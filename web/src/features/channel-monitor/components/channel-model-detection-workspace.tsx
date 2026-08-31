@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Cancel01Icon, PauseIcon, PlayIcon } from '@hugeicons/core-free-icons'
+import {
+  Cancel01Icon,
+  FingerPrintScanIcon,
+  PauseIcon,
+  PlayIcon,
+} from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useMemo, useState } from 'react'
@@ -35,13 +40,18 @@ import {
 import { Spinner } from '@/components/ui/spinner'
 import { channelsQueryKeys } from '@/features/channels/lib/channel-actions'
 
-import { isChannelModelDetectionRunActive } from '../lib/model-detection'
+import { runChannelMonitorBatchExecution } from '../lib/batch-execution'
+import {
+  channelModelDetectionPresetLabel,
+  isChannelModelDetectionRunActive,
+} from '../lib/model-detection'
 import {
   cancelChannelModelDetectionRun,
   getChannelModelDetectionRun,
   getChannelModelDetectionRuns,
   isChannelModelDetectionConfigConflict,
   isChannelModelDetectionInfrastructureConflict,
+  startChannelModelDetectionRun,
   updateChannelModelDetectionConfig,
 } from '../lib/model-detection-channel-api'
 import { channelModelDetectionRequestErrorMessage } from '../lib/model-detection-settings-api'
@@ -52,6 +62,7 @@ import {
 import type {
   ChannelModelDetectionChannel,
   ChannelModelDetectionHistoryQuery,
+  ChannelModelDetectionPreset,
   ChannelModelDetectionRunStatus,
 } from '../types-model-detection'
 import { ChannelModelDetectionConfigSheet } from './channel-model-detection-config-sheet'
@@ -91,7 +102,9 @@ export function ChannelModelDetectionWorkspace(
   const [runChannelId, setRunChannelId] = useState<number | null>(null)
   const [historyChannelId, setHistoryChannelId] = useState<number | null>(null)
   const [cancelChannelId, setCancelChannelId] = useState<number | null>(null)
-  const [bulkAction, setBulkAction] = useState<'enable' | 'pause' | null>(null)
+  const [bulkAction, setBulkAction] = useState<
+    'run' | 'enable' | 'pause' | null
+  >(null)
   const [detailRunId, setDetailRunId] = useState<string | null>(null)
   const [historyQueryInput, setHistoryQueryInput] = useState(
     DEFAULT_HISTORY_QUERY
@@ -122,6 +135,10 @@ export function ChannelModelDetectionWorkspace(
         (channel) => channel.config?.schedule_enabled === true
       ),
     [props.overview?.channels]
+  )
+  const runnableScheduledChannels = useMemo(
+    () => scheduledChannels.filter((channel) => !channel.active_run),
+    [scheduledChannels]
   )
   const pausedChannels = useMemo(
     () =>
@@ -257,6 +274,46 @@ export function ChannelModelDetectionWorkspace(
       }
     },
   })
+  const bulkRunMutation = useMutation({
+    mutationFn: (variables: {
+      channels: ChannelModelDetectionChannel[]
+      preset: ChannelModelDetectionPreset
+      skippedCount: number
+    }) =>
+      runChannelMonitorBatchExecution(variables.channels, (channel) =>
+        startChannelModelDetectionRun(channel.id, {
+          preset: variables.preset,
+          confirm_high_cost: variables.preset === 'high',
+        })
+      ),
+    onSuccess: (results, variables) => {
+      const submittedResults = results.filter(
+        (result) => result.status === 'fulfilled'
+      )
+      const submittedCount = submittedResults.length
+      const failedCount = results.length - submittedCount
+      setBulkAction(null)
+      refreshOverview()
+      for (const result of submittedResults) {
+        refreshChannelHistory(result.item.id)
+      }
+
+      const skippedMessage = variables.skippedCount
+        ? `，跳过 ${variables.skippedCount} 个已有活动轮次的渠道`
+        : ''
+      if (failedCount === 0) {
+        toast.success(
+          `已按${channelModelDetectionPresetLabel(variables.preset)}为 ${submittedCount} 个渠道提交模型检测${skippedMessage}`
+        )
+      } else if (submittedCount === 0) {
+        toast.error(`批量提交失败，${failedCount} 个渠道未进入模型检测队列`)
+      } else {
+        toast.error(
+          `已提交 ${submittedCount} 个渠道，${failedCount} 个渠道失败${skippedMessage}`
+        )
+      }
+    },
+  })
 
   const cancelMutation = useMutation({
     mutationFn: (variables: { channelId: number; runId: string }) =>
@@ -289,6 +346,51 @@ export function ChannelModelDetectionWorkspace(
     actionPendingChannelId = scheduleMutation.variables?.id ?? null
   } else if (cancelMutation.isPending) {
     actionPendingChannelId = cancelMutation.variables?.channelId ?? null
+  }
+  const scheduledPreset = props.overview?.settings.scheduled_preset ?? 'medium'
+  const bulkActionIsRun = bulkAction === 'run'
+  const bulkActionEnabled = bulkAction === 'enable'
+  let bulkActionChannels = scheduledChannels
+  if (bulkActionIsRun) {
+    bulkActionChannels = runnableScheduledChannels
+  } else if (bulkActionEnabled) {
+    bulkActionChannels = pausedChannels
+  }
+  const bulkActionMutationPending = bulkActionIsRun
+    ? bulkRunMutation.isPending
+    : bulkMutation.isPending
+  let bulkDialogTitle = '暂停全部模型定时检测？'
+  let bulkDialogDescription = `将让全部 ${bulkActionChannels.length} 个已参加统一定时检测的渠道退出定时检测，不受当前筛选条件影响。`
+  let bulkDialogNote = '已经运行的检测轮次不会被取消。'
+  let bulkConfirmLabel = '确认暂停'
+  if (bulkActionIsRun) {
+    bulkDialogTitle = '批量执行已启用模型检测？'
+    bulkDialogDescription = `将按统一设置的${channelModelDetectionPresetLabel(scheduledPreset)}，为全部 ${bulkActionChannels.length} 个已启用且当前空闲的渠道创建手动检测轮次，不受当前筛选条件影响。`
+    const skippedCount = scheduledChannels.length - bulkActionChannels.length
+    bulkDialogNote = skippedCount
+      ? `另有 ${skippedCount} 个渠道已有活动轮次，将自动跳过。`
+      : ''
+    if (scheduledPreset === 'high') {
+      bulkDialogNote = `${bulkDialogNote ? `${bulkDialogNote} ` : ''}高档请求量和成本更高，本次确认将同时作为高成本确认。`
+    }
+    bulkConfirmLabel = '确认执行'
+  } else if (bulkActionEnabled) {
+    bulkDialogTitle = '启用全部模型定时检测？'
+    bulkDialogDescription = `将让全部 ${bulkActionChannels.length} 个已配置但暂停的渠道参加统一定时检测，不受当前筛选条件影响。`
+    bulkDialogNote = ''
+    bulkConfirmLabel = '确认启用'
+  }
+  let bulkActionIcon = PauseIcon
+  if (bulkActionIsRun) {
+    bulkActionIcon = FingerPrintScanIcon
+  } else if (bulkActionEnabled) {
+    bulkActionIcon = PlayIcon
+  }
+  let pendingBulkAction: 'run' | 'enable' | 'pause' | null = null
+  if (bulkRunMutation.isPending) {
+    pendingBulkAction = 'run'
+  } else if (bulkMutation.isPending) {
+    pendingBulkAction = bulkAction
   }
 
   function handleSurfaceClose(setOpen: (value: null) => void) {
@@ -352,55 +454,50 @@ export function ChannelModelDetectionWorkspace(
       <AlertDialog
         open={bulkAction != null}
         onOpenChange={(open) => {
-          if (!open && !bulkMutation.isPending) setBulkAction(null)
+          if (!open && !bulkActionMutationPending) setBulkAction(null)
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              {bulkAction === 'enable'
-                ? '启用全部模型定时检测？'
-                : '暂停全部模型定时检测？'}
-            </AlertDialogTitle>
+            <AlertDialogTitle>{bulkDialogTitle}</AlertDialogTitle>
             <AlertDialogDescription className='space-y-2'>
-              <span className='block'>
-                {bulkAction === 'enable'
-                  ? `将让全部 ${pausedChannels.length} 个已配置但暂停的渠道参加统一定时检测，不受当前筛选条件影响。`
-                  : `将让全部 ${scheduledChannels.length} 个已参加统一定时检测的渠道退出定时检测，不受当前筛选条件影响。`}
-              </span>
-              {bulkAction !== 'enable' && (
-                <span className='block'>已经运行的检测轮次不会被取消。</span>
+              <span className='block'>{bulkDialogDescription}</span>
+              {bulkDialogNote && (
+                <span className='block'>{bulkDialogNote}</span>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={bulkMutation.isPending}>
+            <AlertDialogCancel disabled={bulkActionMutationPending}>
               返回
             </AlertDialogCancel>
             <AlertDialogAction
-              variant={bulkAction === 'enable' ? 'default' : 'destructive'}
+              variant={bulkAction === 'pause' ? 'destructive' : 'default'}
               disabled={
-                (bulkAction === 'enable'
-                  ? pausedChannels.length === 0
-                  : scheduledChannels.length === 0) || bulkMutation.isPending
+                bulkActionChannels.length === 0 || bulkActionMutationPending
               }
               onClick={() => {
-                const enabled = bulkAction === 'enable'
+                if (bulkActionIsRun) {
+                  bulkRunMutation.mutate({
+                    channels: bulkActionChannels,
+                    preset: scheduledPreset,
+                    skippedCount:
+                      scheduledChannels.length - bulkActionChannels.length,
+                  })
+                  return
+                }
                 bulkMutation.mutate({
-                  channels: enabled ? pausedChannels : scheduledChannels,
-                  enabled,
+                  channels: bulkActionChannels,
+                  enabled: bulkActionEnabled,
                 })
               }}
             >
-              {bulkMutation.isPending ? (
+              {bulkActionMutationPending ? (
                 <Spinner data-icon='inline-start' />
               ) : (
-                <HugeiconsIcon
-                  icon={bulkAction === 'enable' ? PlayIcon : PauseIcon}
-                  data-icon='inline-start'
-                />
+                <HugeiconsIcon icon={bulkActionIcon} data-icon='inline-start' />
               )}
-              {bulkAction === 'enable' ? '确认启用' : '确认暂停'}
+              {bulkConfirmLabel}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -498,11 +595,14 @@ export function ChannelModelDetectionWorkspace(
       {...props}
       channelQueryClient={queryClient}
       actionPendingChannelId={actionPendingChannelId}
-      actionPendingAll={bulkMutation.isPending}
-      bulkActionPending={bulkMutation.isPending ? bulkAction : null}
+      actionPendingAll={bulkMutation.isPending || bulkRunMutation.isPending}
+      bulkActionPending={pendingBulkAction}
       bulkActionDisabled={
-        scheduleMutation.isPending || cancelMutation.isPending
+        scheduleMutation.isPending ||
+        cancelMutation.isPending ||
+        bulkRunMutation.isPending
       }
+      onRunEnabled={() => setBulkAction('run')}
       onEnableAll={() => setBulkAction('enable')}
       onPauseAll={() => setBulkAction('pause')}
       onOpenSettings={() => setSettingsOpen(true)}

@@ -23,7 +23,7 @@ import { test } from 'vitest'
 import { runBunFixture } from '@/test-utils/run-bun-fixture'
 
 test(
-  '状态监测筛选保持选择，暂停所有时确认并保留渠道配置',
+  '状态监测筛选保持选择，可批量执行已启用渠道并在暂停所有时保留配置',
   { timeout: 15_000 },
   () => {
     const execution = runBunFixture(

@@ -105,7 +105,7 @@ export type ChannelModelDetectionViewProps = {
   error?: string | null
   actionPendingChannelId?: number | null
   actionPendingAll?: boolean
-  bulkActionPending?: 'enable' | 'pause' | null
+  bulkActionPending?: 'run' | 'enable' | 'pause' | null
   bulkActionDisabled?: boolean
   filters?: ChannelModelDetectionFilters
   onFiltersChange?: (filters: ChannelModelDetectionFilters) => void
@@ -119,6 +119,7 @@ export type ChannelModelDetectionViewProps = {
   onToggleSchedule?: (channel: ChannelModelDetectionChannel) => void
   onChannelStatusChanged?: () => void | Promise<void>
   onActionComplete?: () => void | Promise<void>
+  onRunEnabled?: () => void
   onEnableAll?: () => void
   onPauseAll?: () => void
   settingsSurface?: ReactNode
@@ -320,9 +321,16 @@ export function ChannelModelDetectionView(
     ...availableModels.map((model) => ({ value: model, label: model })),
   ]
   const hasActiveRun = overview.channels.some((channel) => channel.active_run)
-  const scheduledChannelCount = overview.channels.filter(
+  const scheduledChannels = overview.channels.filter(
     (channel) => channel.config?.schedule_enabled === true
+  )
+  const runnableScheduledChannelCount = scheduledChannels.filter(
+    (channel) => !channel.active_run
   ).length
+  const detectorBlocked =
+    overview.detector.state === 'offline' ||
+    overview.detector.state === 'incompatible' ||
+    overview.detector.state === 'unconfigured'
   const pausedChannelCount = overview.channels.filter(
     (channel) =>
       channel.config?.schedule_enabled === false &&
@@ -423,7 +431,36 @@ export function ChannelModelDetectionView(
             )}
           </span>
         </div>
-        <div className='flex w-full shrink-0 gap-2 sm:w-auto'>
+        <div
+          className='grid w-full shrink-0 grid-cols-2 gap-2 sm:flex sm:w-auto'
+          data-slot='model-detection-bulk-actions'
+        >
+          {props.onRunEnabled && (
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              className='flex-1 sm:flex-none'
+              onClick={props.onRunEnabled}
+              disabled={
+                runnableScheduledChannelCount === 0 ||
+                detectorBlocked ||
+                props.bulkActionPending != null ||
+                props.bulkActionDisabled
+              }
+              aria-label='批量执行已启用模型检测'
+            >
+              {props.bulkActionPending === 'run' ? (
+                <Spinner data-icon='inline-start' />
+              ) : (
+                <HugeiconsIcon
+                  icon={FingerPrintScanIcon}
+                  data-icon='inline-start'
+                />
+              )}
+              执行已启用
+            </Button>
+          )}
           {props.onEnableAll && (
             <Button
               type='button'
@@ -454,7 +491,7 @@ export function ChannelModelDetectionView(
               className='flex-1 sm:flex-none'
               onClick={props.onPauseAll}
               disabled={
-                scheduledChannelCount === 0 ||
+                scheduledChannels.length === 0 ||
                 props.bulkActionPending != null ||
                 props.bulkActionDisabled
               }

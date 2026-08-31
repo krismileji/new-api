@@ -765,6 +765,137 @@ describe('模型检测工作区', () => {
     )
   })
 
+  test('批量执行仅提交已启用且空闲渠道，并为高档请求发送成本确认', async () => {
+    const overview = createOverview()
+    overview.settings.scheduled_preset = 'high'
+    overview.channels = [
+      createChannel(),
+      createChannel({
+        id: 802,
+        name: '备用渠道',
+        config: {
+          channel_id: 802,
+          schedule_enabled: true,
+          revision: 11,
+          created_at: 1_775_000_000,
+          updated_at: 1_775_000_000,
+        },
+      }),
+      createChannel({
+        id: 803,
+        name: '检测中渠道',
+        health_status: 'running',
+        config: {
+          channel_id: 803,
+          schedule_enabled: true,
+          revision: 5,
+          created_at: 1_775_000_000,
+          updated_at: 1_775_000_000,
+        },
+        active_run: {
+          run_id: 'run-active-803',
+          status: 'running',
+          trigger: 'manual',
+          preset: 'medium',
+          preset_source: 'manual_selected',
+          progress: {
+            planned: 64,
+            logical_completed: 12,
+            successful: 12,
+            errors: 0,
+            cancelled: 0,
+            http_attempts: 12,
+            retries: 0,
+          },
+          queued_at: 1_775_000_000,
+          started_at: 1_775_000_010,
+          updated_at: 1_775_000_020,
+        },
+      }),
+      createChannel({
+        id: 804,
+        name: '已暂停渠道',
+        config: {
+          channel_id: 804,
+          schedule_enabled: false,
+          revision: 3,
+          created_at: 1_775_000_000,
+          updated_at: 1_775_000_000,
+        },
+      }),
+    ]
+    const requests: AxiosRequestConfig[] = []
+    api.defaults.adapter = (async (config) => {
+      requests.push(config)
+      const channelId = Number(config.url?.match(/channel\/(\d+)/)?.[1])
+      return {
+        ...success({
+          run_id: `run-${channelId}`,
+          status: 'queued',
+          preset: 'high',
+          preset_source: 'manual_selected',
+        }),
+        status: 202,
+        config,
+      }
+    }) as AxiosAdapter
+
+    await renderWorkspace(overview)
+
+    const runEnabledButton = findButton('批量执行已启用模型检测')
+    assert.equal(runEnabledButton.disabled, false)
+    await act(async () => runEnabledButton.click())
+    assert.equal(requests.length, 0)
+    assert.match(document.body.textContent ?? '', /批量执行已启用模型检测？/)
+    assert.match(
+      document.body.textContent ?? '',
+      /另有 1 个渠道已有活动轮次，将自动跳过/
+    )
+    assert.match(
+      document.body.textContent ?? '',
+      /高档请求量和成本更高，本次确认将同时作为高成本确认/
+    )
+
+    const confirmButton = [...document.querySelectorAll('button')].find(
+      (button) => button.textContent?.includes('确认执行')
+    )
+    assert.ok(confirmButton)
+    await act(async () => confirmButton.click())
+    await waitForCondition(
+      () => requests.length === 2,
+      '批量模型检测请求未发出'
+    )
+
+    assert.deepEqual(
+      requests.map((request) => ({
+        url: request.url,
+        body: JSON.parse(String(request.data)),
+      })),
+      [
+        {
+          url: '/api/channel_monitor/model_detection/channel/801/run',
+          body: { preset: 'high', confirm_high_cost: true },
+        },
+        {
+          url: '/api/channel_monitor/model_detection/channel/802/run',
+          body: { preset: 'high', confirm_high_cost: true },
+        },
+      ]
+    )
+    await waitForCondition(
+      () => !document.body.textContent?.includes('批量执行已启用模型检测？'),
+      '批量执行确认未关闭'
+    )
+    assert.equal(
+      renderedWorkspace?.queryClient.getQueryState([
+        'channel-monitor',
+        'model-detection',
+        'overview',
+      ])?.isInvalidated,
+      true
+    )
+  })
+
   test('历史筛选进入真实请求并从轮次打开基础设施详情', async () => {
     const requests: AxiosRequestConfig[] = []
     const run = createRunSummary()

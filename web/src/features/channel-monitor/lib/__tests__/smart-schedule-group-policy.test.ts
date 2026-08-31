@@ -115,6 +115,23 @@ describe('smart schedule group policy', () => {
     )
   })
 
+  test('restores the selected model sequence when no explicit model order was saved', () => {
+    const apiPolicy = channelMonitorSmartScheduleGroupPoliciesToApi([
+      createChannelMonitorSmartScheduleGroupPolicy('vip', {
+        ...defaultPolicy,
+        models: ['model-beta', 'model-alpha'],
+        modelOrder: [],
+      }),
+    ])[0]
+    assert.ok(apiPolicy)
+
+    const formPolicy = channelMonitorSmartScheduleGroupPoliciesToForm([
+      apiPolicy,
+    ])[0]
+
+    assert.deepEqual(formPolicy?.modelOrder, ['model-beta', 'model-alpha'])
+  })
+
   test('preserves a complete independent policy across API mapping', () => {
     const formPolicies = channelMonitorSmartScheduleGroupPoliciesToForm([
       {

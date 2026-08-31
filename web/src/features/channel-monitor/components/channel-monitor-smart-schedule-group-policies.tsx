@@ -19,12 +19,15 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
   Add01Icon,
+  ArrowDown01Icon,
+  ArrowUp01Icon,
   Delete02Icon,
+  DragDropVerticalIcon,
   Edit02Icon,
   Settings02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type DragEvent } from 'react'
 import {
   useForm,
   useWatch,
@@ -65,6 +68,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 
 import {
   createChannelMonitorSmartSchedulePolicySchema,
@@ -95,6 +99,8 @@ type ChannelMonitorSmartScheduleGroupPoliciesProps = {
 const EMPTY_GROUP_POLICIES: ChannelMonitorSmartScheduleGroupPolicyFormValues[] =
   []
 const EMPTY_MODEL_OPTIONS: string[] = []
+
+type DropPosition = 'before' | 'after'
 
 function groupPolicyModelSummary(models: string[]): string {
   if (models.length === 0) return '全部模型'
@@ -145,6 +151,9 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
   const [editorOpen, setEditorOpen] = useState(false)
   const [editingGroup, setEditingGroup] = useState<string | null>(null)
   const [draftGroup, setDraftGroup] = useState('')
+  const [draggedGroup, setDraggedGroup] = useState<string | null>(null)
+  const [dragOverGroup, setDragOverGroup] = useState<string | null>(null)
+  const [dropPosition, setDropPosition] = useState<DropPosition>('before')
   const watchedGroupPolicies = useWatch({
     control: props.form.control,
     name: 'smartScheduleGroupPolicies',
@@ -163,13 +172,6 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
     }
     return groups
   }, [configuredGroups, editingGroup, props.groupOptions])
-  const rows = useMemo(
-    () =>
-      [...groupPolicies].sort((left, right) =>
-        left.group.localeCompare(right.group, 'zh-CN')
-      ),
-    [groupPolicies]
-  )
   const policyForm = useForm<ChannelMonitorSmartSchedulePolicyFormValues>({
     resolver: zodResolver(
       createChannelMonitorSmartSchedulePolicySchema() as unknown as ZodType<
@@ -202,23 +204,100 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
     )
   }
 
+  const resetDragState = () => {
+    setDraggedGroup(null)
+    setDragOverGroup(null)
+    setDropPosition('before')
+  }
+
+  const movePolicy = (group: string, offset: -1 | 1) => {
+    const sourceIndex = groupPolicies.findIndex(
+      (policy) => policy.group === group
+    )
+    const targetIndex = sourceIndex + offset
+    if (
+      sourceIndex < 0 ||
+      targetIndex < 0 ||
+      targetIndex >= groupPolicies.length
+    ) {
+      return
+    }
+    const nextPolicies = [...groupPolicies]
+    const targetPolicy = nextPolicies[targetIndex]
+    nextPolicies[targetIndex] = nextPolicies[sourceIndex]
+    nextPolicies[sourceIndex] = targetPolicy
+    props.form.setValue('smartScheduleGroupPolicies', nextPolicies, {
+      shouldDirty: true,
+      shouldValidate: true,
+    })
+  }
+
+  const handleDragStart = (
+    event: DragEvent<HTMLButtonElement>,
+    group: string
+  ) => {
+    setDraggedGroup(group)
+    event.dataTransfer.effectAllowed = 'move'
+    event.dataTransfer.setData('text/plain', group)
+  }
+
+  const handleDragOver = (event: DragEvent<HTMLElement>, group: string) => {
+    event.preventDefault()
+    if (draggedGroup == null || draggedGroup === group) return
+    const rect = event.currentTarget.getBoundingClientRect()
+    setDragOverGroup(group)
+    setDropPosition(
+      event.clientY - rect.top > rect.height / 2 ? 'after' : 'before'
+    )
+    event.dataTransfer.dropEffect = 'move'
+  }
+
+  const handleDrop = (event: DragEvent<HTMLElement>, group: string) => {
+    event.preventDefault()
+    const sourceGroup = draggedGroup ?? event.dataTransfer.getData('text/plain')
+    if (!sourceGroup || sourceGroup === group) {
+      resetDragState()
+      return
+    }
+    const nextPolicies = groupPolicies.filter(
+      (policy) => policy.group !== sourceGroup
+    )
+    let targetIndex = nextPolicies.findIndex((policy) => policy.group === group)
+    if (targetIndex < 0) {
+      resetDragState()
+      return
+    }
+    if (dropPosition === 'after') targetIndex += 1
+    const sourcePolicy = groupPolicies.find(
+      (policy) => policy.group === sourceGroup
+    )
+    if (!sourcePolicy) {
+      resetDragState()
+      return
+    }
+    nextPolicies.splice(targetIndex, 0, sourcePolicy)
+    props.form.setValue('smartScheduleGroupPolicies', nextPolicies, {
+      shouldDirty: true,
+      shouldValidate: true,
+    })
+    resetDragState()
+  }
+
   const savePolicy = policyForm.handleSubmit((policy) => {
     if (!draftGroup) return
     const savedPolicy = createChannelMonitorSmartScheduleGroupPolicy(
       draftGroup,
       policy
     )
-    const nextPolicies = groupPolicies.filter(
-      (item) => item.group !== draftGroup
-    )
-    nextPolicies.push(savedPolicy)
-    props.form.setValue(
-      'smartScheduleGroupPolicies',
-      nextPolicies.sort((left, right) =>
-        left.group.localeCompare(right.group, 'zh-CN')
-      ),
-      { shouldDirty: true, shouldValidate: true }
-    )
+    const nextPolicies = editingGroup
+      ? groupPolicies.map((item) =>
+          item.group === editingGroup ? savedPolicy : item
+        )
+      : [...groupPolicies, savedPolicy]
+    props.form.setValue('smartScheduleGroupPolicies', nextPolicies, {
+      shouldDirty: true,
+      shouldValidate: true,
+    })
     setEditorOpen(false)
   })
 
@@ -243,7 +322,7 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
         </Button>
       </div>
 
-      {rows.length === 0 ? (
+      {groupPolicies.length === 0 ? (
         <Empty className='min-h-48 border'>
           <EmptyHeader>
             <EmptyMedia variant='icon'>
@@ -272,98 +351,160 @@ export function ChannelMonitorSmartScheduleGroupPolicies(
           data-slot='group-policy-list'
           className='min-w-0 overflow-hidden rounded-md border'
         >
-          {rows.map((policy) => (
-            <article
-              key={policy.group}
-              data-slot='group-policy-summary'
-              className='grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-4 border-b p-3 last:border-b-0 sm:p-4'
-              aria-label={`${policy.group} 分组策略`}
-            >
-              <div className='min-w-0'>
-                <h4 className='min-w-0 font-medium break-words'>
-                  {policy.group}
-                </h4>
-                <p
-                  className='text-muted-foreground mt-1 min-w-0 truncate text-xs'
-                  title={policy.models.join(', ') || '全部模型'}
-                >
-                  模型范围：{groupPolicyModelSummary(policy.models)}
-                </p>
-              </div>
+          {groupPolicies.map((policy, index) => {
+            const isDragging = policy.group === draggedGroup
+            const isDropTarget =
+              policy.group === dragOverGroup &&
+              draggedGroup != null &&
+              draggedGroup !== policy.group
+            return (
+              <article
+                key={policy.group}
+                data-slot='group-policy-summary'
+                data-group={policy.group}
+                onDragOver={(event) => handleDragOver(event, policy.group)}
+                onDrop={(event) => handleDrop(event, policy.group)}
+                className={cn(
+                  'grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-4 border-b p-3 transition-colors last:border-b-0 sm:p-4',
+                  isDragging && 'opacity-50',
+                  isDropTarget &&
+                    dropPosition === 'before' &&
+                    'border-t-primary border-t-2',
+                  isDropTarget &&
+                    dropPosition === 'after' &&
+                    'border-b-primary border-b-2'
+                )}
+                aria-label={`${policy.group} 分组策略`}
+              >
+                <div className='min-w-0'>
+                  <div className='flex min-w-0 items-center gap-2'>
+                    <button
+                      type='button'
+                      draggable={groupPolicies.length > 1}
+                      onDragStart={(event) =>
+                        handleDragStart(event, policy.group)
+                      }
+                      onDragEnd={resetDragState}
+                      className='text-muted-foreground hover:text-foreground flex size-7 shrink-0 cursor-grab items-center justify-center rounded-sm active:cursor-grabbing'
+                      aria-label={`拖动分组策略 ${policy.group}`}
+                    >
+                      <HugeiconsIcon
+                        icon={DragDropVerticalIcon}
+                        className='size-4'
+                        aria-hidden='true'
+                      />
+                    </button>
+                    <span className='bg-muted text-muted-foreground flex size-6 shrink-0 items-center justify-center rounded-sm text-xs font-medium tabular-nums'>
+                      {index + 1}
+                    </span>
+                    <h4 className='min-w-0 font-medium break-words'>
+                      {policy.group}
+                    </h4>
+                  </div>
+                  <p
+                    className='text-muted-foreground mt-1 min-w-0 truncate pl-17 text-xs'
+                    title={policy.models.join(', ') || '全部模型'}
+                  >
+                    模型范围：{groupPolicyModelSummary(policy.models)}
+                  </p>
+                </div>
 
-              <div className='flex shrink-0 justify-end gap-1'>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        type='button'
-                        variant='ghost'
-                        size='icon-sm'
-                        onClick={() => openEditor(policy.group)}
-                        aria-label={`编辑分组策略 ${policy.group}`}
-                      >
-                        <HugeiconsIcon icon={Edit02Icon} />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>编辑</TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        type='button'
-                        variant='ghost'
-                        size='icon-sm'
-                        onClick={() => removePolicy(policy.group)}
-                        aria-label={`删除分组调度策略 ${policy.group}`}
-                      >
-                        <HugeiconsIcon icon={Delete02Icon} />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>删除策略</TooltipContent>
-                </Tooltip>
-              </div>
+                <div className='flex shrink-0 justify-end gap-1'>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='icon-sm'
+                    onClick={() => movePolicy(policy.group, -1)}
+                    disabled={index === 0}
+                    aria-label={`上移分组策略 ${policy.group}`}
+                  >
+                    <HugeiconsIcon icon={ArrowUp01Icon} aria-hidden='true' />
+                  </Button>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='icon-sm'
+                    onClick={() => movePolicy(policy.group, 1)}
+                    disabled={index === groupPolicies.length - 1}
+                    aria-label={`下移分组策略 ${policy.group}`}
+                  >
+                    <HugeiconsIcon icon={ArrowDown01Icon} aria-hidden='true' />
+                  </Button>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='icon-sm'
+                          onClick={() => openEditor(policy.group)}
+                          aria-label={`编辑分组策略 ${policy.group}`}
+                        >
+                          <HugeiconsIcon icon={Edit02Icon} />
+                        </Button>
+                      }
+                    />
+                    <TooltipContent>编辑</TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          type='button'
+                          variant='ghost'
+                          size='icon-sm'
+                          onClick={() => removePolicy(policy.group)}
+                          aria-label={`删除分组调度策略 ${policy.group}`}
+                        >
+                          <HugeiconsIcon icon={Delete02Icon} />
+                        </Button>
+                      }
+                    />
+                    <TooltipContent>删除策略</TooltipContent>
+                  </Tooltip>
+                </div>
 
-              <dl className='col-span-2 grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4'>
-                <div className='min-w-0'>
-                  <dt className='text-muted-foreground text-xs'>调度与调整</dt>
-                  <dd className='mt-1 min-w-0 break-words'>
-                    {getChannelMonitorSmartScheduleStrategyLabel(
-                      policy.strategy
-                    )}{' '}
-                    ·{' '}
-                    {getChannelMonitorSmartScheduleApplyModeLabel(
-                      policy.applyMode
-                    )}
-                  </dd>
-                </div>
-                <div className='min-w-0'>
-                  <dt className='text-muted-foreground text-xs'>样本补充</dt>
-                  <dd className='mt-1 flex min-w-0'>
-                    <GroupPolicySampleModeBadge policy={policy} />
-                  </dd>
-                </div>
-                <div className='min-w-0'>
-                  <dt className='text-muted-foreground text-xs'>
-                    统一采样顺序
-                  </dt>
-                  <dd className='mt-1 flex min-w-0'>
-                    <GroupPolicySamplingOrderBadge policy={policy} />
-                  </dd>
-                </div>
-                <div className='min-w-0'>
-                  <dt className='text-muted-foreground text-xs'>稳定性</dt>
-                  <dd className='mt-1 min-w-0 break-words'>
-                    {policy.stabilityEnabled
-                      ? `评分 ${policy.stabilityWindowMinutes} 分钟 · 保护 ${policy.burstFailureWindowMinutes} 分钟 / 最近 ${policy.burstFailureWindowRequests} 次 · 连续 ${policy.consecutiveFailureThreshold} 次 / 失败 ${policy.burstFailureThresholdPercent}% · 恢复 ${policy.recoverySuccessThreshold} 次`
-                      : '关闭'}
-                  </dd>
-                </div>
-              </dl>
-            </article>
-          ))}
+                <dl className='col-span-2 grid min-w-0 gap-3 sm:grid-cols-2 xl:grid-cols-4'>
+                  <div className='min-w-0'>
+                    <dt className='text-muted-foreground text-xs'>
+                      调度与调整
+                    </dt>
+                    <dd className='mt-1 min-w-0 break-words'>
+                      {getChannelMonitorSmartScheduleStrategyLabel(
+                        policy.strategy
+                      )}{' '}
+                      ·{' '}
+                      {getChannelMonitorSmartScheduleApplyModeLabel(
+                        policy.applyMode
+                      )}
+                    </dd>
+                  </div>
+                  <div className='min-w-0'>
+                    <dt className='text-muted-foreground text-xs'>样本补充</dt>
+                    <dd className='mt-1 flex min-w-0'>
+                      <GroupPolicySampleModeBadge policy={policy} />
+                    </dd>
+                  </div>
+                  <div className='min-w-0'>
+                    <dt className='text-muted-foreground text-xs'>
+                      统一采样顺序
+                    </dt>
+                    <dd className='mt-1 flex min-w-0'>
+                      <GroupPolicySamplingOrderBadge policy={policy} />
+                    </dd>
+                  </div>
+                  <div className='min-w-0'>
+                    <dt className='text-muted-foreground text-xs'>稳定性</dt>
+                    <dd className='mt-1 min-w-0 break-words'>
+                      {policy.stabilityEnabled
+                        ? `评分 ${policy.stabilityWindowMinutes} 分钟 · 保护 ${policy.burstFailureWindowMinutes} 分钟 / 最近 ${policy.burstFailureWindowRequests} 次 · 连续 ${policy.consecutiveFailureThreshold} 次 / 失败 ${policy.burstFailureThresholdPercent}% · 恢复 ${policy.recoverySuccessThreshold} 次`
+                        : '关闭'}
+                    </dd>
+                  </div>
+                </dl>
+              </article>
+            )
+          })}
         </div>
       )}
 

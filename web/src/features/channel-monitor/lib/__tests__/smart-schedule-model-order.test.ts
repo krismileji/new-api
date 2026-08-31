@@ -20,9 +20,12 @@ import assert from 'node:assert/strict'
 
 import { describe, test } from 'vitest'
 
-import { getChannelMonitorSmartScheduleModelOptionsByGroup } from '../smart-schedule-model-order'
+import {
+  getChannelMonitorSmartScheduleModelOptionsByGroup,
+  mergeChannelMonitorSmartScheduleModelOrder,
+} from '../smart-schedule-model-order'
 
-describe('smart schedule model options by group', () => {
+describe('smart schedule model order', () => {
   test('isolates route models by group and preserves configured models', () => {
     const optionsByGroup = getChannelMonitorSmartScheduleModelOptionsByGroup(
       [
@@ -55,5 +58,29 @@ describe('smart schedule model options by group', () => {
       'channel-alpha',
       'channel-beta',
     ])
+  })
+
+  test('uses model selection order by default and preserves manual order for retained models', () => {
+    assert.deepEqual(
+      mergeChannelMonitorSmartScheduleModelOrder(
+        ['model-beta', 'model-alpha'],
+        []
+      ),
+      ['model-beta', 'model-alpha']
+    )
+    assert.deepEqual(
+      mergeChannelMonitorSmartScheduleModelOrder(
+        ['model-beta', 'model-gamma', 'model-alpha'],
+        ['model-alpha', 'model-beta']
+      ),
+      ['model-alpha', 'model-beta', 'model-gamma']
+    )
+    assert.deepEqual(
+      mergeChannelMonitorSmartScheduleModelOrder(
+        ['model-gamma', 'model-alpha'],
+        ['model-alpha', 'model-beta', 'model-gamma']
+      ),
+      ['model-alpha', 'model-gamma']
+    )
   })
 })

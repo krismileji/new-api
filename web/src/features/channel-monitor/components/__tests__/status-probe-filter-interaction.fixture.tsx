@@ -330,6 +330,91 @@ try {
     ['全部模型', 'model-a']
   )
 
+  const runRequests: AxiosRequestConfig[] = []
+  const finishRunRequests: Array<() => void> = []
+  api.defaults.adapter = ((config) => {
+    if (config.method === 'post' && config.url?.endsWith('/run')) {
+      runRequests.push(config)
+      return new Promise((resolve) => {
+        finishRunRequests.push(() =>
+          resolve({
+            config,
+            data: {
+              success: true,
+              message: '',
+              data: { manual_request_id: `run-${runRequests.length}` },
+            },
+            headers: {},
+            status: 202,
+            statusText: 'Accepted',
+          })
+        )
+      })
+    }
+    return Promise.resolve({
+      config,
+      data: overview,
+      headers: {},
+      status: 200,
+      statusText: 'OK',
+    })
+  }) as AxiosAdapter
+
+  const runEnabledButton = container.querySelector<HTMLButtonElement>(
+    '[aria-label="批量执行已启用状态检测"]'
+  )
+  assert.ok(runEnabledButton)
+  assert.equal(runEnabledButton.disabled, false)
+  await act(async () => runEnabledButton.click())
+  assert.equal(runRequests.length, 0)
+  assert.match(document.body.textContent ?? '', /执行全部已启用状态检测？/)
+
+  const confirmRunButton = [
+    ...document.querySelectorAll<HTMLButtonElement>('button'),
+  ].find((button) => button.textContent?.includes('确认执行'))
+  assert.ok(confirmRunButton)
+  await act(async () => {
+    confirmRunButton.click()
+    await Promise.resolve()
+  })
+  assert.deepEqual(
+    runRequests.map((request) => request.url),
+    [
+      '/api/channel_monitor/status/channel/1/run',
+      '/api/channel_monitor/status/channel/2/run',
+    ]
+  )
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const currentRunEnabledButton = container.querySelector<HTMLButtonElement>(
+      '[aria-label="批量执行已启用状态检测"]'
+    )
+    if (currentRunEnabledButton?.disabled) break
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+  }
+  assert.equal(
+    container.querySelector<HTMLButtonElement>(
+      '[aria-label="批量执行已启用状态检测"]'
+    )?.disabled,
+    true
+  )
+
+  await act(async () => {
+    for (const finishRequest of finishRunRequests) finishRequest()
+    await Promise.resolve()
+  })
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (!document.body.textContent?.includes('执行全部已启用状态检测？')) break
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+  }
+  assert.equal(
+    document.body.textContent?.includes('执行全部已启用状态检测？'),
+    false
+  )
+
   const updateRequests: AxiosRequestConfig[] = []
   const finishUpdateRequests: Array<() => void> = []
   api.defaults.adapter = ((config) => {

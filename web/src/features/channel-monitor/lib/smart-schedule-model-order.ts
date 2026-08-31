@@ -102,3 +102,25 @@ export function compareChannelMonitorSmartScheduleModels(
   if (secondIndex >= 0) return 1
   return first.localeCompare(second)
 }
+
+export function mergeChannelMonitorSmartScheduleModelOrder(
+  selectedModels: readonly string[],
+  configuredOrder: readonly string[]
+): string[] {
+  if (selectedModels.length === 0) return [...new Set(configuredOrder)]
+
+  const selectedSet = new Set(selectedModels)
+  const seen = new Set<string>()
+  const nextOrder: string[] = []
+  for (const model of configuredOrder) {
+    if (!selectedSet.has(model) || seen.has(model)) continue
+    seen.add(model)
+    nextOrder.push(model)
+  }
+  for (const model of selectedModels) {
+    if (seen.has(model)) continue
+    seen.add(model)
+    nextOrder.push(model)
+  }
+  return nextOrder
+}

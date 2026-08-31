@@ -28,6 +28,7 @@ import type {
   ChannelMonitorSmartScheduleGroupPolicyFormValues,
   ChannelMonitorSmartSchedulePolicyFormValues,
 } from './schema'
+import { mergeChannelMonitorSmartScheduleModelOrder } from './smart-schedule-model-order'
 import {
   channelMonitorSmartScheduleKTokensToTokens,
   channelMonitorSmartScheduleTokensToKTokens,
@@ -113,7 +114,10 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
     scoring: channelMonitorSmartScheduleScoringToForm(policy.scoring),
     applyMode: policy.apply_mode,
     models: [...policy.models],
-    modelOrder: [...(policy.model_order ?? [])],
+    modelOrder: mergeChannelMonitorSmartScheduleModelOrder(
+      policy.models,
+      policy.model_order ?? []
+    ),
     minSamples: policy.min_samples,
     recoveryStabilityScore: policy.recovery_stability_score,
     fastFailurePenaltyPercent: policy.fast_failure_penalty_percent,

@@ -73,6 +73,7 @@ import {
   MIN_SMART_SCHEDULE_WINDOW_MINUTES,
   type ChannelMonitorSmartSchedulePolicyFormValues,
 } from '../lib/schema'
+import { mergeChannelMonitorSmartScheduleModelOrder } from '../lib/smart-schedule-model-order'
 import {
   CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_SAMPLING_ORDER_OPTIONS,
@@ -467,7 +468,17 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
               <MultiSelect
                 options={modelSelectOptions}
                 selected={field.value}
-                onChange={field.onChange}
+                onChange={(models) => {
+                  field.onChange(models)
+                  props.form.setValue(
+                    'modelOrder',
+                    mergeChannelMonitorSmartScheduleModelOrder(
+                      models,
+                      props.form.getValues('modelOrder')
+                    ),
+                    { shouldDirty: true, shouldValidate: true }
+                  )
+                }}
                 placeholder='全部模型'
                 emptyText='没有匹配的模型'
                 maxVisibleChips={4}

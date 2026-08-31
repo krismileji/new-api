@@ -292,22 +292,34 @@ describe('模型检测视图骨架', () => {
     )
   })
 
-  test('没有已配置渠道时禁用启用所有和暂停所有按钮', () => {
+  test('没有已配置渠道时禁用执行已启用、启用所有和暂停所有按钮', () => {
     domWindow.document.body.innerHTML = renderToStaticMarkup(
       <ChannelModelDetectionView
         channelOrder={CHANNEL_ORDER}
         overview={createOverview()}
+        onRunEnabled={() => {}}
         onEnableAll={() => {}}
         onPauseAll={() => {}}
       />
     )
 
+    const runEnabled = domWindow.document.querySelector(
+      '[aria-label="批量执行已启用模型检测"]'
+    ) as HTMLButtonElement | null
     const enableAll = domWindow.document.querySelector(
       '[aria-label="启用所有模型定时检测"]'
     ) as HTMLButtonElement | null
     const pauseAll = domWindow.document.querySelector(
       '[aria-label="暂停所有模型定时检测"]'
     ) as HTMLButtonElement | null
+    const bulkActions = domWindow.document.querySelector(
+      '[data-slot="model-detection-bulk-actions"]'
+    )
+    assert.ok(bulkActions)
+    assert.match(bulkActions.className, /grid-cols-2/)
+    assert.match(bulkActions.className, /sm:flex/)
+    assert.ok(runEnabled)
+    assert.equal(runEnabled.disabled, true)
     assert.ok(enableAll)
     assert.equal(enableAll.disabled, true)
     assert.ok(pauseAll)

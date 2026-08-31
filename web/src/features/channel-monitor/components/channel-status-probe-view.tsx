@@ -78,6 +78,7 @@ import {
   runChannelStatusProbe,
   updateChannelStatusProbeConfig,
 } from '../api'
+import { runChannelMonitorBatchExecution } from '../lib/batch-execution'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
@@ -155,7 +156,9 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
   const [search, setSearch] = useState('')
   const [configChannelId, setConfigChannelId] = useState<number | null>(null)
   const [historyChannelId, setHistoryChannelId] = useState<number | null>(null)
-  const [bulkAction, setBulkAction] = useState<'enable' | 'pause' | null>(null)
+  const [bulkAction, setBulkAction] = useState<
+    'run' | 'enable' | 'pause' | null
+  >(null)
   const query = useQuery({
     queryKey: ['channel-monitor', 'status-probe', { model: modelFilter }],
     queryFn: () => getChannelStatusProbeOverview(modelFilter),
@@ -173,6 +176,11 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
   const enabledChannels = useMemo(
     () => channels.filter((channel) => channel.config?.enabled === true),
     [channels]
+  )
+  const runnableEnabledChannels = useMemo(
+    () =>
+      enabledChannels.filter((channel) => !isChannelStatusProbeActive(channel)),
+    [enabledChannels]
   )
   const pausedChannels = useMemo(
     () =>
@@ -347,23 +355,81 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
       }
     },
   })
+  const bulkRunMutation = useMutation({
+    mutationFn: (variables: {
+      channels: ChannelStatusProbeChannel[]
+      skippedCount: number
+    }) =>
+      runChannelMonitorBatchExecution(variables.channels, (channel) =>
+        runChannelStatusProbe(channel.id)
+      ),
+    onSuccess: (results, variables) => {
+      const submittedCount = results.filter(
+        (result) => result.status === 'fulfilled'
+      ).length
+      const failedCount = results.length - submittedCount
+      setBulkAction(null)
+      void refreshChannelStatus()
+
+      const skippedMessage = variables.skippedCount
+        ? `，跳过 ${variables.skippedCount} 个正在执行或已排队的渠道`
+        : ''
+      if (failedCount === 0) {
+        toast.success(
+          `已为 ${submittedCount} 个渠道提交状态检测${skippedMessage}`
+        )
+      } else if (submittedCount === 0) {
+        toast.error(`批量提交失败，${failedCount} 个渠道未进入检测队列`)
+      } else {
+        toast.error(
+          `已提交 ${submittedCount} 个渠道，${failedCount} 个渠道失败${skippedMessage}`
+        )
+      }
+    },
+  })
   let pendingChannelId: number | null | undefined = null
   if (runMutation.isPending) {
     pendingChannelId = runMutation.variables?.id
   } else if (toggleMutation.isPending) {
     pendingChannelId = toggleMutation.variables?.id
   }
-  const allActionsPending = bulkMutation.isPending
+  const allActionsPending = bulkMutation.isPending || bulkRunMutation.isPending
   const bulkActionPending =
     query.isLoading ||
     query.isFetching ||
     runMutation.isPending ||
     toggleMutation.isPending ||
-    bulkMutation.isPending
+    bulkMutation.isPending ||
+    bulkRunMutation.isPending
+  const bulkActionIsRun = bulkAction === 'run'
   const bulkActionEnabled = bulkAction === 'enable'
-  const bulkActionChannels = bulkActionEnabled
-    ? pausedChannels
-    : enabledChannels
+  let bulkActionChannels = enabledChannels
+  if (bulkActionIsRun) {
+    bulkActionChannels = runnableEnabledChannels
+  } else if (bulkActionEnabled) {
+    bulkActionChannels = pausedChannels
+  }
+  const bulkActionMutationPending = bulkActionIsRun
+    ? bulkRunMutation.isPending
+    : bulkMutation.isPending
+  let bulkDialogTitle = '暂停全部周期探测？'
+  let bulkDialogDescription = `将暂停全部 ${bulkActionChannels.length} 个已启用渠道的周期探测，不受当前筛选条件影响。`
+  let bulkDialogNote = '当前正在运行或已手动排队的任务不会被取消。'
+  let bulkConfirmLabel = '确认暂停'
+  if (bulkActionIsRun) {
+    bulkDialogTitle = '执行全部已启用状态检测？'
+    bulkDialogDescription = `将为全部 ${bulkActionChannels.length} 个已启用且当前空闲的渠道提交一次状态检测，不受当前筛选条件影响。`
+    const skippedCount = enabledChannels.length - bulkActionChannels.length
+    bulkDialogNote = skippedCount
+      ? `另有 ${skippedCount} 个渠道正在执行或已排队，将自动跳过。`
+      : ''
+    bulkConfirmLabel = '确认执行'
+  } else if (bulkActionEnabled) {
+    bulkDialogTitle = '启用全部周期探测？'
+    bulkDialogDescription = `将启用全部 ${bulkActionChannels.length} 个已配置但暂停渠道的周期探测，不受当前筛选条件影响。`
+    bulkDialogNote = ''
+    bulkConfirmLabel = '确认启用'
+  }
   let channelGridContent: ReactNode
   if (query.isLoading) {
     channelGridContent = (
@@ -524,6 +590,21 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
             type='button'
             variant='outline'
             className='w-full sm:w-auto'
+            onClick={() => setBulkAction('run')}
+            disabled={runnableEnabledChannels.length === 0 || bulkActionPending}
+            aria-label='批量执行已启用状态检测'
+          >
+            {bulkRunMutation.isPending ? (
+              <Spinner data-icon='inline-start' />
+            ) : (
+              <HugeiconsIcon icon={PlayIcon} data-icon='inline-start' />
+            )}
+            执行已启用
+          </Button>
+          <Button
+            type='button'
+            variant='outline'
+            className='w-full sm:w-auto'
             onClick={() => setBulkAction('enable')}
             disabled={pausedChannels.length === 0 || bulkActionPending}
             aria-label='启用所有状态探测'
@@ -571,53 +652,52 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
       <AlertDialog
         open={bulkAction != null}
         onOpenChange={(open) => {
-          if (!open && !bulkMutation.isPending) setBulkAction(null)
+          if (!open && !bulkActionMutationPending) setBulkAction(null)
         }}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              {bulkActionEnabled ? '启用全部周期探测？' : '暂停全部周期探测？'}
-            </AlertDialogTitle>
+            <AlertDialogTitle>{bulkDialogTitle}</AlertDialogTitle>
             <AlertDialogDescription className='space-y-2'>
-              <span className='block'>
-                将{bulkActionEnabled ? '启用' : '暂停'}全部{' '}
-                {bulkActionChannels.length} 个
-                {bulkActionEnabled ? '已配置但暂停' : '已启用'}
-                渠道的周期探测，不受当前筛选条件影响。
-              </span>
-              {!bulkActionEnabled && (
-                <span className='block'>
-                  当前正在运行或已手动排队的任务不会被取消。
-                </span>
+              <span className='block'>{bulkDialogDescription}</span>
+              {bulkDialogNote && (
+                <span className='block'>{bulkDialogNote}</span>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={bulkMutation.isPending}>
+            <AlertDialogCancel disabled={bulkActionMutationPending}>
               返回
             </AlertDialogCancel>
             <AlertDialogAction
-              variant={bulkActionEnabled ? 'default' : 'destructive'}
+              variant={bulkAction === 'pause' ? 'destructive' : 'default'}
               disabled={
-                bulkActionChannels.length === 0 || bulkMutation.isPending
+                bulkActionChannels.length === 0 || bulkActionMutationPending
               }
-              onClick={() =>
+              onClick={() => {
+                if (bulkActionIsRun) {
+                  bulkRunMutation.mutate({
+                    channels: bulkActionChannels,
+                    skippedCount:
+                      enabledChannels.length - bulkActionChannels.length,
+                  })
+                  return
+                }
                 bulkMutation.mutate({
                   channels: bulkActionChannels,
                   enabled: bulkActionEnabled,
                 })
-              }
+              }}
             >
-              {bulkMutation.isPending ? (
+              {bulkActionMutationPending ? (
                 <Spinner data-icon='inline-start' />
               ) : (
                 <HugeiconsIcon
-                  icon={bulkActionEnabled ? PlayIcon : PauseIcon}
+                  icon={bulkAction === 'pause' ? PauseIcon : PlayIcon}
                   data-icon='inline-start'
                 />
               )}
-              {bulkActionEnabled ? '确认启用' : '确认暂停'}
+              {bulkConfirmLabel}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
