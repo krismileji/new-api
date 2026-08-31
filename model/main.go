@@ -201,6 +201,11 @@ func InitDB() (err error) {
 				panic(err)
 			}
 		}
+		if common.IsMasterNode {
+			if err := migrateUserQuotaColumns(DB, common.MainDatabaseType()); err != nil {
+				return err
+			}
+		}
 		if err := ensureUserQuotaColumns(DB, common.MainDatabaseType()); err != nil {
 			return err
 		}
@@ -270,9 +275,49 @@ func InitLogDB() (err error) {
 
 var userQuotaColumns = []string{"quota", "used_quota", "aff_quota", "aff_history"}
 
-// ensureUserQuotaColumns rejects a legacy 32-bit wallet schema before any
-// migrations run. The 64-bit-only build intentionally does not auto-upgrade
-// an existing wallet; operators must migrate it explicitly before starting.
+// migrateUserQuotaColumns upgrades the legacy 32-bit wallet columns before
+// the startup schema check runs. Existing values are widened in place by the
+// database; no data rewrite or rounding is involved.
+func migrateUserQuotaColumns(db *gorm.DB, dbType common.DatabaseType) error {
+	if common.GetEnvOrDefaultBool("SKIP_64BIT_QUOTA_SCHEMA_CHECK", false) {
+		return nil
+	}
+	if db == nil || dbType == common.DatabaseTypeSQLite {
+		return nil
+	}
+	if !db.Migrator().HasTable(&User{}) {
+		return nil
+	}
+	columnTypes, err := db.Migrator().ColumnTypes(&User{})
+	if err != nil {
+		return fmt.Errorf("failed to inspect users schema for quota migration: %w", err)
+	}
+	for _, expected := range userQuotaColumns {
+		var dataType string
+		found := false
+		for _, actual := range columnTypes {
+			if strings.EqualFold(actual.Name(), expected) {
+				dataType = actual.DatabaseTypeName()
+				found = true
+				break
+			}
+		}
+		if !found || is64BitIntegerType(dbType, dataType) {
+			continue
+		}
+		if !isLegacyUserQuotaIntegerType(dbType, dataType) {
+			return fmt.Errorf("users.%s uses unsupported type %s; migrate it to BIGINT manually", expected, dataType)
+		}
+		if err := db.Migrator().AlterColumn(&User{}, expected); err != nil {
+			return fmt.Errorf("migrate users.%s to BIGINT: %w", expected, err)
+		}
+		common.SysLog(fmt.Sprintf("migrated users.%s from %s to BIGINT", expected, dataType))
+	}
+	return nil
+}
+
+// ensureUserQuotaColumns verifies that wallet columns are 64-bit after the
+// legacy schema migration has had a chance to widen them.
 func ensureUserQuotaColumns(db *gorm.DB, dbType common.DatabaseType) error {
 	if common.GetEnvOrDefaultBool("SKIP_64BIT_QUOTA_SCHEMA_CHECK", false) {
 		common.SysLog("SKIP_64BIT_QUOTA_SCHEMA_CHECK=true; skipping user quota schema check")
@@ -312,6 +357,24 @@ func is64BitIntegerType(dbType common.DatabaseType, dataType string) bool {
 	default:
 		return false
 	}
+}
+
+func isLegacyUserQuotaIntegerType(dbType common.DatabaseType, dataType string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(dataType))
+	switch dbType {
+	case common.DatabaseTypeMySQL:
+		switch normalized {
+		case "tinyint", "tinyint unsigned", "smallint", "smallint unsigned",
+			"mediumint", "mediumint unsigned", "int", "int unsigned", "integer", "integer unsigned":
+			return true
+		}
+	case common.DatabaseTypePostgreSQL:
+		switch normalized {
+		case "smallint", "int2", "integer", "int4":
+			return true
+		}
+	}
+	return false
 }
 
 func migrateDB() error {
