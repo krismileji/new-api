@@ -330,6 +330,9 @@ func migrateDB() error {
 	if err := prepareChannelSmartScheduleGroupPauseMigration(DB); err != nil {
 		return err
 	}
+	if err := prepareChannelSmartScheduleExecutionDetailMigration(DB); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
