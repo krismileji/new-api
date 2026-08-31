@@ -289,3 +289,26 @@ func TestTimeoutOverdueChannelGroupMonitorPreservesCompletedGroups(t *testing.T)
 	assert.NotEqual(t, claim.RunId, nextClaims.RunId)
 	assert.Equal(t, stored.NextRunAt+60, nextClaims.DeadlineAt)
 }
+
+func TestClaimDueChannelGroupMonitorRealignsStaleRunTimeAfterClaim(t *testing.T) {
+	db := setupChannelGroupMonitorTestDB(t)
+	created, err := SaveChannelGroupMonitorConfig(ChannelGroupMonitorConfigInput{
+		Enabled:         true,
+		Groups:          []ChannelGroupMonitorGroup{{GroupName: "default", ProbeModel: "model-default"}},
+		IntervalSeconds: 60, DisplayValue: 60,
+		DisplayUnit: ChannelStatusProbeDisplayUnitMinute,
+	}, 1_000)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&ChannelGroupMonitorConfig{}).
+		Where("id = ?", created.Id).Update("next_run_at", int64(900)).Error)
+
+	claims, err := ClaimDueChannelGroupMonitor(2_000)
+	require.NoError(t, err)
+	require.NotNil(t, claims)
+	assert.EqualValues(t, 2_040, claims.DeadlineAt)
+
+	stored, err := GetChannelGroupMonitorConfig()
+	require.NoError(t, err)
+	assert.EqualValues(t, 2_040, stored.NextRunAt)
+	assert.Greater(t, claims.DeadlineAt, int64(2_000))
+}

@@ -403,6 +403,9 @@ func ClaimDueChannelGroupMonitor(now int64) (*ChannelGroupMonitorClaim, error) {
 	}
 	if trigger == ChannelGroupMonitorTriggerScheduled {
 		deadlineAt = nextChannelGroupMonitorRunAt(candidate.NextRunAt, candidate.IntervalSeconds)
+		if deadlineAt <= now {
+			deadlineAt = nextChannelGroupMonitorRunAt(now, candidate.IntervalSeconds)
+		}
 		updates["next_run_at"] = deadlineAt
 	} else if candidate.NextRunAt > now {
 		deadlineAt = candidate.NextRunAt

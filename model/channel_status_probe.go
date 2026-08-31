@@ -1188,6 +1188,9 @@ func ClaimDueChannelStatusProbes(now int64, limit int) ([]ChannelStatusProbeClai
 		deadlineAt := nextChannelStatusProbeRunAt(now, candidate.IntervalSeconds)
 		if trigger == ChannelStatusProbeTriggerScheduled {
 			deadlineAt = nextChannelStatusProbeRunAt(candidate.NextRunAt, candidate.IntervalSeconds)
+			if deadlineAt <= now {
+				deadlineAt = nextChannelStatusProbeRunAt(now, candidate.IntervalSeconds)
+			}
 			claimUpdates["next_run_at"] = deadlineAt
 		} else if candidate.NextRunAt > now {
 			deadlineAt = candidate.NextRunAt

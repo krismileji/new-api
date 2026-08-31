@@ -306,6 +306,26 @@ func TestScheduledStatusProbeRealignsLegacyRunTimeAfterClaim(t *testing.T) {
 	assert.EqualValues(t, 1_080, stored.NextRunAt)
 }
 
+func TestScheduledStatusProbeRealignsStaleRunTimeAfterClaim(t *testing.T) {
+	db := setupChannelStatusProbeModelTestDB(t)
+	created, err := SaveChannelStatusProbeConfig(11, ChannelStatusProbeConfigInput{
+		Enabled: true, Models: []string{"model-a"}, IntervalSeconds: 60,
+	}, 1_000)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&ChannelStatusProbeConfig{}).
+		Where("id = ?", created.Id).Update("next_run_at", int64(900)).Error)
+
+	claims, err := ClaimDueChannelStatusProbes(2_000, 1)
+	require.NoError(t, err)
+	require.Len(t, claims, 1)
+	assert.EqualValues(t, 2_040, claims[0].DeadlineAt)
+
+	stored, err := GetChannelStatusProbeConfig(11)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2_040, stored.NextRunAt)
+	assert.Greater(t, claims[0].DeadlineAt, int64(2_000))
+}
+
 func TestSaveChannelStatusProbeExecutionAccumulatesMinuteAndIsIdempotent(t *testing.T) {
 	db := setupChannelStatusProbeModelTestDB(t)
 	firstToken := 240.0
