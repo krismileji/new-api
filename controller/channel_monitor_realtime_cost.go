@@ -41,7 +41,7 @@ func channelMonitorRealtimeTodayCosts(ctx context.Context, channelId int, daySta
 // daily writer's roughly one-second flush delay is preferable to showing an
 // uncommitted Redis amount that can disagree with later historical results.
 func applyChannelMonitorRealtimeCost(
-	_ context.Context,
+	ctx context.Context,
 	overview *channelMonitorCostOverview,
 	_ int,
 	now int64,
@@ -50,7 +50,7 @@ func applyChannelMonitorRealtimeCost(
 	_ bool,
 ) error {
 	todayStart := channelMonitorCostDayStart(now)
-	metadata := channelMonitorRealtimeMetadata(todayStart)
+	metadata := channelMonitorRealtimeMetadataWithContext(ctx, todayStart)
 	overview.DataCutoffAt = metadata.DataCutoffAt
 	overview.ProcessedAt = metadata.ProcessedAt
 	overview.ProjectionStartedAt = metadata.ProjectionStartedAt

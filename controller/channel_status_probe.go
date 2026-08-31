@@ -26,6 +26,8 @@ const (
 	channelStatusProbeHealthUnhealthy    = "unhealthy"
 	channelStatusProbeHealthRateLimited  = "rate_limited"
 	channelStatusProbeHealthStale        = "stale"
+	channelMonitorMaxPage                = 1000000
+	channelMonitorQueryResponseMaxBytes  = 8 << 20
 )
 
 type channelStatusProbeConfigResponse struct {
@@ -486,12 +488,21 @@ func mergeChannelStatusProbeExecutionRecentWindow(
 
 func GetChannelStatusProbeOverview(c *gin.Context) {
 	selectedModel := strings.TrimSpace(c.Query("model"))
+	if utf8.RuneCountInString(selectedModel) > 255 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "模型名称长度不能超过 255 个字符"})
+		return
+	}
 	response, err := queryChannelStatusProbeOverview(c.Request.Context(), selectedModel)
 	if err != nil {
+		if errors.Is(err, model.ErrChannelStatusProbeWindowTooLarge) ||
+			errors.Is(err, model.ErrChannelStatusProbeResponseTooLarge) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"success": false, "message": err.Error()})
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": response})
+	writeChannelMonitorBoundedJSON(c, response)
 }
 
 func buildChannelStatusProbeOverview(
@@ -603,7 +614,7 @@ func buildChannelStatusProbeOverview(
 		return channelStatusProbeOverviewResponse{}, err
 	}
 	recentExecutions, err := model.GetChannelStatusProbeExecutionsSinceForOverview(
-		ctx, db, now-maxDisplaySeconds, queryChannelIDs, selectedModel,
+		ctx, db, now-maxDisplaySeconds, now+1, queryChannelIDs, selectedModel, relations,
 	)
 	if err != nil {
 		return channelStatusProbeOverviewResponse{}, err
@@ -971,24 +982,28 @@ func ListChannelStatusProbeExecutions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的渠道 ID"})
 		return
 	}
-	if _, err := model.GetChannelById(channelId, false); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "渠道不存在"})
-			return
-		}
+	exists, err := model.ChannelExistsForStatusProbe(c.Request.Context(), channelId)
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	if page < 1 {
-		page = 1
+	if !exists {
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "渠道不存在"})
+		return
 	}
-	if pageSize < 1 || pageSize > 100 {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "每页数量必须在 1 到 100 之间"})
+	page, ok := parseChannelMonitorPositivePageQuery(c, "page", 1, channelMonitorMaxPage)
+	if !ok {
+		return
+	}
+	pageSize, ok := parseChannelMonitorPositivePageQuery(c, "page_size", 20, 100)
+	if !ok {
 		return
 	}
 	modelName := strings.TrimSpace(c.Query("model"))
+	if utf8.RuneCountInString(modelName) > 255 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "模型名称长度不能超过 255 个字符"})
+		return
+	}
 	result := strings.TrimSpace(c.Query("result"))
 	trigger := strings.TrimSpace(c.Query("trigger"))
 	validResults := map[string]bool{
@@ -1004,7 +1019,9 @@ func ListChannelStatusProbeExecutions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "执行记录筛选条件无效"})
 		return
 	}
-	executions, total, err := model.ListChannelStatusProbeExecutions(channelId, page, pageSize, modelName, result, trigger)
+	executions, total, err := model.ListChannelStatusProbeExecutionsWithContext(
+		c.Request.Context(), channelId, page, pageSize, modelName, result, trigger,
+	)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -1014,4 +1031,44 @@ func ListChannelStatusProbeExecutions(c *gin.Context) {
 			"page": page, "page_size": pageSize, "total": total, "items": executions,
 		},
 	})
+}
+
+func parseChannelMonitorPositivePageQuery(
+	c *gin.Context,
+	name string,
+	defaultValue int,
+	maxValue int,
+) (int, bool) {
+	raw := strings.TrimSpace(c.Query(name))
+	if raw == "" {
+		return defaultValue, true
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value <= 0 || maxValue > 0 && value > maxValue {
+		message := "页码必须为正整数"
+		if name == "page" && maxValue > 0 {
+			message = "页码必须在 1 到 1000000 之间"
+		}
+		if name == "page_size" {
+			message = "每页数量必须在 1 到 100 之间"
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": message})
+		return 0, false
+	}
+	return value, true
+}
+
+func writeChannelMonitorBoundedJSON(c *gin.Context, data any) {
+	payload, err := common.Marshal(gin.H{"success": true, "message": "", "data": data})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if len(payload) > channelMonitorQueryResponseMaxBytes {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{
+			"success": false, "message": "渠道监控查询结果过大，请缩小查询范围",
+		})
+		return
+	}
+	c.Data(http.StatusOK, "application/json; charset=utf-8", payload)
 }

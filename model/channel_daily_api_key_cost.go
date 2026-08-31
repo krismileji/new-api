@@ -389,7 +389,11 @@ func GetChannelDailyAPIKeyCostsForChannel(ctx context.Context, startTimestamp in
 // with checked arithmetic so no database-specific SUM behavior can wrap a
 // monetary or count total.
 func GetChannelDailyAPIKeyCostTotalsForChannel(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int) ([]ChannelDailyAPIKeyCost, error) {
-	return getChannelDailyAPIKeyCostTotalsForChannel(ctx, startTimestamp, endTimestamp, channelId, 0, 0)
+	costs, err := getChannelDailyAPIKeyCostTotalsForChannel(ctx, DB, startTimestamp, endTimestamp, channelId, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	return resolveChannelDailyAPIKeyCostNames(ctx, DB, costs)
 }
 
 // GetChannelDailyAPIKeyCostTotalsForChannelBounded returns at most limit
@@ -402,8 +406,25 @@ func GetChannelDailyAPIKeyCostTotalsForChannel(ctx context.Context, startTimesta
 // omitted groups are represented by its existing unattributed residual so
 // channel totals remain conserved.
 func GetChannelDailyAPIKeyCostTotalsForChannelBounded(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, limit int) ([]ChannelDailyAPIKeyCost, bool, error) {
+	costs, truncated, err := getChannelDailyAPIKeyCostTotalsForChannelBounded(ctx, DB, startTimestamp, endTimestamp, channelId, limit)
+	if err != nil {
+		return nil, false, err
+	}
+	costs, err = resolveChannelDailyAPIKeyCostNames(ctx, DB, costs)
+	return costs, truncated, err
+}
+
+// GetChannelDailyAPIKeyCostTotalsForMonitor returns bounded ledger rows from a
+// caller-provided consistent transaction. API Key names are left as recorded
+// in the ledger because the monitor controller resolves the current token name
+// and owner in one batched lookup.
+func GetChannelDailyAPIKeyCostTotalsForMonitor(ctx context.Context, db *gorm.DB, startTimestamp int64, endTimestamp int64, channelId int, limit int) ([]ChannelDailyAPIKeyCost, bool, error) {
+	return getChannelDailyAPIKeyCostTotalsForChannelBounded(ctx, db, startTimestamp, endTimestamp, channelId, limit)
+}
+
+func getChannelDailyAPIKeyCostTotalsForChannelBounded(ctx context.Context, db *gorm.DB, startTimestamp int64, endTimestamp int64, channelId int, limit int) ([]ChannelDailyAPIKeyCost, bool, error) {
 	if limit <= 0 {
-		costs, err := getChannelDailyAPIKeyCostTotalsForChannel(ctx, startTimestamp, endTimestamp, channelId, 0, 0)
+		costs, err := getChannelDailyAPIKeyCostTotalsForChannel(ctx, db, startTimestamp, endTimestamp, channelId, 0, 0)
 		return costs, false, err
 	}
 	// The sentinel row below uses limit+1. Reject the largest int value so a
@@ -414,7 +435,7 @@ func GetChannelDailyAPIKeyCostTotalsForChannelBounded(ctx context.Context, start
 	}
 	// Fetch one sentinel row so callers can distinguish an exact-limit result
 	// from a truncated result without a second COUNT query over the aggregate.
-	costs, err := getChannelDailyAPIKeyCostTotalsForChannel(ctx, startTimestamp, endTimestamp, channelId, limit+1, 0)
+	costs, err := getChannelDailyAPIKeyCostTotalsForChannel(ctx, db, startTimestamp, endTimestamp, channelId, limit+1, 0)
 	if err != nil {
 		return nil, false, err
 	}
@@ -440,11 +461,15 @@ func GetChannelDailyAPIKeyCostTotalsForChannelBounded(ctx context.Context, start
 	return costs, truncated, nil
 }
 
-func getChannelDailyAPIKeyCostTotalsForChannel(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, limit int, offset int) ([]ChannelDailyAPIKeyCost, error) {
+func getChannelDailyAPIKeyCostTotalsForChannel(ctx context.Context, db *gorm.DB, startTimestamp int64, endTimestamp int64, channelId int, limit int, offset int) ([]ChannelDailyAPIKeyCost, error) {
 	if startTimestamp >= endTimestamp {
 		return []ChannelDailyAPIKeyCost{}, nil
 	}
-	query := DB.WithContext(ctx).Model(&ChannelDailyAPIKeyCost{}).
+	queryDB, err := channelMonitorCostQueryDB(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	query := queryDB.Model(&ChannelDailyAPIKeyCost{}).
 		Select("MIN(id) AS id, channel_id, api_key_id, MAX(api_key_name) AS api_key_name, MAX(key_fingerprint) AS key_fingerprint, MAX(key_display) AS key_display, SUM(cost_nano_cny) AS cost_nano_cny, SUM(settled_count) AS settled_count, SUM(unresolved_count) AS unresolved_count").
 		Where("day_start >= ? AND day_start < ?", startTimestamp, endTimestamp).
 		Group("channel_id").Group("api_key_id").Group("CASE WHEN api_key_id = 0 THEN key_fingerprint ELSE '' END").
@@ -466,11 +491,6 @@ func getChannelDailyAPIKeyCostTotalsForChannel(ctx context.Context, startTimesta
 		if cost.CostNanoCNY < 0 || cost.SettledCount < 0 || cost.UnresolvedCount < 0 {
 			return nil, errors.New("渠道 API Key 成本汇总超过 int64 范围")
 		}
-	}
-	var err error
-	costs, err = resolveChannelDailyAPIKeyCostNames(ctx, costs)
-	if err != nil {
-		return nil, err
 	}
 	sort.Slice(costs, func(i, j int) bool {
 		if costs[i].ChannelId != costs[j].ChannelId {
@@ -498,12 +518,16 @@ func getChannelDailyAPIKeyCosts(ctx context.Context, startTimestamp int64, endTi
 	if err != nil {
 		return costs, err
 	}
-	return resolveChannelDailyAPIKeyCostNames(ctx, costs)
+	return resolveChannelDailyAPIKeyCostNames(ctx, DB, costs)
 }
 
-func resolveChannelDailyAPIKeyCostNames(ctx context.Context, costs []ChannelDailyAPIKeyCost) ([]ChannelDailyAPIKeyCost, error) {
+func resolveChannelDailyAPIKeyCostNames(ctx context.Context, db *gorm.DB, costs []ChannelDailyAPIKeyCost) ([]ChannelDailyAPIKeyCost, error) {
 	if len(costs) == 0 {
 		return costs, nil
+	}
+	queryDB, err := channelMonitorCostQueryDB(ctx, db)
+	if err != nil {
+		return nil, err
 	}
 	missingNameIDs := make(map[int]struct{})
 	for _, cost := range costs {
@@ -519,7 +543,7 @@ func resolveChannelDailyAPIKeyCostNames(ctx context.Context, costs []ChannelDail
 		ids = append(ids, id)
 	}
 	var tokens []Token
-	if err := DB.WithContext(ctx).Model(&Token{}).Select("id, name").Where("id IN ?", ids).Find(&tokens).Error; err != nil {
+	if err := queryDB.Model(&Token{}).Select("id, name").Where("id IN ?", ids).Find(&tokens).Error; err != nil {
 		return nil, err
 	}
 	tokenNames := make(map[int]string, len(tokens))

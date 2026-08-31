@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -12,7 +13,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const channelMonitorSmartScheduleExecutionDetailPageSize = 50
+const (
+	channelMonitorSmartScheduleExecutionDetailPageSize         = 50
+	channelMonitorSmartScheduleExecutionDetailMaxResponseBytes = 2 * 1024 * 1024
+	channelMonitorSmartScheduleExecutionDetailMaxSearchLength  = 256
+)
 
 type channelMonitorSmartScheduleExecutionDetailPage struct {
 	Page          int                                  `json:"page"`
@@ -37,12 +42,12 @@ func GetChannelMonitorSmartScheduleExecutionDetails(c *gin.Context) {
 		})
 		return
 	}
-	task, err := model.GetSystemTaskByTaskID(taskID)
+	taskType, exists, err := model.GetSystemTaskTypeByTaskID(c.Request.Context(), taskID)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if task == nil || task.Type != channelMonitorSmartScheduleTaskType {
+	if !exists || taskType != channelMonitorSmartScheduleTaskType {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
 			"message": "智能调度执行记录不存在",
@@ -50,19 +55,21 @@ func GetChannelMonitorSmartScheduleExecutionDetails(c *gin.Context) {
 		return
 	}
 
-	detailsByTask, err := model.GetChannelSmartScheduleExecutionDetails([]string{taskID})
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-
 	groupFilter := strings.TrimSpace(c.Query("group"))
 	if groupFilter == "all" {
 		groupFilter = ""
 	}
+	if utf8.RuneCountInString(groupFilter) > maxChannelMonitorSmartScheduleGroupLength {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "分组筛选条件过长"})
+		return
+	}
 	modelFilter := strings.TrimSpace(c.Query("model"))
 	if modelFilter == "all" {
 		modelFilter = ""
+	}
+	if utf8.RuneCountInString(modelFilter) > maxChannelMonitorSmartScheduleModelLength {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "模型筛选条件过长"})
+		return
 	}
 	actionFilter := strings.TrimSpace(c.Query("action"))
 	if actionFilter == "all" {
@@ -83,6 +90,18 @@ func GetChannelMonitorSmartScheduleExecutionDetails(c *gin.Context) {
 		}
 	}
 	search := strings.ToLower(strings.TrimSpace(c.Query("q")))
+	if utf8.RuneCountInString(search) > channelMonitorSmartScheduleExecutionDetailMaxSearchLength {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "搜索条件过长"})
+		return
+	}
+
+	detailsByTask, err := model.GetChannelSmartScheduleExecutionDetailsWithContext(
+		c.Request.Context(), []string{taskID},
+	)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	groups := make(map[string]struct{})
 	models := make(map[string]struct{})
@@ -168,12 +187,22 @@ func GetChannelMonitorSmartScheduleExecutionDetails(c *gin.Context) {
 	}
 
 	pageInfo := common.GetPageQuery(c)
+	if pageInfo.Page < 1 {
+		pageInfo.Page = 1
+	}
+	if pageInfo.Page > channelMonitorMaxPage {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "页码必须在 1 到 1000000 之间"})
+		return
+	}
 	if c.Query("page_size") == "" || pageInfo.PageSize < 1 {
 		pageInfo.PageSize = channelMonitorSmartScheduleExecutionDetailPageSize
 	}
-	start := pageInfo.GetStartIdx()
-	if start > len(filtered) {
-		start = len(filtered)
+	start := len(filtered)
+	if len(filtered) > 0 {
+		lastPage := (len(filtered) + pageInfo.GetPageSize() - 1) / pageInfo.GetPageSize()
+		if pageInfo.GetPage() <= lastPage {
+			start = (pageInfo.GetPage() - 1) * pageInfo.GetPageSize()
+		}
 	}
 	end := start + pageInfo.GetPageSize()
 	if end > len(filtered) {
@@ -193,6 +222,18 @@ func GetChannelMonitorSmartScheduleExecutionDetails(c *gin.Context) {
 		Models:        modelList,
 		ModelsByGroup: modelsByGroup,
 		ChannelNames:  channelNames,
+	}
+	encodedPage, err := common.Marshal(page)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if len(encodedPage) > channelMonitorSmartScheduleExecutionDetailMaxResponseBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"success": false,
+			"message": "当前执行明细单页响应过大，请缩小每页数量或增加筛选条件",
+		})
+		return
 	}
 	common.ApiSuccess(c, page)
 }

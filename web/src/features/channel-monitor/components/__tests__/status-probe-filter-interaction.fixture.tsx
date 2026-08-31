@@ -161,10 +161,19 @@ async function chooseOption(trigger: HTMLButtonElement, label: string) {
 
 let resolveModelRequest: (() => void) | undefined
 const originalAdapter = api.defaults.adapter
-const pendingAdapter: AxiosAdapter = (config) =>
-  new Promise((resolve) => {
-    assert.equal(config.url, '/api/channel_monitor/status')
-    assert.equal(config.params?.model, 'model-b')
+const pendingAdapter: AxiosAdapter = (config) => {
+  assert.equal(config.url, '/api/channel_monitor/status')
+  if (!config.params?.model) {
+    return Promise.resolve({
+      config,
+      data: overview,
+      headers: {},
+      status: 200,
+      statusText: 'OK',
+    })
+  }
+  assert.equal(config.params.model, 'model-b')
+  return new Promise((resolve) => {
     resolveModelRequest = () =>
       resolve({
         config,
@@ -174,6 +183,7 @@ const pendingAdapter: AxiosAdapter = (config) =>
         statusText: 'OK',
       })
   })
+}
 api.defaults.adapter = pendingAdapter
 
 const queryClient = new QueryClient({

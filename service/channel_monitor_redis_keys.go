@@ -42,6 +42,7 @@ const (
 	ChannelMonitorRedisCostProjectionPrefix      = ChannelMonitorRedisProjectionPrefix + "cost:"
 	ChannelMonitorRedisDedupProjectionPrefix     = ChannelMonitorRedisProjectionPrefix + "dedup:"
 	ChannelMonitorRedisSharedEventPrefix         = ChannelMonitorRedisProjectionPrefix + "shared:event:"
+	ChannelMonitorRedisSharedRevisionKey         = ChannelMonitorRedisProjectionPrefix + "shared:revision"
 	ChannelMonitorRedisRuntimeEffectPrefix       = ChannelMonitorRedisProjectionPrefix + "runtime:event:"
 	ChannelMonitorRedisSchedulingDedupPrefix     = ChannelMonitorRedisProjectionPrefix + "schedule:event:"
 )

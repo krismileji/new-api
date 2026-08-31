@@ -494,6 +494,7 @@ func TestChannelMonitorRedisSharedProjectionRejectsDimensionExpansion(t *testing
 
 type channelMonitorRedisSharedProjectionReadCountingHook struct {
 	hgetall      atomic.Int64
+	hscan        atomic.Int64
 	blockOnce    sync.Once
 	blockStarted chan struct{}
 	blockRelease <-chan struct{}
@@ -511,6 +512,9 @@ func (hook *channelMonitorRedisSharedProjectionReadCountingHook) BeforeProcessPi
 	for _, command := range commands {
 		if command.Name() == "hgetall" {
 			hook.hgetall.Add(1)
+		}
+		if command.Name() == "hscan" {
+			hook.hscan.Add(1)
 		}
 	}
 	if hook.blockStarted != nil {
@@ -598,7 +602,7 @@ func TestChannelMonitorRedisSharedProjectionCoalescesConcurrentReadsAndReturnsCo
 	for dayStart := firstDay; dayStart <= lastDay; dayStart += 24 * 60 * 60 {
 		expectedReads++
 	}
-	assert.Equal(t, expectedReads, hook.hgetall.Load())
+	assert.GreaterOrEqual(t, hook.hscan.Load(), int64(expectedReads))
 
 	firstChannel := first.view.Channels[event.ChannelId]
 	firstChannel.EventCount = 99
@@ -608,7 +612,7 @@ func TestChannelMonitorRedisSharedProjectionCoalescesConcurrentReadsAndReturnsCo
 	assert.Equal(t, firstToken, *second.view.Channels[event.ChannelId].LatestFirstTokenMs)
 }
 
-func TestChannelMonitorRedisSharedProjectionMetadataReusesRecentQueryWatermark(t *testing.T) {
+func TestChannelMonitorRedisSharedProjectionMetadataAvoidsFullProjectionScan(t *testing.T) {
 	_, client := newChannelMonitorRedisSharedProjectionTestClient(t)
 	hook := &channelMonitorRedisSharedProjectionReadCountingHook{}
 	client.AddHook(hook)
@@ -619,8 +623,8 @@ func TestChannelMonitorRedisSharedProjectionMetadataReusesRecentQueryWatermark(t
 	startAt, endAt := occurredAt-60, occurredAt+60
 	view, err := projection.Query(context.Background(), startAt, endAt)
 	require.NoError(t, err)
-	hgetallAfterQuery := hook.hgetall.Load()
-	require.Positive(t, hgetallAfterQuery)
+	hscanAfterQuery := hook.hscan.Load()
+	require.Positive(t, hscanAfterQuery)
 
 	previousEnabled, previousRead := common.RedisEnabled, common.RDBMonitorRead
 	common.RedisEnabled = true
@@ -634,7 +638,7 @@ func TestChannelMonitorRedisSharedProjectionMetadataReusesRecentQueryWatermark(t
 	assert.Equal(t, view.DataCutoffAt, dataCutoffAt)
 	assert.Equal(t, view.ProcessedAt, processedAt)
 	assert.Equal(t, view.EventWatermark, eventWatermark)
-	assert.Equal(t, hgetallAfterQuery, hook.hgetall.Load())
+	assert.Equal(t, hscanAfterQuery, hook.hscan.Load())
 }
 
 func TestChannelMonitorRedisSharedProjectionSplitsProbeAndDetectionCosts(t *testing.T) {

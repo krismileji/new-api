@@ -35,12 +35,17 @@ const (
 	ChannelGroupMonitorDefaultDisplayUnit     = ChannelStatusProbeDisplayUnitMinute
 	ChannelGroupMonitorMaxGroups              = 100
 	ChannelGroupMonitorLeaseSeconds           = 600
+	ChannelGroupMonitorCandidateMaxChannels   = 10000
+	ChannelGroupMonitorCandidateMaxAbilities  = 50000
+	ChannelGroupMonitorOverviewMaxExecutions  = 100000
 	ChannelMonitorGroupProbeLogKey            = "channel_monitor_group_probe"
 )
 
 var (
-	ErrChannelGroupMonitorConfigChanged = errors.New("分组监控配置已被其他请求修改，请刷新后重试")
-	ErrChannelGroupMonitorManualPending = errors.New("分组监控已有待执行或正在执行的立即检测")
+	ErrChannelGroupMonitorConfigChanged      = errors.New("分组监控配置已被其他请求修改，请刷新后重试")
+	ErrChannelGroupMonitorManualPending      = errors.New("分组监控已有待执行或正在执行的立即检测")
+	ErrChannelGroupMonitorCandidatesTooLarge = errors.New("分组监控候选渠道或模型数量过多，请缩小候选范围")
+	ErrChannelGroupMonitorWindowTooLarge     = errors.New("分组监控展示窗口内的执行记录过多，请缩短展示范围")
 )
 
 // ChannelGroupMonitorGroup is the durable, ordered user-facing group list.
@@ -169,13 +174,24 @@ func nextChannelGroupMonitorRunAt(after int64, intervalSeconds int) int64 {
 }
 
 func GetChannelGroupMonitorConfig() (ChannelGroupMonitorConfig, error) {
+	return GetChannelGroupMonitorConfigWithContext(context.Background())
+}
+
+func GetChannelGroupMonitorConfigWithContext(ctx context.Context) (ChannelGroupMonitorConfig, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var config ChannelGroupMonitorConfig
-	err := DB.Where("id = ?", 1).First(&config).Error
+	err := DB.WithContext(ctx).Where("id = ?", 1).First(&config).Error
 	return config, err
 }
 
 func GetChannelGroupMonitorConfigOrDefault() (ChannelGroupMonitorConfig, error) {
-	config, err := GetChannelGroupMonitorConfig()
+	return GetChannelGroupMonitorConfigOrDefaultWithContext(context.Background())
+}
+
+func GetChannelGroupMonitorConfigOrDefaultWithContext(ctx context.Context) (ChannelGroupMonitorConfig, error) {
+	config, err := GetChannelGroupMonitorConfigWithContext(ctx)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return ChannelGroupMonitorConfig{
 			Id: 1, IntervalSeconds: ChannelGroupMonitorDefaultIntervalSeconds,
@@ -184,6 +200,55 @@ func GetChannelGroupMonitorConfigOrDefault() (ChannelGroupMonitorConfig, error) 
 		}, nil
 	}
 	return config, err
+}
+
+// GetChannelGroupMonitorCandidateChannels loads only the channel columns used
+// to validate whether an enabled ability can serve the text probe request.
+func GetChannelGroupMonitorCandidateChannels(ctx context.Context, enabledOnly bool) ([]*Channel, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	query := DB.WithContext(ctx).Model(&Channel{}).
+		Select("id", "type", "status", "settings").
+		Order("id ASC").
+		Limit(ChannelGroupMonitorCandidateMaxChannels + 1)
+	if enabledOnly {
+		query = query.Where("status = ?", common.ChannelStatusEnabled)
+	}
+	var channels []*Channel
+	if err := query.Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	if len(channels) > ChannelGroupMonitorCandidateMaxChannels {
+		return nil, ErrChannelGroupMonitorCandidatesTooLarge
+	}
+	return channels, nil
+}
+
+// GetChannelGroupMonitorCandidateAbilities loads the enabled relationships for
+// an explicit channel set. An explicit empty set must remain empty instead of
+// degrading into a query for every ability.
+func GetChannelGroupMonitorCandidateAbilities(ctx context.Context, channelIDs []int) ([]Ability, error) {
+	if len(channelIDs) == 0 {
+		return []Ability{}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var abilities []Ability
+	err := DB.WithContext(ctx).
+		Select(commonGroupCol, "model", "channel_id").
+		Where("enabled = ? AND channel_id IN ?", true, channelIDs).
+		Order(commonGroupCol + " ASC, model ASC, channel_id ASC").
+		Limit(ChannelGroupMonitorCandidateMaxAbilities + 1).
+		Find(&abilities).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(abilities) > ChannelGroupMonitorCandidateMaxAbilities {
+		return nil, ErrChannelGroupMonitorCandidatesTooLarge
+	}
+	return abilities, nil
 }
 
 func SaveChannelGroupMonitorConfig(input ChannelGroupMonitorConfigInput, now int64) (ChannelGroupMonitorConfig, error) {
@@ -542,8 +607,32 @@ func SaveChannelGroupMonitorExecution(execution *ChannelGroupMonitorExecution) (
 }
 
 func GetChannelGroupMonitorStates() ([]ChannelGroupMonitorState, error) {
+	return getChannelGroupMonitorStates(context.Background(), nil)
+}
+
+func GetChannelGroupMonitorStatesForGroups(ctx context.Context, groupNames []string) ([]ChannelGroupMonitorState, error) {
+	return getChannelGroupMonitorStates(ctx, groupNames)
+}
+
+func getChannelGroupMonitorStates(ctx context.Context, groupNames []string) ([]ChannelGroupMonitorState, error) {
+	if groupNames != nil && len(groupNames) == 0 {
+		return []ChannelGroupMonitorState{}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var states []ChannelGroupMonitorState
-	err := DB.Order("group_name ASC").Find(&states).Error
+	query := DB.WithContext(ctx).
+		Select(
+			"id", "group_name", "execution_id", "run_id", "probe_model", "result",
+			"request_dispatched", "response_time_ms", "first_token_ms", "tps", "finished_at",
+			"last_success_at", "last_failure_at", "consecutive_success", "consecutive_failure",
+		).
+		Order("group_name ASC")
+	if groupNames != nil {
+		query = query.Where("group_name IN ?", groupNames)
+	}
+	err := query.Find(&states).Error
 	return states, err
 }
 
@@ -567,6 +656,34 @@ func GetChannelGroupMonitorExecutionWindowSince(startedAt int64) ([]ChannelGroup
 	return executions, err
 }
 
+func GetChannelGroupMonitorExecutionWindowForGroups(
+	ctx context.Context,
+	groupNames []string,
+	startedAt int64,
+	endedAt int64,
+) ([]ChannelGroupMonitorExecution, error) {
+	if len(groupNames) == 0 {
+		return []ChannelGroupMonitorExecution{}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var executions []ChannelGroupMonitorExecution
+	err := DB.WithContext(ctx).
+		Select("id", "group_name", "result", "response_time_ms", "first_token_ms", "tps", "started_at", "finished_at").
+		Where("group_name IN ? AND finished_at >= ? AND finished_at < ?", groupNames, startedAt, endedAt).
+		Order("group_name ASC, finished_at ASC, id ASC").
+		Limit(ChannelGroupMonitorOverviewMaxExecutions + 1).
+		Find(&executions).Error
+	if err != nil {
+		return nil, err
+	}
+	if len(executions) > ChannelGroupMonitorOverviewMaxExecutions {
+		return nil, ErrChannelGroupMonitorWindowTooLarge
+	}
+	return executions, nil
+}
+
 func GetChannelGroupMonitorExecutionSummariesSince(startedAt int64) ([]ChannelGroupMonitorExecutionSummary, error) {
 	var summaries []ChannelGroupMonitorExecutionSummary
 	err := DB.Model(&ChannelGroupMonitorExecution{}).
@@ -577,8 +694,48 @@ func GetChannelGroupMonitorExecutionSummariesSince(startedAt int64) ([]ChannelGr
 	return summaries, err
 }
 
+func GetChannelGroupMonitorExecutionSummariesForGroups(
+	ctx context.Context,
+	groupNames []string,
+	startedAt int64,
+	endedAt int64,
+) ([]ChannelGroupMonitorExecutionSummary, error) {
+	if len(groupNames) == 0 {
+		return []ChannelGroupMonitorExecutionSummary{}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var summaries []ChannelGroupMonitorExecutionSummary
+	err := DB.WithContext(ctx).Model(&ChannelGroupMonitorExecution{}).
+		Select("group_name, result, COUNT(*) AS result_count").
+		Where(
+			"group_name IN ? AND finished_at >= ? AND finished_at < ? AND result <> ?",
+			groupNames, startedAt, endedAt, ChannelGroupMonitorResultSkipped,
+		).
+		Group("group_name, result").
+		Order("group_name ASC, result ASC").
+		Find(&summaries).Error
+	return summaries, err
+}
+
 func ListChannelGroupMonitorExecutions(page int, pageSize int, groupName string, result string) ([]ChannelGroupMonitorExecution, int64, error) {
-	query := DB.Model(&ChannelGroupMonitorExecution{})
+	return ListChannelGroupMonitorExecutionsWithContext(
+		context.Background(), page, pageSize, groupName, result,
+	)
+}
+
+func ListChannelGroupMonitorExecutionsWithContext(
+	ctx context.Context,
+	page int,
+	pageSize int,
+	groupName string,
+	result string,
+) ([]ChannelGroupMonitorExecution, int64, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	query := DB.WithContext(ctx).Model(&ChannelGroupMonitorExecution{})
 	if strings.TrimSpace(groupName) != "" {
 		query = query.Where("group_name = ?", strings.TrimSpace(groupName))
 	}
@@ -589,8 +746,12 @@ func ListChannelGroupMonitorExecutions(page int, pageSize int, groupName string,
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
+	offset := int64(page-1) * int64(pageSize)
+	if offset >= total {
+		return []ChannelGroupMonitorExecution{}, total, nil
+	}
 	var executions []ChannelGroupMonitorExecution
-	err := query.Order("finished_at DESC, id DESC").Offset((page - 1) * pageSize).Limit(pageSize).Find(&executions).Error
+	err := query.Order("finished_at DESC, id DESC").Offset(int(offset)).Limit(pageSize).Find(&executions).Error
 	return executions, total, err
 }
 

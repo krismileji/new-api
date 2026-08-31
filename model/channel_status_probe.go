@@ -46,12 +46,16 @@ const (
 	ChannelStatusProbeMaxDisplayDays         = 30
 	ChannelStatusProbeMaxModels              = 20
 	ChannelStatusProbeLeaseSeconds           = 600
+	ChannelStatusProbeOverviewMaxChannels    = 10000
+	ChannelStatusProbeOverviewMaxExecutions  = 100000
 )
 
 var (
-	ErrChannelStatusProbeConfigChanged = errors.New("渠道状态探测配置已被其他请求修改，请刷新后重试")
-	ErrChannelStatusProbeNotConfigured = errors.New("请先保存至少一个探测模型")
-	ErrChannelStatusProbeManualPending = errors.New("该渠道已有待执行或正在执行的立即检测")
+	ErrChannelStatusProbeConfigChanged    = errors.New("渠道状态探测配置已被其他请求修改，请刷新后重试")
+	ErrChannelStatusProbeNotConfigured    = errors.New("请先保存至少一个探测模型")
+	ErrChannelStatusProbeManualPending    = errors.New("该渠道已有待执行或正在执行的立即检测")
+	ErrChannelStatusProbeResponseTooLarge = errors.New("渠道状态探测响应数据过多，请筛选模型后重试")
+	ErrChannelStatusProbeWindowTooLarge   = errors.New("渠道状态探测展示窗口内的执行记录过多，请缩短展示范围或筛选模型")
 )
 
 type ChannelStatusProbeConfig struct {
@@ -433,6 +437,52 @@ func resolveChannelStatusProbeScopeWithDB(db *gorm.DB, channelID int) (channelSt
 	}, nil
 }
 
+// resolveChannelStatusProbeScopeFromDatabase bypasses the runtime relation
+// projection for page queries. Status history must reflect the current
+// persisted channel membership, even when the scheduler keeps an immutable
+// runtime snapshot for in-flight work.
+func resolveChannelStatusProbeScopeFromDatabase(db *gorm.DB, channelID int) (channelStatusProbeScope, error) {
+	var identity LogicalChannelIdentity
+	var err error
+	if IsLogicalChannelGroupingEnabled() {
+		identity, err = resolveLogicalIdentityFromDatabase(db, channelID)
+	} else {
+		identity, err = resolvePhysicalChannelIdentity(db, channelID)
+	}
+	if err != nil {
+		if db != nil && db.Migrator().HasTable(&Channel{}) {
+			return channelStatusProbeScope{}, err
+		}
+		identity = LogicalChannelIdentity{ChannelID: channelID, LogicalChannelID: int64(channelID)}
+	}
+	var snapshot LogicalChannelGroupSnapshot
+	if identity.Revision == 0 && identity.LogicalChannelID == int64(identity.ChannelID) {
+		snapshot = LogicalChannelGroupSnapshot{
+			LogicalChannelID: identity.LogicalChannelID,
+			Status:           ChannelLogicalGroupStatusEnabled,
+			Members:          []LogicalChannelMemberSnapshot{{ChannelID: identity.ChannelID, Weight: ChannelLogicalGroupDefaultMemberWeight}},
+		}
+	} else {
+		snapshot, err = loadLogicalChannelGroupSnapshotFromDatabase(db, identity.LogicalChannelID)
+		if err != nil {
+			return channelStatusProbeScope{}, err
+		}
+	}
+	members := append([]LogicalChannelMemberSnapshot(nil), snapshot.Members...)
+	sort.Slice(members, func(i, j int) bool { return members[i].ChannelID < members[j].ChannelID })
+	if len(members) == 0 {
+		return channelStatusProbeScope{}, ErrLogicalChannelRuntimeGroupNotFound
+	}
+	memberIDs := make([]int, 0, len(members))
+	for _, member := range members {
+		memberIDs = append(memberIDs, member.ChannelID)
+	}
+	snapshot.Members = members
+	return channelStatusProbeScope{
+		Identity: identity, Snapshot: snapshot, OwnerID: memberIDs[0], MemberIDs: memberIDs,
+	}, nil
+}
+
 func resolvePersistedChannelStatusProbeScope(channelID int, logicalChannelID int64, logicalRevision int64) (channelStatusProbeScope, error) {
 	return resolvePersistedChannelStatusProbeScopeWithDB(DB, channelID, logicalChannelID, logicalRevision)
 }
@@ -800,6 +850,15 @@ func GetChannelStatusProbeConfig(channelId int) (ChannelStatusProbeConfig, error
 	config.LogicalChannelId = scope.Identity.LogicalChannelID
 	config.LogicalRevision = scope.Identity.Revision
 	return config, err
+}
+
+func ChannelExistsForStatusProbe(ctx context.Context, channelID int) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var count int64
+	err := DB.WithContext(ctx).Model(&Channel{}).Where("id = ?", channelID).Limit(1).Count(&count).Error
+	return count > 0, err
 }
 
 func GetChannelStatusProbeConfigs() ([]ChannelStatusProbeConfig, error) {
@@ -1629,14 +1688,103 @@ func GetChannelStatusProbeExecutionsSinceForOverview(
 	ctx context.Context,
 	db *gorm.DB,
 	startedAt int64,
+	endedAt int64,
 	channelIDs []int,
 	selectedModel string,
+	relations *ChannelStatusProbeOverviewRelations,
 ) ([]ChannelStatusProbeExecution, error) {
 	queryDB, err := channelStatusProbeOverviewDB(ctx, db)
 	if err != nil {
 		return nil, err
 	}
-	return getChannelStatusProbeExecutionsSince(queryDB, startedAt, channelIDs, selectedModel)
+	executions, err := getChannelStatusProbeExecutionsForOverview(
+		queryDB, startedAt, endedAt, channelIDs, selectedModel, relations, ChannelStatusProbeOverviewMaxExecutions,
+	)
+	if err != nil || relations == nil {
+		return executions, err
+	}
+	allowedChannels := make(map[int]struct{}, len(channelIDs))
+	for _, channelID := range channelIDs {
+		allowedChannels[channelID] = struct{}{}
+	}
+	projected := make([]ChannelStatusProbeExecution, 0, len(executions))
+	for _, execution := range executions {
+		scope, scopeErr := relations.resolvePersistedScope(
+			execution.ChannelId, execution.LogicalChannelId, execution.LogicalRevision,
+		)
+		if scopeErr != nil {
+			return nil, scopeErr
+		}
+		for _, channelID := range scope.MemberIDs {
+			if channelIDs != nil {
+				if _, allowed := allowedChannels[channelID]; !allowed {
+					continue
+				}
+			}
+			item := execution
+			item.ChannelId = channelID
+			projected = append(projected, item)
+			if len(projected) > ChannelStatusProbeOverviewMaxExecutions {
+				return nil, ErrChannelStatusProbeWindowTooLarge
+			}
+		}
+	}
+	return projected, nil
+}
+
+func getChannelStatusProbeExecutionsForOverview(
+	db *gorm.DB,
+	startedAt int64,
+	endedAt int64,
+	channelIDs []int,
+	selectedModel string,
+	relations *ChannelStatusProbeOverviewRelations,
+	limit int,
+) ([]ChannelStatusProbeExecution, error) {
+	if channelIDs != nil && len(channelIDs) == 0 {
+		return []ChannelStatusProbeExecution{}, nil
+	}
+	if !db.Migrator().HasTable(&ChannelStatusProbeExecution{}) {
+		return []ChannelStatusProbeExecution{}, nil
+	}
+	query := db.Select(
+		"id", "channel_id", "logical_channel_id", "logical_revision", "model_name", "result", "first_token_ms", "tps",
+		"response_time_ms", "started_at", "finished_at",
+	).Where("finished_at >= ? AND finished_at < ?", startedAt, endedAt)
+	if channelIDs != nil {
+		logicalChannelIDs := make([]int64, 0)
+		if relations != nil {
+			seenLogicalChannels := make(map[int64]struct{})
+			for _, channelID := range channelIDs {
+				scope, scopeErr := relations.resolveChannelScope(channelID)
+				if scopeErr != nil || scope.Identity.Revision <= 0 {
+					continue
+				}
+				if _, seen := seenLogicalChannels[scope.Identity.LogicalChannelID]; seen {
+					continue
+				}
+				seenLogicalChannels[scope.Identity.LogicalChannelID] = struct{}{}
+				logicalChannelIDs = append(logicalChannelIDs, scope.Identity.LogicalChannelID)
+			}
+		}
+		if len(logicalChannelIDs) == 0 {
+			query = query.Where("channel_id IN ?", channelIDs)
+		} else {
+			query = query.Where("channel_id IN ? OR logical_channel_id IN ?", channelIDs, logicalChannelIDs)
+		}
+	}
+	if selectedModel != "" {
+		query = query.Where("model_name = ?", selectedModel)
+	}
+	var executions []ChannelStatusProbeExecution
+	if err := query.Order("channel_id ASC, model_name ASC, finished_at ASC, id ASC").
+		Limit(limit + 1).Find(&executions).Error; err != nil {
+		return nil, err
+	}
+	if len(executions) > limit {
+		return nil, ErrChannelStatusProbeWindowTooLarge
+	}
+	return executions, nil
 }
 
 func getChannelStatusProbeExecutionsSince(
@@ -1717,11 +1865,26 @@ func ListChannelStatusProbeExecutions(
 	result string,
 	trigger string,
 ) ([]ChannelStatusProbeExecution, int64, error) {
-	scope, err := resolveChannelStatusProbeScope(channelId)
+	return ListChannelStatusProbeExecutionsWithContext(
+		context.Background(), channelId, page, pageSize, modelName, result, trigger,
+	)
+}
+
+func ListChannelStatusProbeExecutionsWithContext(
+	ctx context.Context,
+	channelId int,
+	page int,
+	pageSize int,
+	modelName string,
+	result string,
+	trigger string,
+) ([]ChannelStatusProbeExecution, int64, error) {
+	db := DB.WithContext(ctx)
+	scope, err := resolveChannelStatusProbeScopeFromDatabase(db, channelId)
 	if err != nil {
 		return nil, 0, err
 	}
-	query := DB.Model(&ChannelStatusProbeExecution{})
+	query := db.Model(&ChannelStatusProbeExecution{})
 	if scope.Identity.Revision > 0 {
 		query = query.Where(
 			"channel_id = ? OR actual_channel_id = ? OR logical_channel_id = ?",
@@ -1746,9 +1909,13 @@ func ListChannelStatusProbeExecutions(
 	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
+	offset := int64(page-1) * int64(pageSize)
+	if offset >= total {
+		return []ChannelStatusProbeExecution{}, total, nil
+	}
 	var executions []ChannelStatusProbeExecution
 	err = query.Order("finished_at DESC, id DESC").
-		Offset((page - 1) * pageSize).
+		Offset(int(offset)).
 		Limit(pageSize).
 		Find(&executions).Error
 	for index := range executions {

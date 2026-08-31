@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -72,6 +73,54 @@ func TestUpdateChannelRatioMonitorTracksOnlyRatioChanges(t *testing.T) {
 	assert.Equal(t, 1.25, history[0].NewRatio)
 	assert.Equal(t, "upstream changed", history[0].Remark)
 	assert.Equal(t, 2, history[0].OperatorId)
+}
+
+func TestGetChannelRatioHistoryWithContextUsesStablePagination(t *testing.T) {
+	resetChannelRatioMonitorTables(t)
+	seedChannelRatioMonitorTestChannels(t, 10, 11)
+	require.NoError(t, DB.Create(&[]ChannelRatioHistory{
+		{Id: 101, ChannelId: 10, CreatedTime: 1_000, Remark: "first"},
+		{Id: 103, ChannelId: 10, CreatedTime: 1_000, Remark: "third"},
+		{Id: 102, ChannelId: 10, CreatedTime: 1_000, Remark: "second"},
+		{Id: 104, ChannelId: 11, CreatedTime: 2_000, Remark: "other channel"},
+	}).Error)
+
+	firstPage, total, err := GetChannelRatioHistoryWithContext(t.Context(), 10, 0, 2)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, total)
+	require.Len(t, firstPage, 2)
+	assert.Equal(t, []int{103, 102}, []int{firstPage[0].Id, firstPage[1].Id})
+
+	secondPage, total, err := GetChannelRatioHistoryWithContext(t.Context(), 10, 2, 2)
+	require.NoError(t, err)
+	assert.EqualValues(t, 3, total)
+	require.Len(t, secondPage, 1)
+	assert.Equal(t, 101, secondPage[0].Id)
+
+	canceledContext, cancel := context.WithCancel(t.Context())
+	cancel()
+	_, _, err = GetChannelRatioHistoryWithContext(canceledContext, 10, 0, 2)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestGetChannelConcurrencyConfigsForChannelIDsReturnsExactSet(t *testing.T) {
+	resetChannelRatioMonitorTables(t)
+	seedChannelRatioMonitorTestChannels(t, 31, 32, 99)
+	require.NoError(t, DB.Create(&[]ChannelRatioMonitor{
+		{ChannelId: 31, ConcurrencyLimit: 3, RPMLimit: 7, ConcurrencyRevision: 2},
+		{ChannelId: 99, ConcurrencyLimit: 9, RPMLimit: 11, ConcurrencyRevision: 4},
+	}).Error)
+
+	configs, err := GetChannelConcurrencyConfigsForChannelIDsWithContext(t.Context(), []int{32, 31, 31, 0, -1})
+	require.NoError(t, err)
+	assert.Len(t, configs, 2)
+	assert.Equal(t, ChannelConcurrencyConfig{Limit: 3, RPMLimit: 7, Revision: 2}, configs[31])
+	assert.Equal(t, ChannelConcurrencyConfig{}, configs[32])
+	assert.NotContains(t, configs, 99)
+
+	emptyConfigs, err := GetChannelConcurrencyConfigsForChannelIDsWithContext(t.Context(), []int{})
+	require.NoError(t, err)
+	assert.Empty(t, emptyConfigs)
 }
 
 func TestChannelRatioMonitorFetchStatusTracksFailureAndRecovery(t *testing.T) {

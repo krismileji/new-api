@@ -168,7 +168,6 @@ export function ChannelModelDetectionWorkspace(
     queryFn: () =>
       getChannelModelDetectionRuns(historyChannelId ?? 0, historyQueryInput),
     enabled: historyChannelId != null,
-    placeholderData: (previous) => previous,
     staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',

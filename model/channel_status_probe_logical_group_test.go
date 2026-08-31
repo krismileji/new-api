@@ -163,6 +163,21 @@ func TestChannelStatusProbeLogicalGroupProjectsOneSharedStateToMembers(t *testin
 	assert.Equal(t, channelIDs[1], history[0].ChannelId)
 	assert.Equal(t, channelIDs[1], history[0].ActualChannelId)
 
+	relations, err := LoadChannelStatusProbeOverviewRelations(t.Context(), db)
+	require.NoError(t, err)
+	overviewExecutions, err := GetChannelStatusProbeExecutionsSinceForOverview(
+		t.Context(), db, 3_000, 3_003, nil, "gpt-a", relations,
+	)
+	require.NoError(t, err)
+	require.Len(t, overviewExecutions, 2)
+	assert.Equal(t, channelIDs, []int{overviewExecutions[0].ChannelId, overviewExecutions[1].ChannelId})
+	filteredOverviewExecutions, err := GetChannelStatusProbeExecutionsSinceForOverview(
+		t.Context(), db, 3_000, 3_003, []int{channelIDs[1]}, "gpt-a", relations,
+	)
+	require.NoError(t, err)
+	require.Len(t, filteredOverviewExecutions, 1)
+	assert.Equal(t, channelIDs[1], filteredOverviewExecutions[0].ChannelId)
+
 	require.NoError(t, db.Where("logical_group_id = ? AND channel_id = ?", group.Id, channelIDs[1]).
 		Delete(&ChannelLogicalGroupMember{}).Error)
 	require.NoError(t, db.Model(&Channel{}).Where("id = ?", channelIDs[1]).Update("logical_channel_id", nil).Error)

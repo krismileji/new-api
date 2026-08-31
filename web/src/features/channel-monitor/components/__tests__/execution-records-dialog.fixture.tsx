@@ -81,6 +81,47 @@ const { ChannelMonitorTaskHistoryDialog } =
 const { ChannelMonitorSmartScheduleExecutionDialog } =
   await import('../channel-monitor-smart-schedule-execution-dialog')
 
+let activeQueryClient: InstanceType<typeof QueryClient> | null = null
+const originalAdapter = api.defaults.adapter
+const cachedQueryAdapter = ((config) => {
+  let queryKey: readonly unknown[]
+  if (config.url?.includes('/details')) {
+    const taskId = config.url.split('/').at(-2) ?? ''
+    queryKey = [
+      'channel-monitor-smart-schedule-executions',
+      'details',
+      taskId,
+      config.params?.p ?? 1,
+      config.params?.q ?? '',
+      config.params?.group ?? '',
+      config.params?.model ?? 'all',
+      config.params?.action ?? 'all',
+    ]
+  } else if (config.params?.kind === 'schedule') {
+    queryKey = [
+      'channel-monitor-smart-schedule-executions',
+      config.params?.p ?? 1,
+    ]
+  } else {
+    queryKey = [
+      'channel-monitor-task-history',
+      'ratio',
+      config.params?.p ?? 1,
+      config.params?.page_size ?? 20,
+    ]
+  }
+  const cachedData = activeQueryClient?.getQueryData<unknown>(queryKey)
+  if (!cachedData) throw new Error(`Unexpected request: ${config.url}`)
+  return Promise.resolve({
+    config,
+    data: cachedData,
+    headers: {},
+    status: 200,
+    statusText: 'OK',
+  })
+}) as AxiosAdapter
+api.defaults.adapter = cachedQueryAdapter
+
 const reactTestGlobals = globalThis as typeof globalThis & {
   IS_REACT_ACT_ENVIRONMENT?: boolean
 }
@@ -181,6 +222,7 @@ async function renderDialog(
   element: ReactNode,
   queryClient: InstanceType<typeof QueryClient>
 ) {
+  activeQueryClient = queryClient
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
@@ -499,7 +541,6 @@ const allActionFilterOption = [
 assert.ok(allActionFilterOption)
 await act(async () => allActionFilterOption.click())
 await waitForDialogText(scheduleRendered.dialog, '高速稳定渠道')
-const originalAdapter = api.defaults.adapter
 let resolveGroupFilterRequest: (() => void) | undefined
 api.defaults.adapter = ((config) => {
   assert.equal(config.url, '/api/channel_monitor/tasks/schedule-1/details')
@@ -549,7 +590,7 @@ assert.equal(
   false
 )
 await act(async () => groupFilterTrigger.click())
-api.defaults.adapter = originalAdapter
+api.defaults.adapter = cachedQueryAdapter
 const detailNextButton =
   scheduleRendered.dialog.querySelector<HTMLButtonElement>(
     '[aria-label="下一页明细"]'
@@ -909,4 +950,5 @@ assert.ok(
 await act(async () => restoredPreferenceRendered.root.unmount())
 restoredPreferenceRendered.container.remove()
 restoredPreferenceQueryClient.clear()
+api.defaults.adapter = originalAdapter
 domWindow.close()

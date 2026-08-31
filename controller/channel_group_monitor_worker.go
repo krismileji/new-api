@@ -264,7 +264,7 @@ func runChannelGroupMonitorClaim(parent context.Context, claim model.ChannelGrou
 	}()
 
 	testUserId, testUserErr := resolveChannelTestUserID(nil)
-	validCandidates, err := getChannelGroupMonitorCandidateModels(true)
+	validCandidates, err := getChannelGroupMonitorCandidateModels(ctx, true)
 	if err != nil {
 		return err
 	}

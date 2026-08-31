@@ -16,6 +16,9 @@ import (
 const (
 	ChannelModelDetectionHistoryDefaultPageSize = 20
 	ChannelModelDetectionHistoryMaxPageSize     = 100
+	ChannelModelDetectionRunDetailMaxExecutions = 10
+
+	channelModelDetectionResponseMaxBytes = 8 << 20
 
 	channelModelDetectionBucketResultSuccess   = "success"
 	channelModelDetectionBucketResultAttention = "attention"
@@ -38,6 +41,7 @@ const (
 var (
 	ErrChannelModelDetectionInvalidHistoryQuery = errors.New("模型检测历史查询参数无效")
 	ErrChannelModelDetectionReportTooLarge      = errors.New("模型检测报告超过大小限制")
+	ErrChannelModelDetectionResponseTooLarge    = errors.New("模型检测响应超过大小限制")
 )
 
 var channelModelDetectionKnownOutcomes = map[string]struct{}{
@@ -559,8 +563,11 @@ func GetChannelModelDetectionRunDetail(ctx context.Context, tx *gorm.DB, runID s
 		return ChannelModelDetectionRunDetailResponse{}, err
 	}
 	var executions []model.ChannelModelDetectionExecution
-	if err := db.Where("run_id = ?", runID).Order("id ASC").Find(&executions).Error; err != nil {
+	if err := db.Where("run_id = ?", runID).Order("id ASC").Limit(ChannelModelDetectionRunDetailMaxExecutions + 1).Find(&executions).Error; err != nil {
 		return ChannelModelDetectionRunDetailResponse{}, err
+	}
+	if len(executions) > ChannelModelDetectionRunDetailMaxExecutions {
+		return ChannelModelDetectionRunDetailResponse{}, fmt.Errorf("%w: 单轮次执行数量超过 %d", ErrChannelModelDetectionResponseTooLarge, ChannelModelDetectionRunDetailMaxExecutions)
 	}
 	executionIDs := make([]int64, 0, len(executions))
 	for i := range executions {
@@ -606,6 +613,9 @@ func GetChannelModelDetectionRunDetail(ctx context.Context, tx *gorm.DB, runID s
 			ReportSHA256: execution.ReportSHA256, FinalErrorCode: execution.FinalErrorCode,
 			ErrorCode: execution.ErrorCode, ErrorMessage: execution.ErrorMessage, Report: report,
 		})
+	}
+	if err := ensureChannelModelDetectionResponseSize(response); err != nil {
+		return ChannelModelDetectionRunDetailResponse{}, err
 	}
 	return response, nil
 }
@@ -1449,6 +1459,17 @@ func isChannelModelDetectionSensitiveReportKey(normalizedKey string) bool {
 		}
 	}
 	return false
+}
+
+func ensureChannelModelDetectionResponseSize(value any) error {
+	encoded, err := common.Marshal(value)
+	if err != nil {
+		return err
+	}
+	if len(encoded) > channelModelDetectionResponseMaxBytes {
+		return fmt.Errorf("%w: 最大允许 %d 字节", ErrChannelModelDetectionResponseTooLarge, channelModelDetectionResponseMaxBytes)
+	}
+	return nil
 }
 
 func channelModelDetectionQueryDB(ctx context.Context, tx *gorm.DB) (*gorm.DB, error) {

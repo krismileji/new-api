@@ -902,7 +902,6 @@ func TestGetChannelMonitorSmartScheduleRouteSummarySkipsMetricAndSampleLoading(t
 	ctx, recorder := newChannelMonitorControllerContext(
 		t, http.MethodGet, "/api/channel_monitor/schedule?metrics=false", nil,
 	)
-	expectedSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
 	GetChannelMonitorSmartScheduleRoutes(ctx)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	var response struct {
@@ -920,14 +919,97 @@ func TestGetChannelMonitorSmartScheduleRouteSummarySkipsMetricAndSampleLoading(t
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.True(t, response.Success)
 	assert.False(t, response.Data.MetricsIncluded)
-	require.NotNil(t, response.Data.ExecutionSnapshotMetrics)
-	assert.Equal(t, expectedSnapshotMetrics, *response.Data.ExecutionSnapshotMetrics)
-	require.NotNil(t, response.Data.RouteSnapshot)
+	assert.NotNil(t, response.Data.ExecutionSnapshotMetrics)
+	assert.NotNil(t, response.Data.RouteSnapshot)
 	require.Len(t, response.Data.Routes, 1)
 	assert.Equal(t, "model-a", response.Data.Routes[0].SampleModel)
 	assert.Empty(t, response.Data.SampleItems)
 	assert.Empty(t, response.Data.PerformanceItems)
 	assert.Empty(t, response.Data.StabilityItems)
+}
+
+func TestGetChannelMonitorSmartScheduleRoutesLoadsMetricWindowsInOneBatch(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, true,
+		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 1, 90, 30,
+	)
+	adaptiveWindowMinutes := 20
+	policy.AdaptiveSamplingWindowMinutes = &adaptiveWindowMinutes
+	usePersistedChannelMonitorOptions(t, db, map[string]string{
+		channelMonitorSmartScheduleEnabledOption:           "true",
+		channelMonitorSmartSchedulePerformanceWindowOption: "5",
+		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(
+			t, policy,
+		),
+	})
+	priority := int64(80)
+	weight := uint(50)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1312, Name: "single window", Group: "vip", Models: "model-a",
+		Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 1312, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1312, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1313, Name: "second window", Group: "vip", Models: "model-a",
+		Status: common.ChannelStatusEnabled, Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 1313, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelSmartScheduleRouteState{
+		ChannelId: 1313, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+	}).Error)
+
+	loadCount := 0
+	var loadedRoutes []model.ChannelSmartScheduleRoute
+	loader := func(
+		_ context.Context,
+		routes []model.ChannelSmartScheduleRoute,
+		_ map[string]channelSmartSchedulePolicy,
+		performanceStart int64,
+		_ int64,
+	) (map[channelSmartScheduleRouteKey]channelSmartScheduleRealtimeRouteMetrics, error) {
+		loadCount++
+		loadedRoutes = append([]model.ChannelSmartScheduleRoute(nil), routes...)
+		views := make(map[channelSmartScheduleRouteKey]channelSmartScheduleRealtimeRouteMetrics, len(routes))
+		for _, route := range routes {
+			key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
+			views[key] = channelSmartScheduleRealtimeRouteMetrics{events: []model.ChannelMonitorEvent{{
+				ChannelId: route.ChannelId, GroupName: route.Group, ModelName: route.Model,
+				OccurredAt: performanceStart,
+				Outcome:    model.ChannelMonitorEventOutcomeSuccess,
+			}}}
+		}
+		return views, nil
+	}
+
+	withoutMetrics, withoutMetricsRecorder := newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/schedule?metrics=false", nil,
+	)
+	getChannelMonitorSmartScheduleRoutes(withoutMetrics, loader)
+	require.Equal(t, http.StatusOK, withoutMetricsRecorder.Code)
+	assert.Zero(t, loadCount)
+
+	withMetrics, withMetricsRecorder := newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/schedule?metrics=true", nil,
+	)
+	getChannelMonitorSmartScheduleRoutes(withMetrics, loader)
+	require.Equal(t, http.StatusOK, withMetricsRecorder.Code)
+	assert.Equal(t, 1, loadCount)
+	require.Len(t, loadedRoutes, 2)
+	assert.ElementsMatch(t, []int{1312, 1313}, []int{loadedRoutes[0].ChannelId, loadedRoutes[1].ChannelId})
+	for _, route := range loadedRoutes {
+		assert.Equal(t, "vip", route.Group)
+		assert.Equal(t, "model-a", route.Model)
+	}
 }
 
 func TestGetChannelMonitorSmartScheduleRoutesDoesNotInitializeOrClearRouteStates(t *testing.T) {

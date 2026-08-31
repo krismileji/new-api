@@ -89,12 +89,14 @@ export function ChannelRatioHistoryPanel(props: ChannelRatioHistoryPanelProps) {
   const query = useQuery({
     queryKey: ['channel-monitor-history', props.channel.id],
     queryFn: () => getChannelMonitorHistory(props.channel.id),
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: 'always',
   })
   const history = query.data?.data.items ?? []
 
   let historyContent: ReactNode
-  if (query.isLoading) {
+  if (query.isLoading || query.isFetching) {
     historyContent = (
       <div className='flex flex-col gap-3 p-4'>
         {['first', 'second', 'third', 'fourth'].map((key) => (

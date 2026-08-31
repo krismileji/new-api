@@ -461,9 +461,9 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
       previousQuery?.queryKey[2] === selectedTask?.task_id
         ? keepPreviousData(previousData)
         : undefined,
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
   })
   const refreshExecutionData = async () => {
     const detailRefresh =

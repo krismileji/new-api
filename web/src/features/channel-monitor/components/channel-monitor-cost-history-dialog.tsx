@@ -112,9 +112,11 @@ export function ChannelMonitorCostHistoryDialog(
         detailDate
       ),
     enabled: props.open,
-    staleTime: 30_000,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: 'always',
   })
+  const loading = query.isLoading || query.isFetching
 
   useEffect(() => {
     setDatePage(1)
@@ -149,10 +151,7 @@ export function ChannelMonitorCostHistoryDialog(
         <div className='min-h-0 flex-1 overflow-x-hidden overflow-y-auto pr-1'>
           <div className='flex flex-col gap-4 pb-1'>
             <div className='flex flex-col gap-3 border-b pb-4 sm:flex-row sm:items-end sm:justify-between'>
-              <CostSummary
-                overview={query.data?.data}
-                loading={query.isLoading}
-              />
+              <CostSummary overview={query.data?.data} loading={loading} />
               <Select
                 items={COST_HISTORY_RANGE_OPTIONS}
                 value={String(days)}
@@ -194,7 +193,7 @@ export function ChannelMonitorCostHistoryDialog(
               </Select>
             </div>
             <CostHistoryContent
-              loading={query.isLoading}
+              loading={loading}
               error={query.isError}
               overview={query.data?.data}
               onDatePageChange={setDatePage}

@@ -486,28 +486,30 @@ func getChannelMonitorOperator(c *gin.Context) (int, string) {
 }
 
 func GetChannelMonitorOverview(c *gin.Context) {
-	channels, err := model.GetAllChannelsForMonitor()
+	ctx := c.Request.Context()
+	generatedAt := common.GetTimestamp()
+	channels, err := model.GetAllChannelsForMonitorWithContext(ctx)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	monitors, err := model.GetChannelRatioMonitors()
+	monitors, err := model.GetChannelRatioMonitorsWithContext(ctx)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	settings, err := loadChannelMonitorSettings(c.Request.Context())
+	settings, err := loadChannelMonitorSettings(ctx)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	todayStart := channelMonitorCostDayStart(common.GetTimestamp())
+	todayStart := channelMonitorCostDayStart(generatedAt)
 
 	monitorByChannel := make(map[int]model.ChannelRatioMonitor, len(monitors))
 	for _, monitor := range monitors {
 		monitorByChannel[monitor.ChannelId] = monitor
 	}
-	todayCostByChannel, err := channelMonitorRealtimeTodayCosts(c.Request.Context(), 0, todayStart)
+	todayCostByChannel, err := channelMonitorRealtimeTodayCosts(ctx, 0, todayStart)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -529,14 +531,17 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		concurrencyConfigs[channelID] = model.ChannelConcurrencyConfig{}
 	}
 	for _, monitor := range monitors {
+		if _, exists := concurrencyConfigs[monitor.ChannelId]; !exists {
+			continue
+		}
 		concurrencyConfigs[monitor.ChannelId] = model.ChannelConcurrencyConfig{
 			Limit:    monitor.ConcurrencyLimit,
 			RPMLimit: monitor.RPMLimit,
 			Revision: monitor.ConcurrencyRevision,
 		}
 	}
-	concurrencyByChannel, err := service.GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigs(
-		c.Request.Context(), channelIDs, concurrencyConfigs,
+	concurrencyByChannel, err := service.GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigsAt(
+		ctx, channelIDs, concurrencyConfigs, generatedAt,
 	)
 	if err != nil {
 		common.ApiError(c, err)
@@ -629,13 +634,13 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		items = append(items, item)
 	}
 
-	realtimeMetadata := channelMonitorRealtimeMetadata(0)
+	realtimeMetadata := channelMonitorRealtimeMetadataWithContext(c.Request.Context(), 0)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data": gin.H{
 			"channels":                      items,
-			"generated_at":                  common.GetTimestamp(),
+			"generated_at":                  generatedAt,
 			"data_cutoff_at":                realtimeMetadata.DataCutoffAt,
 			"processed_at":                  realtimeMetadata.ProcessedAt,
 			"projection_started_at":         realtimeMetadata.ProjectionStartedAt,
@@ -1925,13 +1930,24 @@ func GetChannelMonitorHistory(c *gin.Context) {
 		common.ApiErrorMsg(c, "无效的渠道 ID")
 		return
 	}
-	if _, err := model.GetChannelById(channelId, false); err != nil {
+	ctx := c.Request.Context()
+	if _, err := model.GetChannelForMonitorWithContext(ctx, channelId); err != nil {
 		common.ApiError(c, err)
 		return
 	}
 
 	pageInfo := common.GetPageQuery(c)
-	history, total, err := model.GetChannelRatioHistory(channelId, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	if pageInfo.Page < 1 {
+		pageInfo.Page = 1
+	}
+	if pageInfo.Page > channelMonitorMaxPage {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "页码必须在 1 到 1000000 之间"})
+		return
+	}
+	if pageInfo.PageSize < 1 {
+		pageInfo.PageSize = common.ItemsPerPage
+	}
+	history, total, err := model.GetChannelRatioHistoryWithContext(ctx, channelId, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
 	if err != nil {
 		common.ApiError(c, err)
 		return

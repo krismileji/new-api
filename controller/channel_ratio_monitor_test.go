@@ -1906,6 +1906,88 @@ func TestChannelMonitorOverviewIncludesAutoDisableReason(t *testing.T) {
 	assert.Equal(t, "渠道监控：上游倍率或余额更新失败", response.Data.Channels[0].StatusReason)
 }
 
+func TestChannelMonitorOverviewReadsCurrentMonitorConfiguration(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{})
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 901, Name: "current monitor config", Key: "secret", Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 901, Ratio: 1.1, UpdatedTime: 1, ConcurrencyLimit: 2, ConcurrencyRevision: 1,
+	}).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor", nil)
+	GetChannelMonitorOverview(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var firstResponse channelMonitorOverviewAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &firstResponse))
+	require.Len(t, firstResponse.Data.Channels, 1)
+	require.NotNil(t, firstResponse.Data.Channels[0].Ratio)
+	assert.Equal(t, 1.1, *firstResponse.Data.Channels[0].Ratio)
+	assert.Equal(t, 2, firstResponse.Data.Channels[0].ConcurrencyLimit)
+
+	require.NoError(t, db.Model(&model.ChannelRatioMonitor{}).Where("channel_id = ?", 901).Updates(map[string]any{
+		"ratio":                1.4,
+		"updated_time":         2,
+		"concurrency_limit":    4,
+		"concurrency_revision": 2,
+	}).Error)
+
+	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor", nil)
+	GetChannelMonitorOverview(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var secondResponse channelMonitorOverviewAPIResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &secondResponse))
+	require.Len(t, secondResponse.Data.Channels, 1)
+	require.NotNil(t, secondResponse.Data.Channels[0].Ratio)
+	assert.Equal(t, 1.4, *secondResponse.Data.Channels[0].Ratio)
+	assert.Equal(t, 4, secondResponse.Data.Channels[0].ConcurrencyLimit)
+}
+
+func TestGetChannelMonitorHistoryBoundsPaginationAndUsesStableOrder(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 902, Name: "history channel", Key: "secret", Status: common.ChannelStatusEnabled,
+	}).Error)
+	history := make([]model.ChannelRatioHistory, 0, 25)
+	for id := 1; id <= 25; id++ {
+		history = append(history, model.ChannelRatioHistory{
+			Id: id, ChannelId: 902, CreatedTime: 1_000, Remark: fmt.Sprintf("history-%d", id),
+		})
+	}
+	require.NoError(t, db.Create(&history).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor/channel/902/history?p=-2&page_size=-1", nil)
+	ctx.Params = gin.Params{{Key: "id", Value: "902"}}
+	GetChannelMonitorHistory(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Page     int                         `json:"page"`
+			PageSize int                         `json:"page_size"`
+			Total    int                         `json:"total"`
+			Items    []model.ChannelRatioHistory `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.Equal(t, 1, response.Data.Page)
+	assert.Equal(t, common.ItemsPerPage, response.Data.PageSize)
+	assert.Equal(t, 25, response.Data.Total)
+	require.Len(t, response.Data.Items, common.ItemsPerPage)
+	assert.Equal(t, 25, response.Data.Items[0].Id)
+	assert.Equal(t, 16, response.Data.Items[len(response.Data.Items)-1].Id)
+
+	ctx, recorder = newChannelMonitorControllerContext(
+		t, http.MethodGet,
+		fmt.Sprintf("/api/channel_monitor/channel/902/history?p=%d&page_size=100", channelMonitorMaxPage+1), nil,
+	)
+	ctx.Params = gin.Params{{Key: "id", Value: "902"}}
+	GetChannelMonitorHistory(ctx)
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
 func TestUpdateChannelMonitorConcurrencyLimitValidatesPersistsAndReportsUsage(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})

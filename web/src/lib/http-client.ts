@@ -52,10 +52,71 @@ export const api = axios.create({
 const inFlightGet = new Map<string, Promise<unknown>>()
 const originalGet = api.get.bind(api)
 
-api.get = ((url: string, config: ApiRequestConfig = {}) => {
-  if (config.disableDuplicate) return originalGet(url, config)
+function stableSerialize(value: unknown, seen: WeakSet<object>): string {
+  if (value === null) return 'null'
+  if (value === undefined) return 'undefined'
 
-  const params = config.params ? JSON.stringify(config.params) : '{}'
+  switch (typeof value) {
+    case 'string':
+    case 'boolean':
+      return JSON.stringify(value)
+    case 'number':
+      return Number.isNaN(value) ? 'NaN' : JSON.stringify(value)
+    case 'bigint':
+      return `${value}n`
+    case 'symbol':
+      return value.toString()
+    case 'function':
+      return value.toString()
+  }
+
+  if (value instanceof Date) return `Date(${value.toISOString()})`
+
+  if (
+    typeof URLSearchParams !== 'undefined' &&
+    value instanceof URLSearchParams
+  ) {
+    const entries = [...value.entries()].sort(([leftKey], [rightKey]) =>
+      leftKey.localeCompare(rightKey)
+    )
+    return `URLSearchParams(${stableSerialize(entries, seen)})`
+  }
+
+  if (seen.has(value)) return '[Circular]'
+  seen.add(value)
+
+  if (Array.isArray(value)) {
+    const serialized = `[${value
+      .map((item) => stableSerialize(item, seen))
+      .join(',')}]`
+    seen.delete(value)
+    return serialized
+  }
+
+  const entries = Object.keys(value)
+    .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
+    .sort()
+    .map(
+      (key) =>
+        `${JSON.stringify(key)}:${stableSerialize(
+          (value as Record<string, unknown>)[key],
+          seen
+        )}`
+    )
+  seen.delete(value)
+  return `{${entries.join(',')}}`
+}
+
+export function serializeRequestParams(params: unknown): string {
+  return stableSerialize(params ?? {}, new WeakSet<object>())
+}
+
+api.get = ((url: string, config: ApiRequestConfig = {}) => {
+  if (config.disableDuplicate || config.paramsSerializer) {
+    return originalGet(url, config)
+  }
+
+  const params = serializeRequestParams(config.params)
   const sessionSID = useAuthStore.getState().auth.session?.sid || 'anonymous'
   const key = `${sessionSID}:${url}?${params}`
   const existingRequest = inFlightGet.get(key)

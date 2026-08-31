@@ -115,8 +115,12 @@ func TestGetChannelMonitorPerformanceReturnsUsageLogMetrics(t *testing.T) {
 	require.NotNil(t, response.Data.DegradedReasons)
 	assert.Empty(t, response.Data.DegradedReasons)
 	assert.False(t, response.Data.RealtimeDegraded)
-	assert.True(t, response.Data.MetricCoverage.WindowComplete)
-	windowStart := (response.Data.GeneratedAt - 30*60) - (response.Data.GeneratedAt-30*60)%60
+	// The shared projection currently exposes a bounded bucket window but does
+	// not persist a coverage floor. Keep the response conservative until that
+	// watermark is available instead of claiming a complete window.
+	assert.False(t, response.Data.MetricCoverage.WindowComplete)
+	windowEnd := (response.Data.GeneratedAt - response.Data.GeneratedAt%60) + 60
+	windowStart := windowEnd - 30*60
 	assert.Equal(t, windowStart, response.Data.MetricCoverage.WindowStart)
 	var performanceItem model.ChannelMonitorPerformanceMetric
 	for _, item := range response.Data.Items {

@@ -15,8 +15,7 @@ import (
 )
 
 const (
-	channelModelDetectionOverviewQueryTimeout    = 30 * time.Second
-	channelModelDetectionOverviewDetectorTimeout = 10 * time.Second
+	channelModelDetectionOverviewQueryTimeout = 30 * time.Second
 )
 
 var channelModelDetectionOverviewQuerySingleflight singleflight.Group
@@ -46,13 +45,14 @@ func GetCurrentChannelModelDetectionOverview(ctx context.Context) (ChannelModelD
 		if err != nil {
 			return ChannelModelDetectionOverviewResponse{}, err
 		}
-		detectorCtx, cancel := context.WithTimeout(queryCtx, channelModelDetectionOverviewDetectorTimeout)
-		defer cancel()
-		detector, err := GetChannelModelDetectionService(detectorCtx, db, time.Unix(now, 0).UTC())
+		detector, err := GetChannelModelDetectionService(queryCtx, db, time.Unix(now, 0).UTC())
 		if err != nil {
 			return ChannelModelDetectionOverviewResponse{}, err
 		}
 		response.Detector = channelModelDetectionDetectorResponse(detector)
+		if err := ensureChannelModelDetectionResponseSize(response); err != nil {
+			return ChannelModelDetectionOverviewResponse{}, err
+		}
 		return response, nil
 	})
 }

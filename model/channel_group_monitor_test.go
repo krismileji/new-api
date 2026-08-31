@@ -85,6 +85,30 @@ func TestGetChannelGroupMonitorExecutionWindowSinceIncludesStartedAt(t *testing.
 	assert.EqualValues(t, 1_000, executions[0].StartedAt)
 }
 
+func TestChannelGroupMonitorOverviewQueriesKeepExplicitGroupAndTimeBounds(t *testing.T) {
+	db := setupChannelGroupMonitorTestDB(t)
+	require.NoError(t, db.Create(&[]ChannelGroupMonitorExecution{
+		{RunId: "vip-before", GroupName: "vip", Result: ChannelGroupMonitorResultSuccess, FinishedAt: 99},
+		{RunId: "vip-start", GroupName: "vip", Result: ChannelGroupMonitorResultSuccess, FinishedAt: 100},
+		{RunId: "vip-end", GroupName: "vip", Result: ChannelGroupMonitorResultSuccess, FinishedAt: 200},
+		{RunId: "other-inside", GroupName: "other", Result: ChannelGroupMonitorResultSuccess, FinishedAt: 150},
+	}).Error)
+
+	executions, err := GetChannelGroupMonitorExecutionWindowForGroups(t.Context(), []string{"vip"}, 100, 200)
+	require.NoError(t, err)
+	require.Len(t, executions, 1)
+	assert.EqualValues(t, 100, executions[0].FinishedAt)
+
+	summaries, err := GetChannelGroupMonitorExecutionSummariesForGroups(t.Context(), []string{"vip"}, 100, 200)
+	require.NoError(t, err)
+	require.Len(t, summaries, 1)
+	assert.EqualValues(t, 1, summaries[0].ResultCount)
+
+	empty, err := GetChannelGroupMonitorExecutionWindowForGroups(t.Context(), []string{}, 0, 1_000)
+	require.NoError(t, err)
+	assert.Empty(t, empty)
+}
+
 func TestSaveChannelGroupMonitorExecutionKeepsLatestNonSkippedResult(t *testing.T) {
 	setupChannelGroupMonitorTestDB(t)
 	firstToken := 184.0

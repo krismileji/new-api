@@ -87,6 +87,10 @@ func UpdateChannelModelDetectionSettings(c *gin.Context) {
 func GetChannelModelDetectionService(c *gin.Context) {
 	response, err := service.GetChannelModelDetectionService(c.Request.Context(), nil, time.Now().UTC())
 	if err != nil {
+		if errors.Is(err, service.ErrChannelModelDetectionResponseTooLarge) {
+			c.JSON(http.StatusBadGateway, gin.H{"success": false, "message": err.Error()})
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}

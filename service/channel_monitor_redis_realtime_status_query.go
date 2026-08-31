@@ -54,6 +54,9 @@ func cloneChannelMonitorRedisRealtimeStatus(
 	if status.DegradedReasons != nil {
 		status.DegradedReasons = append([]string{}, status.DegradedReasons...)
 	}
+	if status.RedisPoolDegradedRoles != nil {
+		status.RedisPoolDegradedRoles = append([]ChannelMonitorRedisPoolDegradedRole{}, status.RedisPoolDegradedRoles...)
+	}
 	if status.RedisPoolStats != nil {
 		poolStats := status.RedisPoolStats
 		status.RedisPoolStats = make(map[common.RedisClientRole]common.RedisClientPoolStats, len(poolStats))

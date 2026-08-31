@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -445,11 +446,19 @@ func InitializeChannelSmartScheduleRouteStates() error {
 }
 
 func GetChannelSmartScheduleRoutes() ([]ChannelSmartScheduleRoute, error) {
-	return getChannelSmartScheduleRoutes(true)
+	return GetChannelSmartScheduleRoutesWithContext(context.Background())
+}
+
+func GetChannelSmartScheduleRoutesWithContext(ctx context.Context) ([]ChannelSmartScheduleRoute, error) {
+	return getChannelSmartScheduleRoutes(ctx, true)
 }
 
 func GetChannelSmartScheduleRouteSummaries() ([]ChannelSmartScheduleRoute, error) {
-	return getChannelSmartScheduleRoutes(false)
+	return GetChannelSmartScheduleRouteSummariesWithContext(context.Background())
+}
+
+func GetChannelSmartScheduleRouteSummariesWithContext(ctx context.Context) ([]ChannelSmartScheduleRoute, error) {
+	return getChannelSmartScheduleRoutes(ctx, false)
 }
 
 // GetChannelSmartScheduleRoutePool loads one exact group/model pool for a
@@ -538,28 +547,30 @@ func GetChannelSmartScheduleRoutePool(group string, modelName string) ([]Channel
 	return routes, nil
 }
 
-func getChannelSmartScheduleRoutes(includeSharedSamples bool) ([]ChannelSmartScheduleRoute, error) {
+func getChannelSmartScheduleRoutes(ctx context.Context, includeSharedSamples bool) ([]ChannelSmartScheduleRoute, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	db := DB.WithContext(ctx)
 	var abilities []Ability
-	if err := DB.Find(&abilities).Error; err != nil {
+	if err := db.Find(&abilities).Error; err != nil {
 		return nil, err
 	}
 	var channels []Channel
-	if err := DB.Select("id", "name", "status", "priority", "weight").Find(&channels).Error; err != nil {
+	if err := db.Select("id", "name", "status", "priority", "weight").Find(&channels).Error; err != nil {
 		return nil, err
 	}
 	var states []ChannelSmartScheduleRouteState
-	if err := DB.Find(&states).Error; err != nil {
+	if err := db.Find(&states).Error; err != nil {
 		return nil, err
 	}
-	groupPauses, err := loadActiveChannelSmartScheduleGroupPauses(DB, common.GetTimestamp())
+	groupPauses, err := loadActiveChannelSmartScheduleGroupPauses(db, common.GetTimestamp())
 	if err != nil {
 		return nil, err
 	}
 	var sharedSampleStates []ChannelSmartScheduleModelSampleState
 	if includeSharedSamples {
-		var err error
-		sharedSampleStates, err = GetChannelSmartScheduleModelSampleStates()
-		if err != nil {
+		if err := db.Find(&sharedSampleStates).Error; err != nil {
 			return nil, err
 		}
 	}

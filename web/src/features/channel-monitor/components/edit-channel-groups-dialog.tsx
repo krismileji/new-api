@@ -73,8 +73,10 @@ export function EditChannelGroupsDialog(props: EditChannelGroupsDialogProps) {
   const groupsQuery = useQuery({
     queryKey: ['channel-monitor-available-groups'],
     queryFn: getChannelMonitorAvailableGroups,
-    staleTime: 60 * 1000,
+    enabled: props.open,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: 'always',
   })
   const groupOptions = useMemo(() => {
     const groups = new Set([

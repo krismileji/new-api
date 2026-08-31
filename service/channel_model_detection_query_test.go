@@ -531,3 +531,49 @@ func TestChannelModelDetectionReportAPIPreservesUnknownFieldsAndEnforcesSize(t *
 	_, err = GetChannelModelDetectionRunDetail(context.Background(), db, run.RunId)
 	assert.True(t, errors.Is(err, ErrChannelModelDetectionReportTooLarge))
 }
+
+func TestChannelModelDetectionRunDetailRejectsOversizedTotalResponse(t *testing.T) {
+	db := setupChannelModelDetectionQueryTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{Id: 302, Name: "large-detail", Status: common.ChannelStatusEnabled}).Error)
+	run := model.ChannelModelDetectionRun{
+		RunId: "large-detail-run", ChannelId: 302, Trigger: model.ChannelModelDetectionTriggerManual,
+		Preset: model.ChannelModelDetectionPresetLow, PresetSource: model.ChannelModelDetectionPresetSourceManualSelected,
+		Status: model.ChannelModelDetectionRunStatusCompleted, TargetCount: 9, CompletedTargetCount: 9,
+	}
+	require.NoError(t, db.Create(&run).Error)
+	for index := 0; index < 9; index++ {
+		execution := model.ChannelModelDetectionExecution{
+			RunId: run.RunId, TargetKey: fmt.Sprintf("large-target-%d", index), TargetId: int64(index + 1), ChannelId: 302,
+			RequestModel: "gpt-5.6-sol", ClaimedModel: model.ChannelModelDetectionClaimedModelSol,
+			Preset: run.Preset, Status: model.ChannelModelDetectionExecutionStatusCompleted,
+		}
+		require.NoError(t, db.Create(&execution).Error)
+	}
+	report := `{"payload":"` + strings.Repeat("a", model.ChannelModelDetectionMaxReportBytes-len(`{"payload":""}`)) + `"}`
+	require.Len(t, report, model.ChannelModelDetectionMaxReportBytes)
+	require.NoError(t, db.Model(&model.ChannelModelDetectionExecution{}).Where("run_id = ?", run.RunId).Update("report_json", report).Error)
+
+	_, err := GetChannelModelDetectionRunDetail(context.Background(), db, run.RunId)
+	assert.ErrorIs(t, err, ErrChannelModelDetectionResponseTooLarge)
+}
+
+func TestChannelModelDetectionRunDetailRejectsUnexpectedExecutionCardinality(t *testing.T) {
+	db := setupChannelModelDetectionQueryTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{Id: 303, Name: "execution-limit", Status: common.ChannelStatusEnabled}).Error)
+	run := model.ChannelModelDetectionRun{
+		RunId: "execution-limit-run", ChannelId: 303, Trigger: model.ChannelModelDetectionTriggerManual,
+		Preset: model.ChannelModelDetectionPresetLow, PresetSource: model.ChannelModelDetectionPresetSourceManualSelected,
+		Status: model.ChannelModelDetectionRunStatusCompleted, TargetCount: ChannelModelDetectionRunDetailMaxExecutions + 1,
+	}
+	require.NoError(t, db.Create(&run).Error)
+	for index := 0; index <= ChannelModelDetectionRunDetailMaxExecutions; index++ {
+		require.NoError(t, db.Create(&model.ChannelModelDetectionExecution{
+			RunId: run.RunId, TargetKey: fmt.Sprintf("unexpected-target-%d", index), TargetId: int64(index + 1), ChannelId: 303,
+			RequestModel: "gpt-5.6-sol", ClaimedModel: model.ChannelModelDetectionClaimedModelSol,
+			Preset: run.Preset, Status: model.ChannelModelDetectionExecutionStatusCompleted,
+		}).Error)
+	}
+
+	_, err := GetChannelModelDetectionRunDetail(context.Background(), db, run.RunId)
+	assert.ErrorIs(t, err, ErrChannelModelDetectionResponseTooLarge)
+}

@@ -243,7 +243,9 @@ export function ChannelMonitorSuccessDetailDialog(
         groupName: props.target.groupName,
       })
     },
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: 'always',
   })
   const detail = query.data?.data.detail
   const modeSummary = detail
@@ -304,7 +306,7 @@ export function ChannelMonitorSuccessDetailDialog(
   }
 
   let content: ReactNode
-  if (query.isLoading) {
+  if (query.isLoading || query.isFetching) {
     content = (
       <div className='flex flex-col gap-3'>
         <Skeleton className='h-24 w-full' />

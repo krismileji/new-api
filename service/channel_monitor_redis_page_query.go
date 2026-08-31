@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 
 	"github.com/QuantumNous/new-api/model"
@@ -64,11 +65,49 @@ func QueryChannelMonitorRealtimePageFromRedis(
 	startAt int64,
 	endAt int64,
 ) (ChannelMonitorRealtimePageView, error) {
+	return queryChannelMonitorRealtimePageFromRedis(ctx, startAt, endAt, channelMonitorRedisSharedQuerySelection{})
+}
+
+func QueryChannelMonitorRealtimePerformanceFromRedis(
+	ctx context.Context,
+	startAt int64,
+	endAt int64,
+) (ChannelMonitorRealtimePageView, error) {
+	return queryChannelMonitorRealtimePageFromRedis(ctx, startAt, endAt, channelMonitorRedisSharedQuerySelection{
+		patterns: []string{
+			channelMonitorRedisSharedScopeMetadata + ":*",
+			channelMonitorRedisSharedScopeRoute + ":*",
+			channelMonitorRedisSharedScopeGroup + ":*",
+		},
+	})
+}
+
+func QueryChannelMonitorRealtimeTodaySuccessFromRedis(
+	ctx context.Context,
+	startAt int64,
+	endAt int64,
+) (ChannelMonitorRealtimePageView, error) {
+	return queryChannelMonitorRealtimePageFromRedis(ctx, startAt, endAt, channelMonitorRedisSharedQuerySelection{
+		patterns: []string{
+			channelMonitorRedisSharedScopeMetadata + ":*",
+			channelMonitorRedisSharedScopeGlobal + ":*",
+			channelMonitorRedisSharedScopeChannel + ":*",
+			channelMonitorRedisSharedScopeAPIKey + ":*",
+		},
+	})
+}
+
+func queryChannelMonitorRealtimePageFromRedis(
+	ctx context.Context,
+	startAt int64,
+	endAt int64,
+	selection channelMonitorRedisSharedQuerySelection,
+) (ChannelMonitorRealtimePageView, error) {
 	projection, err := NewChannelMonitorRedisSharedProjection()
 	if err != nil {
 		return ChannelMonitorRealtimePageView{}, err
 	}
-	shared, err := projection.Query(ctx, startAt, endAt)
+	shared, err := projection.querySelected(ctx, startAt, endAt, selection)
 	if err != nil {
 		return ChannelMonitorRealtimePageView{}, err
 	}
@@ -83,16 +122,40 @@ func QueryChannelMonitorRealtimeSuccessDetailFromRedis(
 	endAt int64,
 	filter model.ChannelMonitorSuccessFilter,
 ) (ChannelMonitorRealtimeSuccessDetailView, error) {
+	filter.ModelName = ratio_setting.FormatMatchingModelName(filter.ModelName)
 	projection, err := NewChannelMonitorRedisSharedProjection()
 	if err != nil {
 		return ChannelMonitorRealtimeSuccessDetailView{}, err
 	}
-	shared, err := projection.Query(ctx, startAt, endAt)
+	selection := channelMonitorRedisSharedSuccessDetailSelection(filter)
+	shared, err := projection.querySelected(ctx, startAt, endAt, selection)
 	if err != nil {
 		return ChannelMonitorRealtimeSuccessDetailView{}, err
 	}
-	filter.ModelName = ratio_setting.FormatMatchingModelName(filter.ModelName)
 	return channelMonitorRedisSharedSuccessDetailView(shared, filter)
+}
+
+func channelMonitorRedisSharedSuccessDetailSelection(filter model.ChannelMonitorSuccessFilter) channelMonitorRedisSharedQuerySelection {
+	patterns := []string{channelMonitorRedisSharedScopeMetadata + ":*"}
+	if filter.ChannelId > 0 {
+		modelIdentity := "*"
+		if filter.ModelName != "" {
+			modelIdentity = channelMonitorRedisSharedDimension(filter.ModelName)
+		}
+		patterns = append(patterns,
+			fmt.Sprintf("%s:%d.%s:*", channelMonitorRedisSharedScopeRoute, filter.ChannelId, modelIdentity),
+			fmt.Sprintf("%s:*.%d.%s.*:*", channelMonitorRedisSharedScopeAPIKeyRoute, filter.ChannelId, modelIdentity),
+			fmt.Sprintf("%s:%d.%s.*.*.*.*:*", channelMonitorRedisSharedScopeFailure, filter.ChannelId, modelIdentity),
+		)
+		return channelMonitorRedisSharedQuerySelection{patterns: patterns}
+	}
+	groupIdentity := channelMonitorRedisSharedDimension(filter.Group)
+	patterns = append(patterns,
+		fmt.Sprintf("%s:%s.*:*", channelMonitorRedisSharedScopeGroupRoute, groupIdentity),
+		fmt.Sprintf("%s:*.*.*.%s:*", channelMonitorRedisSharedScopeAPIKeyRoute, groupIdentity),
+		fmt.Sprintf("%s:*.*.%s.*.*.*:*", channelMonitorRedisSharedScopeFailure, groupIdentity),
+	)
+	return channelMonitorRedisSharedQuerySelection{patterns: patterns}
 }
 
 func GetChannelMonitorRedisSharedProjectionMetadata(

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"slices"
@@ -37,6 +38,21 @@ type channelSmartScheduleRoutePrimaryRequest struct {
 }
 
 func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
+	getChannelMonitorSmartScheduleRoutes(c, channelSmartScheduleRealtimeRouteMetricViews)
+}
+
+type channelSmartScheduleRouteMetricViewsLoader func(
+	ctx context.Context,
+	routes []model.ChannelSmartScheduleRoute,
+	policyByGroup map[string]channelSmartSchedulePolicy,
+	performanceStart int64,
+	generatedAt int64,
+) (map[channelSmartScheduleRouteKey]channelSmartScheduleRealtimeRouteMetrics, error)
+
+func getChannelMonitorSmartScheduleRoutes(
+	c *gin.Context,
+	loadMetricViews channelSmartScheduleRouteMetricViewsLoader,
+) {
 	includeMetrics := true
 	if rawMetrics, configured := c.GetQuery("metrics"); configured {
 		parsed, err := strconv.ParseBool(rawMetrics)
@@ -46,7 +62,8 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		}
 		includeMetrics = parsed
 	}
-	executionSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
+	requestedAt := time.Now()
+	generatedAt := requestedAt.Unix()
 	settings, err := loadChannelMonitorSettings(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
@@ -55,15 +72,15 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	var routes []model.ChannelSmartScheduleRoute
 	loadMetrics := includeMetrics && settings.SmartScheduleEnabled && len(settings.SmartScheduleGroupPolicies) > 0
 	if loadMetrics {
-		routes, err = model.GetChannelSmartScheduleRoutes()
+		routes, err = model.GetChannelSmartScheduleRoutesWithContext(c.Request.Context())
 	} else {
-		routes, err = model.GetChannelSmartScheduleRouteSummaries()
+		routes, err = model.GetChannelSmartScheduleRouteSummariesWithContext(c.Request.Context())
 	}
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	economicSnapshot, err := model.GetChannelSmartScheduleEconomicSnapshot()
+	economicSnapshot, err := model.GetChannelSmartScheduleEconomicSnapshotWithContext(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -87,12 +104,11 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		routes[index].GrossMargin = economics.GrossMargin
 		routes[index].EconomicRole = economics.EconomicRole
 	}
-	requestedAt := time.Now()
-	generatedAt := requestedAt.Unix()
 	stabilityWindowMinutes := settings.SmartScheduleGroupPolicies.maxStabilityWindowMinutes()
 	responseRoutes := channelSmartScheduleRouteResponses(routes)
-	routeSnapshotStatus := model.GetChannelSmartScheduleRouteSnapshotStatus()
 	if !loadMetrics {
+		executionSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
+		routeSnapshotStatus := model.GetChannelSmartScheduleRouteSnapshotStatus()
 		common.ApiSuccess(c, gin.H{
 			"generated_at":                  generatedAt,
 			"performance_window_minutes":    settings.SmartSchedulePerformanceWindowMinutes,
@@ -137,31 +153,34 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	sampleItems := make([]channelSmartScheduleSampleItem, 0, len(selectedRoutes))
 	snapshots := make([]service.ChannelMonitorRedisRouteHealthSnapshot, 0, len(selectedRoutes))
 	combinedSnapshot := service.ChannelMonitorRedisRouteHealthSnapshot{}
-	for _, route := range selectedRoutes {
-		policy := policyByGroup[route.Group]
-		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
-		view, err := channelSmartScheduleRealtimeRouteMetricView(
-			c.Request.Context(), route, policy, performanceStart, generatedAt,
+	metricViewsByRoute := make(map[channelSmartScheduleRouteKey]channelSmartScheduleRealtimeRouteMetrics, len(selectedRoutes))
+	if needsPerformance || needsStability {
+		metricViewsByRoute, err = loadMetricViews(
+			c.Request.Context(), selectedRoutes, policyByGroup, performanceStart, generatedAt,
 		)
 		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
-		if view.performance != nil {
-			performanceByRoute = append(performanceByRoute, *view.performance)
-		}
-		if view.businessPerformance != nil {
-			businessPerformanceByRoute = append(businessPerformanceByRoute, *view.businessPerformance)
-		}
-		if view.stability != nil {
-			stabilityByRoute[key] = *view.stability
-		}
-		sampleItems = append(sampleItems, view.sampleItem)
-		if view.snapshot.CoverageStart > 0 {
-			snapshots = append(snapshots, view.snapshot)
-		}
-		if view.snapshot.WindowStart > 0 {
-			channelSmartScheduleMergeRealtimeSnapshot(&combinedSnapshot, view.snapshot)
+		for _, route := range selectedRoutes {
+			key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
+			view := metricViewsByRoute[key]
+			if view.performance != nil {
+				performanceByRoute = append(performanceByRoute, *view.performance)
+			}
+			if view.businessPerformance != nil {
+				businessPerformanceByRoute = append(businessPerformanceByRoute, *view.businessPerformance)
+			}
+			if view.stability != nil {
+				stabilityByRoute[key] = *view.stability
+			}
+			sampleItems = append(sampleItems, view.sampleItem)
+			if view.snapshot.CoverageStart > 0 {
+				snapshots = append(snapshots, view.snapshot)
+			}
+			if view.snapshot.WindowStart > 0 {
+				channelSmartScheduleMergeRealtimeSnapshot(&combinedSnapshot, view.snapshot)
+			}
 		}
 	}
 	metricCoverage := channelSmartScheduleRealtimeMetricCoverage(generatedAt, settings, snapshots)
@@ -196,16 +215,21 @@ func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 		}
 		return businessPerformanceByRoute[i].ChannelId < businessPerformanceByRoute[j].ChannelId
 	})
-	if err := channelSmartScheduleApplyCurrentWindowScores(
-		c.Request.Context(),
-		responseRoutes,
-		selectedRoutes,
-		policyByGroup,
-		generatedAt,
-	); err != nil {
-		common.ApiError(c, err)
-		return
+	if needsPerformance || needsStability {
+		if err := channelSmartScheduleApplyCurrentWindowScores(
+			responseRoutes,
+			selectedRoutes,
+			policyByGroup,
+			generatedAt,
+			performanceStart,
+			metricViewsByRoute,
+		); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
+	executionSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
+	routeSnapshotStatus := model.GetChannelSmartScheduleRouteSnapshotStatus()
 	redisStatus := service.GetChannelMonitorRedisRealtimeStatus(c.Request.Context())
 	projectionStartedAt := combinedSnapshot.ProjectionStartedAt
 	if projectionStartedAt == 0 {

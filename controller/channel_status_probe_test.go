@@ -627,6 +627,34 @@ func TestListChannelStatusProbeExecutionsRejectsInvalidFilters(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
+func TestChannelMonitorExecutionListsRejectInvalidPageValues(t *testing.T) {
+	setupChannelStatusProbeControllerTest(t)
+	tests := []struct {
+		name    string
+		target  string
+		handler func(*gin.Context)
+		params  []gin.Param
+	}{
+		{
+			name: "status probe page", target: "/api/channel_monitor/status/channel/8801/executions?page=invalid",
+			handler: ListChannelStatusProbeExecutions,
+			params:  []gin.Param{{Key: "id", Value: "8801"}},
+		},
+		{
+			name: "group monitor page size", target: "/api/channel_monitor/group_monitor/executions?page_size=101",
+			handler: ListChannelGroupMonitorExecutions,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, recorder := newChannelMonitorControllerContext(t, http.MethodGet, test.target, nil)
+			ctx.Params = append(ctx.Params, test.params...)
+			test.handler(ctx)
+			assert.Equal(t, http.StatusBadRequest, recorder.Code)
+		})
+	}
+}
+
 func TestChannelStatusProbeOverviewIgnoresStatesForRemovedModels(t *testing.T) {
 	channel := setupChannelStatusProbeControllerTest(t)
 	now := common.GetTimestamp()

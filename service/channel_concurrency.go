@@ -221,7 +221,10 @@ var channelConcurrencyRedisLogs = struct {
 }
 
 func ReloadChannelConcurrencyLimits(ctx context.Context) error {
-	if _, err := loadChannelConcurrencyLimits(true); err != nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, err := loadChannelConcurrencyLimits(ctx, true); err != nil {
 		return err
 	}
 	if !common.RedisEnabled {
@@ -235,6 +238,9 @@ func SaveChannelConcurrencyLimit(ctx context.Context, channelID int, limit int) 
 }
 
 func SaveChannelConcurrencyLimits(ctx context.Context, channelID int, concurrencyLimit *int, rpmLimit *int) (model.ChannelRatioMonitor, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if channelID <= 0 {
 		return model.ChannelRatioMonitor{}, errors.New("渠道 ID 必须大于 0")
 	}
@@ -247,11 +253,11 @@ func SaveChannelConcurrencyLimits(ctx context.Context, channelID int, concurrenc
 	if rpmLimit != nil && (*rpmLimit < 0 || *rpmLimit > MaxChannelRPMLimit) {
 		return model.ChannelRatioMonitor{}, fmt.Errorf("渠道 RPM 限制必须在 0 到 %d 之间", MaxChannelRPMLimit)
 	}
-	monitor, err := model.SaveChannelConcurrencyLimits(channelID, concurrencyLimit, rpmLimit)
+	monitor, err := model.SaveChannelConcurrencyLimitsWithContext(ctx, channelID, concurrencyLimit, rpmLimit)
 	if err != nil {
 		return model.ChannelRatioMonitor{}, err
 	}
-	if _, err = loadChannelConcurrencyLimits(false); err != nil {
+	if _, err = loadChannelConcurrencyLimits(ctx, false); err != nil {
 		return monitor, err
 	}
 
@@ -280,10 +286,13 @@ func SaveChannelConcurrencyLimits(ctx context.Context, channelID int, concurrenc
 }
 
 func AcquireChannelConcurrency(ctx context.Context, channelID int) (*ChannelConcurrencyLease, bool, ChannelConcurrencyStatus, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if channelID <= 0 {
 		return &ChannelConcurrencyLease{}, true, ChannelConcurrencyStatus{}, nil
 	}
-	refreshed, err := loadChannelConcurrencyLimits(false)
+	refreshed, err := loadChannelConcurrencyLimits(ctx, false)
 	if err != nil {
 		return nil, false, ChannelConcurrencyStatus{}, err
 	}
@@ -346,6 +355,19 @@ func GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigs(
 	return getChannelConcurrencySnapshotWithRPMAndConfigs(ctx, channelIDs, configs)
 }
 
+// GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigsAt uses the
+// caller's request timestamp for the RPM window. Aggregate monitor responses
+// already establish a single generated_at value and should pass it through so
+// all data sources share the same time boundary.
+func GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigsAt(
+	ctx context.Context,
+	channelIDs []int,
+	configs map[int]model.ChannelConcurrencyConfig,
+	now int64,
+) (map[int]ChannelConcurrencyStatus, error) {
+	return getChannelConcurrencySnapshotWithRPMAndConfigsAt(ctx, channelIDs, configs, now)
+}
+
 func getChannelConcurrencySnapshotWithRPM(ctx context.Context, providedChannelIDs []int) (map[int]ChannelConcurrencyStatus, error) {
 	return getChannelConcurrencySnapshotWithRPMAndConfigs(ctx, providedChannelIDs, nil)
 }
@@ -355,11 +377,38 @@ func getChannelConcurrencySnapshotWithRPMAndConfigs(
 	providedChannelIDs []int,
 	providedConfigs map[int]model.ChannelConcurrencyConfig,
 ) (map[int]ChannelConcurrencyStatus, error) {
+	return getChannelConcurrencySnapshotWithRPMAndConfigsAt(ctx, providedChannelIDs, providedConfigs, common.GetTimestamp())
+}
+
+func getChannelConcurrencySnapshotWithRPMAndConfigsAt(
+	ctx context.Context,
+	providedChannelIDs []int,
+	providedConfigs map[int]model.ChannelConcurrencyConfig,
+	now int64,
+) (map[int]ChannelConcurrencyStatus, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if now <= 0 {
+		now = common.GetTimestamp()
+	}
+	if providedChannelIDs != nil {
+		hasChannelID := false
+		for _, channelID := range providedChannelIDs {
+			if channelID > 0 {
+				hasChannelID = true
+				break
+			}
+		}
+		if !hasChannelID {
+			return map[int]ChannelConcurrencyStatus{}, nil
+		}
+	}
 	snapshot, err := getChannelConcurrencySnapshotAndConfigs(ctx, providedChannelIDs, providedConfigs)
 	if err != nil {
 		return nil, err
 	}
-	currentRPM, err := model.GetChannelMonitorCurrentRPM(ctx, common.GetTimestamp()-60)
+	currentRPM, err := model.GetChannelMonitorCurrentRPM(ctx, now-60)
 	if err != nil {
 		return nil, err
 	}
@@ -394,7 +443,7 @@ func getChannelConcurrencySnapshotAndConfigs(
 			}
 		}
 	} else {
-		refreshed, err := loadChannelConcurrencyLimits(false)
+		refreshed, err := loadChannelConcurrencyLimits(ctx, false)
 		if err != nil {
 			return nil, err
 		}
@@ -533,7 +582,10 @@ func getChannelConcurrencyChannelIDs(ctx context.Context, providedChannelIDs []i
 	return channelIDs, nil
 }
 
-func loadChannelConcurrencyLimits(force bool) (bool, error) {
+func loadChannelConcurrencyLimits(ctx context.Context, force bool) (bool, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	sourceDB := model.DB
 	now := time.Now()
 	channelConcurrency.Lock()
@@ -556,7 +608,7 @@ func loadChannelConcurrencyLimits(force bool) (bool, error) {
 	generation := channelConcurrency.generation
 	channelConcurrency.Unlock()
 
-	configs, err := model.GetChannelConcurrencyConfigs()
+	configs, err := model.GetChannelConcurrencyConfigsWithContext(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -680,7 +732,7 @@ func updateChannelConcurrencyRedisLimits(ctx context.Context, client *redis.Clie
 		return nil
 	}
 
-	if _, err := loadChannelConcurrencyLimits(true); err != nil {
+	if _, err := loadChannelConcurrencyLimits(ctx, true); err != nil {
 		return err
 	}
 	if err = ensureChannelConcurrencyRedisConfig(ctx, client, getChannelConcurrencyConfigsSnapshot()); err != nil {
@@ -716,7 +768,7 @@ func acquireChannelConcurrencyRedis(ctx context.Context, client *redis.Client, c
 		return nil, false, ChannelConcurrencyStatus{}, err
 	}
 	if values[0] == -1 {
-		if _, err = loadChannelConcurrencyLimits(true); err != nil {
+		if _, err = loadChannelConcurrencyLimits(ctx, true); err != nil {
 			return nil, false, ChannelConcurrencyStatus{}, err
 		}
 		if err = ensureChannelConcurrencyRedisConfig(ctx, client, getChannelConcurrencyConfigsSnapshot()); err != nil {
@@ -843,7 +895,7 @@ func getChannelConcurrencyRedisSnapshot(ctx context.Context, client *redis.Clien
 	if len(reply) == 1 {
 		value, parseErr := channelConcurrencyRedisInteger(reply[0])
 		if parseErr == nil && value == -1 {
-			if _, err = loadChannelConcurrencyLimits(true); err != nil {
+			if _, err = loadChannelConcurrencyLimits(ctx, true); err != nil {
 				return nil, err
 			}
 			if err = ensureChannelConcurrencyRedisConfig(ctx, client, getChannelConcurrencyConfigsSnapshot()); err != nil {

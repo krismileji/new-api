@@ -91,6 +91,8 @@ type channelMonitorTodaySuccessOverview struct {
 	Summary                    model.ChannelMonitorSuccessSummary                     `json:"summary"`
 	ChannelItems               []channelMonitorTodaySuccessChannel                    `json:"channel_items"`
 	APIKeyItems                []model.ChannelMonitorSuccessAPIKeyMetric              `json:"api_key_items"`
+	APIKeyItemTotal            int                                                    `json:"api_key_item_total"`
+	APIKeyItemsTruncated       bool                                                   `json:"api_key_items_truncated"`
 	CacheWriteItems            []channelMonitorTodayCacheWriteChannel                 `json:"cache_write_items"`
 	ChartItems                 []channelMonitorDailySuccessChartItem                  `json:"chart_items"`
 }
@@ -132,12 +134,12 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 		CacheWriteItems:            make([]channelMonitorTodayCacheWriteChannel, 0),
 		ChartItems:                 channelMonitorDailySuccessChartItems(rangeStart, days, nil),
 	}
-	todayView, err := service.QueryChannelMonitorRealtimePageFromRedis(c.Request.Context(), todayStart, todayStart+channelMonitorCostDaySeconds)
+	todayView, err := service.QueryChannelMonitorRealtimeTodaySuccessFromRedis(c.Request.Context(), todayStart, generatedAt+1)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	metadata := channelMonitorRealtimePageMetadata(todayView)
+	metadata := channelMonitorRealtimePageMetadataWithContext(c.Request.Context(), todayView)
 	overview.DataCutoffAt = metadata.DataCutoffAt
 	overview.ProcessedAt = metadata.ProcessedAt
 	overview.ProjectionStartedAt = metadata.ProjectionStartedAt
@@ -206,7 +208,7 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 	}
 	dailyMetrics = append(dailyMetrics, todayDailyMetric)
 	overview.ChartItems = channelMonitorDailySuccessChartItems(rangeStart, days, dailyMetrics)
-	channels, err := model.GetAllChannelsForMonitor()
+	channels, err := model.GetAllChannelsForMonitorWithContext(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -229,6 +231,11 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 
 	overview.Summary = metrics.Summary
 	overview.APIKeyItems = metrics.APIKeyItems
+	overview.APIKeyItemTotal = len(overview.APIKeyItems)
+	if len(overview.APIKeyItems) > channelMonitorCostAPIKeyMaxRows {
+		overview.APIKeyItems = overview.APIKeyItems[:channelMonitorCostAPIKeyMaxRows]
+		overview.APIKeyItemsTruncated = true
+	}
 	if err := attachChannelMonitorSuccessAPIKeyOwners(c.Request.Context(), &overview.APIKeyItems); err != nil {
 		common.ApiError(c, err)
 		return

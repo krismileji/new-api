@@ -169,7 +169,11 @@ func TestBuildChannelGroupMonitorItemsUsesLatestResultAndDisplayWindow(t *testin
 		assert.True(t, created)
 	}
 
-	items, err := buildChannelGroupMonitorItems(config, false, map[string]string{"default": "默认分组"}, 1_000)
+	candidates, err := getChannelGroupMonitorCandidateModels(t.Context(), true)
+	require.NoError(t, err)
+	items, err := buildChannelGroupMonitorItems(
+		t.Context(), config, candidates, false, map[string]string{"default": "默认分组"}, 1_000,
+	)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
 	assert.Equal(t, "D", items[0].Initial)
@@ -270,14 +274,14 @@ func TestChannelGroupMonitorCandidatesRequireEnabledAbility(t *testing.T) {
 		Group: "default", Model: "gpt-4.1", ChannelId: 905, Enabled: false,
 	}).Error)
 
-	candidates, err := getChannelGroupMonitorCandidateModels(true)
+	candidates, err := getChannelGroupMonitorCandidateModels(t.Context(), true)
 	require.NoError(t, err)
 	assert.NotContains(t, candidates, "default")
 
 	require.NoError(t, db.Model(&model.Ability{}).
 		Where(&model.Ability{Group: "default", Model: "gpt-4.1", ChannelId: 905}).
 		Update("enabled", true).Error)
-	candidates, err = getChannelGroupMonitorCandidateModels(true)
+	candidates, err = getChannelGroupMonitorCandidateModels(t.Context(), true)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"gpt-4.1"}, candidates["default"])
 }

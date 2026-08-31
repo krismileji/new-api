@@ -13,6 +13,7 @@ type channelSmartScheduleRealtimeRouteMetrics struct {
 	businessPerformance *model.ChannelMonitorRoutePerformanceMetric
 	stability           *model.ChannelMonitorRouteStabilityMetric
 	sampleItem          channelSmartScheduleSampleItem
+	events              []model.ChannelMonitorEvent
 	snapshot            service.ChannelMonitorRedisRouteHealthSnapshot
 }
 
@@ -45,12 +46,90 @@ func channelSmartScheduleRealtimeRouteMetricView(
 		route.State.StabilitySince > routeStabilityStart {
 		routeStabilityStart = route.State.StabilitySince
 	}
+	adaptiveWindowStart := generatedAt - int64(policy.AdaptiveSamplingWindowSeconds)
 	events, snapshot, err := channelSmartScheduleRealtimeEvents(
-		ctx, route.ChannelId, route.Model, min(performanceStart, routeStabilityStart),
+		ctx, route.ChannelId, route.Model, min(performanceStart, routeStabilityStart, adaptiveWindowStart),
 		route.SharedSamples.ObservationSince, 0,
 	)
 	if err != nil {
 		return channelSmartScheduleRealtimeRouteMetrics{}, err
+	}
+	return channelSmartScheduleRealtimeRouteMetricViewFromEvents(
+		route, policy, performanceStart, generatedAt, events, snapshot,
+	), nil
+}
+
+func channelSmartScheduleRealtimeRouteMetricViews(
+	ctx context.Context,
+	routes []model.ChannelSmartScheduleRoute,
+	policyByGroup map[string]channelSmartSchedulePolicy,
+	performanceStart int64,
+	generatedAt int64,
+) (map[channelSmartScheduleRouteKey]channelSmartScheduleRealtimeRouteMetrics, error) {
+	views := make(map[channelSmartScheduleRouteKey]channelSmartScheduleRealtimeRouteMetrics, len(routes))
+	if len(routes) == 0 {
+		return views, nil
+	}
+	redisRoutes := make([]service.ChannelMonitorRedisRouteHealthRouteKey, 0, len(routes))
+	for _, route := range routes {
+		key, valid := service.NewChannelMonitorRedisRouteHealthRouteKey(route.ChannelId, route.Model)
+		if valid {
+			redisRoutes = append(redisRoutes, key)
+		}
+	}
+	batch, err := service.GetChannelMonitorRedisRouteHealthWindows(ctx, redisRoutes)
+	if err != nil {
+		return nil, err
+	}
+	for _, route := range routes {
+		policy := policyByGroup[route.Group]
+		routeStabilityStart := generatedAt - int64(policy.StabilityWindowMinutes*60)
+		if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
+			route.State.StabilitySince > routeStabilityStart {
+			routeStabilityStart = route.State.StabilitySince
+		}
+		adaptiveWindowStart := generatedAt - int64(policy.AdaptiveSamplingWindowSeconds)
+		windowStart := min(performanceStart, routeStabilityStart, adaptiveWindowStart)
+		snapshot := service.ChannelMonitorRedisRouteHealthSnapshot{
+			CoverageStart:       batch.CoverageStart,
+			ProjectionStartedAt: batch.ProjectionStartedAt,
+		}
+		var events []model.ChannelMonitorEvent
+		redisKey, valid := service.NewChannelMonitorRedisRouteHealthRouteKey(route.ChannelId, route.Model)
+		if valid {
+			if window, available := batch.Windows[redisKey]; available {
+				snapshot = window.Snapshot
+				events = channelSmartScheduleRedisWindowEvents(
+					window,
+					route.ChannelId,
+					route.Model,
+					windowStart,
+					route.SharedSamples.ObservationSince,
+					0,
+					0,
+				)
+			}
+		}
+		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
+		views[key] = channelSmartScheduleRealtimeRouteMetricViewFromEvents(
+			route, policy, performanceStart, generatedAt, events, snapshot,
+		)
+	}
+	return views, nil
+}
+
+func channelSmartScheduleRealtimeRouteMetricViewFromEvents(
+	route model.ChannelSmartScheduleRoute,
+	policy channelSmartSchedulePolicy,
+	performanceStart int64,
+	generatedAt int64,
+	events []model.ChannelMonitorEvent,
+	snapshot service.ChannelMonitorRedisRouteHealthSnapshot,
+) channelSmartScheduleRealtimeRouteMetrics {
+	routeStabilityStart := generatedAt - int64(policy.StabilityWindowMinutes*60)
+	if route.State.StabilityState == model.ChannelSmartScheduleStabilityProbing &&
+		route.State.StabilitySince > routeStabilityStart {
+		routeStabilityStart = route.State.StabilitySince
 	}
 	performanceEvents := channelSmartScheduleEventsForWindow(events, performanceStart, 0)
 	businessEvents := make([]model.ChannelMonitorEvent, 0, len(performanceEvents))
@@ -63,7 +142,7 @@ func channelSmartScheduleRealtimeRouteMetricView(
 		performanceSampleEvents = append(performanceSampleEvents, event)
 	}
 
-	view := channelSmartScheduleRealtimeRouteMetrics{snapshot: snapshot}
+	view := channelSmartScheduleRealtimeRouteMetrics{events: events, snapshot: snapshot}
 	if metric, available := channelSmartScheduleRealtimePerformanceMetric(
 		route, performanceEvents, policy,
 	); available {
@@ -99,7 +178,7 @@ func channelSmartScheduleRealtimeRouteMetricView(
 			route, routeStabilityStart, stabilitySampleEvents,
 		),
 	}
-	return view, nil
+	return view
 }
 
 func channelSmartScheduleRealtimePerformanceMetric(

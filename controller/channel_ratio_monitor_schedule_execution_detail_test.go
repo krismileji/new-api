@@ -2,6 +2,7 @@ package controller
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -11,6 +12,39 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestListChannelMonitorTasksOmitsOversizedStoredResult(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	largeResult := strings.Repeat("x", model.SystemTaskListResultMaxCharacters+1)
+	task := model.SystemTask{
+		TaskID: "schedule-large-result",
+		Type:   channelMonitorSmartScheduleTaskType,
+		Status: model.SystemTaskStatusSucceeded,
+		Result: largeResult,
+	}
+	require.NoError(t, db.Create(&task).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/tasks?kind=schedule&p=1&page_size=10", nil,
+	)
+	ListChannelMonitorTasks(ctx)
+
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []struct {
+				TaskID string `json:"task_id"`
+				Result any    `json:"result"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.Len(t, response.Data.Items, 1)
+	assert.Equal(t, task.TaskID, response.Data.Items[0].TaskID)
+	assert.Nil(t, response.Data.Items[0].Result)
+	assert.Less(t, len(recorder.Body.Bytes()), model.SystemTaskListResultMaxCharacters)
+}
 
 func TestListChannelMonitorTasksReturnsScheduleSummaryWithoutExecutionDetails(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
@@ -86,6 +120,64 @@ func TestListChannelMonitorTasksReturnsScheduleSummaryWithoutExecutionDetails(t 
 	require.NoError(t, db.Where("task_id = ?", task.TaskID).First(&persisted).Error)
 	assert.NotContains(t, persisted.Result, "score_details")
 	assert.NotContains(t, persisted.Result, "adjustments")
+}
+
+func TestChannelMonitorTaskQueriesNormalizeNegativePages(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.ChannelSmartScheduleExecutionDetail{}))
+	task := model.SystemTask{
+		TaskID: "schedule-negative-page",
+		Type:   channelMonitorSmartScheduleTaskType,
+		Status: model.SystemTaskStatusSucceeded,
+	}
+	require.NoError(t, db.Create(&task).Error)
+	require.NoError(t, model.SaveChannelSmartScheduleExecutionDetails(
+		task.TaskID,
+		[]model.ChannelSmartScheduleExecutionDetailInput{{
+			AdjustmentIndex: 0,
+			Payload: channelSmartScheduleTaskAdjustment{
+				ChannelId: 71, ChannelName: "稳定渠道", Group: "vip", Model: "model-a",
+				Action: channelSmartScheduleAdjustmentUnchanged,
+			},
+		}},
+	))
+
+	listContext, listRecorder := newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/tasks?kind=schedule&p=-1&page_size=-1", nil,
+	)
+	ListChannelMonitorTasks(listContext)
+	var listResponse struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Page     int `json:"page"`
+			PageSize int `json:"page_size"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(listRecorder.Body.Bytes(), &listResponse))
+	require.True(t, listResponse.Success)
+	assert.Equal(t, 1, listResponse.Data.Page)
+	assert.Equal(t, common.ItemsPerPage, listResponse.Data.PageSize)
+
+	detailContext, detailRecorder := newChannelMonitorControllerContext(
+		t, http.MethodGet,
+		"/api/channel_monitor/tasks/schedule-negative-page/details?p=-1&page_size=-1",
+		nil,
+	)
+	detailContext.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	GetChannelMonitorSmartScheduleExecutionDetails(detailContext)
+	var detailResponse struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Page     int                                  `json:"page"`
+			PageSize int                                  `json:"page_size"`
+			Items    []channelSmartScheduleTaskAdjustment `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(detailRecorder.Body.Bytes(), &detailResponse))
+	require.True(t, detailResponse.Success)
+	assert.Equal(t, 1, detailResponse.Data.Page)
+	assert.Equal(t, channelMonitorSmartScheduleExecutionDetailPageSize, detailResponse.Data.PageSize)
+	require.Len(t, detailResponse.Data.Items, 1)
 }
 
 func TestGetChannelMonitorSmartScheduleExecutionDetailsFiltersAndPaginatesOneTask(t *testing.T) {

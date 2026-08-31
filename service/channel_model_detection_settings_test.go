@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -315,6 +316,56 @@ func TestTestChannelModelDetectionServiceURLDoesNotPersistUnsavedAddress(t *test
 	serviceStatus, err := GetChannelModelDetectionService(context.Background(), db, time.Unix(1_700_000_001, 0).UTC())
 	require.NoError(t, err)
 	assert.Equal(t, "unconfigured", serviceStatus.State)
+}
+
+func TestGetChannelModelDetectionServiceUsesFreshProbeWithOverallDeadline(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case channelModelDetectorHealthPath:
+			_, _ = writer.Write([]byte(`{"status":"ok"}`))
+		case channelModelDetectorBootstrapPath:
+			preset := `{"mode":"single","preset":"low","workers":1,"config_hash":"hash"}`
+			_, _ = writer.Write([]byte(`{"session_token":"fresh-session","schema_version":2,"single_presets":{"low":` + preset + `,"medium":` + preset + `,"high":` + preset + `}}`))
+		case channelModelDetectorEstimatePath:
+			_, _ = writer.Write([]byte(`{"total_requests":2,"fixed_32k_requests":1}`))
+		case channelModelDetectorStatusPath:
+			_, _ = writer.Write([]byte(`{"status":"idle"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	t.Cleanup(server.Close)
+	db := setupChannelModelDetectionSettingsTestDB(t)
+	seedChannelModelDetectionSettings(t, db, server.URL)
+
+	available, err := TestChannelModelDetectionService(
+		context.Background(), db, time.Unix(1_700_000_000, 0).UTC(),
+		ChannelModelDetectorClientOptions{HTTPClient: server.Client()},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "available", available.State)
+
+	deadlineRemaining := make(chan time.Duration, 1)
+	failingClient := &http.Client{Transport: channelModelDetectorRoundTripper(func(request *http.Request) (*http.Response, error) {
+		deadline, ok := request.Context().Deadline()
+		if !ok {
+			deadlineRemaining <- 0
+		} else {
+			deadlineRemaining <- time.Until(deadline)
+		}
+		return nil, errors.New("detector unavailable")
+	})}
+	offline, err := GetChannelModelDetectionService(
+		context.Background(), db, time.Unix(1_700_000_001, 0).UTC(),
+		ChannelModelDetectorClientOptions{HTTPClient: failingClient},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "offline", offline.State)
+	assert.NotEmpty(t, offline.LastError)
+	remaining := <-deadlineRemaining
+	assert.Positive(t, remaining)
+	assert.LessOrEqual(t, remaining, channelModelDetectionServiceQueryTimeout)
 }
 
 func mustMarshalSettings(t *testing.T, value ChannelModelDetectionSettingsResponse) []byte {

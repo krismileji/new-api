@@ -49,8 +49,11 @@ func LoadChannelStatusProbeOverviewRelations(ctx context.Context, db *gorm.DB) (
 	if logicalGroupingAvailable {
 		channelQuery = channelQuery.Select("id", "logical_channel_id")
 	}
-	if err := channelQuery.Order("id ASC").Find(&channels).Error; err != nil {
+	if err := channelQuery.Order("id ASC").Limit(ChannelStatusProbeOverviewMaxChannels + 1).Find(&channels).Error; err != nil {
 		return nil, err
+	}
+	if len(channels) > ChannelStatusProbeOverviewMaxChannels {
+		return nil, ErrChannelStatusProbeResponseTooLarge
 	}
 	relations := &ChannelStatusProbeOverviewRelations{
 		logicalGrouping: logicalGroupingAvailable,
@@ -229,6 +232,9 @@ func GetChannelGroupsForStatusProbeOverview(ctx context.Context, db *gorm.DB) ([
 		return nil, err
 	}
 	var channels []*Channel
-	err = queryDB.Select("id", commonGroupCol).Order("id ASC").Find(&channels).Error
+	err = queryDB.Select("id", commonGroupCol).Order("id ASC").Limit(ChannelStatusProbeOverviewMaxChannels + 1).Find(&channels).Error
+	if err == nil && len(channels) > ChannelStatusProbeOverviewMaxChannels {
+		return nil, ErrChannelStatusProbeResponseTooLarge
+	}
 	return channels, err
 }

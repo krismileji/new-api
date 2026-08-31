@@ -383,6 +383,12 @@ func TestChannelConcurrencySnapshotWithProvidedConfigsReusesCallerRows(t *testin
 	assert.Len(t, snapshot, 1)
 	assert.Equal(t, ChannelConcurrencyStatus{Limit: 3, RPMLimit: 7}, snapshot[41])
 	assert.NotContains(t, snapshot, 42)
+
+	emptySnapshot, err := GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigs(
+		t.Context(), []int{}, map[int]model.ChannelConcurrencyConfig{42: {Limit: 9}},
+	)
+	require.NoError(t, err)
+	assert.Empty(t, emptySnapshot)
 }
 
 func TestChannelConcurrencyRedisSnapshotUsesCallerConfigForRequestedView(t *testing.T) {
@@ -397,4 +403,19 @@ func TestChannelConcurrencyRedisSnapshotUsesCallerConfigForRequestedView(t *test
 	)
 	require.NoError(t, err)
 	assert.Equal(t, ChannelConcurrencyStatus{}, snapshot[41])
+}
+
+func TestReloadChannelConcurrencyLimitsHonorsCanceledContext(t *testing.T) {
+	useChannelConcurrencyTestDB(t)
+	useChannelConcurrencyTestState(t, nil)
+	originalRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = false
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+	})
+
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	err := ReloadChannelConcurrencyLimits(ctx)
+	require.ErrorIs(t, err, context.Canceled)
 }

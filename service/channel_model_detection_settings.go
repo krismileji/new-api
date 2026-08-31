@@ -15,7 +15,10 @@ import (
 	"github.com/QuantumNous/new-api/model"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+const channelModelDetectionServiceQueryTimeout = 10 * time.Second
 
 var (
 	ErrChannelModelDetectionSettingsConflict      = errors.New("模型检测统一设置已被其他管理员更新，请刷新后重试")
@@ -98,8 +101,11 @@ func GetChannelModelDetectionSettings(ctx context.Context, tx *gorm.DB, now time
 	var config model.ChannelModelDetectionGlobalConfig
 	err := db.WithContext(ctx).Where("id = ?", model.ChannelModelDetectionConfigID).First(&config).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		config = channelModelDetectionDefaultGlobalConfig(now)
-		if err := db.WithContext(ctx).Create(&config).Error; err != nil {
+		candidate := channelModelDetectionDefaultGlobalConfig(now)
+		if err := db.WithContext(ctx).Clauses(clause.OnConflict{DoNothing: true}).Create(&candidate).Error; err != nil {
+			return ChannelModelDetectionSettingsResponse{}, err
+		}
+		if err := db.WithContext(ctx).Where("id = ?", model.ChannelModelDetectionConfigID).First(&config).Error; err != nil {
 			return ChannelModelDetectionSettingsResponse{}, err
 		}
 	} else if err != nil {
@@ -393,7 +399,7 @@ func ResolveChannelModelDetectionRelayBaseURL(ctx context.Context, tx *gorm.DB) 
 	return NormalizeChannelModelDetectionRelayURL(value)
 }
 
-func GetChannelModelDetectionService(ctx context.Context, tx *gorm.DB, now time.Time) (ChannelModelDetectionServiceResponse, error) {
+func GetChannelModelDetectionService(ctx context.Context, tx *gorm.DB, now time.Time, options ...ChannelModelDetectorClientOptions) (ChannelModelDetectionServiceResponse, error) {
 	db := tx
 	if db == nil {
 		db = model.DB
@@ -422,8 +428,23 @@ func GetChannelModelDetectionService(ctx context.Context, tx *gorm.DB, now time.
 			State: "unconfigured", Estimates: map[string]ChannelModelDetectionPresetEstimateResponse{},
 		}, nil
 	}
-	response, queryErr := testChannelModelDetectionServiceURL(ctx, db, config.DetectorURL, now)
+	probeCtx, cancel := context.WithTimeout(ctx, channelModelDetectionServiceQueryTimeout)
+	defer cancel()
+	probeOptions := ChannelModelDetectorClientOptions{}
+	if len(options) > 0 {
+		probeOptions = options[0]
+	}
+	if probeOptions.RequestTimeout <= 0 || probeOptions.RequestTimeout > channelModelDetectionServiceQueryTimeout {
+		probeOptions.RequestTimeout = channelModelDetectionServiceQueryTimeout
+	}
+	if probeOptions.MaxResponseBytes <= 0 || probeOptions.MaxResponseBytes > channelModelDetectionResponseMaxBytes {
+		probeOptions.MaxResponseBytes = channelModelDetectionResponseMaxBytes
+	}
+	response, queryErr := testChannelModelDetectionServiceURL(probeCtx, db, config.DetectorURL, now, probeOptions)
 	if response.State != "" {
+		if err := ensureChannelModelDetectionResponseSize(response); err != nil {
+			return ChannelModelDetectionServiceResponse{}, err
+		}
 		return response, nil
 	}
 	return response, queryErr

@@ -38,14 +38,10 @@ func GetChannelMonitorConcurrency(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	storedConfigs, err := model.GetChannelConcurrencyConfigsWithContext(c.Request.Context())
+	configs, err := model.GetChannelConcurrencyConfigsForChannelIDsWithContext(c.Request.Context(), channelIDs)
 	if err != nil {
 		common.ApiError(c, err)
 		return
-	}
-	configs := make(map[int]model.ChannelConcurrencyConfig, len(channelIDs))
-	for _, channelID := range channelIDs {
-		configs[channelID] = storedConfigs[channelID]
 	}
 	statuses, err := service.GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigs(
 		c.Request.Context(), channelIDs, configs,
@@ -70,7 +66,7 @@ func UpdateChannelMonitorConcurrencyLimit(c *gin.Context) {
 		common.ApiErrorMsg(c, "无效的渠道 ID")
 		return
 	}
-	if _, err = model.GetChannelById(channelID, false); err != nil {
+	if _, err = model.GetChannelForMonitorWithContext(c.Request.Context(), channelID); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -86,7 +82,7 @@ func UpdateChannelMonitorConcurrencyLimit(c *gin.Context) {
 	}
 	currentLimit := 0
 	currentRPMLimit := 0
-	currentMonitor, currentErr := model.GetChannelRatioMonitor(channelID)
+	currentMonitor, currentErr := model.GetChannelRatioMonitorWithContext(c.Request.Context(), channelID)
 	if currentErr == nil {
 		currentLimit = currentMonitor.ConcurrencyLimit
 		currentRPMLimit = currentMonitor.RPMLimit

@@ -3,6 +3,7 @@ package model
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -279,6 +280,13 @@ func TestChannelSmartScheduleExecutionDetailsRejectsLimitsAndCorruption(t *testi
 		AdjustmentIndex: 0,
 		Payload:         largePayload,
 	}}))
+	assert.ErrorContains(t, SaveChannelSmartScheduleExecutionDetails(
+		"schedule-item-too-large",
+		[]ChannelSmartScheduleExecutionDetailInput{{
+			AdjustmentIndex: 0,
+			Payload:         strings.Repeat("x", ChannelSmartScheduleExecutionDetailMaxItemJSON),
+		}},
+	), "单条智能调度执行明细")
 
 	require.NoError(t, db.Create(&ChannelSmartScheduleExecutionDetail{
 		TaskId:      "schedule-corrupt",
@@ -311,6 +319,22 @@ func TestChannelSmartScheduleExecutionDetailsRejectsDecompressedDataOverLimit(t 
 	}).Error)
 	_, err := GetChannelSmartScheduleExecutionDetails([]string{"schedule-over-decompressed-limit"})
 	assert.Error(t, err)
+}
+
+func TestChannelSmartScheduleExecutionDetailsRejectsOversizedBlobBeforeLoadingIt(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	require.NoError(t, db.AutoMigrate(&ChannelSmartScheduleExecutionDetail{}))
+	require.NoError(t, db.Create(&ChannelSmartScheduleExecutionDetail{
+		TaskId:      "schedule-oversized-blob",
+		PayloadBlob: bytes.Repeat([]byte{'x'}, channelSmartScheduleExecutionDetailMaxBlob+1),
+		ItemCount:   1,
+		CreatedAt:   common.GetTimestamp(),
+	}).Error)
+
+	_, err := GetChannelSmartScheduleExecutionDetailsWithContext(
+		context.Background(), []string{"schedule-oversized-blob"},
+	)
+	assert.ErrorContains(t, err, "压缩数据超过")
 }
 
 func TestChannelSmartScheduleExecutionDetailIndexes(t *testing.T) {

@@ -336,7 +336,13 @@ func GetChannelDailyCostsForStatusProbeOverview(
 // the requested range. The range should be limited to the requested page by
 // the caller when displaying paginated date details.
 func GetChannelDailyCostDayTotals(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int) ([]ChannelDailyCostDayTotal, error) {
-	return getChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId, 0, 0)
+	return GetChannelDailyCostDayTotalsWithDB(ctx, DB, startTimestamp, endTimestamp, channelId)
+}
+
+// GetChannelDailyCostDayTotalsWithDB lets a caller combine this aggregation
+// with related ledger reads in one request-scoped consistent transaction.
+func GetChannelDailyCostDayTotalsWithDB(ctx context.Context, db *gorm.DB, startTimestamp int64, endTimestamp int64, channelId int) ([]ChannelDailyCostDayTotal, error) {
+	return getChannelDailyCostDayTotals(ctx, db, startTimestamp, endTimestamp, channelId, 0, 0)
 }
 
 // GetChannelDailyCostDayTotalsPage applies a database-side limit to an
@@ -344,7 +350,7 @@ func GetChannelDailyCostDayTotals(ctx context.Context, startTimestamp int64, end
 // range so days without a recorded row can be filled by the presentation
 // layer without changing the page shape.
 func GetChannelDailyCostDayTotalsPage(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, pageSize int) ([]ChannelDailyCostDayTotal, error) {
-	return getChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId, pageSize, 0)
+	return getChannelDailyCostDayTotals(ctx, DB, startTimestamp, endTimestamp, channelId, pageSize, 0)
 }
 
 // GetChannelDailyCostDayTotalsPageWithOffset is useful to callers that page
@@ -352,7 +358,7 @@ func GetChannelDailyCostDayTotalsPage(ctx context.Context, startTimestamp int64,
 // controller uses a bounded calendar window (so missing days can be filled
 // with zeroes) and therefore leaves offset at zero.
 func GetChannelDailyCostDayTotalsPageWithOffset(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, pageSize int, offset int) ([]ChannelDailyCostDayTotal, error) {
-	return getChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId, pageSize, offset)
+	return getChannelDailyCostDayTotals(ctx, DB, startTimestamp, endTimestamp, channelId, pageSize, offset)
 }
 
 // ChannelDailyCostChannelTotal is a database-aggregated total for one
@@ -382,7 +388,14 @@ type ChannelDailyCostChannelTotal struct {
 // single channel while retaining the same SQL shape on all supported
 // dialects.
 func GetChannelDailyCostChannelTotals(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int) ([]ChannelDailyCostChannelTotal, error) {
-	return getChannelDailyCostChannelTotals(ctx, startTimestamp, endTimestamp, channelId, 0)
+	return GetChannelDailyCostChannelTotalsWithDB(ctx, DB, startTimestamp, endTimestamp, channelId)
+}
+
+// GetChannelDailyCostChannelTotalsWithDB lets a caller combine this
+// aggregation with related ledger reads in one request-scoped consistent
+// transaction.
+func GetChannelDailyCostChannelTotalsWithDB(ctx context.Context, db *gorm.DB, startTimestamp int64, endTimestamp int64, channelId int) ([]ChannelDailyCostChannelTotal, error) {
+	return getChannelDailyCostChannelTotals(ctx, db, startTimestamp, endTimestamp, channelId, 0)
 }
 
 // GetChannelDailyCostChannelTotalsWithDetail aggregates the complete range
@@ -390,12 +403,22 @@ func GetChannelDailyCostChannelTotals(ctx context.Context, startTimestamp int64,
 // GROUP BY query. Keeping both views together avoids scanning an overlapping
 // range twice for a detail request.
 func GetChannelDailyCostChannelTotalsWithDetail(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, detailDayStart int64) ([]ChannelDailyCostChannelTotal, error) {
-	return getChannelDailyCostChannelTotals(ctx, startTimestamp, endTimestamp, channelId, detailDayStart)
+	return GetChannelDailyCostChannelTotalsWithDetailAndDB(ctx, DB, startTimestamp, endTimestamp, channelId, detailDayStart)
 }
 
-func getChannelDailyCostChannelTotals(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, detailDayStart int64) ([]ChannelDailyCostChannelTotal, error) {
+// GetChannelDailyCostChannelTotalsWithDetailAndDB reads range and selected-day
+// totals from a caller-provided transaction.
+func GetChannelDailyCostChannelTotalsWithDetailAndDB(ctx context.Context, db *gorm.DB, startTimestamp int64, endTimestamp int64, channelId int, detailDayStart int64) ([]ChannelDailyCostChannelTotal, error) {
+	return getChannelDailyCostChannelTotals(ctx, db, startTimestamp, endTimestamp, channelId, detailDayStart)
+}
+
+func getChannelDailyCostChannelTotals(ctx context.Context, db *gorm.DB, startTimestamp int64, endTimestamp int64, channelId int, detailDayStart int64) ([]ChannelDailyCostChannelTotal, error) {
 	if startTimestamp >= endTimestamp {
 		return []ChannelDailyCostChannelTotal{}, nil
+	}
+	queryDB, err := channelMonitorCostQueryDB(ctx, db)
+	if err != nil {
+		return nil, err
 	}
 	selectColumns := "channel_id, SUM(cost_nano_cny) AS cost_nano_cny, SUM(probe_cost_nano_cny) AS probe_cost_nano_cny, SUM(group_probe_cost_nano_cny) AS group_probe_cost_nano_cny, SUM(model_detection_cost_nano_cny) AS model_detection_cost_nano_cny, SUM(settled_count) AS settled_count, SUM(unresolved_count) AS unresolved_count"
 	// Keep the CASE expressions parameterized. CASE/SUM is supported by
@@ -412,7 +435,7 @@ func getChannelDailyCostChannelTotals(ctx context.Context, startTimestamp int64,
 			args = append(args, detailDayStart)
 		}
 	}
-	query := DB.WithContext(ctx).Model(&ChannelDailyCost{}).
+	query := queryDB.Model(&ChannelDailyCost{}).
 		Select(selectColumns, args...).
 		Where("day_start >= ? AND day_start < ?", startTimestamp, endTimestamp).
 		Group("channel_id").Order("channel_id ASC")
@@ -434,11 +457,15 @@ func getChannelDailyCostChannelTotals(ctx context.Context, startTimestamp int64,
 	return totals, nil
 }
 
-func getChannelDailyCostDayTotals(ctx context.Context, startTimestamp int64, endTimestamp int64, channelId int, pageSize int, offset int) ([]ChannelDailyCostDayTotal, error) {
+func getChannelDailyCostDayTotals(ctx context.Context, db *gorm.DB, startTimestamp int64, endTimestamp int64, channelId int, pageSize int, offset int) ([]ChannelDailyCostDayTotal, error) {
 	if startTimestamp >= endTimestamp {
 		return []ChannelDailyCostDayTotal{}, nil
 	}
-	query := DB.WithContext(ctx).Model(&ChannelDailyCost{}).
+	queryDB, err := channelMonitorCostQueryDB(ctx, db)
+	if err != nil {
+		return nil, err
+	}
+	query := queryDB.Model(&ChannelDailyCost{}).
 		Select("day_start, SUM(cost_nano_cny) AS cost_nano_cny, SUM(probe_cost_nano_cny) AS probe_cost_nano_cny, SUM(group_probe_cost_nano_cny) AS group_probe_cost_nano_cny, SUM(model_detection_cost_nano_cny) AS model_detection_cost_nano_cny, SUM(settled_count) AS settled_count, SUM(unresolved_count) AS unresolved_count").
 		Where("day_start >= ? AND day_start < ?", startTimestamp, endTimestamp).
 		Group("day_start").Order("day_start ASC")

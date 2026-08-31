@@ -628,9 +628,7 @@ export function ChannelMonitorTodaySuccessDialog(
 ) {
   const insight = useChannelMonitorDailyInsight(props.open)
   const result = insight.query.data?.data
-  const detailLoading =
-    insight.query.isLoading ||
-    (insight.query.isFetching && result?.detail_date !== insight.selectedDate)
+  const detailLoading = insight.query.isLoading || insight.query.isFetching
   let description = `按北京时间统计 ${insight.selectedDate} 的请求与缓存利用情况`
   if (result?.generated_at && result.detail_date === insight.selectedDate) {
     description += ` · 更新于 ${formatTimestampToDate(result.generated_at)}`
@@ -659,7 +657,7 @@ export function ChannelMonitorTodaySuccessDialog(
               days={insight.days}
               selectedDate={insight.selectedDate}
               items={result?.chart_items ?? []}
-              loading={insight.query.isLoading}
+              loading={detailLoading}
               onDaysChange={insight.changeDays}
               onDateChange={insight.changeDate}
             />

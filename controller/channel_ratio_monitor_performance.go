@@ -58,21 +58,23 @@ func GetChannelMonitorPerformance(c *gin.Context) {
 	}
 	requestedAt := time.Now()
 	generatedAt := requestedAt.Unix()
-	requestedWindowStart := generatedAt - int64(minutes*60)
-	view, err := service.QueryChannelMonitorRealtimePageFromRedis(c.Request.Context(), requestedWindowStart, generatedAt+1)
+	requestedWindowEnd := generatedAt - generatedAt%60 + 60
+	requestedWindowStart := requestedWindowEnd - int64(minutes)*60
+	view, err := service.QueryChannelMonitorRealtimePerformanceFromRedis(c.Request.Context(), requestedWindowStart, generatedAt+1)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	metrics, successMetrics := channelMonitorRealtimePerformanceMetrics(view)
 	groupSuccessMetrics := channelMonitorRealtimeGroupSuccessMetrics(view)
-	metadata := channelMonitorRealtimePageMetadata(view)
+	metadata := channelMonitorRealtimePageMetadataWithContext(c.Request.Context(), view)
 	metricCoverage := channelMonitorPerformanceMetricCoverageResponse{
 		AggregationEnabled: true,
 		AggregatedFrom:     metadata.WindowStart,
 		AggregatedThrough:  metadata.DataCutoffAt,
 		WindowStart:        view.WindowStart,
-		WindowComplete:     !metadata.RealtimeDegraded && metadata.WindowStart > 0 && metadata.WindowStart <= view.WindowStart,
+		WindowComplete: !metadata.RealtimeDegraded &&
+			metadata.DataCutoffAt >= view.WindowEnd,
 	}
 	common.ApiSuccess(c, gin.H{
 		"range_minutes":                 minutes,
@@ -161,7 +163,8 @@ func GetChannelMonitorSuccessDetail(c *gin.Context) {
 	} else {
 		filter.Group = group
 	}
-	requestedWindowStart := generatedAt - int64(minutes*60)
+	requestedWindowEnd := generatedAt - generatedAt%60 + 60
+	requestedWindowStart := requestedWindowEnd - int64(minutes)*60
 	detailView, err := service.QueryChannelMonitorRealtimeSuccessDetailFromRedis(
 		c.Request.Context(),
 		requestedWindowStart, generatedAt+1, filter,
@@ -171,11 +174,26 @@ func GetChannelMonitorSuccessDetail(c *gin.Context) {
 		return
 	}
 	detail := detailView.Detail
+	apiKeyItemTotal := len(detail.APIKeyItems)
+	apiKeyItemsTruncated := false
+	if len(detail.APIKeyItems) > channelMonitorCostAPIKeyMaxRows {
+		detail.APIKeyItems = detail.APIKeyItems[:channelMonitorCostAPIKeyMaxRows]
+		apiKeyItemsTruncated = true
+	}
+	failureCategoryTotal := len(detail.FailureCategories)
+	failureCategoriesTruncated := false
+	if len(detail.FailureCategories) > channelMonitorCostAPIKeyMaxRows {
+		detail.FailureCategories = detail.FailureCategories[:channelMonitorCostAPIKeyMaxRows]
+		failureCategoriesTruncated = true
+	}
 	if err := attachChannelMonitorSuccessAPIKeyOwners(c.Request.Context(), &detail.APIKeyItems); err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	metadata := channelMonitorRealtimeMetadata(detailView.WindowStart)
+	metadata := channelMonitorRealtimeProjectionMetadata(
+		c.Request.Context(), detailView.WindowStart,
+		detailView.DataCutoffAt, detailView.ProcessedAt, detailView.EventWatermark,
+	)
 	common.ApiSuccess(c, gin.H{
 		"range_minutes":                 minutes,
 		"generated_at":                  generatedAt,
@@ -227,6 +245,10 @@ func GetChannelMonitorSuccessDetail(c *gin.Context) {
 		"realtime_degraded":             metadata.RealtimeDegraded || metadata.ProjectionStartedAt > detailView.WindowStart,
 		"success_metrics_available":     true,
 		"scope":                         scope,
+		"api_key_item_total":            apiKeyItemTotal,
+		"api_key_items_truncated":       apiKeyItemsTruncated,
+		"failure_category_total":        failureCategoryTotal,
+		"failure_categories_truncated":  failureCategoriesTruncated,
 		"detail":                        detail,
 	})
 }

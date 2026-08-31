@@ -23,7 +23,7 @@ import {
   Settings02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useMemo, useState, type ReactNode } from 'react'
 
 import { Badge } from '@/components/ui/badge'
@@ -274,7 +274,6 @@ export function ChannelStatusProbeHistorySheet(
         result,
         trigger,
       }),
-    placeholderData: keepPreviousData,
     enabled: props.open,
     staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,

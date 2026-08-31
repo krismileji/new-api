@@ -3,6 +3,7 @@ package model
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,8 +18,10 @@ import (
 )
 
 const (
-	ChannelSmartScheduleExecutionDetailMaxItems = 20_000
-	channelSmartScheduleExecutionDetailMaxJSON  = 64 * 1024 * 1024
+	ChannelSmartScheduleExecutionDetailMaxItems    = 20_000
+	ChannelSmartScheduleExecutionDetailMaxItemJSON = 256 * 1024
+	channelSmartScheduleExecutionDetailMaxJSON     = 64 * 1024 * 1024
+	channelSmartScheduleExecutionDetailMaxBlob     = channelSmartScheduleExecutionDetailMaxJSON + 1024*1024
 )
 
 // ChannelSmartScheduleExecutionDetailMetrics contains process-local snapshot
@@ -183,6 +186,12 @@ func channelSmartScheduleExecutionDetailSnapshot(
 		if err != nil {
 			return nil, fmt.Errorf("编码智能调度执行明细失败: %w", err)
 		}
+		if len(encoded) > ChannelSmartScheduleExecutionDetailMaxItemJSON {
+			return nil, fmt.Errorf(
+				"单条智能调度执行明细不能超过 %d KiB",
+				ChannelSmartScheduleExecutionDetailMaxItemJSON/1024,
+			)
+		}
 		payloads = append(payloads, json.RawMessage(encoded))
 	}
 	encoded, err := common.Marshal(payloads)
@@ -202,6 +211,9 @@ func channelSmartScheduleExecutionDetailSnapshot(
 	}
 	if err := writer.Close(); err != nil {
 		return nil, fmt.Errorf("完成压缩智能调度执行明细失败: %w", err)
+	}
+	if compressed.Len() > channelSmartScheduleExecutionDetailMaxBlob {
+		return nil, fmt.Errorf("智能调度执行明细压缩数据不能超过 %d MiB", channelSmartScheduleExecutionDetailMaxBlob/(1024*1024))
 	}
 	channelSmartScheduleExecutionDetailMetrics.rounds.Add(1)
 	channelSmartScheduleExecutionDetailMetrics.adjustmentCount.Add(int64(len(payloads)))
@@ -252,18 +264,60 @@ func channelSmartScheduleExecutionDetailPayloads(
 	if len(decodedPayloads) != row.ItemCount {
 		return nil, fmt.Errorf("智能调度执行明细数量校验失败: item_count=%d, decoded=%d", row.ItemCount, len(decodedPayloads))
 	}
+	for _, payload := range decodedPayloads {
+		if len(payload) > ChannelSmartScheduleExecutionDetailMaxItemJSON {
+			return nil, fmt.Errorf(
+				"单条智能调度执行明细超过 %d KiB",
+				ChannelSmartScheduleExecutionDetailMaxItemJSON/1024,
+			)
+		}
+	}
 	return decodedPayloads, nil
 }
 
 func GetChannelSmartScheduleExecutionDetails(
 	taskIds []string,
 ) (map[string][]ChannelSmartScheduleExecutionDetailPayload, error) {
+	return GetChannelSmartScheduleExecutionDetailsWithContext(context.Background(), taskIds)
+}
+
+func GetChannelSmartScheduleExecutionDetailsWithContext(
+	ctx context.Context,
+	taskIds []string,
+) (map[string][]ChannelSmartScheduleExecutionDetailPayload, error) {
 	result := make(map[string][]ChannelSmartScheduleExecutionDetailPayload)
 	if len(taskIds) == 0 {
 		return result, nil
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	type executionDetailMetadata struct {
+		TaskId      string
+		ItemCount   int
+		PayloadSize int64
+	}
+	var metadata []executionDetailMetadata
+	if err := DB.WithContext(ctx).Model(&ChannelSmartScheduleExecutionDetail{}).
+		Select("task_id", "item_count", "LENGTH(payload_blob) AS payload_size").
+		Where("task_id IN ?", taskIds).Find(&metadata).Error; err != nil {
+		return nil, err
+	}
+	boundedTaskIds := make([]string, 0, len(metadata))
+	for _, item := range metadata {
+		if item.ItemCount < 0 || item.ItemCount > ChannelSmartScheduleExecutionDetailMaxItems {
+			return nil, fmt.Errorf("智能调度执行明细数量无效: %d", item.ItemCount)
+		}
+		if item.PayloadSize < 0 || item.PayloadSize > channelSmartScheduleExecutionDetailMaxBlob {
+			return nil, fmt.Errorf("智能调度执行明细压缩数据超过 %d MiB", channelSmartScheduleExecutionDetailMaxBlob/(1024*1024))
+		}
+		boundedTaskIds = append(boundedTaskIds, item.TaskId)
+	}
+	if len(boundedTaskIds) == 0 {
+		return result, nil
+	}
 	var rows []ChannelSmartScheduleExecutionDetail
-	if err := DB.Where("task_id IN ?", taskIds).Find(&rows).Error; err != nil {
+	if err := DB.WithContext(ctx).Where("task_id IN ?", boundedTaskIds).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	for _, row := range rows {

@@ -161,7 +161,7 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
     queryFn: () => getChannelStatusProbeOverview(modelFilter),
     staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
     refetchInterval: (statusProbeQuery) =>
       getChannelMonitorActiveRefetchInterval(
         statusProbeQuery.state.data?.data.channels.some(

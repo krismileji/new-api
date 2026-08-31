@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/QuantumNous/new-api/common"
@@ -108,17 +109,28 @@ func UpdateChannelMonitorGroupRatioOption(value string) error {
 }
 
 func GetChannelSmartScheduleEconomicSnapshot() (snapshot ChannelSmartScheduleEconomicSnapshot, err error) {
+	return GetChannelSmartScheduleEconomicSnapshotWithContext(context.Background())
+}
+
+func GetChannelSmartScheduleEconomicSnapshotWithContext(
+	ctx context.Context,
+) (snapshot ChannelSmartScheduleEconomicSnapshot, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	db := DB.WithContext(ctx)
 	ratioSeed, err := common.Marshal(ratio_setting.GetGroupRatioCopy())
 	if err != nil {
 		return snapshot, err
 	}
-	if !hasChannelSmartScheduleOptionTable(DB) {
+	if !hasChannelSmartScheduleOptionTable(db) {
 		snapshot.GroupRatios = ratio_setting.GetGroupRatioCopy()
-		snapshot.Monitors, err = GetChannelRatioMonitorCostMetadata()
+		err = db.Select("channel_id", "ratio", "cost_conversion", "updated_time").
+			Find(&snapshot.Monitors).Error
 		return snapshot, err
 	}
 
-	err = DB.Transaction(func(tx *gorm.DB) error {
+	err = db.Transaction(func(tx *gorm.DB) error {
 		options, lockErr := lockChannelMonitorOptionsTx(tx, map[string]string{
 			ChannelMonitorEconomicRevisionOption: "",
 			"GroupRatio":                         string(ratioSeed),

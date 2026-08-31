@@ -240,7 +240,19 @@ func ListChannelMonitorTasks(c *gin.Context) {
 		return
 	}
 	pageInfo := common.GetPageQuery(c)
-	tasks, total, err := model.GetChannelMonitorTasksByType(taskType, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	if pageInfo.Page < 1 {
+		pageInfo.Page = 1
+	}
+	if pageInfo.Page > channelMonitorMaxPage {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "页码必须在 1 到 1000000 之间"})
+		return
+	}
+	if pageInfo.PageSize < 1 {
+		pageInfo.PageSize = common.ItemsPerPage
+	}
+	tasks, total, err := model.GetSystemTasksByTypePage(
+		c.Request.Context(), taskType, pageInfo.GetStartIdx(), pageInfo.GetPageSize(),
+	)
 	if err != nil {
 		common.ApiError(c, err)
 		return

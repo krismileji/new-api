@@ -32,8 +32,9 @@ export function useChannelMonitorDailyInsight(open: boolean) {
     queryKey: ['channel-monitor', 'success', 'daily', days, selectedDate],
     queryFn: () => getChannelMonitorTodaySuccess({ days, date: selectedDate }),
     enabled: open,
-    staleTime: 30_000,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    refetchOnMount: 'always',
   })
 
   const changeDays = (nextDays: number) => {

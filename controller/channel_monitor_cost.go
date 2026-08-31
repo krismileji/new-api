@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const (
@@ -26,7 +27,8 @@ const (
 	// while preserving all channel totals through the residual "unattributed"
 	// row below. Reserve one slot for that residual so the serialized response
 	// itself remains bounded by this limit.
-	channelMonitorCostAPIKeyMaxRows = 1000
+	channelMonitorCostAPIKeyMaxRows    = 1000
+	channelMonitorOwnerLookupBatchSize = 500
 )
 
 type channelMonitorCostDay struct {
@@ -238,11 +240,17 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 	todayStart := channelMonitorCostDayStart(now)
 	startTimestamp := todayStart - int64(days-1)*channelMonitorCostDaySeconds
 	endTimestamp := todayStart + channelMonitorCostDaySeconds
-	totals, err := model.GetChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId)
-	if err != nil {
-		return channelMonitorCostOverview{}, err
-	}
-	channelTotals, err := model.GetChannelDailyCostChannelTotals(ctx, startTimestamp, endTimestamp, channelId)
+	var totals []model.ChannelDailyCostDayTotal
+	var channelTotals []model.ChannelDailyCostChannelTotal
+	err := model.RunChannelMonitorCostRead(ctx, func(db *gorm.DB) error {
+		var queryErr error
+		totals, queryErr = model.GetChannelDailyCostDayTotalsWithDB(ctx, db, startTimestamp, endTimestamp, channelId)
+		if queryErr != nil {
+			return queryErr
+		}
+		channelTotals, queryErr = model.GetChannelDailyCostChannelTotalsWithDB(ctx, db, startTimestamp, endTimestamp, channelId)
+		return queryErr
+	})
 	if err != nil {
 		return channelMonitorCostOverview{}, err
 	}
@@ -361,10 +369,6 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 	startTimestamp := todayStart - int64(days-1)*channelMonitorCostDaySeconds
 	endTimestamp := todayStart + channelMonitorCostDaySeconds
 
-	allChannelTotals, err := model.GetChannelDailyCostChannelTotalsWithDetail(ctx, startTimestamp, endTimestamp, channelId, detailDayStart)
-	if err != nil {
-		return channelMonitorCostOverview{}, err
-	}
 	detailStartTimestamp := startTimestamp
 	detailEndTimestamp := endTimestamp
 	if detailDayStart > 0 {
@@ -372,19 +376,45 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		detailEndTimestamp = detailDayStart + channelMonitorCostDaySeconds
 	}
 	apiKeyLimit := channelMonitorCostAPIKeyMaxRows - 1
-	apiKeyRows, apiKeysTruncated, err := model.GetChannelDailyAPIKeyCostTotalsForChannelBounded(ctx, detailStartTimestamp, detailEndTimestamp, channelId, apiKeyLimit)
+	var allChannelTotals []model.ChannelDailyCostChannelTotal
+	var apiKeyRows []model.ChannelDailyAPIKeyCost
+	var apiKeysTruncated bool
+	var channels []model.ChannelMonitorCostChannelMetadata
+	var monitors []model.ChannelRatioMonitor
+	var chartRows []model.ChannelDailyCostDayTotal
+	err := model.RunChannelMonitorCostRead(ctx, func(db *gorm.DB) error {
+		var queryErr error
+		allChannelTotals, queryErr = model.GetChannelDailyCostChannelTotalsWithDetailAndDB(
+			ctx, db, startTimestamp, endTimestamp, channelId, detailDayStart,
+		)
+		if queryErr != nil {
+			return queryErr
+		}
+		apiKeyRows, apiKeysTruncated, queryErr = model.GetChannelDailyAPIKeyCostTotalsForMonitor(
+			ctx, db, detailStartTimestamp, detailEndTimestamp, channelId, apiKeyLimit,
+		)
+		if queryErr != nil {
+			return queryErr
+		}
+		ledgerChannelIDs := make([]int, 0, len(allChannelTotals))
+		for _, total := range allChannelTotals {
+			ledgerChannelIDs = append(ledgerChannelIDs, total.ChannelId)
+		}
+		channels, queryErr = model.GetChannelMonitorCostChannelMetadata(ctx, db, ledgerChannelIDs)
+		if queryErr != nil {
+			return queryErr
+		}
+		monitors, queryErr = model.GetChannelMonitorCostRatioMetadata(ctx, db, ledgerChannelIDs)
+		if queryErr != nil {
+			return queryErr
+		}
+		chartRows, queryErr = model.GetChannelDailyCostDayTotalsWithDB(ctx, db, startTimestamp, endTimestamp, channelId)
+		return queryErr
+	})
 	if err != nil {
 		return channelMonitorCostOverview{}, err
 	}
 	apiKeyOwners, err := getChannelMonitorCostAPIKeyOwners(ctx, apiKeyRows)
-	if err != nil {
-		return channelMonitorCostOverview{}, err
-	}
-	channels, err := model.GetAllChannelsForMonitor()
-	if err != nil {
-		return channelMonitorCostOverview{}, err
-	}
-	monitors, err := model.GetChannelRatioMonitorCostMetadata()
 	if err != nil {
 		return channelMonitorCostOverview{}, err
 	}
@@ -469,10 +499,6 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		channelCosts[row.ChannelId] = &copy
 	}
 
-	chartRows, err := model.GetChannelDailyCostDayTotals(ctx, startTimestamp, endTimestamp, channelId)
-	if err != nil {
-		return channelMonitorCostOverview{}, err
-	}
 	chartItems := channelMonitorCostDaysFromTotals(startTimestamp, endTimestamp, chartRows)
 	var totalCostNanoCNY int64
 	var totalProbeCostNanoCNY int64
@@ -843,18 +869,24 @@ func getChannelMonitorAPIKeyOwners(ctx context.Context, tokenIds []int) (map[int
 		UserId     int
 		APIKeyName string `gorm:"column:name"`
 	}
-	var tokens []tokenOwner
-	if err := model.DB.WithContext(ctx).Unscoped().Model(&model.Token{}).
-		Select("id, user_id, name").Where("id IN ?", tokenIds).Find(&tokens).Error; err != nil {
-		// Token rows are optional for historical cost data and some installations
-		// run the monitor before the token table migration has completed. Avoid a
-		// metadata probe on every request; treat only the dialect-specific
-		// missing-table errors as an empty owner lookup and preserve all other
-		// database failures for the caller.
-		if channelMonitorTokenTableMissingError(err) {
-			return owners, nil
+	sort.Ints(tokenIds)
+	tokens := make([]tokenOwner, 0, len(tokenIds))
+	for start := 0; start < len(tokenIds); start += channelMonitorOwnerLookupBatchSize {
+		end := min(start+channelMonitorOwnerLookupBatchSize, len(tokenIds))
+		var batch []tokenOwner
+		if err := model.DB.WithContext(ctx).Unscoped().Model(&model.Token{}).
+			Select("id, user_id, name").Where("id IN ?", tokenIds[start:end]).Find(&batch).Error; err != nil {
+			// Token rows are optional for historical cost data and some installations
+			// run the monitor before the token table migration has completed. Avoid a
+			// metadata probe on every request; treat only the dialect-specific
+			// missing-table errors as an empty owner lookup and preserve all other
+			// database failures for the caller.
+			if channelMonitorTokenTableMissingError(err) {
+				return owners, nil
+			}
+			return nil, err
 		}
-		return nil, err
+		tokens = append(tokens, batch...)
 	}
 	userIds := make([]int, 0, len(tokens))
 	seenUserIds := make(map[int]struct{})
@@ -877,10 +909,16 @@ func getChannelMonitorAPIKeyOwners(ctx context.Context, tokenIds []int) (map[int
 		Username    string
 		DisplayName string
 	}
-	var users []userIdentity
-	if err := model.DB.WithContext(ctx).Unscoped().Model(&model.User{}).
-		Select("id, username, display_name").Where("id IN ?", userIds).Find(&users).Error; err != nil {
-		return nil, err
+	sort.Ints(userIds)
+	users := make([]userIdentity, 0, len(userIds))
+	for start := 0; start < len(userIds); start += channelMonitorOwnerLookupBatchSize {
+		end := min(start+channelMonitorOwnerLookupBatchSize, len(userIds))
+		var batch []userIdentity
+		if err := model.DB.WithContext(ctx).Unscoped().Model(&model.User{}).
+			Select("id, username, display_name").Where("id IN ?", userIds[start:end]).Find(&batch).Error; err != nil {
+			return nil, err
+		}
+		users = append(users, batch...)
 	}
 	userIdentities := make(map[int]userIdentity, len(users))
 	for _, user := range users {

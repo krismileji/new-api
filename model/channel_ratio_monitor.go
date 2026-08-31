@@ -102,22 +102,40 @@ type ChannelRatioMonitorBalanceEstimateState struct {
 }
 
 type ChannelRatioHistory struct {
-	Id               int     `json:"id"`
-	ChannelId        int     `json:"channel_id" gorm:"index;not null"`
+	Id               int     `json:"id" gorm:"index:idx_channel_ratio_history_channel_created,priority:3"`
+	ChannelId        int     `json:"channel_id" gorm:"index;not null;index:idx_channel_ratio_history_channel_created,priority:1"`
 	OldRatio         float64 `json:"old_ratio" gorm:"not null"`
 	NewRatio         float64 `json:"new_ratio" gorm:"not null"`
 	Remark           string  `json:"remark" gorm:"type:varchar(255);default:''"`
-	CreatedTime      int64   `json:"created_time" gorm:"bigint;index"`
+	CreatedTime      int64   `json:"created_time" gorm:"bigint;index;index:idx_channel_ratio_history_channel_created,priority:2"`
 	OperatorId       int     `json:"operator_id" gorm:"index"`
 	OperatorUsername string  `json:"operator_username" gorm:"type:varchar(64);default:''"`
 }
 
 func GetAllChannelsForMonitor() ([]*Channel, error) {
+	return GetAllChannelsForMonitorWithContext(context.Background())
+}
+
+func GetAllChannelsForMonitorWithContext(ctx context.Context) ([]*Channel, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var channels []*Channel
-	err := resolveChannelSortOptions(false, nil).Apply(DB).
+	err := resolveChannelSortOptions(false, nil).Apply(DB.WithContext(ctx)).
 		Omit("key").
 		Find(&channels).Error
 	return channels, err
+}
+
+func GetChannelForMonitorWithContext(ctx context.Context, channelId int) (*Channel, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	channel := &Channel{Id: channelId}
+	if err := DB.WithContext(ctx).Omit("key").First(channel, "id = ?", channelId).Error; err != nil {
+		return nil, err
+	}
+	return channel, nil
 }
 
 func GetChannelIDsForMonitor(ctx context.Context) ([]int, error) {
@@ -130,8 +148,15 @@ func GetChannelIDsForMonitor(ctx context.Context) ([]int, error) {
 }
 
 func GetChannelRatioMonitors() ([]ChannelRatioMonitor, error) {
+	return GetChannelRatioMonitorsWithContext(context.Background())
+}
+
+func GetChannelRatioMonitorsWithContext(ctx context.Context) ([]ChannelRatioMonitor, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var monitors []ChannelRatioMonitor
-	err := DB.Find(&monitors).Error
+	err := DB.WithContext(ctx).Find(&monitors).Error
 	return monitors, err
 }
 
@@ -159,8 +184,15 @@ func GetChannelRatioMonitorCostMetadata() ([]ChannelRatioMonitor, error) {
 }
 
 func GetChannelRatioMonitor(channelId int) (ChannelRatioMonitor, error) {
+	return GetChannelRatioMonitorWithContext(context.Background(), channelId)
+}
+
+func GetChannelRatioMonitorWithContext(ctx context.Context, channelId int) (ChannelRatioMonitor, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var monitor ChannelRatioMonitor
-	err := DB.Where("channel_id = ?", channelId).First(&monitor).Error
+	err := DB.WithContext(ctx).Where("channel_id = ?", channelId).First(&monitor).Error
 	return monitor, err
 }
 
@@ -169,17 +201,38 @@ func GetChannelConcurrencyConfigs() (map[int]ChannelConcurrencyConfig, error) {
 }
 
 func GetChannelConcurrencyConfigsWithContext(ctx context.Context) (map[int]ChannelConcurrencyConfig, error) {
+	return GetChannelConcurrencyConfigsForChannelIDsWithContext(ctx, nil)
+}
+
+func GetChannelConcurrencyConfigsForChannelIDsWithContext(ctx context.Context, channelIDs []int) (map[int]ChannelConcurrencyConfig, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	configs := make(map[int]ChannelConcurrencyConfig, len(channelIDs))
+	if channelIDs != nil {
+		for _, channelID := range channelIDs {
+			if channelID > 0 {
+				configs[channelID] = ChannelConcurrencyConfig{}
+			}
+		}
+		if len(configs) == 0 {
+			return configs, nil
+		}
+	}
 	var monitors []ChannelRatioMonitor
-	err := DB.WithContext(ctx).Select("channel_id", "concurrency_limit", "rpm_limit", "concurrency_revision").
+	query := DB.WithContext(ctx).Select("channel_id", "concurrency_limit", "rpm_limit", "concurrency_revision").
 		Where("concurrency_limit > ? OR rpm_limit > ? OR concurrency_revision > ?", 0, 0, 0).
-		Find(&monitors).Error
+		Order("channel_id ASC")
+	if channelIDs != nil {
+		query = query.Where("channel_id IN ?", channelIDs)
+	}
+	err := query.Find(&monitors).Error
 	if err != nil {
 		return nil, err
 	}
-	configs := make(map[int]ChannelConcurrencyConfig, len(monitors))
+	if channelIDs == nil {
+		configs = make(map[int]ChannelConcurrencyConfig, len(monitors))
+	}
 	for _, monitor := range monitors {
 		configs[monitor.ChannelId] = ChannelConcurrencyConfig{
 			Limit:    monitor.ConcurrencyLimit,
@@ -195,13 +248,20 @@ func SaveChannelConcurrencyLimit(channelId int, limit int) (monitor ChannelRatio
 }
 
 func SaveChannelConcurrencyLimits(channelId int, concurrencyLimit *int, rpmLimit *int) (monitor ChannelRatioMonitor, err error) {
+	return SaveChannelConcurrencyLimitsWithContext(context.Background(), channelId, concurrencyLimit, rpmLimit)
+}
+
+func SaveChannelConcurrencyLimitsWithContext(ctx context.Context, channelId int, concurrencyLimit *int, rpmLimit *int) (monitor ChannelRatioMonitor, err error) {
 	if concurrencyLimit == nil && rpmLimit == nil {
 		return monitor, errors.New("请至少提供渠道并发或 RPM 限制")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
 
-	err = DB.Transaction(func(tx *gorm.DB) error {
+	err = DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := lockChannelForDependentWriteTx(tx, channelId); err != nil {
 			return err
 		}
@@ -813,7 +873,14 @@ func updateChannelRatioMonitorWithRevision(channelId int, ratio float64, remark 
 }
 
 func GetChannelRatioHistory(channelId int, startIdx int, num int) (history []ChannelRatioHistory, total int64, err error) {
-	query := DB.Model(&ChannelRatioHistory{}).Where("channel_id = ?", channelId)
+	return GetChannelRatioHistoryWithContext(context.Background(), channelId, startIdx, num)
+}
+
+func GetChannelRatioHistoryWithContext(ctx context.Context, channelId int, startIdx int, num int) (history []ChannelRatioHistory, total int64, err error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	query := DB.WithContext(ctx).Model(&ChannelRatioHistory{}).Where("channel_id = ?", channelId)
 	if err = query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}

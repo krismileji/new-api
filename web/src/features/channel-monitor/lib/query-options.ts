@@ -39,7 +39,6 @@ export const CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS = {
 // Keep the active-task interval shared so the status-probe and model-detection
 // views cannot drift apart.
 export const CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS = 1000
-export const CHANNEL_MONITOR_MANUAL_REFRESH_COALESCE_MS = 750
 
 export function getChannelMonitorActiveRefetchInterval(active: boolean) {
   return active ? CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS : false
@@ -94,16 +93,9 @@ export function getChannelMonitorManualRefreshScopeKey(
 export function shouldCoalesceChannelMonitorManualRefresh(props: {
   currentScope: string
   previousScope: string | null
-  currentTime: number
-  previousRefreshAt: number
   inFlight: boolean
 }) {
-  return (
-    props.currentScope === props.previousScope &&
-    (props.inFlight ||
-      props.currentTime - props.previousRefreshAt <
-        CHANNEL_MONITOR_MANUAL_REFRESH_COALESCE_MS)
-  )
+  return props.currentScope === props.previousScope && props.inFlight
 }
 
 type ChannelMonitorRefreshTarget = {
@@ -191,9 +183,9 @@ export function getChannelMonitorOverviewQueryOptions() {
   return queryOptions({
     queryKey: ['channel-monitor'],
     queryFn: getChannelMonitorOverview,
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
   })
 }
 
@@ -202,9 +194,9 @@ export function getChannelMonitorConcurrencyQueryOptions(enabled = true) {
     queryKey: CHANNEL_MONITOR_CONCURRENCY_QUERY_KEY,
     queryFn: getChannelMonitorConcurrency,
     enabled,
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
   })
 }
 
@@ -217,9 +209,9 @@ export function getChannelMonitorPerformanceQueryOptions(
     queryKey: ['channel-monitor-performance', source, minutes],
     queryFn: () => getChannelMonitorPerformance(minutes),
     enabled: active,
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
   })
 }
 
@@ -243,8 +235,8 @@ export function getChannelMonitorSmartScheduleQueryOptions(
       metrics ? 'metrics' : 'summary',
     ],
     queryFn: () => getChannelMonitorSmartScheduleRoutes(metrics),
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
   })
 }

@@ -27,7 +27,6 @@ import type {
 } from '../../types'
 import {
   CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS,
-  CHANNEL_MONITOR_MANUAL_REFRESH_COALESCE_MS,
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   getChannelMonitorActiveRefetchInterval,
   getChannelMonitorConcurrencyQueryOptions,
@@ -79,20 +78,21 @@ describe('channel monitor query policy', () => {
     assert.equal(performanceOptions.refetchOnReconnect, false)
   })
 
-  test('keeps the lightweight concurrency snapshot independent and manual', () => {
+  test('keeps concurrency data current and manual-refresh only', () => {
     const enabled = getChannelMonitorConcurrencyQueryOptions()
     const disabled = getChannelMonitorConcurrencyQueryOptions(false)
 
     assert.equal(enabled.enabled, true)
-    assert.equal(enabled.staleTime, Number.POSITIVE_INFINITY)
+    assert.equal(enabled.staleTime, 0)
     assert.equal(enabled.refetchInterval, false)
-    assert.equal(enabled.refetchOnMount, false)
+    assert.equal(enabled.refetchOnMount, 'always')
     assert.equal(disabled.enabled, false)
     assert.deepEqual(enabled.queryKey, ['channel-monitor', 'concurrency'])
   })
 
-  test('deduplicates fresh reads while preserving an explicit refresh', async () => {
+  test('deduplicates in-flight reads while preserving an explicit refresh', async () => {
     let requestCount = 0
+    let resolveRequest: (() => void) | undefined
     const options = getChannelMonitorPerformanceQueryOptions(15, 'manual')
     const response: ChannelMonitorApiResponse<ChannelMonitorPerformanceResult> =
       {
@@ -120,21 +120,27 @@ describe('channel monitor query policy', () => {
           group_success_items: [],
         },
       }
-    const queryFn: NonNullable<typeof options.queryFn> = async () => {
+    const queryFn: NonNullable<typeof options.queryFn> = () => {
       requestCount += 1
-      return response
+      if (requestCount > 1) return Promise.resolve(response)
+      return new Promise((resolve) => {
+        resolveRequest = () => resolve(response)
+      })
     }
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     })
 
-    await queryClient.fetchQuery({ ...options, queryFn })
-    await queryClient.fetchQuery({ ...options, queryFn })
+    const firstRequest = queryClient.fetchQuery({ ...options, queryFn })
+    const secondRequest = queryClient.fetchQuery({ ...options, queryFn })
+    await Promise.resolve()
     assert.equal(requestCount, 1)
+    resolveRequest?.()
+    await Promise.all([firstRequest, secondRequest])
 
     await queryClient.refetchQueries({ queryKey: options.queryKey })
     assert.equal(requestCount, 2)
-    assert.equal(options.staleTime, Number.POSITIVE_INFINITY)
+    assert.equal(options.staleTime, 0)
     assert.equal(options.refetchInterval, false)
   })
 
@@ -319,19 +325,16 @@ describe('channel monitor query policy', () => {
     assert.notEqual(channels, channelsWithHistory)
   })
 
-  test('coalesces repeated refreshes for the same scope for 750 milliseconds', () => {
+  test('coalesces only an in-flight refresh for the same scope', () => {
     const currentScope = getChannelMonitorManualRefreshScopeKey({
       view: 'channels',
     })
 
-    assert.equal(CHANNEL_MONITOR_MANUAL_REFRESH_COALESCE_MS, 750)
     assert.equal(
       shouldCoalesceChannelMonitorManualRefresh({
         currentScope,
         previousScope: currentScope,
-        currentTime: 1_749,
-        previousRefreshAt: 1_000,
-        inFlight: false,
+        inFlight: true,
       }),
       true
     )
@@ -339,8 +342,6 @@ describe('channel monitor query policy', () => {
       shouldCoalesceChannelMonitorManualRefresh({
         currentScope,
         previousScope: currentScope,
-        currentTime: 1_750,
-        previousRefreshAt: 1_000,
         inFlight: false,
       }),
       false
@@ -351,31 +352,29 @@ describe('channel monitor query policy', () => {
         previousScope: getChannelMonitorManualRefreshScopeKey({
           view: 'groups',
         }),
-        currentTime: 1_100,
-        previousRefreshAt: 1_000,
         inFlight: true,
       }),
       false
     )
   })
 
-  test('keeps lightweight schedule summaries and metric details manual-refresh only', () => {
+  test('keeps schedule summaries and metric details current and manual-refresh only', () => {
     const summary = getChannelMonitorSmartScheduleQueryOptions(false)
     const metrics = getChannelMonitorSmartScheduleQueryOptions(true)
 
     assert.notDeepEqual(summary.queryKey, metrics.queryKey)
     assert.equal(summary.refetchInterval, false)
     assert.equal(metrics.refetchInterval, false)
-    assert.equal(summary.staleTime, Number.POSITIVE_INFINITY)
-    assert.equal(metrics.staleTime, Number.POSITIVE_INFINITY)
+    assert.equal(summary.staleTime, 0)
+    assert.equal(metrics.staleTime, 0)
     assert.equal(summary.refetchOnWindowFocus, false)
     assert.equal(metrics.refetchOnWindowFocus, false)
   })
 
-  test('does not refresh schedule routes on mount or window focus', () => {
+  test('revalidates schedule routes on mount but not window focus', () => {
     const options = getChannelMonitorSmartScheduleQueryOptions()
 
-    assert.equal(options.refetchOnMount, false)
+    assert.equal(options.refetchOnMount, 'always')
     assert.equal(options.refetchOnWindowFocus, false)
   })
 })

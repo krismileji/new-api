@@ -487,7 +487,6 @@ export function ChannelMonitor() {
   const [manualRefreshPending, setManualRefreshPending] = useState(false)
   const manualRefreshPromiseRef = useRef<Promise<void> | null>(null)
   const manualRefreshScopeRef = useRef<string | null>(null)
-  const manualRefreshAtRef = useRef(0)
   const previousViewRef = useRef<MonitorView | null>(null)
 
   const query = useQuery(getChannelMonitorOverviewQueryOptions())
@@ -554,16 +553,16 @@ export function ChannelMonitor() {
   const costQuery = useQuery({
     queryKey: ['channel-monitor', 'cost', 'summary', 2],
     queryFn: () => getChannelMonitorCostOverview(2, undefined, 1, true),
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
   })
   const todaySuccessQuery = useQuery({
     queryKey: ['channel-monitor', 'success', 'today'],
     queryFn: () => getChannelMonitorTodaySuccess(),
-    staleTime: Number.POSITIVE_INFINITY,
+    staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchOnMount: false,
+    refetchOnMount: 'always',
   })
 
   // Shared queries stay mounted while tabs change, so refetchOnMount alone
@@ -582,7 +581,6 @@ export function ChannelMonitor() {
   }, [queryClient, view])
 
   const refreshChannelMonitor = () => {
-    const now = Date.now()
     const refreshScope = getChannelMonitorManualRefreshScopeKey({
       view,
       taskHistoryOpen,
@@ -592,14 +590,11 @@ export function ChannelMonitor() {
       shouldCoalesceChannelMonitorManualRefresh({
         currentScope: refreshScope,
         previousScope: manualRefreshScopeRef.current,
-        currentTime: now,
-        previousRefreshAt: manualRefreshAtRef.current,
         inFlight: manualRefreshPromiseRef.current != null,
       })
     ) {
       return manualRefreshPromiseRef.current ?? Promise.resolve()
     }
-    manualRefreshAtRef.current = now
     manualRefreshScopeRef.current = refreshScope
     setManualRefreshPending(true)
     const refreshPromise = refetchChannelMonitorQueries(queryClient, {
@@ -607,6 +602,7 @@ export function ChannelMonitor() {
       taskHistoryOpen,
       smartScheduleHistoryOpen,
     }).finally(() => {
+      if (manualRefreshPromiseRef.current !== refreshPromise) return
       manualRefreshPromiseRef.current = null
       setManualRefreshPending(false)
     })

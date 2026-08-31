@@ -125,13 +125,11 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresKeepsHistoryAndCandidateBou
 			))
 		}
 	}
-	channelSmartScheduleApplyCurrentWindowScores(
-		context.Background(),
-		responses,
-		routes,
-		policyByGroup,
-		now,
-	)
+	performanceStart := now - 60*60
+	require.NoError(t, channelSmartScheduleApplyCurrentWindowScores(
+		responses, routes, policyByGroup, now, performanceStart,
+		channelSmartScheduleMetricViewsForTest(t, routes, policyByGroup, performanceStart, now),
+	))
 
 	byChannel := make(map[int]channelSmartScheduleRouteResponse, len(responses))
 	for _, response := range responses {
@@ -212,8 +210,11 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresUsesSwitchConfirmation(t *t
 		))
 	}
 
+	policyByGroup := map[string]channelSmartSchedulePolicy{"vip": policy}
+	performanceStart := now - 60*60
 	require.NoError(t, channelSmartScheduleApplyCurrentWindowScores(
-		context.Background(), responses, routes, map[string]channelSmartSchedulePolicy{"vip": policy}, now,
+		responses, routes, policyByGroup, now, performanceStart,
+		channelSmartScheduleMetricViewsForTest(t, routes, policyByGroup, performanceStart, now),
 	))
 
 	byChannel := make(map[int]channelSmartScheduleRouteResponse, len(responses))
@@ -269,8 +270,11 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresUsesMinimumComparableChanne
 	policy.AdaptiveSamplingEnabled = false
 	responses := channelSmartScheduleRouteResponses(routes)
 
+	policyByGroup := map[string]channelSmartSchedulePolicy{"vip": policy}
+	performanceStart := now - 60*60
 	require.NoError(t, channelSmartScheduleApplyCurrentWindowScores(
-		context.Background(), responses, routes, map[string]channelSmartSchedulePolicy{"vip": policy}, now,
+		responses, routes, policyByGroup, now, performanceStart,
+		channelSmartScheduleMetricViewsForTest(t, routes, policyByGroup, performanceStart, now),
 	))
 
 	for _, response := range responses {
@@ -323,8 +327,11 @@ func TestChannelSmartScheduleApplyCurrentWindowScoresUsesWinsorizedFirstToken(t 
 		26, "vip", "model-a", now-19, true, &outlierFirstTokenMs, nil, nil, false,
 	))
 
+	policyByGroup := map[string]channelSmartSchedulePolicy{"vip": policy}
+	performanceStart := now - 60*60
 	require.NoError(t, channelSmartScheduleApplyCurrentWindowScores(
-		context.Background(), responses, routes, map[string]channelSmartSchedulePolicy{"vip": policy}, now,
+		responses, routes, policyByGroup, now, performanceStart,
+		channelSmartScheduleMetricViewsForTest(t, routes, policyByGroup, performanceStart, now),
 	))
 
 	byChannel := make(map[int]channelSmartScheduleRouteResponse, len(responses))
@@ -369,4 +376,61 @@ func TestChannelSmartScheduleRealtimeRouteMetricViewUsesPolicyStabilityWindow(t 
 	require.NoError(t, err)
 	require.NotNil(t, longView.stability)
 	assert.Equal(t, int64(1), longView.stability.SuccessCount)
+}
+
+func TestChannelSmartScheduleRealtimeRouteMetricViewCoversAdaptiveWindow(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	now := common.GetTimestamp()
+	firstTokenMs := 150.0
+	require.NoError(t, projectChannelSmartScheduleMetricEventForTest(
+		32, "vip", "model-a", now-10*60, true, &firstTokenMs, nil, nil, false,
+	))
+	route := model.ChannelSmartScheduleRoute{
+		ChannelId: 32,
+		Group:     "vip",
+		Model:     "model-a",
+		State:     model.ChannelSmartScheduleRouteState{ParticipationSet: true},
+	}
+	policy := channelSmartScheduleTestGroupPolicy(
+		"vip", channelMonitorSmartScheduleStrategySmart, false,
+		channelMonitorSmartScheduleApplyPriorityWeight, nil, 1, 80, 30,
+	).policy()
+	policy.StabilityWindowMinutes = 5
+	policy.AdaptiveSamplingWindowSeconds = 15 * 60
+
+	view, err := channelSmartScheduleRealtimeRouteMetricView(
+		context.Background(), route, policy, now-5*60, now,
+	)
+	require.NoError(t, err)
+	require.Len(t, view.events, 1)
+	assert.Equal(t, now-10*60, view.events[0].OccurredAt)
+	assert.Nil(t, view.performance)
+	assert.Nil(t, view.stability)
+}
+
+func channelSmartScheduleMetricViewsForTest(
+	t *testing.T,
+	routes []model.ChannelSmartScheduleRoute,
+	policyByGroup map[string]channelSmartSchedulePolicy,
+	performanceStart int64,
+	now int64,
+) map[channelSmartScheduleRouteKey]channelSmartScheduleRealtimeRouteMetrics {
+	t.Helper()
+	views := make(map[channelSmartScheduleRouteKey]channelSmartScheduleRealtimeRouteMetrics, len(routes))
+	for _, route := range routes {
+		policy, configured := policyByGroup[route.Group]
+		if !configured {
+			continue
+		}
+		view, err := channelSmartScheduleRealtimeRouteMetricView(
+			context.Background(), route, policy, performanceStart, now,
+		)
+		require.NoError(t, err)
+		views[channelSmartScheduleRouteKey{
+			channelId: route.ChannelId,
+			group:     route.Group,
+			model:     route.Model,
+		}] = view
+	}
+	return views
 }

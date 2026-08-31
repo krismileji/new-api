@@ -2,9 +2,13 @@ package service
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,6 +61,19 @@ func TestChannelModelDetectionOverviewQueryMergesConcurrentReads(t *testing.T) {
 	require.NoError(t, <-firstResult)
 	require.NoError(t, <-secondResult)
 	assert.Equal(t, int64(1), buildCount.Load())
+}
+
+func TestCurrentChannelModelDetectionOverviewRejectsOversizedResponse(t *testing.T) {
+	db := setupChannelModelDetectionQueryTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 890, Name: strings.Repeat("x", channelModelDetectionResponseMaxBytes), Status: common.ChannelStatusEnabled,
+	}).Error)
+	previousDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = previousDB })
+
+	_, err := GetCurrentChannelModelDetectionOverview(context.Background())
+	assert.ErrorIs(t, err, ErrChannelModelDetectionResponseTooLarge)
 }
 
 func TestChannelModelDetectionOverviewQueryGenerationFencesInflightReads(t *testing.T) {

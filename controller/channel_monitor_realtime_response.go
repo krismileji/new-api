@@ -59,12 +59,26 @@ type channelMonitorRealtimeResponseMetadata struct {
 }
 
 func channelMonitorRealtimeMetadata(windowStart int64) channelMonitorRealtimeResponseMetadata {
+	return channelMonitorRealtimeMetadataWithContext(context.Background(), windowStart)
+}
+
+func channelMonitorRealtimeMetadataWithContext(ctx context.Context, windowStart int64) channelMonitorRealtimeResponseMetadata {
 	now := time.Now().Unix()
-	dataCutoffAt, processedAt, eventWatermark, projectionErr := service.GetChannelMonitorRedisSharedProjectionMetadata(context.Background(), windowStart, now+1)
-	redisStatus := service.GetChannelMonitorRedisRealtimeStatus(context.Background())
+	dataCutoffAt, processedAt, eventWatermark, projectionErr := service.GetChannelMonitorRedisSharedProjectionMetadata(ctx, windowStart, now+1)
 	if projectionErr != nil {
 		dataCutoffAt, processedAt, eventWatermark = 0, 0, 0
 	}
+	return channelMonitorRealtimeProjectionMetadata(ctx, windowStart, dataCutoffAt, processedAt, eventWatermark)
+}
+
+func channelMonitorRealtimeProjectionMetadata(
+	ctx context.Context,
+	windowStart int64,
+	dataCutoffAt int64,
+	processedAt int64,
+	eventWatermark uint64,
+) channelMonitorRealtimeResponseMetadata {
+	redisStatus := service.GetChannelMonitorRedisRealtimeStatus(ctx)
 	return channelMonitorRealtimeResponseMetadata{
 		DataCutoffAt:               dataCutoffAt,
 		ProcessedAt:                processedAt,
@@ -118,56 +132,16 @@ func channelMonitorRealtimeMetadata(windowStart int64) channelMonitorRealtimeRes
 func channelMonitorRealtimePageMetadata(
 	view service.ChannelMonitorRealtimePageView,
 ) channelMonitorRealtimeResponseMetadata {
-	redisStatus := service.GetChannelMonitorRedisRealtimeStatus(context.Background())
-	projectionStartedAt := int64(0)
-	return channelMonitorRealtimeResponseMetadata{
-		DataCutoffAt:               view.DataCutoffAt,
-		ProcessedAt:                view.ProcessedAt,
-		ProjectionStartedAt:        projectionStartedAt,
-		EventWatermark:             view.EventWatermark,
-		QueueDepth:                 int(redisStatus.PendingCount),
-		RedisStatus:                redisStatus.RedisStatus,
-		RedisAvailable:             redisStatus.RedisAvailable,
-		RedisPoolIsolation:         redisStatus.RedisPoolIsolation,
-		RedisPoolIsolationMode:     redisStatus.RedisPoolIsolationMode,
-		RedisPoolShared:            redisStatus.RedisPoolShared,
-		RedisPoolDegradedRoles:     redisStatus.RedisPoolDegradedRoles,
-		RedisConsumerRunning:       redisStatus.RedisConsumerRunning,
-		PendingCount:               redisStatus.PendingCount,
-		WriterQueueDepth:           redisStatus.WriterQueueDepth,
-		WriterQueueCapacity:        redisStatus.WriterQueueCapacity,
-		WriterQueuedEvents:         redisStatus.WriterQueuedEvents,
-		WriterDroppedEvents:        redisStatus.WriterDroppedEvents,
-		WriterRetryEvents:          redisStatus.WriterRetryEvents,
-		WriterOldestQueuedAt:       redisStatus.WriterOldestQueuedAt,
-		WriterQueueAgeSeconds:      redisStatus.WriterQueueAgeSeconds,
-		OldestPendingAt:            redisStatus.OldestPendingAt,
-		ConsumerLagSeconds:         redisStatus.ConsumerLagSeconds,
-		LastPublishedAt:            redisStatus.LastPublishedAt,
-		LastProcessedAt:            redisStatus.LastProcessedAt,
-		RetryCount:                 redisStatus.RetryCount,
-		TakeoverCount:              redisStatus.TakeoverCount,
-		QuarantineCount:            redisStatus.QuarantineCount,
-		LastQuarantinedAt:          redisStatus.LastQuarantinedAt,
-		RuntimeMarkerFailureCount:  redisStatus.RuntimeMarkerFailureCount,
-		ScheduleMarkerFailureCount: redisStatus.ScheduleMarkerFailureCount,
-		CostStreamPendingCount:     redisStatus.CostStreamPendingCount,
-		CostStreamUnreadCount:      redisStatus.CostStreamUnreadCount,
-		CostOutboxPendingCount:     redisStatus.CostOutboxPendingCount,
-		CostOutboxOldestPendingAt:  redisStatus.CostOutboxOldestPendingAt,
-		CostOutboxRetryCount:       redisStatus.CostOutboxRetryCount,
-		CostLedgerFailedCount:      redisStatus.CostLedgerFailedCount,
-		CostPublishFailedCount:     redisStatus.CostPublishFailedCount,
-		CostDeadLetterCount:        redisStatus.CostDeadLetterCount,
-		MarkerReleaseFailureCount:  redisStatus.MarkerReleaseFailureCount,
-		MarkerReleaseFailureActive: redisStatus.MarkerReleaseFailureActive,
-		StreamTrimFailureCount:     redisStatus.StreamTrimFailureCount,
-		StreamTrimFailureActive:    redisStatus.StreamTrimFailureActive,
-		RedisPoolStats:             redisStatus.RedisPoolStats,
-		DegradedReasons:            redisStatus.DegradedReasons,
-		RealtimeDegraded:           redisStatus.RealtimeDegraded,
-		WindowStart:                view.WindowStart,
-	}
+	return channelMonitorRealtimePageMetadataWithContext(context.Background(), view)
+}
+
+func channelMonitorRealtimePageMetadataWithContext(
+	ctx context.Context,
+	view service.ChannelMonitorRealtimePageView,
+) channelMonitorRealtimeResponseMetadata {
+	return channelMonitorRealtimeProjectionMetadata(
+		ctx, view.WindowStart, view.DataCutoffAt, view.ProcessedAt, view.EventWatermark,
+	)
 }
 
 func channelMonitorRealtimePerformanceMetrics(

@@ -16,6 +16,10 @@ import (
 func GetChannelModelDetectionOverview(c *gin.Context) {
 	response, err := service.GetCurrentChannelModelDetectionOverview(c.Request.Context())
 	if err != nil {
+		if errors.Is(err, service.ErrChannelModelDetectionResponseTooLarge) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"success": false, "message": err.Error()})
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
@@ -65,7 +69,7 @@ func GetChannelModelDetectionRunDetail(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		case errors.Is(err, gorm.ErrRecordNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"success": false, "message": "模型检测轮次不存在"})
-		case errors.Is(err, service.ErrChannelModelDetectionReportTooLarge):
+		case errors.Is(err, service.ErrChannelModelDetectionReportTooLarge), errors.Is(err, service.ErrChannelModelDetectionResponseTooLarge):
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"success": false, "message": err.Error()})
 		default:
 			common.ApiError(c, err)

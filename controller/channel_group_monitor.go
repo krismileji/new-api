@@ -1,10 +1,10 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -131,16 +131,18 @@ func channelGroupMonitorConfigToResponse(config model.ChannelGroupMonitorConfig)
 	}, nil
 }
 
-func getChannelGroupMonitorCandidateModels(enabledOnly bool) (map[string][]string, error) {
-	channels, err := model.GetAllChannelsForMonitor()
+func getChannelGroupMonitorCandidateModels(ctx context.Context, enabledOnly bool) (map[string][]string, error) {
+	channels, err := model.GetChannelGroupMonitorCandidateChannels(ctx, enabledOnly)
 	if err != nil {
 		return nil, err
 	}
 	channelsByID := make(map[int]*model.Channel, len(channels))
+	channelIDs := make([]int, 0, len(channels))
 	for _, channel := range channels {
 		channelsByID[channel.Id] = channel
+		channelIDs = append(channelIDs, channel.Id)
 	}
-	abilities, err := model.GetAllEnableAbilityWithChannels()
+	abilities, err := model.GetChannelGroupMonitorCandidateAbilities(ctx, channelIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -148,9 +150,6 @@ func getChannelGroupMonitorCandidateModels(enabledOnly bool) (map[string][]strin
 	for _, ability := range abilities {
 		channel := channelsByID[ability.ChannelId]
 		if channel == nil {
-			continue
-		}
-		if enabledOnly && channel.Status != common.ChannelStatusEnabled {
 			continue
 		}
 		groupName := strings.TrimSpace(ability.Group)
@@ -454,16 +453,28 @@ func channelGroupMonitorHealth(config model.ChannelGroupMonitorConfig, state *mo
 	}
 }
 
-func buildChannelGroupMonitorItems(config model.ChannelGroupMonitorConfig, includeInvalid bool, usableGroups map[string]string, now int64) ([]channelGroupMonitorItemResponse, error) {
+func buildChannelGroupMonitorItems(
+	ctx context.Context,
+	config model.ChannelGroupMonitorConfig,
+	validCandidates map[string][]string,
+	includeInvalid bool,
+	usableGroups map[string]string,
+	now int64,
+) ([]channelGroupMonitorItemResponse, error) {
 	groups, err := config.Groups()
 	if err != nil {
 		return nil, err
 	}
-	validCandidates, err := getChannelGroupMonitorCandidateModels(true)
-	if err != nil {
-		return nil, err
+	groupNames := make([]string, 0, len(groups))
+	for _, group := range groups {
+		if usableGroups != nil {
+			if _, allowed := usableGroups[group.GroupName]; !allowed {
+				continue
+			}
+		}
+		groupNames = append(groupNames, group.GroupName)
 	}
-	states, err := model.GetChannelGroupMonitorStates()
+	states, err := model.GetChannelGroupMonitorStatesForGroups(ctx, groupNames)
 	if err != nil {
 		return nil, err
 	}
@@ -472,8 +483,12 @@ func buildChannelGroupMonitorItems(config model.ChannelGroupMonitorConfig, inclu
 		stateByGroup[state.GroupName] = state
 	}
 	displayValue, displayUnit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
-	summaries, err := model.GetChannelGroupMonitorExecutionSummariesSince(
-		now - channelGroupMonitorDisplaySeconds(displayValue, displayUnit),
+	bucketSeconds := model.ChannelStatusProbeDisplayBucketSeconds(displayUnit)
+	windowStart := model.ChannelStatusProbeDisplayBucketStart(now, displayUnit) -
+		int64(displayValue-1)*bucketSeconds
+	windowEnd := now + 1
+	summaries, err := model.GetChannelGroupMonitorExecutionSummariesForGroups(
+		ctx, groupNames, windowStart, windowEnd,
 	)
 	if err != nil {
 		return nil, err
@@ -488,9 +503,9 @@ func buildChannelGroupMonitorItems(config model.ChannelGroupMonitorConfig, inclu
 		}
 		summaryByGroup[item.GroupName] = current
 	}
-	windowStart := model.ChannelStatusProbeDisplayBucketStart(now, displayUnit) -
-		int64(displayValue-1)*model.ChannelStatusProbeDisplayBucketSeconds(displayUnit)
-	executions, err := model.GetChannelGroupMonitorExecutionWindowSince(windowStart)
+	executions, err := model.GetChannelGroupMonitorExecutionWindowForGroups(
+		ctx, groupNames, windowStart, windowEnd,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -544,8 +559,17 @@ func buildChannelGroupMonitorItems(config model.ChannelGroupMonitorConfig, inclu
 	return items, nil
 }
 
+func respondChannelGroupMonitorQueryError(c *gin.Context, err error) {
+	if errors.Is(err, model.ErrChannelGroupMonitorCandidatesTooLarge) ||
+		errors.Is(err, model.ErrChannelGroupMonitorWindowTooLarge) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	common.ApiError(c, err)
+}
+
 func GetChannelGroupMonitorSettings(c *gin.Context) {
-	config, err := model.GetChannelGroupMonitorConfigOrDefault()
+	config, err := model.GetChannelGroupMonitorConfigOrDefaultWithContext(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -555,14 +579,14 @@ func GetChannelGroupMonitorSettings(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	candidates, err := getChannelGroupMonitorCandidateModels(true)
+	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), true)
 	if err != nil {
-		common.ApiError(c, err)
+		respondChannelGroupMonitorQueryError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{
+	writeChannelMonitorBoundedJSON(c, gin.H{
 		"settings": response, "candidate_models_by_group": candidates,
-	}})
+	})
 }
 
 func UpdateChannelGroupMonitorSettings(c *gin.Context) {
@@ -584,12 +608,12 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "状态展示范围至少需要覆盖两个探测周期"})
 		return
 	}
-	candidates, err := getChannelGroupMonitorCandidateModels(true)
+	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), true)
 	if err != nil {
-		common.ApiError(c, err)
+		respondChannelGroupMonitorQueryError(c, err)
 		return
 	}
-	currentConfig, err := model.GetChannelGroupMonitorConfigOrDefault()
+	currentConfig, err := model.GetChannelGroupMonitorConfigOrDefaultWithContext(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -632,7 +656,7 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 
 func GetChannelGroupMonitorOverview(c *gin.Context) {
 	now := common.GetTimestamp()
-	config, err := model.GetChannelGroupMonitorConfigOrDefault()
+	config, err := model.GetChannelGroupMonitorConfigOrDefaultWithContext(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -642,19 +666,19 @@ func GetChannelGroupMonitorOverview(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	items, err := buildChannelGroupMonitorItems(config, true, nil, now)
+	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), true)
 	if err != nil {
-		common.ApiError(c, err)
+		respondChannelGroupMonitorQueryError(c, err)
 		return
 	}
-	candidates, err := getChannelGroupMonitorCandidateModels(true)
+	items, err := buildChannelGroupMonitorItems(c.Request.Context(), config, candidates, true, nil, now)
 	if err != nil {
-		common.ApiError(c, err)
+		respondChannelGroupMonitorQueryError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": channelGroupMonitorOverviewResponse{
+	writeChannelMonitorBoundedJSON(c, channelGroupMonitorOverviewResponse{
 		ServerNow: now, Settings: settings, CandidateModelsByGroup: candidates, Items: items,
-	}})
+	})
 }
 
 func RunChannelGroupMonitorNow(c *gin.Context) {
@@ -676,16 +700,36 @@ func RunChannelGroupMonitorNow(c *gin.Context) {
 }
 
 func ListChannelGroupMonitorExecutions(c *gin.Context) {
-	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
-	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
-	if page < 1 {
-		page = 1
-	}
-	if pageSize < 1 || pageSize > 100 {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "每页数量必须在 1 到 100 之间"})
+	page, ok := parseChannelMonitorPositivePageQuery(c, "page", 1, channelMonitorMaxPage)
+	if !ok {
 		return
 	}
-	items, total, err := model.ListChannelGroupMonitorExecutions(page, pageSize, c.Query("group"), c.Query("result"))
+	pageSize, ok := parseChannelMonitorPositivePageQuery(c, "page_size", 20, 100)
+	if !ok {
+		return
+	}
+	groupName := strings.TrimSpace(c.Query("group"))
+	result := strings.TrimSpace(c.Query("result"))
+	if utf8.RuneCountInString(groupName) > 64 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "分组名称长度不能超过 64 个字符"})
+		return
+	}
+	validResults := map[string]bool{
+		"": true, model.ChannelGroupMonitorResultSuccess: true,
+		model.ChannelGroupMonitorResultUpstreamFailure: true,
+		model.ChannelGroupMonitorResultRateLimited:     true,
+		model.ChannelGroupMonitorResultLocalFailure:    true,
+		model.ChannelGroupMonitorResultUnavailable:     true,
+		model.ChannelGroupMonitorResultSkipped:         true,
+		model.ChannelGroupMonitorResultTimeout:         true,
+	}
+	if !validResults[result] {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "执行记录筛选条件无效"})
+		return
+	}
+	items, total, err := model.ListChannelGroupMonitorExecutionsWithContext(
+		c.Request.Context(), page, pageSize, groupName, result,
+	)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -697,7 +741,7 @@ func ListChannelGroupMonitorExecutions(c *gin.Context) {
 
 func GetPricingGroupMonitor(c *gin.Context) {
 	now := common.GetTimestamp()
-	config, err := model.GetChannelGroupMonitorConfigOrDefault()
+	config, err := model.GetChannelGroupMonitorConfigOrDefaultWithContext(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -709,9 +753,14 @@ func GetPricingGroupMonitor(c *gin.Context) {
 		}
 	}
 	usableGroups := service.GetRoleUsableGroups(userGroup, c.GetInt("role"))
-	items, err := buildChannelGroupMonitorItems(config, false, usableGroups, now)
+	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), true)
 	if err != nil {
-		common.ApiError(c, err)
+		respondChannelGroupMonitorQueryError(c, err)
+		return
+	}
+	items, err := buildChannelGroupMonitorItems(c.Request.Context(), config, candidates, false, usableGroups, now)
+	if err != nil {
+		respondChannelGroupMonitorQueryError(c, err)
 		return
 	}
 	publicItems := make([]pricingGroupMonitorItemResponse, 0, len(items))
