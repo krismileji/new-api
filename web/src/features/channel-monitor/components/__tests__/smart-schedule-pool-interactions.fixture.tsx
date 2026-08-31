@@ -344,6 +344,34 @@ async function renderPool(options?: {
 }
 
 const filtered = await renderPool()
+const desktopTable = filtered.container.querySelector<HTMLTableElement>(
+  '[data-schedule-route-list="desktop-table"]'
+)
+assert.ok(desktopTable)
+const desktopHeaders = [
+  ...desktopTable.querySelectorAll<HTMLTableCellElement>('thead th'),
+]
+const participationColumnIndex = desktopHeaders.findIndex(
+  (header) => header.textContent?.trim() === '参与'
+)
+const actionsColumnIndex = desktopHeaders.findIndex(
+  (header) => header.textContent?.trim() === '操作'
+)
+assert.ok(participationColumnIndex >= 0)
+assert.ok(actionsColumnIndex >= 0)
+assert.ok(
+  desktopHeaders[participationColumnIndex]?.className.includes('min-w-[4.5rem]')
+)
+assert.ok(
+  desktopHeaders[actionsColumnIndex]?.className.includes('min-w-[9rem]')
+)
+const desktopCells = desktopTable.querySelectorAll<HTMLTableCellElement>(
+  'tbody tr:first-child td'
+)
+assert.ok(
+  desktopCells[participationColumnIndex]?.className.includes('min-w-[4.5rem]')
+)
+assert.ok(desktopCells[actionsColumnIndex]?.className.includes('min-w-[9rem]'))
 const search = filtered.container.querySelector<HTMLInputElement>(
   '[aria-label="搜索调度池渠道"]'
 )

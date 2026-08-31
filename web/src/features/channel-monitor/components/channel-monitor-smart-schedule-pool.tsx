@@ -992,10 +992,10 @@ export function ChannelMonitorSmartSchedulePool(
                   <th className='w-[15%] px-2 py-2 font-medium'>
                     窗口数据 / 测试样本
                   </th>
-                  <th className='w-[6%] px-2 py-2 text-center font-medium'>
+                  <th className='w-[6%] min-w-[4.5rem] px-2 py-2 text-center font-medium'>
                     参与
                   </th>
-                  <th className='w-[7%] px-3 py-2 text-right font-medium'>
+                  <th className='w-[9rem] min-w-[9rem] px-3 py-2 text-right font-medium'>
                     操作
                   </th>
                 </tr>
@@ -1104,7 +1104,7 @@ export function ChannelMonitorSmartSchedulePool(
                           )}
                         />
                       </td>
-                      <td className='px-2 py-2 text-center align-middle'>
+                      <td className='w-[6%] min-w-[4.5rem] px-2 py-2 text-center align-middle'>
                         <div className='flex items-center justify-center'>
                           {updatePending ? (
                             <Spinner className='size-4' />
@@ -1122,7 +1122,7 @@ export function ChannelMonitorSmartSchedulePool(
                           )}
                         </div>
                       </td>
-                      <td className='px-3 py-2 align-middle'>
+                      <td className='w-[9rem] min-w-[9rem] px-3 py-2 align-middle'>
                         <RouteActions
                           route={route}
                           disabled={props.updateDisabled}
