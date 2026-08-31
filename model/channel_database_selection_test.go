@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	appdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"github.com/stretchr/testify/assert"
@@ -37,7 +38,7 @@ func TestDatabaseChannelSelectionPrefersAvailableExactModelPool(t *testing.T) {
 		{ChannelId: 9202, Group: "vip", Model: wildcardModel, Enabled: true, Priority: &wildcardPriority, Weight: weight},
 	}).Error)
 
-	channel, err := GetRandomSatisfiedChannel("vip", requestModel, 0, "")
+	channel, err := GetRandomSatisfiedChannel("vip", requestModel, 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 9201, channel.Id)
@@ -67,10 +68,10 @@ func TestDatabaseChannelSelectionFallsBackAfterExactPoolFilters(t *testing.T) {
 	channel, err := GetRandomSatisfiedChannel(
 		"vip",
 		requestModel,
-		3,
-		"",
-		ChannelSelectionOptions{ExcludedChannelIds: []int{9213}},
-	)
+		3, nil,
+
+		ChannelSelectionOptions{ExcludedChannelIds: []int{9213}})
+
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 9214, channel.Id)
@@ -98,7 +99,10 @@ func TestDatabaseChannelSelectionFallsBackAfterRequestPathFilter(t *testing.T) {
 		{ChannelId: wildcard.Id, Group: "vip", Model: wildcardModel, Enabled: true, Priority: &priority, Weight: weight},
 	}).Error)
 
-	channel, err := GetRandomSatisfiedChannel("vip", requestModel, 0, "/v1/responses")
+	channel, err := GetRandomSatisfiedChannel("vip", requestModel, 0, []appdto.ChannelFilter{{
+		Kind:        appdto.FilterRequestPath,
+		RequestPath: "/v1/responses",
+	}})
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, wildcard.Id, channel.Id)

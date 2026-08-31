@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -1005,7 +1006,7 @@ func getRandomSatisfiedChannelWithRateLimitFallback(
 	group string,
 	modelName string,
 	retry int,
-	requestPath string,
+	filters []dto.ChannelFilter,
 	options model.ChannelSelectionOptions,
 ) (*model.Channel, error) {
 	optionsWithoutRateLimitCooldown := options
@@ -1021,7 +1022,7 @@ func getRandomSatisfiedChannelWithRateLimitFallback(
 			break
 		}
 	}
-	channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, requestPath, options)
+	channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, filters, options)
 	if err != nil || channel != nil || !hasFallbackCandidate {
 		return channel, err
 	}
@@ -1029,7 +1030,7 @@ func getRandomSatisfiedChannelWithRateLimitFallback(
 		group,
 		modelName,
 		retry,
-		requestPath,
+		filters,
 		optionsWithoutRateLimitCooldown,
 	)
 }

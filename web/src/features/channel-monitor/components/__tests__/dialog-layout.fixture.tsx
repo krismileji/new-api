@@ -18,8 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
+import type { AxiosAdapter } from 'axios'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import type { ReactElement } from 'react'
+
+import { api } from '@/lib/api'
 
 import type { ChannelMonitorItem } from '../../types'
 import './test-dom'
@@ -227,6 +230,23 @@ successQueryClient.setQueryData(
     },
   }
 )
+const successDetailQueryKey = [
+  'channel-monitor-success-detail',
+  1440,
+  'channel',
+  7,
+  undefined,
+] as const
+const originalAdapter = api.defaults.adapter
+const successDetailAdapter: AxiosAdapter = async (config) => ({
+  data: successQueryClient.getQueryData(successDetailQueryKey),
+  status: 200,
+  statusText: 'OK',
+  headers: {},
+  config,
+})
+api.defaults.adapter = successDetailAdapter
+
 const successRendered = await renderDialog(
   <ChannelMonitorSuccessDetailDialog
     target={{
@@ -243,6 +263,10 @@ const successRendered = await renderDialog(
   />,
   successQueryClient
 )
+await act(async () => {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+})
+api.defaults.adapter = originalAdapter
 const failureTable = [
   ...successRendered.dialog.querySelectorAll<HTMLElement>(
     '[data-slot="table"]'

@@ -41,6 +41,16 @@ func (a *taskPollingResponseAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *r
 	return 0
 }
 
+func (a *taskPollingResponseAdaptor) FetchMode() string { return "batch" }
+
+func (a *taskPollingResponseAdaptor) FetchBatchTasks(baseURL, key string, taskIDs []string, proxy string) (*http.Response, error) {
+	return a.FetchTask(baseURL, key, map[string]any{"ids": taskIDs}, proxy)
+}
+
+func (a *taskPollingResponseAdaptor) ParseBatchResult([]byte) (map[string]*BatchTaskResult, error) {
+	return nil, nil
+}
+
 type taskPollingCloseTrackingBody struct {
 	io.Reader
 	closed bool
@@ -87,7 +97,7 @@ func TestUpdateVideoSingleTaskRejectsEmptyUpstreamResponses(t *testing.T) {
 	assert.Contains(t, err.Error(), "status 502")
 }
 
-func TestUpdateSunoTasksClosesNonSuccessResponseBody(t *testing.T) {
+func TestUpdateBatchTasksClosesNonSuccessResponseBody(t *testing.T) {
 	truncate(t)
 
 	const channelID = 810
@@ -107,7 +117,7 @@ func TestUpdateSunoTasksClosesNonSuccessResponseBody(t *testing.T) {
 	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return adaptor }
 	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
 
-	err := updateSunoTasks(context.Background(), channelID, []string{"upstream-task"}, nil)
+	err := updateBatchTasks(context.Background(), adaptor, channelID, []string{"upstream-task"}, nil)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "status code: 502")

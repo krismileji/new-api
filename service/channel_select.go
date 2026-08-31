@@ -5,10 +5,35 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/gin-gonic/gin"
 )
+
+func GetChannelConstraints(c *gin.Context) *dto.ChannelConstraints {
+	if c == nil {
+		return &dto.ChannelConstraints{}
+	}
+	if existing, ok := common.GetContextKeyType[*dto.ChannelConstraints](c, constant.ContextKeyChannelConstraints); ok && existing != nil {
+		return existing
+	}
+	constraints := &dto.ChannelConstraints{}
+	common.SetContextKey(c, constant.ContextKeyChannelConstraints, constraints)
+	return constraints
+}
+
+func AppendTaskPluginIdentityFilter(c *gin.Context, pluginKey string) {
+	if c == nil {
+		return
+	}
+	GetChannelConstraints(c).AddFilter(dto.ChannelFilter{
+		Kind:                   dto.FilterTaskPluginIdentity,
+		TaskPluginKey:          pluginKey,
+		TaskPluginChannelTypes: pinnedTaskPluginChannelTypes(c, pluginKey),
+	})
+}
 
 type RetryParam struct {
 	Ctx              *gin.Context
@@ -112,6 +137,13 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelS
 			selectionOptions.RequestBodyBytes = providedOptions.RequestBodyBytes
 		}
 	}
+	filters := append([]dto.ChannelFilter(nil), GetChannelConstraints(param.Ctx).Filters...)
+	if param.RequestPath != "" {
+		filters = append(filters, dto.ChannelFilter{
+			Kind:        dto.FilterRequestPath,
+			RequestPath: param.RequestPath,
+		})
+	}
 	if param.TokenGroup == "auto" {
 		autoGroups := GetRequestAutoGroups(param.Ctx, userGroup)
 		if len(autoGroups) == 0 {
@@ -156,7 +188,13 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelS
 			}
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, _ = getRandomSatisfiedChannelWithRateLimitFallback(autoGroup, param.ModelName, priorityRetry, param.RequestPath, selectionOptions)
+			channel, _ = getRandomSatisfiedChannelWithRateLimitFallback(
+				autoGroup,
+				param.ModelName,
+				priorityRetry,
+				filters,
+				selectionOptions,
+			)
 			if channel == nil {
 				// Initial auto-group selection may fall through groups to find any
 				// usable channel. Once channels have failed in this request, crossing
@@ -206,10 +244,69 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelS
 			break
 		}
 	} else {
-		channel, err = getRandomSatisfiedChannelWithRateLimitFallback(param.TokenGroup, param.ModelName, param.GetRetry(), param.RequestPath, selectionOptions)
+		channel, err = getRandomSatisfiedChannelWithRateLimitFallback(
+			param.TokenGroup,
+			param.ModelName,
+			param.GetRetry(),
+			filters,
+			selectionOptions,
+		)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}
 	}
 	return channel, selectGroup, nil
+}
+
+func pinnedTaskPluginChannelTypes(c *gin.Context, expected string) []int {
+	if c == nil || expected == "" {
+		return nil
+	}
+	if value, exists := c.Get(jsplugin.ContextKeyPinnedEndpoint); exists {
+		pinned, ok := value.(jsplugin.PinnedEndpoint)
+		if ok && pinned.Generation != nil && len(pinned.Candidates) > 1 {
+			expectedFound := false
+			channelTypes := make([]int, 0, len(pinned.Candidates))
+			seen := make(map[int]struct{}, len(pinned.Candidates))
+			for _, candidate := range pinned.Candidates {
+				if candidate.Plugin == nil {
+					continue
+				}
+				if candidate.Plugin.Meta.Key == expected {
+					expectedFound = true
+				}
+				for _, channelType := range candidate.Plugin.Meta.ChannelTypes {
+					if channelType == 0 || channelType == constant.ChannelTypeTaskPlugin {
+						continue
+					}
+					if _, duplicate := seen[channelType]; duplicate {
+						continue
+					}
+					if plugin, indexed := pinned.Generation.GetByChannelType(channelType); indexed && plugin == candidate.Plugin {
+						seen[channelType] = struct{}{}
+						channelTypes = append(channelTypes, channelType)
+					}
+				}
+			}
+			if expectedFound {
+				return channelTypes
+			}
+		}
+	}
+	value, exists := c.Get(jsplugin.ContextKeyPinnedPlugin)
+	pinned, ok := value.(jsplugin.PinnedPlugin)
+	if !exists || !ok || pinned.Generation == nil || pinned.Plugin == nil || pinned.Plugin.Meta.Key != expected {
+		return nil
+	}
+	channelTypes := make([]int, 0, len(pinned.Plugin.Meta.ChannelTypes))
+	for _, channelType := range pinned.Plugin.Meta.ChannelTypes {
+		if channelType == 0 || channelType == constant.ChannelTypeTaskPlugin {
+			continue
+		}
+		channelTypes = append(channelTypes, channelType)
+	}
+	if len(channelTypes) == 0 {
+		return nil
+	}
+	return channelTypes
 }

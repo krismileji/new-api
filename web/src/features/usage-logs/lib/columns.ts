@@ -33,12 +33,14 @@ import { getLogsViewCapabilities } from './scope'
  */
 export function useColumnsByCategory(
   logCategory: LogCategory,
-  viewScope: LogsViewScope
+  viewScope: LogsViewScope,
+  isRoot: boolean
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): ColumnDef<any>[] {
   const capabilities = getLogsViewCapabilities(viewScope)
   const commonColumns = useCommonLogsColumns(
     capabilities.isAdminView,
+    isRoot,
     capabilities.showUserColumn,
     capabilities.showChannelColumn
   )
@@ -49,6 +51,7 @@ export function useColumnsByCategory(
   )
   const taskColumns = useTaskLogsColumns(
     capabilities.isAdminView,
+    isRoot,
     capabilities.showUserColumn,
     capabilities.showChannelColumn
   )

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"strings"
 	"sync"
@@ -131,16 +132,21 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
 		logContent = fmt.Sprintf("%s，按次计费", logContent)
 	} else {
+		var contents []string
 		if otherRatios := info.PriceData.OtherRatios(); len(otherRatios) > 0 {
-			var contents []string
 			for key, ra := range otherRatios {
 				if 1.0 != ra {
 					contents = append(contents, fmt.Sprintf("%s: %.2f", key, ra))
 				}
 			}
-			if len(contents) > 0 {
-				logContent = fmt.Sprintf("%s, 计算参数：%s", logContent, strings.Join(contents, ", "))
+		}
+		if snap := info.TieredBillingSnapshot; snap != nil {
+			for key, value := range snap.UsageFacts {
+				contents = append(contents, fmt.Sprintf("%s: %v", key, value))
 			}
+		}
+		if len(contents) > 0 {
+			logContent = fmt.Sprintf("%s, 计算参数：%s", logContent, strings.Join(contents, ", "))
 		}
 	}
 	other := make(map[string]interface{})
@@ -158,6 +164,15 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = info.UpstreamModelName
 	}
+	if snap := info.TieredBillingSnapshot; snap != nil {
+		other["billing_mode"] = "tiered_expr"
+		other["expr_b64"] = base64.StdEncoding.EncodeToString([]byte(snap.ExprString))
+		other["matched_tier"] = snap.EstimatedTier
+		if len(snap.UsageFacts) > 0 {
+			other["usage_facts"] = snap.UsageFacts
+		}
+	}
+	appendTaskLogInfo(task, other)
 	attachQuotaSaturation(c, info, other)
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
@@ -262,13 +277,48 @@ func taskBillingOther(task *model.Task) map[string]interface{} {
 				other[k] = v
 			}
 		}
+		if snap := bc.TieredSnapshot; snap != nil {
+			other["billing_mode"] = "tiered_expr"
+			other["expr_b64"] = base64.StdEncoding.EncodeToString([]byte(snap.ExprString))
+			other["matched_tier"] = snap.EstimatedTier
+			if len(snap.UsageFacts) > 0 {
+				other["usage_facts"] = snap.UsageFacts
+			}
+		}
 	}
 	props := task.Properties
 	if props.UpstreamModelName != "" && props.UpstreamModelName != props.OriginModelName {
 		other["is_model_mapped"] = true
 		other["upstream_model_name"] = props.UpstreamModelName
 	}
+	appendTaskLogInfo(task, other)
 	return other
+}
+
+func appendTaskLogInfo(task *model.Task, other map[string]interface{}) {
+	if task == nil || other == nil {
+		return
+	}
+	if task.TaskID != "" {
+		other["task_id"] = task.TaskID
+	}
+	if task.PrivateData.Execution != nil {
+		AppendTaskPluginAuditInfo(other, task.PrivateData.Execution.TaskPlugin)
+	}
+	if task.PrivateData.UpstreamTaskID == "" && task.PrivateData.NodeName == "" {
+		return
+	}
+	rootInfo, ok := other["root_info"].(map[string]interface{})
+	if !ok || rootInfo == nil {
+		rootInfo = map[string]interface{}{}
+		other["root_info"] = rootInfo
+	}
+	if task.PrivateData.UpstreamTaskID != "" {
+		rootInfo["upstream_task_id"] = task.PrivateData.UpstreamTaskID
+	}
+	if task.PrivateData.NodeName != "" {
+		rootInfo["node_name"] = task.PrivateData.NodeName
+	}
 }
 
 func taskBillingContextPriceData(bc *model.TaskBillingContext) *types.PriceData {
@@ -387,7 +437,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 }
 
 func recalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) bool {
-	if task == nil {
+	if task == nil || actualQuota < 0 {
 		return false
 	}
 	if task.ID > 0 {
@@ -400,8 +450,8 @@ func recalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 }
 
 func recalculateUnsavedTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) bool {
-	if actualQuota <= 0 {
-		return true
+	if actualQuota < 0 {
+		return false
 	}
 	key := ephemeralTaskBillingKey{taskID: task.TaskID, userID: task.UserId, channelID: task.ChannelId}
 	entry, unlock := lockEphemeralTaskBillingEntry(key)
@@ -432,8 +482,8 @@ func recalculateTaskQuotaLegacy(ctx context.Context, task *model.Task, actualQuo
 	if task == nil {
 		return false
 	}
-	if actualQuota <= 0 {
-		return true
+	if actualQuota < 0 {
+		return false
 	}
 	if actualQuota > common.MaxQuota {
 		logger.LogWarn(ctx, fmt.Sprintf("任务 actual quota 超出范围，拒绝结算 task %s: %d", task.TaskID, actualQuota))
@@ -550,8 +600,8 @@ func refundPersistedTaskQuota(ctx context.Context, task *model.Task, reason stri
 }
 
 func recalculatePersistedTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) bool {
-	if actualQuota <= 0 {
-		return true
+	if actualQuota < 0 {
+		return false
 	}
 	result, err := model.ApplyTaskBilling(ctx, task, model.TaskBillingOperationSettle, actualQuota)
 	if err != nil {
@@ -672,16 +722,12 @@ func publishTaskChannelCostCorrection(task *model.Task, costNanoCNY int64) {
 // RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。
 // 当任务成功且返回了 totalTokens 时，根据模型倍率和分组倍率重新计算实际扣费额度，
 // 与预扣费的差额进行补扣或退还。支持钱包和订阅计费来源。
-func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) {
-	_ = recalculateTaskQuotaByTokens(ctx, task, totalTokens)
-}
-
-func recalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) bool {
+func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTokens int) bool {
 	if task == nil {
 		return false
 	}
 	if totalTokens <= 0 {
-		return true
+		return false
 	}
 
 	modelName := taskModelName(task)
@@ -690,7 +736,7 @@ func recalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
 	// 只有配置了倍率(非固定价格)时才按 token 重新计费
 	if !hasRatioSetting || modelRatio <= 0 {
-		return true
+		return false
 	}
 
 	// 获取用户和组的倍率信息
@@ -702,7 +748,7 @@ func recalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 		}
 	}
 	if group == "" {
-		return true
+		return false
 	}
 
 	groupRatio := ratio_setting.GetGroupRatio(group)

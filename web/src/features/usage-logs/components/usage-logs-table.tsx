@@ -39,11 +39,11 @@ import {
 import { useColumnsByCategory } from '../lib/columns'
 import { parseLogOther } from '../lib/format'
 import { fetchLogsByCategory } from '../lib/utils'
-import type { LogCategory, LogsViewScope } from '../types'
+import type { LogCategory } from '../types'
 import { CommonLogsFilterBar } from './common-logs-filter-bar'
 import { TaskLogsFilterBar } from './task-logs-filter-bar'
 import { UsageLogsMobileList } from './usage-logs-mobile-card'
-import { useLogsViewScope } from './usage-logs-provider'
+import { useLogsViewScope, type LogsViewAccess } from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
 
@@ -58,12 +58,9 @@ const quotaSaturationRowTint = 'bg-amber-50/60 dark:bg-amber-950/25'
 
 function getColumnVisibilityStorageKey(
   logCategory: LogCategory,
-  viewScope: LogsViewScope
+  viewAccess: LogsViewAccess
 ): string {
-  if (viewScope !== 'self') {
-    return `usage-logs:${logCategory}:admin:column-visibility`
-  }
-  return `usage-logs:${logCategory}:user:column-visibility`
+  return `usage-logs:v2:${logCategory}:${viewAccess}:column-visibility`
 }
 
 function deserializeLogTypeFilter(value: unknown): unknown[] {
@@ -82,7 +79,8 @@ interface UsageLogsTableProps {
 
 export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const { t } = useTranslation()
-  const { viewScope, isAdminView, isAllUsersView } = useLogsViewScope()
+  const { viewScope, isAdminView, isRootView, isAllUsersView, viewAccess } =
+    useLogsViewScope()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const searchParams = route.useSearch()
 
@@ -132,7 +130,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     queryKey: [
       'logs',
       logCategory,
-      viewScope,
+      viewAccess,
       pagination.pageIndex + 1,
       pagination.pageSize,
       columnFilters,
@@ -159,7 +157,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     placeholderData: (previousData, previousQuery) => {
       if (
         previousQuery?.queryKey[1] === logCategory &&
-        previousQuery.queryKey[2] === viewScope
+        previousQuery.queryKey[2] === viewAccess
       ) {
         return previousData
       }
@@ -168,7 +166,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   })
 
   const logs = data?.items || []
-  const columns = useColumnsByCategory(logCategory, viewScope)
+  const columns = useColumnsByCategory(logCategory, viewScope, isRootView)
   const isLoadingData = isLoading || (isFetching && !data)
 
   const { table } = useDataTable({
@@ -177,7 +175,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
     columnFilters,
     columnVisibilityStorageKey: getColumnVisibilityStorageKey(
       logCategory,
-      viewScope
+      viewAccess
     ),
     pagination,
     enableRowSelection: false,

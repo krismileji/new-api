@@ -505,7 +505,7 @@ func filterChannelSmartScheduleCachedRouteAvailability(routes []channelSmartSche
 		}
 		channelIds = append(channelIds, route.channelId)
 	}
-	channelIds = filterChannelsByRequestPathAndModel(channelIds, requestPath, requestModel)
+	channelIds, _ = filterCandidateIDs(channelIds, requestModel, options.Filters)
 	channelIds = filterChannelIDsBySelectionOptions(channelIds, options)
 	allowed := make(map[int]struct{}, len(channelIds))
 	for _, channelId := range channelIds {

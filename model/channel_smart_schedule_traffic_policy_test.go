@@ -65,17 +65,17 @@ func TestChannelSmartScheduleTrafficPolicyDatabaseSelectionScopesParticipationTo
 		{ChannelId: 5203, GroupName: "vip", ModelName: "model-a", ParticipationSet: true, Excluded: true},
 	}).Error)
 
-	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 5202, channel.Id)
 
-	channel, err = GetRandomSatisfiedChannel("unconfigured", "model-a", 0, "")
+	channel, err = GetRandomSatisfiedChannel("unconfigured", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 5204, channel.Id)
 
-	channel, err = GetRandomSatisfiedChannel("vip", "model-b", 0, "")
+	channel, err = GetRandomSatisfiedChannel("vip", "model-b", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 5205, channel.Id)
@@ -103,7 +103,7 @@ func TestChannelSmartScheduleManagedPoolIgnoresChannelDefaultRouting(t *testing.
 		{ChannelId: 5222, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 	}).Error)
 
-	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 5222, channel.Id)
@@ -163,27 +163,27 @@ func TestChannelSmartScheduleTrafficPolicyCacheSelectionFailsClosedAndFallsBackT
 		},
 	)
 
-	channel, err := GetRandomSatisfiedChannel("vip", exactModel, 0, "")
+	channel, err := GetRandomSatisfiedChannel("vip", exactModel, 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 5212, channel.Id)
 
-	channel, err = GetRandomSatisfiedChannel("unconfigured", "model-a", 0, "")
+	channel, err = GetRandomSatisfiedChannel("unconfigured", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 5213, channel.Id)
 
-	channel, err = GetRandomSatisfiedChannel("vip", "model-b", 0, "")
+	channel, err = GetRandomSatisfiedChannel("vip", "model-b", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 5214, channel.Id)
 
 	channelSmartScheduleRouteCache = nil
-	channel, err = GetRandomSatisfiedChannel("vip", exactModel, 0, "")
+	channel, err = GetRandomSatisfiedChannel("vip", exactModel, 0, nil)
 	assert.ErrorIs(t, err, ErrChannelSmartScheduleRouteSnapshotUnavailable)
 	assert.Nil(t, channel)
 
-	channel, err = GetRandomSatisfiedChannel("unconfigured", "model-a", 0, "")
+	channel, err = GetRandomSatisfiedChannel("unconfigured", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 5213, channel.Id)
@@ -201,7 +201,7 @@ func TestChannelSmartScheduleTrafficPolicyDisabledRestoresOfficialCandidates(t *
 		ChannelId: 5221, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: 100,
 	}).Error)
 
-	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 5221, channel.Id)
@@ -224,7 +224,7 @@ func TestChannelSmartScheduleTrafficPolicyInvalidConfigFailsClosedToParticipatin
 		ChannelId: 5227, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
 	}).Error)
 
-	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 5227, channel.Id)
@@ -273,11 +273,11 @@ func TestChannelSmartScheduleTrafficPolicySelectionSkipsDegradedRouteUntilRetry(
 			assert.Equal(t, ChannelSmartScheduleAffinityInvalid,
 				ChannelSmartScheduleAffinityEligibility("vip", "model-a", 5222, ""))
 
-			channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+			channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 			require.NoError(t, err)
 			assert.Nil(t, channel)
 
-			channel, err = GetRandomSatisfiedChannel("vip", "model-a", 1, "")
+			channel, err = GetRandomSatisfiedChannel("vip", "model-a", 1, nil)
 			require.NoError(t, err)
 			require.NotNil(t, channel)
 			assert.Equal(t, 5222, channel.Id)

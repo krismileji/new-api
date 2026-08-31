@@ -38,7 +38,7 @@ func TestCM08DirtyRoutingConcurrentReadsDoNotFallbackToDatabase(t *testing.T) {
 		go func() {
 			defer wait.Done()
 			<-start
-			selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+			selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 			if err != nil {
 				errs <- err
 				return

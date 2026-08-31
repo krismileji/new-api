@@ -38,17 +38,17 @@ func TestGetRandomSatisfiedChannelExcludesFailedChannels(t *testing.T) {
 		channelSyncLock.Unlock()
 	})
 
-	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 5, "", ChannelSelectionOptions{ExcludedChannelIds: []int{1}})
+	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 5, nil, ChannelSelectionOptions{ExcludedChannelIds: []int{1}})
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 2, channel.Id)
 
-	channel, err = GetRandomSatisfiedChannel("vip", "model-a", 0, "", ChannelSelectionOptions{ExcludedChannelIds: []int{1, 2}})
+	channel, err = GetRandomSatisfiedChannel("vip", "model-a", 0, nil, ChannelSelectionOptions{ExcludedChannelIds: []int{1, 2}})
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 3, channel.Id)
 
-	channel, err = GetRandomSatisfiedChannel("vip", "model-a", 0, "", ChannelSelectionOptions{ExcludedChannelIds: []int{1, 2, 3}})
+	channel, err = GetRandomSatisfiedChannel("vip", "model-a", 0, nil, ChannelSelectionOptions{ExcludedChannelIds: []int{1, 2, 3}})
 	require.NoError(t, err)
 	assert.Nil(t, channel)
 }
@@ -83,12 +83,12 @@ func TestGetRandomSatisfiedChannelExcludesFailedChannelsWithoutMemoryCache(t *te
 		{Group: "vip", Model: "model-a", ChannelId: 9103, Enabled: true, Priority: &priority80, Weight: weight},
 	}).Error)
 
-	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 5, "", ChannelSelectionOptions{ExcludedChannelIds: []int{9101}})
+	channel, err := GetRandomSatisfiedChannel("vip", "model-a", 5, nil, ChannelSelectionOptions{ExcludedChannelIds: []int{9101}})
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 9102, channel.Id)
 
-	channel, err = GetRandomSatisfiedChannel("vip", "model-a", 5, "", ChannelSelectionOptions{ExcludedChannelIds: channelIDs})
+	channel, err = GetRandomSatisfiedChannel("vip", "model-a", 5, nil, ChannelSelectionOptions{ExcludedChannelIds: channelIDs})
 	require.NoError(t, err)
 	assert.Nil(t, channel)
 }
@@ -126,17 +126,19 @@ func TestGetRandomSatisfiedChannelPrefersStableRouteForLargeRequest(t *testing.T
 	})
 
 	channel, err := GetRandomSatisfiedChannel(
-		"vip", "model-a", 0, "",
-		ChannelSelectionOptions{EstimatedPromptTokens: 101},
-	)
+		"vip", "model-a", 0, nil,
+
+		ChannelSelectionOptions{EstimatedPromptTokens: 101})
+
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 2, channel.Id)
 
 	channel, err = GetRandomSatisfiedChannel(
-		"vip", "model-a", 0, "",
-		ChannelSelectionOptions{EstimatedPromptTokens: 100},
-	)
+		"vip", "model-a", 0, nil,
+
+		ChannelSelectionOptions{EstimatedPromptTokens: 100})
+
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 1, channel.Id)
@@ -147,9 +149,10 @@ func TestGetRandomSatisfiedChannelPrefersStableRouteForLargeRequest(t *testing.T
 	channelSmartScheduleRouteCache["vip"]["model-a"] = routes
 	channelSyncLock.Unlock()
 	channel, err = GetRandomSatisfiedChannel(
-		"vip", "model-a", 0, "",
-		ChannelSelectionOptions{EstimatedPromptTokens: 1_000_000},
-	)
+		"vip", "model-a", 0, nil,
+
+		ChannelSelectionOptions{EstimatedPromptTokens: 1_000_000})
+
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 1, channel.Id)
@@ -187,17 +190,19 @@ func TestGetRandomSatisfiedChannelPrefersStableRouteOverLimitedStabilityRelease(
 	})
 
 	channel, err := GetRandomSatisfiedChannel(
-		"vip", "model-a", 0, "",
-		ChannelSelectionOptions{EstimatedPromptTokens: 101},
-	)
+		"vip", "model-a", 0, nil,
+
+		ChannelSelectionOptions{EstimatedPromptTokens: 101})
+
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 2, channel.Id)
 
 	channel, err = GetRandomSatisfiedChannel(
-		"vip", "model-a", 0, "",
-		ChannelSelectionOptions{EstimatedPromptTokens: 100},
-	)
+		"vip", "model-a", 0, nil,
+
+		ChannelSelectionOptions{EstimatedPromptTokens: 100})
+
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 1, channel.Id)
@@ -231,9 +236,10 @@ func TestGetRandomSatisfiedChannelFallsBackToExplorationWhenItIsTheOnlyRoute(t *
 	})
 
 	channel, err := GetRandomSatisfiedChannel(
-		"vip", "model-a", 0, "",
-		ChannelSelectionOptions{EstimatedPromptTokens: 101},
-	)
+		"vip", "model-a", 0, nil,
+
+		ChannelSelectionOptions{EstimatedPromptTokens: 101})
+
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 1, channel.Id)
@@ -277,17 +283,19 @@ func TestGetRandomSatisfiedChannelPrefersStableRouteWithoutMemoryCache(t *testin
 	}).Error)
 
 	channel, err := GetRandomSatisfiedChannel(
-		"vip", "model-a", 0, "",
-		ChannelSelectionOptions{EstimatedPromptTokens: 101},
-	)
+		"vip", "model-a", 0, nil,
+
+		ChannelSelectionOptions{EstimatedPromptTokens: 101})
+
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 9202, channel.Id)
 
 	channel, err = GetRandomSatisfiedChannel(
-		"vip", "model-a", 0, "",
-		ChannelSelectionOptions{EstimatedPromptTokens: 100},
-	)
+		"vip", "model-a", 0, nil,
+
+		ChannelSelectionOptions{EstimatedPromptTokens: 100})
+
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 9201, channel.Id)
@@ -331,9 +339,10 @@ func TestGetRandomSatisfiedChannelPrefersStableRouteOverLimitedStabilityReleaseW
 	}).Error)
 
 	channel, err := GetRandomSatisfiedChannel(
-		"vip", "model-a", 0, "",
-		ChannelSelectionOptions{EstimatedPromptTokens: 101},
-	)
+		"vip", "model-a", 0, nil,
+
+		ChannelSelectionOptions{EstimatedPromptTokens: 101})
+
 	require.NoError(t, err)
 	require.NotNil(t, channel)
 	assert.Equal(t, 9302, channel.Id)

@@ -45,16 +45,18 @@ func TestLogicalSmartScheduleOverlayControlsSharedRouteWithoutPhysicalProjection
 			InitChannelCache()
 
 			selected, err := GetRandomSatisfiedChannel(
-				"vip", "model-a", 0, "", test.options,
-			)
+				"vip", "model-a", 0, nil,
+				test.options)
+
 			require.NoError(t, err)
 			require.NotNil(t, selected)
 			assert.Equal(t, dirtySelectionNewMember, selected.Id)
 
 			common.MemoryCacheEnabled = false
 			selected, err = GetRandomSatisfiedChannel(
-				"vip", "model-a", 0, "", test.options,
-			)
+				"vip", "model-a", 0, nil,
+				test.options)
+
 			require.NoError(t, err)
 			require.NotNil(t, selected)
 			assert.Equal(t, dirtySelectionNewMember, selected.Id)
@@ -76,9 +78,10 @@ func TestLogicalSmartScheduleOverlayAppliesWithOneAvailableMember(t *testing.T) 
 	InitChannelCache()
 
 	selected, err := GetRandomSatisfiedChannel(
-		"vip", "model-a", 0, "",
-		ChannelSelectionOptions{ExcludedChannelIds: []int{dirtySelectionOldMember}},
-	)
+		"vip", "model-a", 0, nil,
+
+		ChannelSelectionOptions{ExcludedChannelIds: []int{dirtySelectionOldMember}})
+
 	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, dirtySelectionRetained, selected.Id)

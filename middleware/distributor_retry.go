@@ -6,6 +6,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -15,7 +16,11 @@ import (
 // ChannelSupportsRequestPath exposes the upstream path check to retry routing
 // without changing the upstream helper's ownership or name.
 func ChannelSupportsRequestPath(channel *model.Channel, requestPath string, requestModel string) bool {
-	return channelSupportsRequestPath(channel, requestPath, requestModel)
+	ok, _ := model.ChannelSatisfiesFilters(channel, requestModel, []taskdto.ChannelFilter{{
+		Kind:        taskdto.FilterRequestPath,
+		RequestPath: requestPath,
+	}})
+	return ok
 }
 
 // SetupContextForRetry clears channel-specific metadata before delegating to

@@ -62,6 +62,7 @@ Object.defineProperty(domWindow.Element.prototype, 'getAnimations', {
 
 const { act } = await import('react')
 const { createRoot } = await import('react-dom/client')
+const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
 const { createInstance } = await import('i18next')
 const { I18nextProvider, initReactI18next } = await import('react-i18next')
 const { DetailsDialog } = await import('../dialogs/details-dialog')
@@ -116,19 +117,25 @@ async function renderDetails(isAdmin: boolean) {
   const container = document.createElement('div')
   document.body.append(container)
   const root = createRoot(container)
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
   await act(async () => {
     root.render(
-      <I18nextProvider i18n={i18n}>
-        <DetailsDialog
-          log={upstreamErrorLog()}
-          isAdmin={isAdmin}
-          open
-          onOpenChange={() => {}}
-        />
-      </I18nextProvider>
+      <QueryClientProvider client={queryClient}>
+        <I18nextProvider i18n={i18n}>
+          <DetailsDialog
+            log={upstreamErrorLog()}
+            isAdmin={isAdmin}
+            isRoot={false}
+            open
+            onOpenChange={() => {}}
+          />
+        </I18nextProvider>
+      </QueryClientProvider>
     )
   })
-  return { container, root }
+  return { container, root, queryClient }
 }
 
 describe('upstream error log details', () => {
@@ -150,6 +157,7 @@ describe('upstream error log details', () => {
     assert.ok(dialog.textContent?.includes('no such host'))
 
     await act(async () => rendered.root.unmount())
+    rendered.queryClient.clear()
     rendered.container.remove()
   })
 
@@ -164,6 +172,7 @@ describe('upstream error log details', () => {
     assert.equal(dialog.textContent?.includes('api.example.com'), false)
 
     await act(async () => rendered.root.unmount())
+    rendered.queryClient.clear()
     rendered.container.remove()
   })
 })

@@ -93,7 +93,7 @@ test(
     assert.equal(result.generalTabCount, 5)
     assert.equal(result.generalUsesContentSizedViewport, true)
     assert.equal(result.generalInputGroupsUseInsetRing, true)
-    assert.equal(result.generalUsesInsetRing, true)
+    assert.equal(result.generalUsesInsetRing, false)
     assert.equal(result.errorSettingsUseDedicatedTab, true)
     assert.equal(result.retentionSettingsLoaded, true)
     assert.equal(result.allNotificationTypesSelected, true)

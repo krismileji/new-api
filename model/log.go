@@ -166,6 +166,8 @@ func formatUserLogs(logs []*Log, startIdx int) {
 		if otherMap != nil {
 			// Remove admin-only debug fields.
 			delete(otherMap, "admin_info")
+			// Remove diagnostics reserved for root.
+			delete(otherMap, "root_info")
 			// Remove operation-audit details (operator/route info), admin-only.
 			delete(otherMap, "audit_info")
 			// delete(otherMap, "reject_reason")
@@ -239,6 +241,19 @@ func userVisibleLogs(tx *gorm.DB) *gorm.DB {
 		"%\""+ChannelMonitorGroupProbeLogKey+"\":true%",
 		"%\"violation_fee\":true%",
 	)
+}
+
+// FormatAdminLogs removes root-only diagnostics while retaining operational
+// admin_info. Root callers must not pass their results through this formatter.
+func FormatAdminLogs(logs []*Log) {
+	for i := range logs {
+		otherMap, _ := common.StrToMap(logs[i].Other)
+		if otherMap == nil {
+			continue
+		}
+		delete(otherMap, "root_info")
+		logs[i].Other = common.MapToJsonStr(otherMap)
+	}
 }
 
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {

@@ -114,8 +114,8 @@ func ApplyTaskBilling(ctx context.Context, task *Task, operation TaskBillingOper
 	if operation != TaskBillingOperationRefund && operation != TaskBillingOperationSettle {
 		return TaskBillingApplyResult{}, errors.New("unknown task billing operation")
 	}
-	if operation == TaskBillingOperationSettle && actualQuota <= 0 {
-		return TaskBillingApplyResult{}, nil
+	if operation == TaskBillingOperationSettle && actualQuota < 0 {
+		return TaskBillingApplyResult{}, errors.New("task billing actual quota must not be negative")
 	}
 	if operation == TaskBillingOperationSettle && actualQuota > common.MaxQuota {
 		return TaskBillingApplyResult{}, errors.New("task billing actual quota exceeds int32 range")

@@ -1,6 +1,9 @@
 package model
 
-import "gorm.io/gorm"
+import (
+	"github.com/QuantumNous/new-api/dto"
+	"gorm.io/gorm"
+)
 
 // ChannelSelectionOptions carries request-scoped channel exclusions without
 // changing the existing selector call sites.
@@ -8,10 +11,20 @@ type ChannelSelectionOptions struct {
 	ExcludedChannelIds    []int
 	EstimatedPromptTokens int
 	RequestBodyBytes      int64
+	Filters               []dto.ChannelFilter
 	// IgnoreSmartScheduleRequestLimits is used only for the fallback pass
 	// after all non-limited candidates have been tried. It never changes the
 	// configured route state or the effective priority and weight.
 	IgnoreSmartScheduleRequestLimits bool
+}
+
+func requestPathFromChannelFilters(filters []dto.ChannelFilter) string {
+	for _, filter := range filters {
+		if filter.Kind == dto.FilterRequestPath {
+			return filter.RequestPath
+		}
+	}
+	return ""
 }
 
 const (

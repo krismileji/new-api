@@ -162,7 +162,7 @@ func replaceDirtyLogicalSelectionRelation(t *testing.T, db *gorm.DB) {
 
 func assertDirtyLogicalSelectionMatchesDatabase(t *testing.T, wantChannelID int) {
 	t.Helper()
-	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, wantChannelID, selected.Id)
@@ -180,7 +180,7 @@ func waitForDirtyLogicalSelection(t *testing.T, wantChannelID int) {
 	var selected *Channel
 	var err error
 	require.Eventually(t, func() bool {
-		selected, err = GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+		selected, err = GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 		return err == nil && selected != nil && selected.Id == wantChannelID
 	}, 2*time.Second, 10*time.Millisecond)
 	require.NoError(t, err)
@@ -195,7 +195,7 @@ func TestDirtyLogicalSelectionRefreshesReplacedRelationBeforeRouting(t *testing.
 	InvalidateLogicalChannelRuntimeCache()
 
 	// The request path immediately serves the previous complete snapshot.
-	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, dirtySelectionOldMember, selected.Id)
@@ -209,7 +209,7 @@ func TestDirtyLogicalSelectionRefreshesDisabledGroupBeforeRouting(t *testing.T) 
 		Updates(map[string]any{"status": ChannelLogicalGroupStatusDisabled, "revision": 2}).Error)
 	InvalidateLogicalChannelRuntimeCache()
 
-	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, dirtySelectionOldMember, selected.Id)
@@ -232,7 +232,7 @@ func TestDirtyLogicalSelectionRefreshesDeletedGroupBeforeRouting(t *testing.T) {
 	}))
 	InvalidateLogicalChannelRuntimeCache()
 
-	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, dirtySelectionOldMember, selected.Id)
@@ -250,7 +250,7 @@ func TestDirtyLogicalSelectionKeepsLastCompleteSnapshotWhenRefreshFails(t *testi
 	}).Error)
 	InvalidateLogicalChannelRuntimeCache()
 
-	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, dirtySelectionOldMember, selected.Id)

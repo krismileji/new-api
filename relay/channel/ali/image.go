@@ -329,6 +329,9 @@ func responseAli2OpenAIImage(c *gin.Context, response *AliResponse, originBody [
 
 func aliImageHandler(a *Adaptor, c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*types.NewAPIError, *dto.Usage) {
 	responseFormat := c.GetString("response_format")
+	if imageReq, ok := info.Request.(*dto.ImageRequest); ok {
+		responseFormat = imageReq.ResponseFormat
+	}
 	if resp == nil || resp.Body == nil {
 		return types.NewError(errors.New("ali returned an empty response"), types.ErrorCodeBadResponse), nil
 	}

@@ -191,6 +191,9 @@ func GetChannelRatioMonitorWithContext(ctx context.Context, channelId int) (Chan
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if DB == nil {
+		return ChannelRatioMonitor{}, errors.New("database is unavailable")
+	}
 	var monitor ChannelRatioMonitor
 	err := DB.WithContext(ctx).Where("channel_id = ?", channelId).First(&monitor).Error
 	return monitor, err
@@ -218,6 +221,14 @@ func GetChannelConcurrencyConfigsForChannelIDsWithContext(ctx context.Context, c
 		if len(configs) == 0 {
 			return configs, nil
 		}
+	}
+	if DB == nil {
+		return nil, errors.New("database is unavailable")
+	}
+	// Older installations and lightweight request fixtures may not have the
+	// optional monitor table yet; in that case no channel-level limits apply.
+	if !DB.Migrator().HasTable(&ChannelRatioMonitor{}) {
+		return configs, nil
 	}
 	var monitors []ChannelRatioMonitor
 	query := DB.WithContext(ctx).Select("channel_id", "concurrency_limit", "rpm_limit", "concurrency_revision").

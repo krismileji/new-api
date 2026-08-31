@@ -207,8 +207,8 @@ describe('smart schedule execution adjustment details', () => {
     })
 
     assert.ok(markup.includes('失败阶段：配置冲突'))
-    assert.ok(markup.includes('上一轮生效结果：'))
+    assert.ok(markup.includes('上一轮生效：'))
     assert.ok(markup.includes('P90 / W100'))
-    assert.ok(markup.includes('上一轮结果继续生效'))
+    assert.ok(markup.includes('本轮失败未覆盖，继续沿用'))
   })
 })

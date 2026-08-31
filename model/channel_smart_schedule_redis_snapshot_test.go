@@ -493,7 +493,7 @@ func TestChannelSmartScheduleRedisOutageUsesLastSnapshotThenProtectsWithoutDBFal
 		queryCount++
 	}))
 	t.Cleanup(func() { _ = db.Callback().Query().Remove(callbackName) })
-	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	selected, err := GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, 9701, selected.Id)
@@ -503,7 +503,7 @@ func TestChannelSmartScheduleRedisOutageUsesLastSnapshotThenProtectsWithoutDBFal
 	channelSmartScheduleLocalSnapshotMetadataCache.GeneratedAt = time.Now().Add(-2 * time.Hour).UnixMilli()
 	channelSyncLock.Unlock()
 	t.Setenv("CHANNEL_SMART_SCHEDULE_ROUTE_SNAPSHOT_MAX_AGE_SECONDS", "60")
-	selected, err = GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	selected, err = GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	assert.ErrorIs(t, err, ErrChannelSmartScheduleRouteSnapshotUnavailable)
 	assert.Nil(t, selected)
 	assert.Zero(t, queryCount, "stale protection mode must fail fast without DB queries")
@@ -516,7 +516,7 @@ func TestChannelSmartScheduleRedisOutageUsesLastSnapshotThenProtectsWithoutDBFal
 	channelSmartScheduleRouteCache = nil
 	channelSmartScheduleLocalSnapshotMetadataCache = nil
 	channelSyncLock.Unlock()
-	selected, err = GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	selected, err = GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	assert.ErrorIs(t, err, ErrChannelSmartScheduleRouteSnapshotUnavailable)
 	assert.Nil(t, selected)
 	assert.Zero(t, queryCount)

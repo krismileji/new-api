@@ -27,6 +27,6 @@ func GetAllUserVisibleTask(c *gin.Context) {
 	items := model.TaskGetAllTasks(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
 	total := model.TaskCountAllTasks(queryParams)
 	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(tasksToDto(items, true))
+	pageInfo.SetItems(tasksToDto(items, true, common.RoleCommonUser))
 	common.ApiSuccess(c, pageInfo)
 }

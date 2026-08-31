@@ -4,7 +4,6 @@ import (
 	"sort"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
@@ -119,11 +118,8 @@ func getChannelFromDatabasePoolWithTrafficPolicy(
 		if channel == nil {
 			continue
 		}
-		if requestPath != "" && channel.Type == constant.ChannelTypeAdvancedCustom {
-			config := channel.GetOtherSettings().AdvancedCustom
-			if config == nil || !config.SupportsPathForModel(requestPath, requestModelName) {
-				continue
-			}
+		if matches, _ := ChannelSatisfiesFilters(channel, requestModelName, options.Filters); !matches {
+			continue
 		}
 		available = append(available, ability)
 	}

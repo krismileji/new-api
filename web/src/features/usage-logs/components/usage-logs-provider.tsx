@@ -19,10 +19,22 @@ For commercial licensing, please contact support@quantumnous.com
 /* eslint-disable react-refresh/only-export-components */
 import { createContext, useContext, useState, type ReactNode } from 'react'
 
-import { useIsAdmin } from '@/hooks/use-admin'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getLogsViewCapabilities, resolveLogsViewScope } from '../lib/scope'
 import type { ChannelAffinityInfo, LogsViewScope } from '../types'
+
+export type LogsViewAccess = 'self' | 'user-visible' | 'admin' | 'root'
+
+export function resolveLogsViewAccess(
+  role: number,
+  viewScope: LogsViewScope
+): LogsViewAccess {
+  if (viewScope === 'self' || role < ROLE.ADMIN) return 'self'
+  if (viewScope === 'user-visible') return 'user-visible'
+  return role === ROLE.SUPER_ADMIN ? 'root' : 'admin'
+}
 
 interface UsageLogsContextValue {
   selectedUserId: number | null
@@ -84,14 +96,19 @@ export function useUsageLogsContext() {
 
 /** Resolves the requested scope and its independent data/UI capabilities. */
 export function useLogsViewScope() {
-  const canManageScope = useIsAdmin()
+  const role = useAuthStore((state) => state.auth.user?.role ?? ROLE.GUEST)
   const { viewScope, setViewScope } = useUsageLogsContext()
+  const canManageScope = role >= ROLE.ADMIN
   const effectiveViewScope = resolveLogsViewScope(viewScope, canManageScope)
+  const viewAccess = resolveLogsViewAccess(role, effectiveViewScope)
+  const isRootView = viewAccess === 'root'
 
   return {
     canManageScope,
     viewScope: effectiveViewScope,
     setViewScope,
     ...getLogsViewCapabilities(effectiveViewScope),
+    isRootView,
+    viewAccess,
   }
 }

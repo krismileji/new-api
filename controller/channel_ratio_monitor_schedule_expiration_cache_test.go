@@ -52,7 +52,7 @@ func TestRunChannelSmartScheduleRefreshesCacheWhenOnlyExpiredPrimaryChanges(t *t
 	}).Error)
 
 	model.InitChannelCache()
-	selected, err := model.GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	selected, err := model.GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, 1701, selected.Id)
@@ -72,7 +72,7 @@ func TestRunChannelSmartScheduleRefreshesCacheWhenOnlyExpiredPrimaryChanges(t *t
 	require.NoError(t, err)
 	assert.Zero(t, result.Total)
 
-	selected, err = model.GetRandomSatisfiedChannel("vip", "model-a", 0, "")
+	selected, err = model.GetRandomSatisfiedChannel("vip", "model-a", 0, nil)
 	require.NoError(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, 1702, selected.Id)

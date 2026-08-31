@@ -265,8 +265,8 @@ func relayWithChannelConcurrency(c *gin.Context, info *relaycommon.RelayInfo, re
 	return markAcceptedUpstreamResponseError(c, apiErr)
 }
 
-func relayTaskWithChannelConcurrency(c *gin.Context, info *relaycommon.RelayInfo, lease *service.ChannelConcurrencyLease) (*relay.TaskSubmitResult, *dto.TaskError) {
+func relayTaskWithChannelConcurrency(c *gin.Context, info *relaycommon.RelayInfo, lease *service.ChannelConcurrencyLease, submit taskSubmitAttempt) (*relay.TaskSubmitResult, *dto.TaskError) {
 	defer lease.Release()
 	resetRelayAttemptResponseState(c)
-	return relay.RelayTaskSubmit(c, info)
+	return submit(c, info)
 }
