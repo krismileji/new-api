@@ -228,7 +228,7 @@ describe('channel monitor query policy', () => {
     unsubscribers.forEach((unsubscribe) => unsubscribe())
   })
 
-  test('manual refresh clears the active result before fetching new data', async () => {
+  test('manual refresh preserves the active result while fetching new data', async () => {
     const queryKey = ['channel-monitor'] as const
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, staleTime: Infinity } },
@@ -251,7 +251,8 @@ describe('channel monitor query policy', () => {
       })
       await Promise.resolve()
 
-      assert.equal(observer.getCurrentResult().data, undefined)
+      assert.equal(observer.getCurrentResult().data, 'previous result')
+      assert.equal(observer.getCurrentResult().isLoading, false)
       resolveRequest?.('latest result')
       await refresh
       assert.equal(observer.getCurrentResult().data, 'latest result')

@@ -172,7 +172,10 @@ export async function refetchChannelMonitorQueries(
 ) {
   await Promise.all(
     getChannelMonitorManualRefreshTargets(scope).map(({ queryKey, exact }) =>
-      queryClient.resetQueries({ queryKey, exact, type: 'active' })
+      queryClient.refetchQueries(
+        { queryKey, exact, type: 'active' },
+        { cancelRefetch: false }
+      )
     )
   )
 }
