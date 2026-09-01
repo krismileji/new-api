@@ -42,8 +42,8 @@ import {
 } from '../query-options'
 
 describe('channel monitor query policy', () => {
-  test('refreshes the selected view whenever entering or switching to it', () => {
-    assert.equal(shouldRefreshChannelMonitorViewOnEnter(null, 'channels'), true)
+  test('refreshes the selected view only after switching to it', () => {
+    assert.equal(shouldRefreshChannelMonitorViewOnEnter(null, 'channels'), false)
     assert.equal(
       shouldRefreshChannelMonitorViewOnEnter('channels', 'status-probe'),
       true
@@ -162,8 +162,9 @@ describe('channel monitor query policy', () => {
     assert.equal(options.refetchInterval, false)
   })
 
-  test('skips manual performance refresh while the status probe view is active', () => {
+  test('skips manual performance refresh while a dedicated monitor view is active', () => {
     assert.equal(isChannelMonitorPerformanceQueryActive('status-probe'), false)
+    assert.equal(isChannelMonitorPerformanceQueryActive('model-detection'), false)
     assert.equal(isChannelMonitorPerformanceQueryActive('channels'), true)
   })
 
@@ -172,7 +173,9 @@ describe('channel monitor query policy', () => {
     assert.equal(getChannelStatusProbeHistoryLatestExecutionKey(2, 42), 0)
   })
 
-  test('shared manual policy disables interval, focus, and reconnect refreshes', () => {
+  test('shared manual policy disables retained snapshots and automatic retries', () => {
+    assert.equal(CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS.gcTime, 0)
+    assert.equal(CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS.retry, false)
     assert.equal(
       CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS.refetchInterval,
       false
@@ -223,6 +226,38 @@ describe('channel monitor query policy', () => {
 
     assert.equal(requestCount, queryKeys.length + 4)
     unsubscribers.forEach((unsubscribe) => unsubscribe())
+  })
+
+  test('manual refresh clears the active result before fetching new data', async () => {
+    const queryKey = ['channel-monitor'] as const
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    })
+    queryClient.setQueryData(queryKey, 'previous result')
+    let resolveRequest: ((value: string) => void) | undefined
+    const observer = new QueryObserver(queryClient, {
+      queryKey,
+      queryFn: () =>
+        new Promise<string>((resolve) => {
+          resolveRequest = resolve
+        }),
+      staleTime: Infinity,
+    })
+    const unsubscribe = observer.subscribe(() => undefined)
+
+    try {
+      const refresh = refetchChannelMonitorQueries(queryClient, {
+        view: 'groups',
+      })
+      await Promise.resolve()
+
+      assert.equal(observer.getCurrentResult().data, undefined)
+      resolveRequest?.('latest result')
+      await refresh
+      assert.equal(observer.getCurrentResult().data, 'latest result')
+    } finally {
+      unsubscribe()
+    }
   })
 
   test('manual refresh includes only the active live view and open history dialog', async () => {

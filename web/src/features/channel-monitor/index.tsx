@@ -130,7 +130,6 @@ import { aggregateChannelMonitorPerformanceByChannel } from './lib/performance'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
-  getChannelMonitorConcurrencyQueryOptions,
   getChannelMonitorActiveRefetchInterval,
   getChannelMonitorManualRefreshScopeKey,
   getChannelMonitorOverviewQueryOptions,
@@ -491,9 +490,6 @@ export function ChannelMonitor() {
 
   const query = useQuery(getChannelMonitorOverviewQueryOptions())
   const overview = query.data?.data
-  const concurrencyQuery = useQuery(
-    getChannelMonitorConcurrencyQueryOptions(view === 'channels')
-  )
   const settings = useMemo(
     () =>
       normalizeChannelMonitorSettings(
@@ -511,8 +507,7 @@ export function ChannelMonitor() {
   const requestedPerformanceRangeSource = smartSchedulePerformanceRangeActive
     ? 'smart_schedule'
     : 'manual'
-  const performanceQueryActive =
-    isChannelMonitorPerformanceQueryActive(view) && view !== 'model-detection'
+  const performanceQueryActive = isChannelMonitorPerformanceQueryActive(view)
   const performanceQuery = useQuery(
     getChannelMonitorPerformanceQueryOptions(
       requestedPerformanceRangeMinutes,
@@ -548,6 +543,7 @@ export function ChannelMonitor() {
     queryFn: getChannelGroupMonitorSettings,
     enabled: groupMonitorSettingsOpen,
     staleTime: 0,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
   const costQuery = useQuery({
@@ -569,12 +565,13 @@ export function ChannelMonitor() {
   // cannot refresh a tab when it becomes visible again. Revalidate the
   // selected scope both when this page opens and when the tab changes.
   useEffect(() => {
+    const previousView = previousViewRef.current
+    previousViewRef.current = view
     if (
-      !shouldRefreshChannelMonitorViewOnEnter(previousViewRef.current, view)
+      !shouldRefreshChannelMonitorViewOnEnter(previousView, view)
     ) {
       return
     }
-    previousViewRef.current = view
     void refetchChannelMonitorQueries(queryClient, { view }).catch(
       () => undefined
     )
@@ -689,22 +686,7 @@ export function ChannelMonitor() {
       })
     },
   })
-  const overviewChannels = overview?.channels ?? EMPTY_CHANNELS
-  const channels = useMemo(() => {
-    const concurrencyByChannel = concurrencyQuery.data?.data.channels ?? null
-    if (!concurrencyByChannel) return overviewChannels
-    return overviewChannels.map((channel) => {
-      const status = concurrencyByChannel[String(channel.id)]
-      if (!status) return channel
-      return {
-        ...channel,
-        concurrency_active: status.active,
-        concurrency_limit: status.limit,
-        current_rpm: status.current_rpm ?? channel.current_rpm ?? 0,
-        rpm_limit: status.rpm_limit ?? channel.rpm_limit ?? 0,
-      }
-    })
-  }, [concurrencyQuery.data?.data.channels, overviewChannels])
+  const channels = overview?.channels ?? EMPTY_CHANNELS
   const channelOrder = overview?.channel_order ?? EMPTY_CHANNEL_ORDER
   const groupRatios = overview?.group_ratios ?? EMPTY_GROUP_RATIOS
   const groupCoefficients =

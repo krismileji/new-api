@@ -30,10 +30,12 @@ import type {
 } from '../types'
 
 export const CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS = {
+  retry: false,
   refetchInterval: false,
   refetchIntervalInBackground: false,
   refetchOnWindowFocus: false,
   refetchOnReconnect: false,
+  gcTime: 0,
 } as const
 
 // Keep the active-task interval shared so the status-probe and model-detection
@@ -48,7 +50,7 @@ export function shouldRefreshChannelMonitorViewOnEnter(
   previousView: ChannelMonitorManualRefreshView | null,
   currentView: ChannelMonitorManualRefreshView
 ) {
-  return previousView === null || previousView !== currentView
+  return previousView !== null && previousView !== currentView
 }
 
 export const CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY = [
@@ -112,7 +114,6 @@ function getChannelMonitorManualRefreshTargets(
     case 'channels':
       targets = [
         { queryKey: ['channel-monitor'], exact: true },
-        { queryKey: CHANNEL_MONITOR_CONCURRENCY_QUERY_KEY, exact: true },
         { queryKey: ['channel-monitor-performance'] },
         { queryKey: ['channel-monitor', 'cost', 'summary', 2], exact: true },
         { queryKey: ['channel-monitor', 'success', 'today'], exact: true },
@@ -171,10 +172,7 @@ export async function refetchChannelMonitorQueries(
 ) {
   await Promise.all(
     getChannelMonitorManualRefreshTargets(scope).map(({ queryKey, exact }) =>
-      queryClient.refetchQueries(
-        { queryKey, exact, type: 'active' },
-        { cancelRefetch: false }
-      )
+      queryClient.resetQueries({ queryKey, exact, type: 'active' })
     )
   )
 }
@@ -216,7 +214,7 @@ export function getChannelMonitorPerformanceQueryOptions(
 }
 
 export function isChannelMonitorPerformanceQueryActive(view: string) {
-  return view !== 'status-probe'
+  return view !== 'status-probe' && view !== 'model-detection'
 }
 
 export function getChannelStatusProbeHistoryLatestExecutionKey(
