@@ -8,6 +8,8 @@ Root 管理接口提供配置、候选模型、总览、手动执行和执行历
 
 Worker 每个逻辑分组每轮只执行一次探测；上游失败可以在物理成员之间重试，但管理员执行记录保留最终逻辑结果和实际渠道。下一监测周期开始时仍未完成的分组会记录 timeout，已完成的分组结果保持不变；timeout 显示为黄色告警，且计入失败统计。结果包括 success、upstream_failure、rate_limited、local_failure、unavailable、timeout 和 skipped；skipped 不计入成功率。探测成本归属实际物理渠道。
 
+探测请求根据渠道类型使用对应的 API 端点：Anthropic 渠道使用 Messages API (`/v1/messages`)，其他渠道使用 Responses API (`/v1/responses`)。系统自动选择适配的端点类型，无需手动配置。
+
 ## 用户视图
 
 用户接口按 pricing 模块权限和当前用户可用分组过滤，只返回 group、initial、status、probe_model、latest_first_token_ms、success_rate、last_finished_at 和 recent_window。不会返回渠道 ID、Key、成本、错误详情、租约或管理员配置。
