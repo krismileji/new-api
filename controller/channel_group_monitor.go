@@ -207,6 +207,11 @@ func channelGroupMonitorSupportsTextProbe(channel *model.Channel, modelName stri
 	if strings.HasPrefix(normalized, "m3e") || strings.Contains(normalized, "bge-") {
 		return false
 	}
+	// For Anthropic channels, check if they support the Messages API path
+	// instead of the Responses API path
+	if channel.Type == constant.ChannelTypeAnthropic {
+		return middleware.ChannelSupportsRequestPath(channel, "/v1/messages", modelName)
+	}
 	return middleware.ChannelSupportsRequestPath(channel, "/v1/responses", modelName)
 }
 

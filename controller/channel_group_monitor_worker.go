@@ -417,8 +417,9 @@ func runChannelGroupMonitorGroup(
 			RetryIndex:          retryParam.GetRetry(),
 			AttemptedChannelIds: attemptedChannelIds,
 		})
+		endpointType := selectChannelGroupMonitorEndpointType(channel)
 		outcome := executeChannelStatusProbeModelWithEndpoint(
-			attemptCtx, channel, testUserId, group.ProbeModel, string(constant.EndpointTypeOpenAIResponse),
+			attemptCtx, channel, testUserId, group.ProbeModel, endpointType,
 		)
 		execution.ChannelId = channel.Id
 		finalOutcome = &outcome
@@ -649,4 +650,20 @@ func truncateChannelGroupMonitorText(value string, limit int) string {
 		return string(runes)
 	}
 	return string(runes[:limit])
+}
+
+// selectChannelGroupMonitorEndpointType returns the appropriate endpoint type
+// for group monitoring based on the channel type. Claude/Anthropic channels
+// use the Anthropic Messages API endpoint, while other channels use the
+// OpenAI Responses endpoint.
+func selectChannelGroupMonitorEndpointType(channel *model.Channel) string {
+	if channel == nil {
+		return string(constant.EndpointTypeOpenAIResponse)
+	}
+	switch channel.Type {
+	case constant.ChannelTypeAnthropic:
+		return string(constant.EndpointTypeAnthropic)
+	default:
+		return string(constant.EndpointTypeOpenAIResponse)
+	}
 }
