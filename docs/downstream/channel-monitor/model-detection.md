@@ -19,3 +19,18 @@ bootstrap 要求 `schema_version=2`。完成报告保存未知字段，但必须
 ## 成本和清理
 
 检测请求的 prepared、dispatched、settled 和 unresolved 状态分别记录；成本归属实际物理渠道。只清理 terminal/resolved 的历史，prepared 或 pending 成本不会被直接删除。
+
+## 管理接口
+
+- `GET /api/channel_monitor/model_detection`
+- `GET /api/channel_monitor/model_detection/settings`
+- `PUT /api/channel_monitor/model_detection/settings`
+- `GET /api/channel_monitor/model_detection/service`
+- `POST /api/channel_monitor/model_detection/service/test`
+- `PUT /api/channel_monitor/model_detection/channel/:id/config`
+- `POST /api/channel_monitor/model_detection/channel/:id/estimate`
+- `POST /api/channel_monitor/model_detection/channel/:id/run`
+- `GET /api/channel_monitor/model_detection/channel/:id/runs`
+- `GET /api/channel_monitor/model_detection/runs/:run_id`
+- `POST /api/channel_monitor/model_detection/runs/:run_id/cancel`
+- 内部中继 `POST /internal/model-detector/v1/responses`

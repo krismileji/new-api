@@ -4,13 +4,19 @@
 
 ## 接口和权限
 
-`all` 和 `user-visible` 接口使用 AdminAuth，`self` 接口使用 UserAuth。common、绘图和任务日志分别提供对应的范围后缀。普通用户直接请求管理员范围会被拒绝。
+| 范围 | 权限 | common | 绘图 | 任务 |
+| --- | --- | --- | --- | --- |
+| `all` | AdminAuth | `GET /api/log/` 及 `/stat` | `GET /api/mj/` | `GET /api/task/` |
+| `user-visible` | AdminAuth | `GET /api/log/user-visible` 及 `/user-visible/stat` | `GET /api/mj/user-visible` | `GET /api/task/user-visible` |
+| `self` | UserAuth | `GET /api/log/self` 及 `/self/stat`、`/self/search` | `GET /api/mj/self` | `GET /api/task/self` |
+
+普通用户直接请求管理员范围会被拒绝。
 
 ## 可见性
 
 common 日志的用户侧范围只保留消费和错误记录，排除重试尝试、渠道监控测试、智能探测、状态探测、分组探测和违规费用记录。self 返回当前用户记录并清除 `admin_info`、`audit_info`、渠道名和内部错误；管理员的 user-visible 保留完整诊断字段、渠道和用户列。
 
-用户侧错误优先使用 `user_visible_error_message`，否则只返回 HTTP 状态错误。管理员可按规则恢复请求 IP；普通用户不能看到管理员诊断字段。
+用户侧错误优先使用 `user_visible_error_message`，否则只返回 HTTP 状态错误。管理员可按规则恢复请求 IP；普通用户不能看到管理员诊断字段。错误映射、白名单和关键字见[中继可靠性](../relay-reliability/README.md)。
 
 ## 统计
 

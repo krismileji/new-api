@@ -19,6 +19,14 @@
 
 接口位于 `/api/channel/logical-groups`，查询和预检需要 ChannelRead，创建、替换成员和启停需要 ChannelWrite，删除需要 ChannelSensitiveWrite。成员替换、状态变更和删除使用 revision；旧 revision 返回 409。响应只返回脱敏成员信息，不返回渠道 Key。
 
+- `GET /api/channel/logical-groups`
+- `GET /api/channel/logical-groups/:id`
+- `POST /api/channel/logical-groups/precheck`
+- `POST /api/channel/logical-groups`
+- `PUT /api/channel/logical-groups/:id/members`
+- `PUT /api/channel/logical-groups/:id/status`
+- `DELETE /api/channel/logical-groups/:id`
+
 ## 运行时行为
 
 运行时使用包含 logical ID、revision、成员 ID、weight 和地址摘要的冻结快照。关系变更不会改写已经运行的调度、探测或检测任务；缓存刷新失败时不会发布半套关系。全局开关 `CHANNEL_LOGICAL_GROUP_ENABLED` 或单组 disabled 时，新请求回退到物理渠道路径，关系和历史保留。

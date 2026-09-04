@@ -7,14 +7,19 @@
 - [监控总览](dashboard.md)：渠道、分组、模型和智能调度视图。
 - [上游同步](upstream-sync.md)：上游倍率、余额、认证和自动处置。
 - [智能调度](smart-scheduling.md)：调度准入、评分、保本兜底、稳定性保护和重试选路。
+- [调度算法](scheduling-algorithm.md)：评分公式、经济分类、429 冷却、探索和自适应采样。
 - [成本统计](cost-statistics.md)：渠道/API Key 成本、成功率、性能和未解析数据。
 - [实时监控](realtime-monitoring.md)：事件流、实时投影和分钟聚合读取。
+- [整体架构](architecture.md)：发布、消费、投影和成本可靠链路。
+- [数据一致性](data-consistency.md)：实时、历史、账本和降级边界。
 - [状态探测](status-probe.md)：定时/手动探测、健康状态和探测样本。
 - [模型检测](model-detection.md)：独立检测器接入、渠道模型检测和结果结算。
 - [模型广场分组监控](model-market-monitoring.md)：用户侧分组状态与管理员探测配置。
 - [连通性测试](connectivity-test.md)：单次、批量和并发循环测试。
 - [渠道并发限制](channel-concurrency.md)：渠道并发上限、租约和满载重选。
 - [本地探针响应](local-probe-response.md)：公开请求的本地探针响应。
+
+环境变量、Option 和保留期见[配置参考](../configuration-reference.md)。启用顺序见[集成指南](../integration-guide.md)。
 
 ## 权限边界
 

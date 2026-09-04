@@ -11,4 +11,11 @@
 - [管理员分组访问](admin-group-access/README.md)：管理员分组访问范围。
 - [图像生成定价保护](image-pricing-guard/README.md)：未配置图像倍率时的请求保护。
 
+## 集成与配置
+
+- [集成指南](integration-guide.md)：功能依赖、启用顺序、回退和常见问题。
+- [配置参考](configuration-reference.md)：环境变量、Option、默认值和变更影响。
+- [审查记录](REVIEW.md)：本次文档对照代码的遗漏点和补充清单。
+
 上游功能不在此重复说明；只有下游改变了入口、权限、数据或行为时才记录。
+

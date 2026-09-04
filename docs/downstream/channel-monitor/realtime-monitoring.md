@@ -91,3 +91,5 @@ ChannelMonitorRedisRouteHealthProjection 按渠道+规范化模型维护采样 S
 ## 数据可见性边界
 
 `realtime_degraded=true` 表示实时投影不可用或延迟，不表示没有请求或成本为零。历史金额读取 `ChannelDailyCost`/`ChannelDailyAPIKeyCost`；实时投影不作为账本。Redis 实时轨道与数据库分钟聚合、成本批处理并存，不能互相替代。
+
+发布、消费和投影的完整架构见[整体架构](architecture.md)。实时、历史和账本的水位差异见[数据一致性](data-consistency.md)。

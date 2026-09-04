@@ -15,3 +15,14 @@ worker 只在主节点运行，按配置的 next_run_at 和 lease 领取到期�
 ## 状态
 
 状态按最近完成结果、配置和数据新鲜度计算：unconfigured、paused、pending、healthy、partial、unhealthy、rate_limited 和 stale。窗口数据按渠道、模型和时间桶返回；无样本不转换为成功或失败。
+
+## Worker
+
+状态探测 worker 只在主节点运行。扫描间隔由 `CHANNEL_STATUS_PROBE_SCAN_INTERVAL_MS` 控制，默认 `1000` 毫秒，有效范围 `200..30000`，超出回退默认值。租约每 `2` 分钟续期。样本写入失败每 `30` 秒重试，最多保留 `24` 小时，每批 `20` 条。
+
+管理接口：
+
+- `GET /api/channel_monitor/status`
+- `PUT /api/channel_monitor/status/channel/:id/config`
+- `POST /api/channel_monitor/status/channel/:id/run`
+- `GET /api/channel_monitor/status/channel/:id/executions`

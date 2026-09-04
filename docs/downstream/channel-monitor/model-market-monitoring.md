@@ -13,3 +13,13 @@ Worker 每个逻辑分组每轮只执行一次探测；上游失败可以在物�
 用户接口按 pricing 模块权限和当前用户可用分组过滤，只返回 group、initial、status、probe_model、latest_first_token_ms、success_rate、last_finished_at 和 recent_window。不会返回渠道 ID、Key、成本、错误详情、租约或管理员配置。
 
 状态包括 unconfigured、paused、pending、healthy、unavailable、unhealthy、rate_limited 和 stale。监控关闭时用户仍可看到已配置分组的 paused 状态；无效探测模型只保留在管理员视图。
+
+管理 API 前缀为 `/api/channel_monitor/group_monitor`：
+
+- `GET /settings`
+- `PUT /settings`
+- `GET /overview`
+- `POST /run`
+- `GET /executions`
+
+用户 API 为 `GET /api/pricing/group-monitor`。Worker 扫描间隔由 `CHANNEL_GROUP_MONITOR_SCAN_INTERVAL_MS` 控制，默认 `1000` 毫秒，范围 `200..30000`。

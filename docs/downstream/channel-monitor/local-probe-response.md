@@ -9,6 +9,7 @@
 - 唯一的用户输入在去除首尾空白后等于配置的“匹配输入”（默认 `hi`），匹配不区分大小写。
 - 允许请求携带 system、developer 或 Responses `instructions` 指令。
 - 存在历史 assistant 消息、多个 user 消息、`previous_response_id`、conversation、图片、文件、音频、工具结果或其他文本时不命中。
+- 可配置生效 IP 白名单。空表示不限制；最多 64 个 IP，总长 4096。客户端 IP 不在名单中时不命中。配置非法时运行时关闭探针，避免误命中。
 - 其他端点和未命中的请求继续执行正常渠道选择、计费和中继流程。
 
 渠道管理和渠道监控发起的连通性测试直接调用渠道适配器，不经过公开中继入口，因此始终真实请求上游，不会被本功能误判为成功。它们属于 automated probe，始终按测试链路写入带监控标记的消费日志，并记录渠道成本；本地响应开关不会改变这些后台探测的真实请求行为。
@@ -26,7 +27,8 @@ Responses API 的非流式返回按请求模型填充响应字段，包括完整
 配置对应的系统 Option 和默认值如下：
 
 | 管理端字段 | Option 键 | 默认值 | 有效范围 |
-| --- | --- | ---: | --- |
+| --- | --- | --- | --- |
+| 生效 IP | `ChannelMonitorProbeResponseAllowedIPs` | 空（不限制） | 最多 64 个 IP，总长 4096；非法配置会使探针关闭 |
 | 匹配输入 | `ChannelMonitorProbeResponseMatchInput` | `hi` | 去首尾空白后不能为空，最长 4096 个字符 |
 | 响应文本 | `ChannelMonitorProbeResponseText` | `Hi. What are you working on?` | 去首尾空白后不能为空，最长 16384 个字符 |
 | 最小延迟 | `ChannelMonitorProbeResponseMinDelayMilliseconds` | `500` | `0..600000` 毫秒，不能大于最大延迟 |
