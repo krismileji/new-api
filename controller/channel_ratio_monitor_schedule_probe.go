@@ -595,9 +595,10 @@ func runChannelSmartScheduleProbeOnce(
 			}
 		}
 		probeStartedAt := time.Now()
+		endpointType := selectChannelSmartScheduleProbeEndpointType(channel)
 		probeResult := testChannel(
 			probeCtx, channel, testUserID, item.requestModel,
-			string(constant.EndpointTypeOpenAIResponse), true,
+			endpointType, true,
 		)
 		lease.Release()
 		if probeResult.localErr != nil || probeResult.newAPIError != nil {
@@ -846,6 +847,24 @@ func channelSmartScheduleMergeSharedSampleAverage(
 	}
 	if current == nil || currentCount <= 0 {
 		value := *probe
+		return &value, int(probeCount)
+	}
+	merged := (*current*float64(currentCount) + *probe*float64(probeCount)) / float64(currentCount+int(probeCount))
+	return &merged, currentCount + int(probeCount)
+}
+
+// selectChannelSmartScheduleProbeEndpointType returns the appropriate endpoint type for
+// smart schedule probe based on the channel type. Anthropic channels use the Anthropic
+// Messages API endpoint, while all others use the OpenAI Responses endpoint.
+func selectChannelSmartScheduleProbeEndpointType(channel *model.Channel) string {
+	if channel == nil {
+		return string(constant.EndpointTypeOpenAIResponse)
+	}
+	if channel.Type == constant.ChannelTypeAnthropic {
+		return string(constant.EndpointTypeAnthropic)
+	}
+	return string(constant.EndpointTypeOpenAIResponse)
+}
 		return &value, int(probeCount)
 	}
 	totalCount := int64(currentCount) + probeCount

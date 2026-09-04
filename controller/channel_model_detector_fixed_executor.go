@@ -122,7 +122,8 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 	}
 	writer := newChannelModelDetectorResponseWriter(maxResponseBytes)
 	c, _ := gin.CreateTestContext(writer)
-	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/responses", bytes.NewReader(execution.RequestBody))
+	requestPath := selectChannelModelDetectorEndpointPath(&channel)
+	c.Request = httptest.NewRequestWithContext(ctx, http.MethodPost, requestPath, bytes.NewReader(execution.RequestBody))
 	c.Request.Header.Set("Content-Type", "application/json")
 	c.Set(common.RequestIdKey, common.NewRequestId())
 	pricingUser.ToBaseUser().WriteContext(c)
@@ -434,6 +435,19 @@ func (writer *channelModelDetectorResponseWriter) Hijack() (net.Conn, *bufio.Rea
 }
 func (writer *channelModelDetectorResponseWriter) Bytes() []byte {
 	return append([]byte(nil), writer.body.Bytes()...)
+}
+
+// selectChannelModelDetectorEndpointPath returns the appropriate API endpoint path for
+// model detection based on the channel type. Anthropic channels use /v1/messages,
+// while all other channels use /v1/responses.
+func selectChannelModelDetectorEndpointPath(channel *model.Channel) string {
+	if channel == nil {
+		return "/v1/responses"
+	}
+	if channel.Type == constant.ChannelTypeAnthropic {
+		return "/v1/messages"
+	}
+	return "/v1/responses"
 }
 
 var _ gin.ResponseWriter = (*channelModelDetectorResponseWriter)(nil)
