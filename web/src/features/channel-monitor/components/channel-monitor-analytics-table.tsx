@@ -232,9 +232,9 @@ function getSecondaryLabel(
       : 'ID 未知'
   }
   if (groupBy === 'user') {
-    return item.user_id && item.user_id > 0
-      ? `ID ${item.user_id}`
-      : '历史归属未知'
+    if (!item.user_id || item.user_id <= 0) return '历史归属未知'
+    const username = item.user_name?.trim()
+    return username ? `ID ${item.user_id} · ${username}` : `ID ${item.user_id}`
   }
   if (groupBy === 'channel' || groupBy === 'channel_model') {
     const channelID = item.channel_id ? `ID ${item.channel_id}` : '渠道未知'

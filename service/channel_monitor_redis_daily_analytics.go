@@ -69,7 +69,6 @@ func channelMonitorRedisDailySuccessAnalyticsFromView(
 		EventWatermark: daily.EventWatermark,
 	}
 	rows := make(map[string]*ChannelMonitorRedisDailySuccessAnalyticsRow)
-	userByChannelKey := make(map[string]int)
 
 	for _, entry := range daily.Entries {
 		row := ChannelMonitorRedisDailySuccessAnalyticsRow{Aggregate: entry.Aggregate}
@@ -118,7 +117,7 @@ func channelMonitorRedisDailySuccessAnalyticsFromView(
 				continue
 			}
 			modelName, ok := decodeDailySuccessDimension(parts[3])
-			if !ok {
+			if !ok || modelName == "" {
 				continue
 			}
 			row.UserID = parseDailySuccessPositiveInt(parts[0])
@@ -139,7 +138,7 @@ func channelMonitorRedisDailySuccessAnalyticsFromView(
 				continue
 			}
 			modelName, ok := decodeDailySuccessDimension(parts[1])
-			if !ok {
+			if !ok || modelName == "" {
 				continue
 			}
 			row.ChannelID = parseDailySuccessPositiveInt(parts[0])
@@ -150,7 +149,7 @@ func channelMonitorRedisDailySuccessAnalyticsFromView(
 				continue
 			}
 			modelName, ok := decodeDailySuccessDimension(parts[2])
-			if !ok {
+			if !ok || modelName == "" {
 				continue
 			}
 			row.APIKeyID = parseDailySuccessPositiveInt(parts[0])
@@ -167,14 +166,6 @@ func channelMonitorRedisDailySuccessAnalyticsFromView(
 			row.APIKeyName = entry.Aggregate.APIKeyName
 		}
 		key := dailySuccessAnalyticsRowKey(row)
-		if row.ChannelID > 0 && row.UserID > 0 && row.APIKeyID > 0 {
-			ownerKey := strconv.Itoa(row.ChannelID) + "." + strconv.Itoa(row.APIKeyID)
-			if previous, exists := userByChannelKey[ownerKey]; exists && previous != row.UserID {
-				userByChannelKey[ownerKey] = 0
-			} else {
-				userByChannelKey[ownerKey] = row.UserID
-			}
-		}
 		if existing := rows[key]; existing != nil {
 			if err := mergeChannelMonitorRedisSharedAggregate(&existing.Aggregate, row.Aggregate); err != nil {
 				return ChannelMonitorRedisDailySuccessAnalyticsView{}, err
@@ -189,13 +180,6 @@ func channelMonitorRedisDailySuccessAnalyticsFromView(
 	}
 
 	for _, row := range rows {
-		if row.APIKeyID > 0 && row.ChannelID > 0 && row.UserID == 0 {
-			owner := userByChannelKey[strconv.Itoa(row.ChannelID)+"."+strconv.Itoa(row.APIKeyID)]
-			if owner > 0 {
-				row.UserID = owner
-				row.UserAttribution = string(model.ChannelMonitorEventUserAttributionRequest)
-			}
-		}
 		view.Rows = append(view.Rows, *row)
 	}
 	return view, nil

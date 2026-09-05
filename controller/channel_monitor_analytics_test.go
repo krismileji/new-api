@@ -55,11 +55,11 @@ func TestChannelMonitorAnalyticsCurrentAPIKeyRowsRemainVisible(t *testing.T) {
 	event.UserId = 31
 	event.APIKeyId = 201
 	event.APIKeyName = "生产 Key"
+	event.ModelName = "gpt-4.1"
 	event.RequestDispatched = true
 	event.IsFinalAttempt = true
 	require.NoError(t, service.NewChannelMonitorRedisSharedProjectionWithClient(common.RDB).
 		HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{event}))
-
 	response, err := queryChannelMonitorHistoricalAnalytics(context.Background(), channelMonitorAnalyticsQuery{
 		Metric: "success", GroupBy: "api_key", From: dayStart, To: dayStart + 24*60*60,
 		Page: 1, PageSize: 20, Sort: "samples", Direction: "desc",
@@ -68,6 +68,31 @@ func TestChannelMonitorAnalyticsCurrentAPIKeyRowsRemainVisible(t *testing.T) {
 	require.Len(t, response.Items, 1)
 	assert.Equal(t, 201, response.Items[0]["api_key_id"])
 	assert.Equal(t, "生产 Key", response.Items[0]["api_key_name"])
+	assert.Equal(t, int64(1), response.Items[0]["actual_sample_count"])
+
+	userQuery := channelMonitorAnalyticsQuery{
+		Metric: "success", GroupBy: "api_key", From: dayStart, To: dayStart + 24*60*60,
+		Channel: 101, User: 31, Page: 1, PageSize: 20, Sort: "samples", Direction: "desc",
+	}
+	userResponse, err := queryChannelMonitorHistoricalAnalytics(context.Background(), userQuery)
+	require.NoError(t, err)
+	require.Len(t, userResponse.Items, 1)
+	assert.Equal(t, 201, userResponse.Items[0]["api_key_id"])
+	assert.Equal(t, int64(1), userResponse.Items[0]["actual_sample_count"])
+
+	detailQuery := userQuery
+	detailQuery.GroupBy = "api_key_channel_model"
+	detailQuery.APIKey = 201
+	detailResponse, err := queryChannelMonitorHistoricalAnalytics(context.Background(), detailQuery)
+	require.NoError(t, err)
+	require.Len(t, detailResponse.Items, 1)
+	assert.Equal(t, 201, detailResponse.Items[0]["api_key_id"])
+	assert.Equal(t, int64(1), detailResponse.Items[0]["actual_sample_count"])
+
+	backResponse, err := queryChannelMonitorHistoricalAnalytics(context.Background(), userQuery)
+	require.NoError(t, err)
+	require.Len(t, backResponse.Items, 1)
+	assert.Equal(t, userResponse.Items, backResponse.Items)
 }
 
 func TestChannelMonitorAnalyticsCurrentUserRowsIncludeIdentity(t *testing.T) {

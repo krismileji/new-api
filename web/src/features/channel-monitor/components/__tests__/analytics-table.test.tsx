@@ -81,6 +81,7 @@ test('renders the user name and ID for channel drill-down rows', () => {
 
   assert.match(markup, /Alice/)
   assert.match(markup, /ID 31/)
+  assert.match(markup, /alice/)
 })
 
 test('keeps long lists in a horizontally scrollable bounded table', () => {

@@ -174,12 +174,9 @@ function selectionLabel(
   }
   if (user) {
     const userLabel = user.user_display_name || user.user_name
-    labels.push(
-      userLabel ||
-        (user.user_id && user.user_id > 0
-          ? `用户 #${user.user_id}`
-          : '未归属用户')
-    )
+    const userID =
+      user.user_id && user.user_id > 0 ? `用户 #${user.user_id}` : ''
+    labels.push(userLabel || userID || '未归属用户')
   }
   if (apiKey) {
     labels.push(apiKey.api_key_name || `API Key #${apiKey.api_key_id ?? 0}`)
@@ -239,8 +236,11 @@ export function ChannelMonitorAnalyticsDialog(
     pageSize: 20,
   }
   const query = useChannelMonitorAnalytics(request, props.open)
+  const queryResponse = query.data?.data
   const response =
-    query.data?.data?.group_by === groupBy ? query.data.data : undefined
+    !query.isFetching && queryResponse?.group_by === groupBy
+      ? queryResponse
+      : undefined
   const coverage = response?.coverage
   const coverageIncomplete =
     isChannelMonitorAnalyticsCoverageIncomplete(coverage)
@@ -344,7 +344,7 @@ export function ChannelMonitorAnalyticsDialog(
   }, [goBack, props.open, selectedAPIKey, selectedChannel, selectedUser])
 
   let table: ReactNode
-  if (query.isLoading) {
+  if (query.isLoading || (query.isFetching && !response)) {
     table = <Skeleton className='h-72 w-full' />
   } else if (query.isError) {
     table = (
