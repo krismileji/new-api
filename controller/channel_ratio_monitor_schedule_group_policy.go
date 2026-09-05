@@ -26,12 +26,12 @@ const (
 	maxChannelMonitorSmartScheduleFastRetryDelayMs                     = 60_000
 	defaultChannelMonitorSmartScheduleBurstFailureWindowMinutes        = 1
 	defaultChannelMonitorSmartScheduleBurstFailureWindowRequests       = 100
-	defaultChannelMonitorSmartScheduleBurstFailureThresholdPercent     = 3.0
+	defaultChannelMonitorSmartScheduleBurstFailureThresholdPercent     = 10.0
 	defaultChannelMonitorSmartScheduleBurstFailureWindowSeconds        = 30
-	defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold      = 2
+	defaultChannelMonitorSmartScheduleConsecutiveFailureThreshold      = 5
 	defaultChannelMonitorSmartScheduleBurstFailureThreshold            = 3
 	defaultChannelMonitorSmartScheduleRecoverySuccessThreshold         = 2
-	defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount = 0
+	defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount = 3
 	defaultChannelMonitorSmartScheduleFastRetryDelayMs                 = 1_000
 	minChannelMonitorSmartScheduleAdaptiveSamplingWindowMinutes        = 1
 	maxChannelMonitorSmartScheduleAdaptiveSamplingWindowMinutes        = 60

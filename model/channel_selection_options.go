@@ -30,7 +30,7 @@ func requestPathFromChannelFilters(filters []dto.ChannelFilter) string {
 const (
 	ChannelSmartSchedulePromptTokensPerK                       = 1_000
 	DefaultChannelSmartScheduleExplorationMaxPromptTokens      = 50_000
-	DefaultChannelSmartScheduleStabilityReleaseMaxPromptTokens = 0
+	DefaultChannelSmartScheduleStabilityReleaseMaxPromptTokens = 50_000
 	MaxChannelSmartScheduleExplorationPromptTokens             = 1_000_000
 	requestBodyBytesPerPromptToken                             = 3
 )

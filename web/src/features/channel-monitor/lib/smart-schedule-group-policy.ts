@@ -66,7 +66,8 @@ export function channelMonitorSmartScheduleScoringToForm(
     stabilityPercent: scoring.stability_percent,
     primaryTrafficPercent: scoring.primary_traffic_percent ?? 90,
     primarySwitchThresholdPercent:
-      scoring.primary_switch_threshold_percent ?? 3,
+      scoring.primary_switch_threshold_percent ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING.primary_switch_threshold_percent,
     smart: {
       costRatioPercent: scoring.smart.cost_ratio_percent,
       firstTokenPercent: scoring.smart.first_token_percent,

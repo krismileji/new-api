@@ -13,7 +13,7 @@ const (
 	channelMonitorDefaultPrimaryTraffic  = 90.0
 	channelMonitorMinPrimaryTraffic      = 51.0
 	channelMonitorMaxPrimaryTraffic      = 99.0
-	channelMonitorDefaultSwitchThreshold = 3.0
+	channelMonitorDefaultSwitchThreshold = 10.0
 )
 
 const (

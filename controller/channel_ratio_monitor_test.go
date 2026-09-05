@@ -823,7 +823,7 @@ func TestChannelSmartScheduleConfigurationDefaultsNewFields(t *testing.T) {
 		"ratio":{"cost_ratio_percent":70,"first_token_percent":20,"tps_percent":10}
 	}`, &scoring))
 	assert.Equal(t, 90.0, scoring.PrimaryTrafficPercent)
-	assert.Equal(t, 3.0, scoring.PrimarySwitchThresholdPercent)
+	assert.Equal(t, 10.0, scoring.PrimarySwitchThresholdPercent)
 	require.NoError(t, validateChannelSmartScheduleScoring(scoring))
 	for _, value := range []float64{51, 99} {
 		candidate := scoring
@@ -1331,7 +1331,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NotNil(t, defaultGroupPolicy.ExplorationMaxPromptTokens)
 	assert.Equal(t, 50_000, *defaultGroupPolicy.ExplorationMaxPromptTokens)
 	require.NotNil(t, defaultGroupPolicy.StabilityReleaseMaxPromptTokens)
-	assert.Zero(t, *defaultGroupPolicy.StabilityReleaseMaxPromptTokens)
+	assert.Equal(t, 50_000, *defaultGroupPolicy.StabilityReleaseMaxPromptTokens)
 	require.NotNil(t, defaultGroupPolicy.AdaptiveSamplingFirstTokenWarningRequestPercent)
 	assert.Equal(t, 10.0, *defaultGroupPolicy.AdaptiveSamplingFirstTokenWarningRequestPercent)
 
@@ -1378,7 +1378,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NotNil(t, groupPolicy.ExplorationMaxPromptTokens)
 	assert.Equal(t, 50_000, *groupPolicy.ExplorationMaxPromptTokens)
 	require.NotNil(t, groupPolicy.StabilityReleaseMaxPromptTokens)
-	assert.Zero(t, *groupPolicy.StabilityReleaseMaxPromptTokens)
+	assert.Equal(t, 50_000, *groupPolicy.StabilityReleaseMaxPromptTokens)
 	require.NotNil(t, groupPolicy.AdaptiveSamplingFirstTokenWarningRequestPercent)
 	assert.Equal(t, 10.0, *groupPolicy.AdaptiveSamplingFirstTokenWarningRequestPercent)
 	require.NotNil(t, groupPolicy.AdaptiveSamplingWindowSeconds)

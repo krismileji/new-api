@@ -154,7 +154,7 @@ const (
 	defaultChannelMonitorCleanupContinuationSeconds            = 60
 	defaultChannelMonitorCleanupIntervalMinutes                = 24 * 60
 	defaultChannelMonitorGroupCoefficient                      = 1
-	defaultChannelMonitorSmartScheduleProbeInterval            = 10
+	defaultChannelMonitorSmartScheduleProbeInterval            = 1
 	defaultChannelMonitorSmartSchedulePerformanceWindowMinutes = model.ChannelMonitorSmartScheduleDefaultPerformanceWindowMinutes
 	defaultChannelMonitorSmartScheduleRealtimeRetentionMinutes = model.ChannelMonitorSmartScheduleDefaultRealtimeRetentionMinutes
 	defaultChannelMonitorSmartScheduleRealtimeSampleLimit      = model.ChannelMonitorSmartScheduleDefaultRealtimeSampleLimit

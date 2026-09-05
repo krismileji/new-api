@@ -326,6 +326,7 @@ describe('smart schedule group policy', () => {
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.recoveryStabilityScore,
       95
     )
+    assert.equal(CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.minSamples, 3)
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.jitterEnabled,
       true
@@ -350,7 +351,7 @@ describe('smart schedule group policy', () => {
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.scoring
         .primarySwitchThresholdPercent,
-      3
+      10
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.fastFailurePenaltyPercent,
@@ -358,11 +359,11 @@ describe('smart schedule group policy', () => {
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.fastFailureSeconds,
-      1
+      3
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.fastFailureSameChannelRetryCount,
-      0
+      3
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.fastFailureSameChannelRetryDelayMs,
@@ -382,11 +383,11 @@ describe('smart schedule group policy', () => {
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.consecutiveFailureThreshold,
-      2
+      5
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.burstFailureThresholdPercent,
-      3
+      10
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.recoverySuccessThreshold,
@@ -402,11 +403,11 @@ describe('smart schedule group policy', () => {
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.stabilityReleaseMaxPromptKTokens,
-      0
+      50
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.probeIntervalMinutes,
-      10
+      1
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.adaptiveSamplingFirstTokenWarningRequestPercent,

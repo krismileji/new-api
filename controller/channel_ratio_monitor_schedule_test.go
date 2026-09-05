@@ -456,7 +456,7 @@ func TestNormalizeChannelSmartScheduleGroupPolicyDefaultsPromptLimits(t *testing
 	require.NotNil(t, normalized[0].ExplorationMaxPromptTokens)
 	require.NotNil(t, normalized[0].StabilityReleaseMaxPromptTokens)
 	assert.Equal(t, 50_000, *normalized[0].ExplorationMaxPromptTokens)
-	assert.Zero(t, *normalized[0].StabilityReleaseMaxPromptTokens)
+	assert.Equal(t, model.DefaultChannelSmartScheduleStabilityReleaseMaxPromptTokens, *normalized[0].StabilityReleaseMaxPromptTokens)
 }
 
 func TestChannelSmartScheduleGroupPolicyWindowContractSerialization(t *testing.T) {
