@@ -4353,10 +4353,13 @@ func TestRunChannelRatioMonitorTaskRespectsPerChannelSyncCapabilities(t *testing
 	}))
 	defer server.Close()
 
+	ratioRemark := "倍率线路"
+	balanceRemark := "余额线路"
+	disabledRemark := "停用线路"
 	channels := []model.Channel{
-		{Id: 1, Name: "ratio only", Key: "ratio-key", Group: "vip", Status: common.ChannelStatusEnabled},
-		{Id: 2, Name: "balance only", Key: "balance-key", Group: "vip", Status: common.ChannelStatusEnabled},
-		{Id: 3, Name: "fully disabled", Key: "disabled-key", Group: "vip", Status: common.ChannelStatusEnabled},
+		{Id: 1, Name: "ratio only", Remark: &ratioRemark, Key: "ratio-key", Group: "vip", Status: common.ChannelStatusEnabled},
+		{Id: 2, Name: "balance only", Remark: &balanceRemark, Key: "balance-key", Group: "vip", Status: common.ChannelStatusEnabled},
+		{Id: 3, Name: "fully disabled", Remark: &disabledRemark, Key: "disabled-key", Group: "vip", Status: common.ChannelStatusEnabled},
 	}
 	require.NoError(t, db.Create(&channels).Error)
 	monitors := []model.ChannelRatioMonitor{
@@ -4392,6 +4395,20 @@ func TestRunChannelRatioMonitorTaskRespectsPerChannelSyncCapabilities(t *testing
 	assert.Equal(t, 1, summary.BalanceUpdated)
 	assert.Equal(t, 1, summary.Skipped)
 	assert.Zero(t, summary.Failed)
+	require.Len(t, summary.ChangedChannels, 1)
+	assert.Equal(t, 1, summary.ChangedChannels[0].ChannelId)
+	assert.Equal(t, "ratio only", summary.ChangedChannels[0].ChannelName)
+	assert.Equal(t, ratioRemark, summary.ChangedChannels[0].ChannelRemark)
+	assert.InDelta(t, 1.25, summary.ChangedChannels[0].NewRatio, 1e-9)
+	require.Len(t, summary.BalanceUpdates, 1)
+	assert.Equal(t, 2, summary.BalanceUpdates[0].ChannelId)
+	assert.Equal(t, "balance only", summary.BalanceUpdates[0].ChannelName)
+	assert.Equal(t, balanceRemark, summary.BalanceUpdates[0].ChannelRemark)
+	assert.InDelta(t, 5, summary.BalanceUpdates[0].Balance, 1e-9)
+	require.Len(t, summary.SkippedChannels, 1)
+	assert.Equal(t, 3, summary.SkippedChannels[0].ChannelId)
+	assert.Equal(t, "fully disabled", summary.SkippedChannels[0].ChannelName)
+	assert.Equal(t, disabledRemark, summary.SkippedChannels[0].ChannelRemark)
 	assert.EqualValues(t, 1, ratioRequests.Load())
 	assert.EqualValues(t, 1, balanceRequests.Load())
 	assert.EqualValues(t, 1, statusRequests.Load())
@@ -4603,6 +4620,7 @@ func TestRunChannelRatioMonitorTaskContinuesAfterFailure(t *testing.T) {
 	assert.Zero(t, summary.RecoveredAfterRetry)
 	require.Len(t, summary.Failures, 1)
 	assert.Equal(t, 1, summary.Failures[0].ChannelId)
+	assert.Equal(t, model.ChannelRatioFailureAlertRatio, summary.Failures[0].Kind)
 	assert.Equal(t, "failing disabled", summary.Failures[0].ChannelName)
 	assert.Contains(t, summary.Failures[0].Error, "重试 3 次后仍失败")
 	assert.Contains(t, summary.Failures[0].Error, "502 Bad Gateway")
@@ -5142,6 +5160,55 @@ func TestRunChannelRatioMonitorTaskRefreshesBalanceAndDeduplicatesLowBalanceEmai
 	monitor, err = model.GetChannelRatioMonitor(1)
 	require.NoError(t, err)
 	assert.True(t, monitor.BalanceAlertNotified)
+}
+
+func TestRunChannelRatioMonitorTaskRecordsBalanceFailureWhenRatioSucceeds(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorAutoUpdateRetryCountOption: "0",
+	})
+	disableChannelMonitorSSRFProtection(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/user/self/groups":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"vip":{"ratio":1.25}}}`))
+		case "/api/user/self":
+			http.Error(w, "balance unavailable", http.StatusBadGateway)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	remark := "倍率与余额"
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1, Name: "partial sync", Remark: &remark, Key: "test-key", Group: "vip", Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+		ChannelId: 1, Ratio: 1, UpdatedTime: 1,
+		UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL,
+		UpstreamGroup: "vip", UpstreamAuthType: service.NewAPIUpstreamAuthUser,
+		UpstreamUserId: 42, UpstreamAccessToken: "test-token",
+	}).Error)
+
+	summary, err := runChannelRatioMonitorTaskOnce(context.Background(), nil, nil)
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.Updated)
+	assert.Equal(t, 1, summary.Changed)
+	assert.Zero(t, summary.BalanceUpdated)
+	assert.Equal(t, 1, summary.Failed)
+	require.Len(t, summary.ChangedChannels, 1)
+	require.Len(t, summary.Failures, 1)
+	assert.Equal(t, model.ChannelRatioFailureAlertBalance, summary.Failures[0].Kind)
+	assert.Equal(t, remark, summary.Failures[0].ChannelRemark)
+	assert.Contains(t, summary.Failures[0].Error, "502 Bad Gateway")
+
+	monitor, err := model.GetChannelRatioMonitor(1)
+	require.NoError(t, err)
+	assert.InDelta(t, 1.25, monitor.Ratio, 1e-9)
+	assert.NotEmpty(t, monitor.LastBalanceError)
 }
 
 func TestRunChannelRatioMonitorTaskEmailsUpdateFailures(t *testing.T) {

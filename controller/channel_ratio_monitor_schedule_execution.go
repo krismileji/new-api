@@ -113,6 +113,9 @@ func GetChannelMonitorSmartScheduleExecutionDetails(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+		if adjustment.Action == channelSmartScheduleAdjustmentUnchanged {
+			continue
+		}
 		groups[adjustment.Group] = struct{}{}
 		models[adjustment.Model] = struct{}{}
 		if modelSetsByGroup[adjustment.Group] == nil {

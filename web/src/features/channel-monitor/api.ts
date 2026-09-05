@@ -42,6 +42,7 @@ import type {
   ChannelMonitorSuccessDetailResult,
   ChannelMonitorTodaySuccessResult,
   ChannelMonitorTaskRunResult,
+  ChannelMonitorTaskResult,
   ChannelMonitorTaskPage,
   ChannelMonitorTaskKind,
   ChannelMonitorUpstreamBalanceResult,
@@ -309,6 +310,16 @@ export async function getChannelMonitorSmartScheduleExecutionDetails(
         action: request.action || undefined,
       },
     })
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function getChannelMonitorTaskDetails(taskId: string) {
+  const response = await api.get<
+    ChannelMonitorApiResponse<ChannelMonitorTaskResult>
+  >(
+    `/api/channel_monitor/tasks/${encodeURIComponent(taskId)}/ratio-details`,
+    channelMonitorRequestConfig()
   )
   return ensureChannelMonitorSuccess(response.data)
 }

@@ -23,6 +23,7 @@ import type {
   ChannelMonitorTaskAdjustment,
 } from '../../types'
 import {
+  filterChannelMonitorSmartScheduleAdjustments,
   loadChannelMonitorSmartScheduleExecutionSelection,
   orderChannelMonitorSmartScheduleAdjustmentsByRoutingPolicy,
   orderChannelMonitorSmartScheduleModels,
@@ -105,6 +106,21 @@ describe('智能调度执行记录排序与偏好', () => {
     expect(ordered.map((adjustment) => adjustment.channel_id)).toEqual([
       3, 4, 2, 1,
     ])
+  })
+
+  test('过滤无变化渠道并保留其他执行结果', () => {
+    const adjustments = [
+      createAdjustment(1, 100, 80),
+      createAdjustment(2, 80, 20, { action: 'unchanged' }),
+      createAdjustment(3, 0, 0, { action: 'failed' }),
+      createAdjustment(4, 0, 0, { action: 'skipped' }),
+    ]
+
+    expect(
+      filterChannelMonitorSmartScheduleAdjustments(adjustments).map(
+        (adjustment) => adjustment.channel_id
+      )
+    ).toEqual([1, 3, 4])
   })
 
   test('模型仅从历史分组中选择并按当前配置顺序排列', () => {

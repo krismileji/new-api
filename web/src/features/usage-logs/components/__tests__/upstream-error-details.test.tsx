@@ -62,7 +62,8 @@ Object.defineProperty(domWindow.Element.prototype, 'getAnimations', {
 
 const { act } = await import('react')
 const { createRoot } = await import('react-dom/client')
-const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query')
+const { QueryClient, QueryClientProvider } =
+  await import('@tanstack/react-query')
 const { createInstance } = await import('i18next')
 const { I18nextProvider, initReactI18next } = await import('react-i18next')
 const { DetailsDialog } = await import('../dialogs/details-dialog')

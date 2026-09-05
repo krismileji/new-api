@@ -159,12 +159,12 @@ export function ChannelMonitorChannelCostTable(
         </span>
       </div>
       <div className='overflow-hidden rounded-md border'>
-        <Table className='w-full table-fixed [&_td]:overflow-hidden [&_td]:text-ellipsis'>
+        <Table className='w-max min-w-full table-auto [&_td]:overflow-hidden [&_td]:text-ellipsis'>
           <TableHeader className='bg-muted/30'>
             <TableRow>
               <ChannelMonitorSortableTableHead
                 label='渠道'
-                className='w-[25%] px-1 text-xs'
+                className='w-max px-1 text-xs'
                 direction={sortDirection('channel_name')}
                 subtleUnsortedIcon
                 onSort={() =>

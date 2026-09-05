@@ -129,6 +129,12 @@ export function orderChannelMonitorSmartScheduleAdjustmentsByRoutingPolicy(
   })
 }
 
+export function filterChannelMonitorSmartScheduleAdjustments(
+  adjustments: readonly ChannelMonitorTaskAdjustment[]
+): ChannelMonitorTaskAdjustment[] {
+  return adjustments.filter((adjustment) => adjustment.action !== 'unchanged')
+}
+
 export function formatChannelMonitorSmartScheduleFailureStage(stage?: string) {
   if (!stage) return ''
   return FAILURE_STAGE_LABELS[stage] ?? stage

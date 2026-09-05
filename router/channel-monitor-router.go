@@ -33,6 +33,7 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 		monitorRoute.GET("/success/detail", controller.GetChannelMonitorSuccessDetail)
 		monitorRoute.GET("/tasks", controller.ListChannelMonitorTasks)
 		monitorRoute.GET("/tasks/:task_id/details", controller.GetChannelMonitorSmartScheduleExecutionDetails)
+		monitorRoute.GET("/tasks/:task_id/ratio-details", controller.GetChannelMonitorRatioTaskDetails)
 		monitorRoute.PUT("/settings", controller.UpdateChannelMonitorSettings)
 		monitorRoute.POST("/settings/email-preview", controller.PreviewChannelMonitorNotificationEmail)
 		monitorRoute.POST("/ratio/run", controller.RunChannelMonitorRatioUpdate)

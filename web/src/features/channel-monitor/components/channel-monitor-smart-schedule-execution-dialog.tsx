@@ -87,6 +87,7 @@ import {
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
 } from '../lib/query-options'
 import {
+  filterChannelMonitorSmartScheduleAdjustments,
   formatChannelMonitorSmartScheduleFailureStage,
   loadChannelMonitorSmartScheduleExecutionSelection,
   orderChannelMonitorSmartScheduleAdjustmentsByRoutingPolicy,
@@ -127,7 +128,6 @@ const ACTION_LABELS: Record<ChannelMonitorTaskAdjustment['action'], string> = {
 const ACTION_FILTER_OPTIONS = [
   { value: 'all', label: '全部结果' },
   { value: 'updated', label: '已调整' },
-  { value: 'unchanged', label: '保持' },
   { value: 'skipped', label: '已跳过' },
   { value: 'failed', label: '失败' },
 ]
@@ -475,8 +475,10 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
   const detailResult = detailQuery.data?.data
   const adjustments = useMemo(
     () =>
-      orderChannelMonitorSmartScheduleAdjustmentsByRoutingPolicy(
-        detailResult?.items ?? []
+      filterChannelMonitorSmartScheduleAdjustments(
+        orderChannelMonitorSmartScheduleAdjustmentsByRoutingPolicy(
+          detailResult?.items ?? []
+        )
       ),
     [detailResult?.items]
   )
@@ -1078,7 +1080,6 @@ export function ChannelMonitorSmartScheduleExecutionPanel(
                   <SelectGroup>
                     <SelectItem value='all'>全部结果</SelectItem>
                     <SelectItem value='updated'>已调整</SelectItem>
-                    <SelectItem value='unchanged'>保持</SelectItem>
                     <SelectItem value='skipped'>已跳过</SelectItem>
                     <SelectItem value='failed'>失败</SelectItem>
                   </SelectGroup>

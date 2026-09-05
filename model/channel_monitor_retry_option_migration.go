@@ -21,7 +21,7 @@ func MigrateRetiredChannelMonitorRetryOptions() error {
 	}
 
 	return DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("key IN ?", retiredChannelMonitorRetryOptionKeys).Delete(&Option{}).Error; err != nil {
+		if err := tx.Where(commonKeyCol+" IN ?", retiredChannelMonitorRetryOptionKeys).Delete(&Option{}).Error; err != nil {
 			return fmt.Errorf("delete retired channel monitor retry options: %w", err)
 		}
 		return nil

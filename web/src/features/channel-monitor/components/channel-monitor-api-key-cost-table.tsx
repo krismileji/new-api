@@ -84,7 +84,7 @@ type APIKeyCostUserGroup = {
 }
 
 const apiKeyCostGridClassName =
-  'grid grid-cols-[minmax(0,2.2fr)_minmax(4.5rem,0.7fr)_minmax(4.5rem,0.8fr)_minmax(4.5rem,0.8fr)_minmax(4.5rem,0.8fr)_minmax(5rem,0.8fr)_minmax(8rem,1.2fr)]'
+  'grid grid-cols-[fit-content(24rem)_minmax(4.5rem,0.7fr)_minmax(4.5rem,0.8fr)_minmax(4.5rem,0.8fr)_minmax(4.5rem,0.8fr)_minmax(5rem,0.8fr)_minmax(8rem,1.2fr)]'
 const apiKeyCostItemGridClassName =
   'grid grid-cols-[minmax(0,2.2fr)_minmax(4.5rem,0.8fr)_minmax(4.5rem,0.8fr)_minmax(4.5rem,0.8fr)_minmax(5rem,0.8fr)_minmax(8rem,1.2fr)]'
 
@@ -378,10 +378,10 @@ export function ChannelMonitorAPIKeyCostTable(
         </Empty>
       ) : (
         <div className='max-h-[min(36rem,60dvh)] overflow-auto rounded-md border'>
-          <div className='min-w-0'>
+          <div className={cn(apiKeyCostGridClassName, 'min-w-max')}>
             <div
               className={cn(
-                apiKeyCostGridClassName,
+                'col-span-full grid grid-cols-subgrid',
                 'bg-muted/30 min-h-10 items-center border-b px-3'
               )}
             >
@@ -448,87 +448,85 @@ export function ChannelMonitorAPIKeyCostTable(
                 }
               />
             </div>
-            <div className='divide-border divide-y'>
-              {userGroups.map((group) => (
-                <details
-                  key={`${group.user_id}:${group.display_name}`}
-                  className='group/user'
+            {userGroups.map((group) => (
+              <details
+                key={`${group.user_id}:${group.display_name}`}
+                className='group/user col-span-full grid grid-cols-subgrid border-b last:border-b-0'
+              >
+                <summary
+                  className={cn(
+                    'col-span-full grid grid-cols-subgrid',
+                    'hover:bg-muted/40 focus-visible:ring-ring/50 min-w-0 cursor-pointer list-none items-center px-3 py-3 outline-none focus-visible:ring-3 [&::-webkit-details-marker]:hidden'
+                  )}
                 >
-                  <summary
+                  <span className='flex min-w-0 items-center pl-1'>
+                    <HugeiconsIcon
+                      icon={ArrowRight01Icon}
+                      aria-hidden='true'
+                      className='text-muted-foreground mr-1 size-4 shrink-0 transition-transform group-open/user:rotate-90'
+                    />
+                    <span className='min-w-0 flex-1'>
+                      <span
+                        className='block truncate font-medium'
+                        title={group.display_name}
+                      >
+                        {group.display_name}
+                      </span>
+                      {group.username &&
+                      group.username !== group.display_name ? (
+                        <span className='text-muted-foreground block truncate text-xs'>
+                          @{group.username}
+                        </span>
+                      ) : null}
+                    </span>
+                  </span>
+                  <span className='text-right font-mono text-sm tabular-nums'>
+                    {group.items.length}
+                  </span>
+                  <span className='text-right font-mono text-sm tabular-nums'>
+                    {group.channel_count}
+                  </span>
+                  <span className='text-right font-mono text-sm tabular-nums'>
+                    {group.settled_count}
+                  </span>
+                  <span className='text-right font-mono text-sm tabular-nums'>
+                    {group.unresolved_count}
+                  </span>
+                  <span className='text-right font-mono text-sm tabular-nums'>
+                    {formatChannelMonitorResolutionRate(
+                      group.settled_count,
+                      group.unresolved_count
+                    )}
+                  </span>
+                  <span className='text-right font-mono font-semibold tabular-nums'>
+                    {formatChannelMonitorCost(group.cost_cny)}
+                  </span>
+                </summary>
+                <div className='bg-muted/10 col-span-full border-t'>
+                  <div
                     className={cn(
-                      apiKeyCostGridClassName,
-                      'hover:bg-muted/40 focus-visible:ring-ring/50 min-w-0 cursor-pointer list-none items-center px-3 py-3 outline-none focus-visible:ring-3 [&::-webkit-details-marker]:hidden'
+                      apiKeyCostItemGridClassName,
+                      'bg-muted/20 min-h-9 items-center border-b px-3 text-xs font-medium'
                     )}
                   >
-                    <span className='flex min-w-0 items-center pl-1'>
-                      <HugeiconsIcon
-                        icon={ArrowRight01Icon}
-                        aria-hidden='true'
-                        className='text-muted-foreground mr-1 size-4 shrink-0 transition-transform group-open/user:rotate-90'
-                      />
-                      <span className='min-w-0 flex-1'>
-                        <span
-                          className='block truncate font-medium'
-                          title={group.display_name}
-                        >
-                          {group.display_name}
-                        </span>
-                        {group.username &&
-                        group.username !== group.display_name ? (
-                          <span className='text-muted-foreground block truncate text-xs'>
-                            @{group.username}
-                          </span>
-                        ) : null}
-                      </span>
-                    </span>
-                    <span className='text-right font-mono text-sm tabular-nums'>
-                      {group.items.length}
-                    </span>
-                    <span className='text-right font-mono text-sm tabular-nums'>
-                      {group.channel_count}
-                    </span>
-                    <span className='text-right font-mono text-sm tabular-nums'>
-                      {group.settled_count}
-                    </span>
-                    <span className='text-right font-mono text-sm tabular-nums'>
-                      {group.unresolved_count}
-                    </span>
-                    <span className='text-right font-mono text-sm tabular-nums'>
-                      {formatChannelMonitorResolutionRate(
-                        group.settled_count,
-                        group.unresolved_count
-                      )}
-                    </span>
-                    <span className='text-right font-mono font-semibold tabular-nums'>
-                      {formatChannelMonitorCost(group.cost_cny)}
-                    </span>
-                  </summary>
-                  <div className='bg-muted/10 border-t'>
-                    <div
-                      className={cn(
-                        apiKeyCostItemGridClassName,
-                        'bg-muted/20 min-h-9 items-center border-b px-3 text-xs font-medium'
-                      )}
-                    >
-                      <span className='pl-7'>API Key</span>
-                      <span className='text-right'>关联渠道</span>
-                      <span className='text-right'>结算请求</span>
-                      <span className='text-right'>未解析</span>
-                      <span className='text-right'>解析率</span>
-                      <span className='text-right'>结算成本</span>
-                    </div>
-                    <div className='divide-border divide-y'>
-                      {group.items.map((item) => (
-                        <APIKeyCostItemRow
-                          key={`${item.api_key_id}:${item.id}:${item.display_name}`}
-                          item={item}
-                        />
-                      ))}
-                    </div>
+                    <span className='pl-7'>API Key</span>
+                    <span className='text-right'>关联渠道</span>
+                    <span className='text-right'>结算请求</span>
+                    <span className='text-right'>未解析</span>
+                    <span className='text-right'>解析率</span>
+                    <span className='text-right'>结算成本</span>
                   </div>
-                </details>
-              ))}
-            </div>
+                  <div className='divide-border divide-y'>
+                    {group.items.map((item) => (
+                      <APIKeyCostItemRow
+                        key={`${item.api_key_id}:${item.id}:${item.display_name}`}
+                        item={item}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </details>
+            ))}
           </div>
         </div>
       )}

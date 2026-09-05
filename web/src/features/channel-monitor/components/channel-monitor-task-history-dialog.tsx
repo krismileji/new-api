@@ -28,6 +28,7 @@ import {
   Coins01Icon,
   Exchange01Icon,
   HistoryIcon,
+  InformationCircleIcon,
   Link01Icon,
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
@@ -62,11 +63,24 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
-import { TableCell, TableRow } from '@/components/ui/table'
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { formatCurrencyFromUSD } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { getChannelMonitorTasks, runChannelMonitorRatioUpdate } from '../api'
+import {
+  getChannelMonitorTaskDetails,
+  getChannelMonitorTasks,
+  runChannelMonitorRatioUpdate,
+} from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
@@ -76,11 +90,19 @@ import {
   getLatestCompletedChannelMonitorTaskTime,
   isActiveChannelMonitorTask,
 } from '../lib/task-status'
-import type { ChannelMonitorTask, ChannelMonitorTaskStatus } from '../types'
+import type {
+  ChannelMonitorTask,
+  ChannelMonitorTaskBalanceUpdate,
+  ChannelMonitorTaskFailure,
+  ChannelMonitorTaskRatioChange,
+  ChannelMonitorTaskSkippedChannel,
+  ChannelMonitorTaskStatus,
+} from '../types'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { ChannelMonitorTaskAdjustmentDetails } from './channel-monitor-task-adjustment-details'
 
 const TASK_PAGE_SIZE = 20
+type RatioTaskDetailTab = 'changed' | 'balance' | 'failures' | 'skipped'
 
 const STATUS_LABELS: Record<ChannelMonitorTaskStatus, string> = {
   pending: '待执行',
@@ -156,6 +178,59 @@ function getRatioTaskImpact(task: ChannelMonitorTask) {
   }
 }
 
+function getRatioTaskDetailCount(task: ChannelMonitorTask) {
+  const result = task.result
+  return (
+    (result?.changed_channels?.length ?? 0) +
+    (result?.balance_updates?.length ?? 0) +
+    (result?.failures?.length ?? 0) +
+    (result?.skipped_channels?.length ?? 0)
+  )
+}
+
+function hasPersistedRatioTaskDetails(task: ChannelMonitorTask) {
+  const result = task.result
+  return (
+    (result?.changed_channels?.length ?? 0) > 0 ||
+    (result?.balance_updates?.length ?? 0) > 0 ||
+    (result?.failures?.length ?? 0) > 0 ||
+    (result?.skipped_channels?.length ?? 0) > 0
+  )
+}
+
+function hasAggregateOnlyRatioTaskDetails(task: ChannelMonitorTask) {
+  const result = task.result
+  return Boolean(
+    result &&
+    !hasPersistedRatioTaskDetails(task) &&
+    ((result.changed ?? 0) > 0 ||
+      (result.balance_updated ?? 0) > 0 ||
+      (result.failed ?? 0) > 0 ||
+      (result.skipped ?? 0) > 0)
+  )
+}
+
+function getFirstRatioTaskDetailTab(
+  changedCount: number,
+  balanceCount: number,
+  failureCount: number
+): RatioTaskDetailTab {
+  if (changedCount > 0) return 'changed'
+  if (balanceCount > 0) return 'balance'
+  if (failureCount > 0) return 'failures'
+  return 'skipped'
+}
+
+function hasRatioTaskDetailTruncation(task: ChannelMonitorTask) {
+  const result = task.result
+  return Boolean(
+    result?.changed_details_truncated ||
+    result?.balance_details_truncated ||
+    result?.failure_details_truncated ||
+    result?.skipped_details_truncated
+  )
+}
+
 function getRatioTaskHeadline(task: ChannelMonitorTask) {
   if (task.status === 'pending') return '任务已创建，正在等待执行。'
   if (task.status === 'running') {
@@ -204,11 +279,373 @@ function RatioTaskMetric(props: {
   )
 }
 
+function formatRatio(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return '-'
+  return value.toLocaleString(undefined, {
+    maximumFractionDigits: 12,
+    useGrouping: false,
+  })
+}
+
+function formatBalance(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return '首次记录'
+  return formatCurrencyFromUSD(value, {
+    digitsLarge: 2,
+    digitsSmall: 4,
+    abbreviate: false,
+  })
+}
+
+function formatChannelName(channel: {
+  channel_id: number
+  channel_name?: string
+}) {
+  return channel.channel_name || `渠道 ${channel.channel_id}`
+}
+
+function ChannelIdentity(props: {
+  channel: {
+    channel_id: number
+    channel_name?: string
+    channel_remark?: string
+  }
+}) {
+  return (
+    <div className='min-w-0'>
+      <p className='truncate font-medium' title={props.channel.channel_name}>
+        {formatChannelName(props.channel)}
+      </p>
+      <p className='text-muted-foreground mt-0.5 truncate text-xs'>
+        ID {props.channel.channel_id}
+        {props.channel.channel_remark
+          ? ` · ${props.channel.channel_remark}`
+          : ''}
+      </p>
+    </div>
+  )
+}
+
+function RatioTaskDetailEmpty(props: { label: string }) {
+  return (
+    <div className='text-muted-foreground flex min-h-24 items-center justify-center px-4 text-sm'>
+      本次任务没有{props.label}明细
+    </div>
+  )
+}
+
+function RatioTaskTruncationNote(props: { visible: number; total: number }) {
+  if (props.total <= props.visible) return null
+  return (
+    <p className='text-muted-foreground px-1 text-xs'>
+      仅显示前 {props.visible} 条，共 {props.total} 条；完整数量仍计入任务汇总。
+    </p>
+  )
+}
+
+function ChangedChannelsTable(props: {
+  items: ChannelMonitorTaskRatioChange[]
+}) {
+  if (props.items.length === 0) return <RatioTaskDetailEmpty label='倍率变化' />
+  return (
+    <div className='overflow-hidden rounded-md border'>
+      <Table className='min-w-[620px]'>
+        <TableHeader>
+          <TableRow>
+            <TableHead>渠道</TableHead>
+            <TableHead>上游倍率</TableHead>
+            <TableHead>成本倍率</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {props.items.map((item) => {
+            const percent =
+              item.old_ratio === 0
+                ? null
+                : ((item.new_ratio - item.old_ratio) / item.old_ratio) * 100
+            return (
+              <TableRow key={item.channel_id}>
+                <TableCell className='max-w-64'>
+                  <ChannelIdentity channel={item} />
+                </TableCell>
+                <TableCell>
+                  <div className='flex items-center gap-2 font-mono'>
+                    <span>{formatRatio(item.old_ratio)}</span>
+                    <span className='text-muted-foreground'>→</span>
+                    <strong>{formatRatio(item.new_ratio)}</strong>
+                    <span
+                      className={cn(
+                        'text-xs',
+                        percent != null && percent > 0
+                          ? 'text-warning'
+                          : 'text-success'
+                      )}
+                    >
+                      {percent == null
+                        ? '-'
+                        : `${percent > 0 ? '+' : ''}${percent.toFixed(2)}%`}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div className='flex items-center gap-2 font-mono'>
+                    <span>{formatRatio(item.old_cost_ratio)}</span>
+                    <span className='text-muted-foreground'>→</span>
+                    <strong>{formatRatio(item.new_cost_ratio)}</strong>
+                  </div>
+                </TableCell>
+              </TableRow>
+            )
+          })}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
+function BalanceUpdatesTable(props: {
+  items: ChannelMonitorTaskBalanceUpdate[]
+}) {
+  if (props.items.length === 0) return <RatioTaskDetailEmpty label='余额刷新' />
+  return (
+    <div className='overflow-hidden rounded-md border'>
+      <Table className='min-w-[620px]'>
+        <TableHeader>
+          <TableRow>
+            <TableHead>渠道</TableHead>
+            <TableHead>余额变化</TableHead>
+            <TableHead>状态</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {props.items.map((item) => (
+            <TableRow key={item.channel_id}>
+              <TableCell className='max-w-64'>
+                <ChannelIdentity channel={item} />
+              </TableCell>
+              <TableCell>
+                <div className='flex items-center gap-2 font-mono'>
+                  <span>{formatBalance(item.previous_balance)}</span>
+                  <span className='text-muted-foreground'>→</span>
+                  <strong>{formatBalance(item.balance)}</strong>
+                </div>
+              </TableCell>
+              <TableCell>
+                {item.warning ? (
+                  <Badge variant='warning'>
+                    低于预警值 {formatBalance(item.warning_threshold)}
+                  </Badge>
+                ) : (
+                  <span className='text-muted-foreground text-xs'>正常</span>
+                )}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
+function failureKindLabel(kind: string | undefined) {
+  if (kind === 'balance') return '余额'
+  if (kind === 'ratio') return '倍率'
+  return '同步'
+}
+
+function RatioTaskFailuresTable(props: { items: ChannelMonitorTaskFailure[] }) {
+  if (props.items.length === 0) return <RatioTaskDetailEmpty label='上游失败' />
+  return (
+    <div className='overflow-hidden rounded-md border'>
+      <Table className='min-w-[620px]'>
+        <TableHeader>
+          <TableRow>
+            <TableHead>渠道</TableHead>
+            <TableHead>失败类型</TableHead>
+            <TableHead>失败原因</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {props.items.map((item) => (
+            <TableRow key={`${item.channel_id}-${item.kind}-${item.error}`}>
+              <TableCell className='max-w-64'>
+                <ChannelIdentity channel={item} />
+              </TableCell>
+              <TableCell>
+                <Badge variant='destructive'>
+                  {failureKindLabel(item.kind)}
+                </Badge>
+              </TableCell>
+              <TableCell className='max-w-[28rem] break-words whitespace-normal'>
+                {item.error || '上游同步失败'}
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
+function SkippedChannelsTable(props: {
+  items: ChannelMonitorTaskSkippedChannel[]
+}) {
+  if (props.items.length === 0) return <RatioTaskDetailEmpty label='跳过渠道' />
+  return (
+    <div className='overflow-hidden rounded-md border'>
+      <Table className='min-w-[560px]'>
+        <TableHeader>
+          <TableRow>
+            <TableHead>渠道</TableHead>
+            <TableHead>跳过原因</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {props.items.map((item) => (
+            <TableRow key={item.channel_id}>
+              <TableCell className='max-w-64'>
+                <ChannelIdentity channel={item} />
+              </TableCell>
+              <TableCell className='whitespace-normal'>{item.reason}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  )
+}
+
 function ChannelMonitorRatioTaskFailureDetails(props: {
   task: ChannelMonitorTask
   id: string
 }) {
-  const failures = props.task.result?.failures ?? []
+  const detailQuery = useQuery({
+    queryKey: [
+      ...CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
+      'details',
+      props.task.task_id,
+    ],
+    queryFn: () => getChannelMonitorTaskDetails(props.task.task_id),
+    enabled:
+      props.task.result === null && !isActiveChannelMonitorTask(props.task),
+    staleTime: 60_000,
+  })
+  const result = detailQuery.data?.data ?? props.task.result
+  const failures = result?.failures ?? []
+  const changedChannels = result?.changed_channels ?? []
+  const balanceUpdates = result?.balance_updates ?? []
+  const skippedChannels = result?.skipped_channels ?? []
+  const hasPersistedDetails =
+    changedChannels.length > 0 ||
+    balanceUpdates.length > 0 ||
+    failures.length > 0 ||
+    skippedChannels.length > 0
+  const hasAggregateOnlyDetails = Boolean(
+    result &&
+    !hasPersistedDetails &&
+    ((result.changed ?? 0) > 0 ||
+      (result.balance_updated ?? 0) > 0 ||
+      (result.failed ?? 0) > 0 ||
+      (result.skipped ?? 0) > 0)
+  )
+  const firstTab = getFirstRatioTaskDetailTab(
+    changedChannels.length,
+    balanceUpdates.length,
+    failures.length
+  )
+  const [activeTab, setActiveTab] = useState<RatioTaskDetailTab | null>(null)
+  const selectedTab = activeTab ?? firstTab
+
+  let detailContent: ReactNode = null
+  if (detailQuery.isLoading) {
+    detailContent = (
+      <div className='text-muted-foreground flex min-h-24 items-center justify-center gap-2 text-sm'>
+        <Spinner aria-label='更新明细加载中' />
+        正在加载渠道明细
+      </div>
+    )
+  } else if (detailQuery.isError) {
+    detailContent = (
+      <Alert variant='destructive'>
+        <HugeiconsIcon icon={Alert02Icon} />
+        <AlertTitle>渠道明细加载失败</AlertTitle>
+        <AlertDescription>
+          {detailQuery.error instanceof Error
+            ? detailQuery.error.message
+            : '请稍后重试'}
+        </AlertDescription>
+      </Alert>
+    )
+  } else if (result && hasPersistedDetails) {
+    detailContent = (
+      <Tabs
+        value={selectedTab}
+        onValueChange={(value) => setActiveTab(value as RatioTaskDetailTab)}
+        className='min-h-0'
+      >
+        <TabsList className='no-scrollbar bg-muted/30 flex h-auto w-full flex-nowrap justify-start overflow-x-auto rounded-md border p-1'>
+          <TabsTrigger value='changed'>
+            倍率变化 {result.changed ?? 0}
+          </TabsTrigger>
+          <TabsTrigger value='balance'>
+            余额刷新 {result.balance_updated ?? 0}
+          </TabsTrigger>
+          <TabsTrigger value='failures'>
+            上游失败 {result.failed ?? 0}
+          </TabsTrigger>
+          <TabsTrigger value='skipped'>
+            已跳过 {result.skipped ?? 0}
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value='changed' className='mt-2 space-y-2'>
+          <ChangedChannelsTable items={changedChannels} />
+          {result.changed_details_truncated && (
+            <RatioTaskTruncationNote
+              visible={changedChannels.length}
+              total={result.changed ?? changedChannels.length}
+            />
+          )}
+        </TabsContent>
+        <TabsContent value='balance' className='mt-2 space-y-2'>
+          <BalanceUpdatesTable items={balanceUpdates} />
+          {result.balance_details_truncated && (
+            <RatioTaskTruncationNote
+              visible={balanceUpdates.length}
+              total={result.balance_updated ?? balanceUpdates.length}
+            />
+          )}
+        </TabsContent>
+        <TabsContent value='failures' className='mt-2 space-y-2'>
+          <RatioTaskFailuresTable items={failures} />
+          {result.failure_details_truncated && (
+            <RatioTaskTruncationNote
+              visible={failures.length}
+              total={result.failed}
+            />
+          )}
+        </TabsContent>
+        <TabsContent value='skipped' className='mt-2 space-y-2'>
+          <SkippedChannelsTable items={skippedChannels} />
+          {result.skipped_details_truncated && (
+            <RatioTaskTruncationNote
+              visible={skippedChannels.length}
+              total={result.skipped ?? skippedChannels.length}
+            />
+          )}
+        </TabsContent>
+      </Tabs>
+    )
+  } else if (hasAggregateOnlyDetails) {
+    detailContent = (
+      <Alert>
+        <HugeiconsIcon icon={InformationCircleIcon} />
+        <AlertTitle>该记录仅保存了汇总</AlertTitle>
+        <AlertDescription>
+          这条历史记录生成于渠道明细采集启用前，无法还原当时的具体渠道列表。
+        </AlertDescription>
+      </Alert>
+    )
+  }
+
   return (
     <div
       id={props.id}
@@ -225,24 +662,7 @@ function ChannelMonitorRatioTaskFailureDetails(props: {
           </AlertDescription>
         </Alert>
       )}
-      {failures.map((failure) => (
-        <Alert key={failure.channel_id} variant='destructive'>
-          <HugeiconsIcon icon={Alert02Icon} />
-          <AlertTitle>
-            {failure.channel_name
-              ? `${failure.channel_name}（ID ${failure.channel_id}）`
-              : `渠道 ID ${failure.channel_id}`}
-          </AlertTitle>
-          <AlertDescription className='text-left break-all'>
-            {failure.error || '上游倍率获取失败'}
-          </AlertDescription>
-        </Alert>
-      ))}
-      {props.task.result?.failure_details_truncated && (
-        <p className='text-muted-foreground text-xs'>
-          失败渠道较多，仅显示前 {failures.length} 条明细
-        </p>
-      )}
+      {detailContent}
     </div>
   )
 }
@@ -256,9 +676,12 @@ function ChannelMonitorRatioTaskCard(props: {
   const result = props.task.result
   const progressState = props.task.state
   const impact = getRatioTaskImpact(props.task)
-  const failures = result?.failures ?? []
   const detailsId = `channel-monitor-ratio-task-details-${props.task.task_id}`
-  const canExpand = failures.length > 0 || Boolean(props.task.error)
+  const canExpand =
+    getRatioTaskDetailCount(props.task) > 0 ||
+    hasAggregateOnlyRatioTaskDetails(props.task) ||
+    (props.task.result === null && !isActiveChannelMonitorTask(props.task)) ||
+    Boolean(props.task.error)
   const detailsExpanded = props.expanded && canExpand
   const partiallyFailed = isTaskPartiallyFailed(props.task)
   const linkedActions = [
@@ -415,8 +838,8 @@ function ChannelMonitorRatioTaskCard(props: {
           <>
             <Separator className='my-3' />
             <ChannelMonitorTaskRowDisclosure
-              adjustmentCount={failures.length}
-              truncated={result?.failure_details_truncated === true}
+              adjustmentCount={getRatioTaskDetailCount(props.task)}
+              truncated={hasRatioTaskDetailTruncation(props.task)}
               expanded={detailsExpanded}
               controlsId={detailsId}
               onToggle={props.onToggleDetails}
@@ -602,12 +1025,15 @@ export function ChannelMonitorTaskHistoryEntry(props: {
   expanded: boolean
   onToggleDetails: () => void
 }) {
-  const failures = props.task.result?.failures ?? []
   const detailsId = `channel-monitor-task-details-${props.task.task_id}`
   const canExpand =
     props.task.type === 'channel_smart_schedule'
       ? props.task.result !== null || Boolean(props.task.error)
-      : failures.length > 0 || Boolean(props.task.error)
+      : getRatioTaskDetailCount(props.task) > 0 ||
+        hasAggregateOnlyRatioTaskDetails(props.task) ||
+        (props.task.result === null &&
+          !isActiveChannelMonitorTask(props.task)) ||
+        Boolean(props.task.error)
   const detailsExpanded = props.expanded && canExpand
 
   return (
@@ -683,12 +1109,12 @@ export function ChannelMonitorTaskHistoryEntry(props: {
               adjustmentCount={
                 props.task.type === 'channel_smart_schedule'
                   ? (props.task.result?.adjustments?.length ?? 0)
-                  : failures.length
+                  : getRatioTaskDetailCount(props.task)
               }
               truncated={
                 props.task.type === 'channel_smart_schedule'
                   ? false
-                  : props.task.result?.failure_details_truncated === true
+                  : hasRatioTaskDetailTruncation(props.task)
               }
               expanded={detailsExpanded}
               controlsId={detailsId}

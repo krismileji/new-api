@@ -122,6 +122,122 @@ func TestListChannelMonitorTasksReturnsScheduleSummaryWithoutExecutionDetails(t 
 	assert.NotContains(t, persisted.Result, "adjustments")
 }
 
+func TestGetChannelMonitorRatioTaskDetailsReturnsRatioResult(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	previousBalance := 12.5
+	threshold := 10.0
+	resultJSON, err := common.Marshal(channelRatioMonitorTaskResult{
+		Total:          2,
+		Updated:        2,
+		Changed:        1,
+		BalanceUpdated: 1,
+		ChangedChannels: []channelRatioMonitorTaskChange{{
+			ChannelId: 2, ChannelName: "倍率渠道", OldRatio: 1, NewRatio: 1.2,
+		}},
+		BalanceUpdates: []channelRatioMonitorTaskBalance{{
+			ChannelId: 1, ChannelName: "余额渠道", PreviousBalance: &previousBalance,
+			Balance: 8, Warning: true, WarningThreshold: &threshold,
+		}},
+	})
+	require.NoError(t, err)
+	task := model.SystemTask{
+		TaskID: "ratio-detail-task",
+		Type:   model.SystemTaskTypeChannelRatioMonitor,
+		Status: model.SystemTaskStatusSucceeded,
+		Result: string(resultJSON),
+	}
+	require.NoError(t, db.Create(&task).Error)
+
+	ctx, recorder := newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/tasks/ratio-detail-task/ratio-details", nil,
+	)
+	ctx.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	GetChannelMonitorRatioTaskDetails(ctx)
+
+	var response struct {
+		Success bool                          `json:"success"`
+		Data    channelRatioMonitorTaskResult `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.Len(t, response.Data.ChangedChannels, 1)
+	assert.Equal(t, 2, response.Data.ChangedChannels[0].ChannelId)
+	require.Len(t, response.Data.BalanceUpdates, 1)
+	assert.Equal(t, 1, response.Data.BalanceUpdates[0].ChannelId)
+	assert.InDelta(t, 8, response.Data.BalanceUpdates[0].Balance, 1e-9)
+}
+
+func TestOversizedRatioTaskResultCanStillLoadDetails(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	changedChannels := make([]channelRatioMonitorTaskChange, 100)
+	balanceUpdates := make([]channelRatioMonitorTaskBalance, 100)
+	for index := range changedChannels {
+		changedChannels[index] = channelRatioMonitorTaskChange{
+			ChannelId:     index + 1,
+			ChannelName:   strings.Repeat("channel-", 16),
+			ChannelRemark: strings.Repeat("remark-", 36),
+			OldRatio:      1,
+			NewRatio:      1.2,
+			OldCostRatio:  1,
+			NewCostRatio:  1.2,
+		}
+		balanceUpdates[index] = channelRatioMonitorTaskBalance{
+			ChannelId:     index + 1,
+			ChannelName:   strings.Repeat("channel-", 16),
+			ChannelRemark: strings.Repeat("remark-", 36),
+			Balance:       float64(index),
+		}
+	}
+	resultJSON, err := common.Marshal(channelRatioMonitorTaskResult{
+		Total:           100,
+		Updated:         100,
+		Changed:         100,
+		BalanceUpdated:  100,
+		ChangedChannels: changedChannels,
+		BalanceUpdates:  balanceUpdates,
+	})
+	require.NoError(t, err)
+	require.Greater(t, len(resultJSON), model.SystemTaskListResultMaxCharacters)
+	task := model.SystemTask{
+		TaskID: "ratio-oversized-detail-task",
+		Type:   model.SystemTaskTypeChannelRatioMonitor,
+		Status: model.SystemTaskStatusSucceeded,
+		Result: string(resultJSON),
+	}
+	require.NoError(t, db.Create(&task).Error)
+
+	listContext, listRecorder := newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/tasks?kind=ratio&p=1&page_size=10", nil,
+	)
+	ListChannelMonitorTasks(listContext)
+	var listResponse struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []struct {
+				Result any `json:"result"`
+			} `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(listRecorder.Body.Bytes(), &listResponse))
+	require.True(t, listResponse.Success)
+	require.Len(t, listResponse.Data.Items, 1)
+	assert.Nil(t, listResponse.Data.Items[0].Result)
+
+	detailContext, detailRecorder := newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/tasks/ratio-oversized-detail-task/ratio-details", nil,
+	)
+	detailContext.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	GetChannelMonitorRatioTaskDetails(detailContext)
+	var detailResponse struct {
+		Success bool                          `json:"success"`
+		Data    channelRatioMonitorTaskResult `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(detailRecorder.Body.Bytes(), &detailResponse))
+	require.True(t, detailResponse.Success)
+	assert.Len(t, detailResponse.Data.ChangedChannels, 100)
+	assert.Len(t, detailResponse.Data.BalanceUpdates, 100)
+}
+
 func TestChannelMonitorTaskQueriesNormalizeNegativePages(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.ChannelSmartScheduleExecutionDetail{}))
@@ -137,7 +253,7 @@ func TestChannelMonitorTaskQueriesNormalizeNegativePages(t *testing.T) {
 			AdjustmentIndex: 0,
 			Payload: channelSmartScheduleTaskAdjustment{
 				ChannelId: 71, ChannelName: "稳定渠道", Group: "vip", Model: "model-a",
-				Action: channelSmartScheduleAdjustmentUnchanged,
+				Action: channelSmartScheduleAdjustmentUpdated,
 			},
 		}},
 	))
@@ -244,11 +360,10 @@ func TestGetChannelMonitorSmartScheduleExecutionDetailsFiltersAndPaginatesOneTas
 	assert.Equal(t, 2, response.Data.Total)
 	require.Len(t, response.Data.Items, 1)
 	assert.Equal(t, 73, response.Data.Items[0].ChannelId)
-	assert.Equal(t, []string{"default", "vip"}, response.Data.Groups)
-	assert.Equal(t, []string{"model-a", "model-b", "model-c"}, response.Data.Models)
+	assert.Equal(t, []string{"vip"}, response.Data.Groups)
+	assert.Equal(t, []string{"model-a", "model-c"}, response.Data.Models)
 	assert.Equal(t, map[string][]string{
-		"default": {"model-b"},
-		"vip":     {"model-a", "model-c"},
+		"vip": []string{"model-a", "model-c"},
 	}, response.Data.ModelsByGroup)
 	assert.Equal(t, "备用渠道", response.Data.ChannelNames["73"])
 	assert.NotContains(t, response.Data.ChannelNames, "71")
@@ -262,11 +377,10 @@ func TestGetChannelMonitorSmartScheduleExecutionDetailsFiltersAndPaginatesOneTas
 	GetChannelMonitorSmartScheduleExecutionDetails(routingCtx)
 	require.NoError(t, common.Unmarshal(routingRecorder.Body.Bytes(), &response))
 	require.True(t, response.Success)
-	require.Len(t, response.Data.Items, 3)
-	assert.Equal(t, []int{71, 73, 72}, []int{
+	require.Len(t, response.Data.Items, 2)
+	assert.Equal(t, []int{71, 73}, []int{
 		response.Data.Items[0].ChannelId,
 		response.Data.Items[1].ChannelId,
-		response.Data.Items[2].ChannelId,
 	})
 
 	searchCtx, searchRecorder := newChannelMonitorControllerContext(
@@ -281,4 +395,16 @@ func TestGetChannelMonitorSmartScheduleExecutionDetailsFiltersAndPaginatesOneTas
 	assert.Equal(t, 1, response.Data.Total)
 	require.Len(t, response.Data.Items, 1)
 	assert.Equal(t, 71, response.Data.Items[0].ChannelId)
+
+	explicitUnchangedCtx, explicitUnchangedRecorder := newChannelMonitorControllerContext(
+		t, http.MethodGet,
+		"/api/channel_monitor/tasks/schedule-detail-page/details?p=1&page_size=50&action=unchanged",
+		nil,
+	)
+	explicitUnchangedCtx.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	GetChannelMonitorSmartScheduleExecutionDetails(explicitUnchangedCtx)
+	require.NoError(t, common.Unmarshal(explicitUnchangedRecorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.Equal(t, 0, response.Data.Total)
+	assert.Empty(t, response.Data.Items)
 }
