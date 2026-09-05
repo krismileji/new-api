@@ -46,6 +46,30 @@ func TestChannelMonitorAnalyticsCurrentPaginationKeepsScopeSummaryStable(t *test
 	assert.Len(t, pageTwo.Items, 1)
 }
 
+func TestChannelMonitorAnalyticsCurrentAPIKeyRowsRemainVisible(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	now := common.GetTimestamp()
+	dayStart := model.ChannelDailyCostDayStart(now)
+	event := model.NewChannelMonitorEvent(101, model.ChannelMonitorEventSourceBusiness, model.ChannelMonitorEventOutcomeSuccess, now)
+	event.EventId = "analytics-current-api-key"
+	event.UserId = 31
+	event.APIKeyId = 201
+	event.APIKeyName = "生产 Key"
+	event.RequestDispatched = true
+	event.IsFinalAttempt = true
+	require.NoError(t, service.NewChannelMonitorRedisSharedProjectionWithClient(common.RDB).
+		HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{event}))
+
+	response, err := queryChannelMonitorHistoricalAnalytics(context.Background(), channelMonitorAnalyticsQuery{
+		Metric: "success", GroupBy: "api_key", From: dayStart, To: dayStart + 24*60*60,
+		Page: 1, PageSize: 20, Sort: "samples", Direction: "desc",
+	})
+	require.NoError(t, err)
+	require.Len(t, response.Items, 1)
+	assert.Equal(t, 201, response.Items[0]["api_key_id"])
+	assert.Equal(t, "生产 Key", response.Items[0]["api_key_name"])
+}
+
 func TestChannelMonitorAnalyticsCurrentRedisFailureDoesNotReturnZeroSummary(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
 	originalClient := common.RDB

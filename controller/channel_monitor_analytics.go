@@ -243,20 +243,13 @@ func queryChannelMonitorCurrentSuccessAnalytics(ctx context.Context, query chann
 	}
 	rows := make([]channelMonitorAnalyticsSuccessRow, 0, len(view.Rows))
 	var summaryRow channelMonitorAnalyticsSuccessRow
-	userScopedAPIKeys := make(map[int]bool)
 	userScopedRoutes := make(map[string]bool)
 	for _, redisRow := range view.Rows {
-		if redisRow.UserID > 0 && redisRow.APIKeyID > 0 && redisRow.ChannelID == 0 && redisRow.ModelName == "" {
-			userScopedAPIKeys[redisRow.APIKeyID] = true
-		}
 		if redisRow.UserID > 0 && redisRow.APIKeyID > 0 && redisRow.ChannelID > 0 && redisRow.ModelName != "" {
 			userScopedRoutes[strconv.Itoa(redisRow.APIKeyID)+":"+strconv.Itoa(redisRow.ChannelID)+":"+redisRow.ModelName] = true
 		}
 	}
 	for _, redisRow := range view.Rows {
-		if query.GroupBy == "api_key" && query.Channel == 0 && query.User == 0 && redisRow.UserID == 0 && userScopedAPIKeys[redisRow.APIKeyID] {
-			continue
-		}
 		if query.GroupBy == "api_key_channel_model" && redisRow.UserID == 0 && userScopedRoutes[strconv.Itoa(redisRow.APIKeyID)+":"+strconv.Itoa(redisRow.ChannelID)+":"+redisRow.ModelName] {
 			continue
 		}
