@@ -36,6 +36,7 @@ import {
 } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import { CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY } from '../lib/query-options'
+import { channelMonitorSmartScheduleRouteRuntimeState } from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
 
 type ChannelMonitorSmartScheduleClearDialogProps = {
@@ -93,13 +94,16 @@ export function ChannelMonitorSmartScheduleClearDialog(
     },
   })
 
+  const runtimeState = props.route
+    ? channelMonitorSmartScheduleRouteRuntimeState(props.route)
+    : undefined
   const clearingExploration =
-    props.route?.state.stability_state === '' &&
-    (props.route.state.temporary_traffic_kind === 'insufficient_samples' ||
-      props.route.state.temporary_traffic_kind === 'adaptive_sampling')
+    runtimeState?.stability_state === '' &&
+    (runtimeState.temporary_traffic_kind === 'insufficient_samples' ||
+      runtimeState.temporary_traffic_kind === 'adaptive_sampling')
   let title = '确认解除智能调度保护？'
   let stateLabel = '稳定性试放'
-  if (props.route?.state.stability_state === 'degraded') {
+  if (runtimeState?.stability_state === 'degraded') {
     stateLabel = '稳定性降级'
   }
   if (clearingExploration) {

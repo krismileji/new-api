@@ -42,6 +42,9 @@ import { getChannelMonitorSmartScheduleSamplingOrderLabel } from '../lib/smart-s
 import {
   channelMonitorSmartScheduleRouteIsBreakEvenFallback,
   channelMonitorSmartScheduleRouteParticipates,
+  channelMonitorSmartScheduleRouteRuntimePriority,
+  channelMonitorSmartScheduleRouteRuntimeState,
+  channelMonitorSmartScheduleRouteRuntimeWeight,
   getChannelMonitorSmartScheduleRouteDisplayStatus,
   type ChannelMonitorSmartScheduleRoutePlacement,
 } from '../lib/smart-schedule-summary'
@@ -93,6 +96,7 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
   if ((props.route.rate_limit_bypass_until ?? 0) > Date.now() / 1000) {
     return <Badge variant='default'>429 限制已暂停</Badge>
   }
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(props.route)
   const status = getChannelMonitorSmartScheduleRouteDisplayStatus(
     props.route,
     props.placement
@@ -108,9 +112,9 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
     )
   }
   if (
-    props.route.state.stability_state !== '' ||
-    props.route.state.temporary_traffic_kind === 'insufficient_samples' ||
-    props.route.state.temporary_traffic_kind === 'adaptive_sampling'
+    runtimeState.stability_state !== '' ||
+    runtimeState.temporary_traffic_kind === 'insufficient_samples' ||
+    runtimeState.temporary_traffic_kind === 'adaptive_sampling'
   ) {
     return (
       <ChannelMonitorSmartScheduleRouteState
@@ -133,7 +137,7 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
     channelMonitorSmartScheduleRouteIsBreakEvenFallback(props.route) &&
     (status === 'primary' || status === 'candidate' || status === 'backup')
   ) {
-    if (props.route.state.manual_primary_until > 0) {
+    if (runtimeState.manual_primary_until > 0) {
       return <Badge variant='warning'>保本兜底 · 已手动固定</Badge>
     }
     if (props.placement?.isActualTopLayer) {
@@ -194,24 +198,27 @@ export function ChannelMonitorSmartScheduleRouteDetails(
   if (!props.route) return null
 
   const route = props.route
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(route)
+  const runtimePriority = channelMonitorSmartScheduleRouteRuntimePriority(route)
+  const runtimeWeight = channelMonitorSmartScheduleRouteRuntimeWeight(route)
   const remark = props.channel?.channel_remark || props.channel?.remark
   const currentWindowScore =
     route.current_window_score == null
       ? '-'
       : `${(route.current_window_score * 100).toFixed(1)} 分`
   const lastScheduleScore =
-    route.state.last_schedule_score == null
+    runtimeState.last_schedule_score == null
       ? '-'
-      : `${(route.state.last_schedule_score * 100).toFixed(1)} 分`
+      : `${(runtimeState.last_schedule_score * 100).toFixed(1)} 分`
   const participates = channelMonitorSmartScheduleRouteParticipates(route)
   const currentScoreDetails =
     route.current_window_score_details ??
-    route.state.last_schedule_score_details ??
+    runtimeState.last_schedule_score_details ??
     null
   const decision = currentScoreDetails?.decision
-  const baseRank = route.state.base_rank || decision?.base_rank || 0
-  const basePriority = route.state.base_priority || decision?.base_priority || 0
-  const baseWeight = route.state.base_weight || decision?.base_weight || 0
+  const baseRank = runtimeState.base_rank || decision?.base_rank || 0
+  const basePriority = runtimeState.base_priority || decision?.base_priority || 0
+  const baseWeight = runtimeState.base_weight || decision?.base_weight || 0
   const scoringWinnerChannelId =
     props.placement?.scoringWinnerChannelId ??
     decision?.raw_winner_channel_id ??
@@ -229,30 +236,30 @@ export function ChannelMonitorSmartScheduleRouteDetails(
     decision?.actual_top_layer_channel_ids ??
     []
   const pending = props.updatePending || props.groupPausePending
-  const samplingOrder = route.state.sampling_order
+  const samplingOrder = runtimeState.sampling_order
     ? getChannelMonitorSmartScheduleSamplingOrderLabel(
-        route.state.sampling_order
+        runtimeState.sampling_order
       )
     : '-'
   const rollingStability =
-    route.state.rolling_stability_score == null
+    runtimeState.rolling_stability_score == null
       ? '-'
-      : `${(route.state.rolling_stability_score * 100).toFixed(1)} 分 · ${route.state.rolling_stability_sample_count} 个样本`
+      : `${(runtimeState.rolling_stability_score * 100).toFixed(1)} 分 · ${runtimeState.rolling_stability_sample_count} 个样本`
   const adaptiveHealthState = formatAdaptiveHealthState(
-    route.state.adaptive_health_state || currentScoreDetails?.health.state
+    runtimeState.adaptive_health_state || currentScoreDetails?.health.state
   )
   const hasAdaptiveHealthEvidence =
-    (route.state.adaptive_health_sample_count ?? 0) > 0 ||
+    (runtimeState.adaptive_health_sample_count ?? 0) > 0 ||
     currentScoreDetails?.health.evidence === true
   const adaptiveHealthPressure = hasAdaptiveHealthEvidence
-    ? `${(Number(route.state.adaptive_health_pressure ?? 0) * 100).toFixed(1)}%`
+    ? `${(Number(runtimeState.adaptive_health_pressure ?? 0) * 100).toFixed(1)}%`
     : '-'
   const adaptiveRequestRatios = currentScoreDetails?.health.evidence
     ? `错误 ${currentScoreDetails.health.error_request_percent.toFixed(1)}% / 首字告警 ${currentScoreDetails.health.first_token_warning_request_percent.toFixed(1)}% / 风险 ${currentScoreDetails.health.risk_request_percent.toFixed(1)}% / 健康 ${currentScoreDetails.health.healthy_request_percent.toFixed(1)}%`
     : '-'
   const rollingSlowSuccess =
-    route.state.rolling_stability_sample_count > 0
-      ? `${route.state.rolling_stability_slow_count} / ${route.state.rolling_stability_allowed_slow_count}`
+    runtimeState.rolling_stability_sample_count > 0
+      ? `${runtimeState.rolling_stability_slow_count} / ${runtimeState.rolling_stability_allowed_slow_count}`
       : '-'
   const channelNameById = new Map(
     props.poolRoutes.map((poolRoute) => [
@@ -280,7 +287,7 @@ export function ChannelMonitorSmartScheduleRouteDetails(
             <SheetTitle className='truncate' title={route.channel_name}>
               {route.channel_name}
             </SheetTitle>
-            {route.state.manual_primary_until > 0 ? (
+            {runtimeState.manual_primary_until > 0 ? (
               <Badge variant='secondary'>管理员固定</Badge>
             ) : null}
             {channelMonitorSmartScheduleRouteIsBreakEvenFallback(route) ? (
@@ -330,10 +337,10 @@ export function ChannelMonitorSmartScheduleRouteDetails(
                   {props.updatePending || props.groupPausePending ? (
                     <Spinner className='size-4' />
                   ) : null}
-                  {route.state.last_schedule_time > 0 ? (
+                  {runtimeState.last_schedule_time > 0 ? (
                     <span className='text-muted-foreground text-xs'>
                       更新于{' '}
-                      {formatTimestampToDate(route.state.last_schedule_time)}
+                      {formatTimestampToDate(runtimeState.last_schedule_time)}
                     </span>
                   ) : null}
                 </div>
@@ -370,7 +377,7 @@ export function ChannelMonitorSmartScheduleRouteDetails(
               <DetailMetric label='最近调度得分' value={lastScheduleScore} />
               <DetailMetric
                 label='当前 P / W'
-                value={`P${route.priority} / W${route.weight}`}
+                value={`P${runtimePriority} / W${runtimeWeight}`}
               />
               <DetailMetric
                 label='软健康状态'
@@ -402,28 +409,28 @@ export function ChannelMonitorSmartScheduleRouteDetails(
               <DetailMetric
                 label='当前采样渠道与类型'
                 value={formatChannelMonitorSmartScheduleTemporaryTraffic(
-                  route.state.temporary_traffic_kind,
-                  route.state.temporary_traffic_target_percent
+                  runtimeState.temporary_traffic_kind,
+                  runtimeState.temporary_traffic_target_percent
                 )}
               />
               <DetailMetric
                 label='最近调度'
                 value={
-                  route.state.last_schedule_time > 0
-                    ? formatTimestampToDate(route.state.last_schedule_time)
+                  runtimeState.last_schedule_time > 0
+                    ? formatTimestampToDate(runtimeState.last_schedule_time)
                     : '-'
                 }
               />
               <DetailMetric
                 label='样本欠账 / 候选'
-                value={`${route.state.sampling_debt} / ${route.state.sampling_candidate ? '是' : '否'}`}
+                value={`${runtimeState.sampling_debt} / ${runtimeState.sampling_candidate ? '是' : '否'}`}
               />
               <DetailMetric label='采样顺序' value={samplingOrder} />
               <DetailMetric
                 label='最近采样'
                 value={
-                  route.state.last_sampling_at > 0
-                    ? formatTimestampToDate(route.state.last_sampling_at)
+                  runtimeState.last_sampling_at > 0
+                    ? formatTimestampToDate(runtimeState.last_sampling_at)
                     : '-'
                 }
               />
@@ -435,9 +442,9 @@ export function ChannelMonitorSmartScheduleRouteDetails(
               <DetailMetric
                 label='滚动稳定性刷新'
                 value={
-                  route.state.rolling_stability_updated_at > 0
+                  runtimeState.rolling_stability_updated_at > 0
                     ? formatTimestampToDate(
-                        route.state.rolling_stability_updated_at
+                        runtimeState.rolling_stability_updated_at
                       )
                     : '-'
                 }
@@ -537,13 +544,13 @@ export function ChannelMonitorSmartScheduleRouteDetails(
             channelNameById={channelNameById}
           />
           <ChannelMonitorSmartScheduleScoreDetails
-            details={route.state.last_schedule_score_details}
+            details={runtimeState.last_schedule_score_details}
             snapshotLabel='最近一次实际调度快照'
             defaultOpen={false}
             channelNameById={channelNameById}
           />
           {!route.current_window_score_details &&
-          !route.state.last_schedule_score_details ? (
+          !runtimeState.last_schedule_score_details ? (
             <section className='border-t px-4 py-4' aria-label='评分计算'>
               <div className='flex items-start gap-2'>
                 <HugeiconsIcon

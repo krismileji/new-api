@@ -80,6 +80,13 @@ func getChannelMonitorSmartScheduleRoutes(
 		common.ApiError(c, err)
 		return
 	}
+	runtimeViews, err := model.GetChannelSmartScheduleRouteRuntimeViewsWithContext(
+		c.Request.Context(), routes,
+	)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	economicSnapshot, err := model.GetChannelSmartScheduleEconomicSnapshotWithContext(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
@@ -105,7 +112,7 @@ func getChannelMonitorSmartScheduleRoutes(
 		routes[index].EconomicRole = economics.EconomicRole
 	}
 	stabilityWindowMinutes := settings.SmartScheduleGroupPolicies.maxStabilityWindowMinutes()
-	responseRoutes := channelSmartScheduleRouteResponses(routes)
+	responseRoutes := channelSmartScheduleRouteResponses(routes, runtimeViews)
 	if !loadMetrics {
 		executionSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
 		routeSnapshotStatus := model.GetChannelSmartScheduleRouteSnapshotStatus()

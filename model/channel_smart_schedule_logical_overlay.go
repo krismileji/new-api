@@ -15,25 +15,9 @@ func loadLogicalSmartScheduleRouteOverlays(
 	groupName string,
 	modelName string,
 ) (map[channelLogicalSmartScheduleRouteKey]channelLogicalSmartScheduleRouteOverlay, error) {
-	result := make(map[channelLogicalSmartScheduleRouteKey]channelLogicalSmartScheduleRouteOverlay)
-	if DB == nil || len(logicalIDs) == 0 || !IsLogicalChannelGroupingEnabled() ||
-		!DB.Migrator().HasTable(&ChannelLogicalSmartScheduleRouteState{}) {
-		return result, nil
-	}
-	groupName = strings.TrimSpace(groupName)
-	modelName = channelSmartScheduleModelName(modelName)
-	var rows []ChannelLogicalSmartScheduleRouteState
-	query := DB.Where("logical_group_id IN ?", logicalIDs)
-	if groupName != "" {
-		query = query.Where("group_name = ?", groupName)
-	}
-	if modelName != "" {
-		query = query.Where("model_name = ?", modelName)
-	}
-	if err := query.Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	return logicalSmartScheduleRouteOverlaysFromStates(rows)
+	return loadLogicalSmartScheduleRouteOverlaysWithDB(
+		DB, logicalIDs, strings.TrimSpace(groupName), modelName,
+	)
 }
 
 func logicalSmartScheduleRouteOverlaysFromStates(

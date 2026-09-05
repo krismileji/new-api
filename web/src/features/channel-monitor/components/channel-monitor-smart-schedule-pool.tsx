@@ -66,6 +66,10 @@ import {
   channelMonitorSmartScheduleRouteKey,
   channelMonitorSmartScheduleRouteIsTrafficPaused,
   channelMonitorSmartScheduleRouteParticipates,
+  channelMonitorSmartScheduleRouteCandidateChannelId,
+  channelMonitorSmartScheduleRouteRuntimePriority,
+  channelMonitorSmartScheduleRouteRuntimeState,
+  channelMonitorSmartScheduleRouteRuntimeWeight,
   compareChannelMonitorSmartScheduleRoutesByAttention,
   getChannelMonitorSmartSchedulePoolStatus,
   getChannelMonitorSmartScheduleRouteDisplayStatus,
@@ -242,6 +246,9 @@ function RouteSamples(props: {
   stability?: ChannelMonitorSmartScheduleRouteStability
   samples?: ChannelMonitorSmartScheduleSampleItem
 }) {
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(
+    props.route
+  )
   const performanceSamples =
     props.samples?.performance_window ?? props.route.shared_samples
   const stabilitySamples =
@@ -262,7 +269,7 @@ function RouteSamples(props: {
       <div className='flex flex-col gap-0.5 text-xs'>
         <span className='text-muted-foreground'>窗口内暂无样本</span>
         <span className='font-medium'>
-          样本欠账 {props.route.state.sampling_debt}
+          样本欠账 {runtimeState.sampling_debt}
         </span>
       </div>
     )
@@ -284,10 +291,10 @@ function RouteSamples(props: {
       ? 'TPS -'
       : `TPS ${props.performance.average_tps.toFixed(2)}`
   const rollingStabilityLabel =
-    props.route.state.rolling_stability_score == null
+    runtimeState.rolling_stability_score == null
       ? '滚动稳定性 -'
-      : `滚动稳定性 ${(props.route.state.rolling_stability_score * 100).toFixed(1)} 分 · 慢成功 ${props.route.state.rolling_stability_slow_count}/${props.route.state.rolling_stability_allowed_slow_count}`
-  const detail = `稳定性评分窗口 ${stabilitySampleCount} 次，其中测试/探测 ${stabilitySharedSampleCount} 次，${stabilityLabel}；性能窗口有效 ${performanceSampleCount} 次，其中业务 ${businessPerformanceSampleCount} 次、测试/探测 ${performanceSharedSampleCount} 次，${firstTokenLabel}，${tpsLabel}；${rollingStabilityLabel}；样本欠账 ${props.route.state.sampling_debt}`
+      : `滚动稳定性 ${(runtimeState.rolling_stability_score * 100).toFixed(1)} 分 · 慢成功 ${runtimeState.rolling_stability_slow_count}/${runtimeState.rolling_stability_allowed_slow_count}`
+  const detail = `稳定性评分窗口 ${stabilitySampleCount} 次，其中测试/探测 ${stabilitySharedSampleCount} 次，${stabilityLabel}；性能窗口有效 ${performanceSampleCount} 次，其中业务 ${businessPerformanceSampleCount} 次、测试/探测 ${performanceSharedSampleCount} 次，${firstTokenLabel}，${tpsLabel}；${rollingStabilityLabel}；样本欠账 ${runtimeState.sampling_debt}`
 
   return (
     <div className='min-w-0 text-xs tabular-nums' title={detail}>
@@ -299,7 +306,7 @@ function RouteSamples(props: {
         + 测试 {performanceSharedSampleCount}）· {firstTokenLabel} · {tpsLabel}
       </div>
       <div className='mt-0.5 truncate font-medium'>
-        样本欠账 {props.route.state.sampling_debt} · {rollingStabilityLabel}
+        样本欠账 {runtimeState.sampling_debt} · {rollingStabilityLabel}
       </div>
     </div>
   )
@@ -312,10 +319,13 @@ function RouteAdaptiveHealthSummary(props: {
   if (!props.placement?.isActualPrimary && !props.placement?.isScoringWinner) {
     return null
   }
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(
+    props.route
+  )
   const details =
     props.route.current_window_score_details ??
-    props.route.state.last_schedule_score_details
-  const state = props.route.state.adaptive_health_state || details?.health.state
+    runtimeState.last_schedule_score_details
+  const state = runtimeState.adaptive_health_state || details?.health.state
   const stateLabels: Record<string, string> = {
     unknown: '未知',
     healthy: '健康',
@@ -350,12 +360,15 @@ function RouteAdaptiveHealthSummary(props: {
 function ManualPrimaryIndicator(props: {
   route: ChannelMonitorSmartScheduleRoute
 }) {
-  if (props.route.state.manual_primary_until <= 0) return null
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(
+    props.route
+  )
+  if (runtimeState.manual_primary_until <= 0) return null
 
-  const degradeLabel = props.route.state.manual_primary_allow_stability_degrade
+  const degradeLabel = runtimeState.manual_primary_allow_stability_degrade
     ? '允许稳定性降级'
     : '固定期间不降级'
-  const label = `管理员固定至 ${formatTimestampToDate(props.route.state.manual_primary_until)} · ${degradeLabel}`
+  const label = `管理员固定至 ${formatTimestampToDate(runtimeState.manual_primary_until)} · ${degradeLabel}`
   return (
     <span className='text-primary shrink-0' title={label} aria-label={label}>
       <HugeiconsIcon icon={PinIcon} className='size-3.5' aria-hidden='true' />
@@ -384,19 +397,32 @@ function PoolDecisionSummary(props: {
       formatPoolChannelReference(props.pool.routes, channelId)
     )
     .join('、')
+  const scoringWinnerRoute = props.pool.routes.find(
+    (route) =>
+      channelMonitorSmartScheduleRouteCandidateChannelId(route) ===
+      summary.scoringWinnerChannelId
+  )
   const decision =
-    props.pool.routes.find(
-      (route) => route.channel_id === summary.scoringWinnerChannelId
-    )?.current_window_score_details?.decision ??
+    scoringWinnerRoute?.current_window_score_details?.decision ??
     props.pool.routes
       .map((route) => route.current_window_score_details?.decision)
       .find((item) => item != null)
+  const historicalWinnerRoute = props.pool.routes.find(
+    (route) =>
+      channelMonitorSmartScheduleRouteCandidateChannelId(route) ===
+      summary.historicalScoringWinnerChannelId
+  )
   const historicalDecision =
-    props.pool.routes.find(
-      (route) => route.channel_id === summary.historicalScoringWinnerChannelId
-    )?.state.last_schedule_score_details?.decision ??
+    (historicalWinnerRoute
+      ? channelMonitorSmartScheduleRouteRuntimeState(historicalWinnerRoute)
+          .last_schedule_score_details?.decision
+      : undefined) ??
     props.pool.routes
-      .map((route) => route.state.last_schedule_score_details?.decision)
+      .map(
+        (route) =>
+          channelMonitorSmartScheduleRouteRuntimeState(route)
+            .last_schedule_score_details?.decision
+      )
       .find((item) => item != null)
   let nonSwitchReason =
     decision?.selection_reason ||
@@ -498,19 +524,22 @@ function RouteDecisionBadges(props: {
 function RouteTemporaryTraffic(props: {
   route: ChannelMonitorSmartScheduleRoute
 }) {
-  const samplingOrderLabel = props.route.state.sampling_order
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(
+    props.route
+  )
+  const samplingOrderLabel = runtimeState.sampling_order
     ? getChannelMonitorSmartScheduleSamplingOrderLabel(
-        props.route.state.sampling_order,
+        runtimeState.sampling_order,
         true
       )
     : '-'
-  if (!props.route.state.temporary_traffic_kind) {
+  if (!runtimeState.temporary_traffic_kind) {
     return (
       <div className='flex flex-col gap-0.5'>
         <span className='text-muted-foreground'>当前未采样</span>
-        {props.route.state.sampling_candidate ? (
+        {runtimeState.sampling_candidate ? (
           <span className='text-muted-foreground text-[11px]'>
-            候选 · 欠账 {props.route.state.sampling_debt} · 顺序{' '}
+            候选 · 欠账 {runtimeState.sampling_debt} · 顺序{' '}
             {samplingOrderLabel}
           </span>
         ) : null}
@@ -522,12 +551,12 @@ function RouteTemporaryTraffic(props: {
       <span className='font-medium'>当前采样渠道</span>
       <span>
         {getChannelMonitorSmartScheduleTemporaryTrafficLabel(
-          props.route.state.temporary_traffic_kind
+          runtimeState.temporary_traffic_kind
         )}
       </span>
       <span className='text-muted-foreground font-mono'>
-        目标 {props.route.state.temporary_traffic_target_percent.toFixed(1)}% ·
-        欠账 {props.route.state.sampling_debt} · 顺序 {samplingOrderLabel}
+        目标 {runtimeState.temporary_traffic_target_percent.toFixed(1)}% · 欠账{' '}
+        {runtimeState.sampling_debt} · 顺序 {samplingOrderLabel}
       </span>
     </div>
   )
@@ -614,7 +643,9 @@ function RouteActions(props: {
   rateLimitCooldownKey: string | null
   onOpenDetails: (route: ChannelMonitorSmartScheduleRoute) => void
 }) {
-  const fixed = props.route.state.manual_primary_until > 0
+  const fixed =
+    channelMonitorSmartScheduleRouteRuntimeState(props.route)
+      .manual_primary_until > 0
   const trafficPaused = channelMonitorSmartScheduleRouteIsTrafficPaused(
     props.route
   )
@@ -1007,6 +1038,12 @@ export function ChannelMonitorSmartSchedulePool(
                   const remark = channel?.channel_remark || channel?.remark
                   const placement = props.placements.get(key)
                   const updatePending = props.updateRouteKey === key
+                  const runtimeState =
+                    channelMonitorSmartScheduleRouteRuntimeState(route)
+                  const runtimePriority =
+                    channelMonitorSmartScheduleRouteRuntimePriority(route)
+                  const runtimeWeight =
+                    channelMonitorSmartScheduleRouteRuntimeWeight(route)
                   return (
                     <tr
                       key={key}
@@ -1056,29 +1093,29 @@ export function ChannelMonitorSmartSchedulePool(
                         </span>
                         <span
                           className='text-muted-foreground mt-0.5 block truncate text-[11px] whitespace-nowrap'
-                          title={`当前 ${route.current_window_score == null ? '-' : (route.current_window_score * 100).toFixed(1)} · 最近 ${route.state.last_schedule_score == null ? '-' : (route.state.last_schedule_score * 100).toFixed(1)}`}
+                          title={`当前 ${route.current_window_score == null ? '-' : (route.current_window_score * 100).toFixed(1)} · 最近 ${runtimeState.last_schedule_score == null ? '-' : (runtimeState.last_schedule_score * 100).toFixed(1)}`}
                         >
                           {route.current_window_score == null
                             ? '当前 -'
                             : `当前 ${(route.current_window_score * 100).toFixed(1)}`}
                           {' · '}
-                          {route.state.last_schedule_score == null
+                          {runtimeState.last_schedule_score == null
                             ? '最近 -'
-                            : `最近 ${(route.state.last_schedule_score * 100).toFixed(1)}`}
+                            : `最近 ${(runtimeState.last_schedule_score * 100).toFixed(1)}`}
                         </span>
                       </td>
                       <td className='px-2 py-2 align-middle font-mono font-medium'>
-                        {route.state.base_rank > 0
-                          ? `第 ${route.state.base_rank} 名`
+                        {runtimeState.base_rank > 0
+                          ? `第 ${runtimeState.base_rank} 名`
                           : '-'}
                       </td>
                       <td className='px-2 py-2 align-middle font-mono'>
-                        {route.state.base_rank > 0
-                          ? `P${route.state.base_priority} · W${route.state.base_weight}`
+                        {runtimeState.base_rank > 0
+                          ? `P${runtimeState.base_priority} · W${runtimeState.base_weight}`
                           : '-'}
                       </td>
                       <td className='px-2 py-2 align-middle font-mono font-medium'>
-                        P{route.priority} · W{route.weight}
+                        P{runtimePriority} · W{runtimeWeight}
                       </td>
                       <td className='px-2 py-2 align-middle'>
                         <RouteDecisionBadges placement={placement} />
@@ -1153,6 +1190,12 @@ export function ChannelMonitorSmartSchedulePool(
               const remark = channel?.channel_remark || channel?.remark
               const placement = props.placements.get(key)
               const updatePending = props.updateRouteKey === key
+              const runtimeState =
+                channelMonitorSmartScheduleRouteRuntimeState(route)
+              const runtimePriority =
+                channelMonitorSmartScheduleRouteRuntimePriority(route)
+              const runtimeWeight =
+                channelMonitorSmartScheduleRouteRuntimeWeight(route)
               return (
                 <article key={key} className='px-3 py-3'>
                   <div className='flex min-w-0 items-start justify-between gap-3'>
@@ -1198,9 +1241,9 @@ export function ChannelMonitorSmartSchedulePool(
                           ? '-'
                           : (route.current_window_score * 100).toFixed(1)}{' '}
                         /{' '}
-                        {route.state.last_schedule_score == null
+                        {runtimeState.last_schedule_score == null
                           ? '-'
-                          : (route.state.last_schedule_score * 100).toFixed(1)}
+                          : (runtimeState.last_schedule_score * 100).toFixed(1)}
                       </span>
                     </div>
                     <div>
@@ -1208,8 +1251,8 @@ export function ChannelMonitorSmartSchedulePool(
                         基础排名
                       </span>
                       <span className='font-mono font-medium'>
-                        {route.state.base_rank > 0
-                          ? `第 ${route.state.base_rank} 名`
+                        {runtimeState.base_rank > 0
+                          ? `第 ${runtimeState.base_rank} 名`
                           : '-'}
                       </span>
                     </div>
@@ -1218,8 +1261,8 @@ export function ChannelMonitorSmartSchedulePool(
                         基础 P / W
                       </span>
                       <span className='font-mono'>
-                        {route.state.base_rank > 0
-                          ? `P${route.state.base_priority} · W${route.state.base_weight}`
+                        {runtimeState.base_rank > 0
+                          ? `P${runtimeState.base_priority} · W${runtimeState.base_weight}`
                           : '-'}
                       </span>
                     </div>
@@ -1228,7 +1271,7 @@ export function ChannelMonitorSmartSchedulePool(
                         当前 P / W
                       </span>
                       <span className='font-mono font-medium'>
-                        P{route.priority} · W{route.weight}
+                        P{runtimePriority} · W{runtimeWeight}
                       </span>
                     </div>
                     <div>
@@ -1237,8 +1280,8 @@ export function ChannelMonitorSmartSchedulePool(
                       </span>
                       <span className='font-medium'>
                         {formatChannelMonitorSmartScheduleTemporaryTraffic(
-                          route.state.temporary_traffic_kind,
-                          route.state.temporary_traffic_target_percent
+                          runtimeState.temporary_traffic_kind,
+                          runtimeState.temporary_traffic_target_percent
                         )}
                       </span>
                     </div>

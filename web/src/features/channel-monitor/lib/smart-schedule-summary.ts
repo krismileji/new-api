@@ -187,10 +187,68 @@ export function channelMonitorSmartScheduleRouteKey(route: {
   return `${route.channel_id}\u0000${route.group}\u0000${route.model}`
 }
 
+export function channelMonitorSmartScheduleRouteRuntimeState(
+  route: ChannelMonitorSmartScheduleRoute
+) {
+  return route.effective_state ?? route.state
+}
+
+export function channelMonitorSmartScheduleRouteRuntimePriority(
+  route: ChannelMonitorSmartScheduleRoute
+) {
+  return route.effective_priority ?? route.priority
+}
+
+export function channelMonitorSmartScheduleRouteRuntimeWeight(
+  route: ChannelMonitorSmartScheduleRoute
+) {
+  return route.effective_weight ?? route.weight
+}
+
+export function channelMonitorSmartScheduleRouteCandidateChannelId(
+  route: ChannelMonitorSmartScheduleRoute
+) {
+  return route.routing_candidate_channel_id || route.channel_id
+}
+
+export function channelMonitorSmartScheduleRouteCandidateMemberWeight(
+  route: ChannelMonitorSmartScheduleRoute
+) {
+  const memberIds = route.logical_member_ids
+  const memberWeights = route.logical_member_weights
+  if (memberIds && memberWeights) {
+    const memberIndex = memberIds.indexOf(route.channel_id)
+    if (memberIndex >= 0) return memberWeights[memberIndex] ?? 0
+  }
+  return channelMonitorSmartScheduleRouteRuntimeWeight(route)
+}
+
+function channelMonitorSmartScheduleRecordedCandidateId(
+  routes: readonly ChannelMonitorSmartScheduleRoute[],
+  channelId: number
+) {
+  if (channelId <= 0) return channelId
+  const route = routes.find((item) => item.channel_id === channelId)
+  return route
+    ? channelMonitorSmartScheduleRouteCandidateChannelId(route)
+    : channelId
+}
+
 export function channelMonitorSmartScheduleRouteParticipates(
   route: ChannelMonitorSmartScheduleRoute
 ) {
   return route.state.participation_set && !route.state.excluded
+}
+
+export function channelMonitorSmartScheduleRouteRuntimeParticipates(
+  route: ChannelMonitorSmartScheduleRoute
+) {
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(route)
+  return (
+    channelMonitorSmartScheduleRouteParticipates(route) &&
+    runtimeState.participation_set &&
+    !runtimeState.excluded
+  )
 }
 
 export function channelMonitorSmartScheduleRouteIsAvailable(
@@ -224,9 +282,10 @@ export function channelMonitorSmartScheduleRouteIsActive(
   route: ChannelMonitorSmartScheduleRoute
 ) {
   return (
-    channelMonitorSmartScheduleRouteParticipates(route) &&
+    channelMonitorSmartScheduleRouteRuntimeParticipates(route) &&
     channelMonitorSmartScheduleRouteIsAvailable(route) &&
-    route.state.stability_state !== 'degraded'
+    channelMonitorSmartScheduleRouteRuntimeState(route).stability_state !==
+      'degraded'
   )
 }
 
@@ -276,7 +335,11 @@ export function summarizeChannelMonitorSmartScheduleChannel(
   let lastScheduleTime = 0
 
   for (const route of routes) {
-    const participates = channelMonitorSmartScheduleRouteParticipates(route)
+    const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(route)
+    const runtimePriority =
+      channelMonitorSmartScheduleRouteRuntimePriority(route)
+    const runtimeWeight = channelMonitorSmartScheduleRouteRuntimeWeight(route)
+    const participates = channelMonitorSmartScheduleRouteRuntimeParticipates(route)
     const paused =
       participates &&
       route.enabled &&
@@ -288,25 +351,25 @@ export function summarizeChannelMonitorSmartScheduleChannel(
     if (participates) participatingCount += 1
     if (active) activeCount += 1
     if (paused) pausedCount += 1
-    if (available && route.state.stability_state === 'degraded') {
+    if (available && runtimeState.stability_state === 'degraded') {
       degradedCount += 1
     }
-    if (active && route.state.stability_state === 'probing') {
+    if (active && runtimeState.stability_state === 'probing') {
       probingCount += 1
     }
     if (
       active &&
-      (route.state.temporary_traffic_kind === 'insufficient_samples' ||
-        route.state.temporary_traffic_kind === 'adaptive_sampling')
+      (runtimeState.temporary_traffic_kind === 'insufficient_samples' ||
+        runtimeState.temporary_traffic_kind === 'adaptive_sampling')
     ) {
       insufficientSampleCount += 1
     }
-    if (active && route.state.last_schedule_status === 'failed') {
+    if (active && runtimeState.last_schedule_status === 'failed') {
       failedCount += 1
     }
     lastScheduleTime = Math.max(
       lastScheduleTime,
-      route.state.last_schedule_time
+      runtimeState.last_schedule_time
     )
 
     const existing = groupMap.get(route.group)
@@ -317,18 +380,18 @@ export function summarizeChannelMonitorSmartScheduleChannel(
         participatingCount: participates ? 1 : 0,
         activeCount: active ? 1 : 0,
         pausedCount: paused ? 1 : 0,
-        priorityMin: route.priority,
-        priorityMax: route.priority,
-        weightMin: route.weight,
-        weightMax: route.weight,
+        priorityMin: runtimePriority,
+        priorityMax: runtimePriority,
+        weightMin: runtimeWeight,
+        weightMax: runtimeWeight,
         degradedCount:
-          available && route.state.stability_state === 'degraded' ? 1 : 0,
+          available && runtimeState.stability_state === 'degraded' ? 1 : 0,
         probingCount:
-          active && route.state.stability_state === 'probing' ? 1 : 0,
+          active && runtimeState.stability_state === 'probing' ? 1 : 0,
         insufficientSampleCount:
           active &&
-          (route.state.temporary_traffic_kind === 'insufficient_samples' ||
-            route.state.temporary_traffic_kind === 'adaptive_sampling')
+          (runtimeState.temporary_traffic_kind === 'insufficient_samples' ||
+            runtimeState.temporary_traffic_kind === 'adaptive_sampling')
             ? 1
             : 0,
       })
@@ -338,20 +401,20 @@ export function summarizeChannelMonitorSmartScheduleChannel(
     if (participates) existing.participatingCount += 1
     if (active) existing.activeCount += 1
     if (paused) existing.pausedCount += 1
-    existing.priorityMin = Math.min(existing.priorityMin, route.priority)
-    existing.priorityMax = Math.max(existing.priorityMax, route.priority)
-    existing.weightMin = Math.min(existing.weightMin, route.weight)
-    existing.weightMax = Math.max(existing.weightMax, route.weight)
-    if (available && route.state.stability_state === 'degraded') {
+    existing.priorityMin = Math.min(existing.priorityMin, runtimePriority)
+    existing.priorityMax = Math.max(existing.priorityMax, runtimePriority)
+    existing.weightMin = Math.min(existing.weightMin, runtimeWeight)
+    existing.weightMax = Math.max(existing.weightMax, runtimeWeight)
+    if (available && runtimeState.stability_state === 'degraded') {
       existing.degradedCount += 1
     }
-    if (active && route.state.stability_state === 'probing') {
+    if (active && runtimeState.stability_state === 'probing') {
       existing.probingCount += 1
     }
     if (
       active &&
-      (route.state.temporary_traffic_kind === 'insufficient_samples' ||
-        route.state.temporary_traffic_kind === 'adaptive_sampling')
+      (runtimeState.temporary_traffic_kind === 'insufficient_samples' ||
+        runtimeState.temporary_traffic_kind === 'adaptive_sampling')
     ) {
       existing.insufficientSampleCount += 1
     }
@@ -408,15 +471,63 @@ type ChannelMonitorSmartSchedulePoolRoutingSnapshot = {
 function getChannelMonitorSmartSchedulePoolRoutingSnapshot(
   routes: readonly ChannelMonitorSmartScheduleRoute[]
 ): ChannelMonitorSmartSchedulePoolRoutingSnapshot {
+  const candidatesById = new Map<
+    number,
+    {
+      routes: ChannelMonitorSmartScheduleRoute[]
+      activeRoutes: ChannelMonitorSmartScheduleRoute[]
+      priority: number
+      weight: number
+    }
+  >()
+  for (const route of routes) {
+    const candidateId =
+      channelMonitorSmartScheduleRouteCandidateChannelId(route)
+    const active = channelMonitorSmartScheduleRouteIsActive(route)
+    const candidate = candidatesById.get(candidateId)
+    if (candidate) {
+      candidate.routes.push(route)
+      if (active) {
+        candidate.activeRoutes.push(route)
+        if (candidate.activeRoutes.length === 1) {
+          candidate.priority = channelMonitorSmartScheduleRouteRuntimePriority(
+            route
+          )
+          candidate.weight = channelMonitorSmartScheduleRouteRuntimeWeight(route)
+        } else {
+          candidate.priority = Math.max(
+            candidate.priority,
+            channelMonitorSmartScheduleRouteRuntimePriority(route)
+          )
+          candidate.weight = Math.max(
+            candidate.weight,
+            channelMonitorSmartScheduleRouteRuntimeWeight(route)
+          )
+        }
+      }
+    } else {
+      candidatesById.set(candidateId, {
+        routes: [route],
+        activeRoutes: active ? [route] : [],
+        priority: active
+          ? channelMonitorSmartScheduleRouteRuntimePriority(route)
+          : 0,
+        weight: active
+          ? channelMonitorSmartScheduleRouteRuntimeWeight(route)
+          : 0,
+      })
+    }
+  }
   let historicalDecision:
     | ChannelMonitorSmartScheduleScoreDetails['decision']
     | undefined
   let decisionTime = -1
   for (const route of routes) {
-    const candidate = route.state.last_schedule_score_details?.decision
-    if (candidate && route.state.last_schedule_time >= decisionTime) {
+    const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(route)
+    const candidate = runtimeState.last_schedule_score_details?.decision
+    if (candidate && runtimeState.last_schedule_time >= decisionTime) {
       historicalDecision = candidate
-      decisionTime = route.state.last_schedule_time
+      decisionTime = runtimeState.last_schedule_time
     }
   }
   const currentDecision = routes
@@ -428,32 +539,44 @@ function getChannelMonitorSmartSchedulePoolRoutingSnapshot(
   if (currentDecision) decisionSource = 'current_window'
   else if (historicalDecision) decisionSource = 'last_schedule'
 
-  const activeRoutes = routes.filter(channelMonitorSmartScheduleRouteIsActive)
-  const routesOutsideRateLimitCooldown = activeRoutes.filter(
-    (route) => !channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(route)
+  const activeCandidates = [...candidatesById.values()].filter(
+    (candidate) => candidate.activeRoutes.length > 0
   )
-  const routableRoutes =
-    routesOutsideRateLimitCooldown.length > 0
-      ? routesOutsideRateLimitCooldown
-      : activeRoutes
-  const actualHighestPriority = routableRoutes.reduce<number | null>(
-    (current, route) =>
-      current == null ? route.priority : Math.max(current, route.priority),
+  const candidatesOutsideRateLimitCooldown = activeCandidates.filter(
+    (candidate) =>
+      candidate.activeRoutes.some(
+        (route) => !channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(route)
+      )
+  )
+  const routableCandidates =
+    candidatesOutsideRateLimitCooldown.length > 0
+      ? candidatesOutsideRateLimitCooldown
+      : activeCandidates
+  const actualHighestPriority = routableCandidates.reduce<number | null>(
+    (current, candidate) =>
+      current == null ? candidate.priority : Math.max(current, candidate.priority),
     null
   )
-  const actualTopLayerRoutes =
+  const actualTopLayerCandidates =
     actualHighestPriority == null
       ? []
-      : routableRoutes.filter(
-          (route) => route.priority === actualHighestPriority
+      : routableCandidates.filter(
+          (candidate) => candidate.priority === actualHighestPriority
         )
-  const actualTopLayerChannelIds = actualTopLayerRoutes
-    .map((route) => route.channel_id)
+  const actualTopLayerChannelIds = actualTopLayerCandidates
+    .map((candidate) =>
+      candidate.routes[0]
+        ? channelMonitorSmartScheduleRouteCandidateChannelId(candidate.routes[0])
+        : 0
+    )
+    .filter((channelId) => channelId > 0)
     .sort((first, second) => first - second)
   const recordedTopLayer = [
     ...new Set(
       (decision?.actual_top_layer_channel_ids ?? []).filter(
         (channelId) => channelId > 0
+      ).map((channelId) =>
+        channelMonitorSmartScheduleRecordedCandidateId(routes, channelId)
       )
     ),
   ].sort((first, second) => first - second)
@@ -465,24 +588,32 @@ function getChannelMonitorSmartSchedulePoolRoutingSnapshot(
     )
   const largestWeight = Math.max(
     0,
-    ...actualTopLayerRoutes.map((route) => Math.max(0, route.weight))
+    ...actualTopLayerCandidates.map((candidate) => Math.max(0, candidate.weight))
   )
-  const largestWeightCount = actualTopLayerRoutes.filter(
-    (route) => Math.max(0, route.weight) === largestWeight
+  const largestWeightCount = actualTopLayerCandidates.filter(
+    (candidate) => Math.max(0, candidate.weight) === largestWeight
   ).length
-  const weightedPrimary = actualTopLayerRoutes.find(
-    (route) =>
-      actualTopLayerRoutes.length === 1 ||
-      (Math.max(0, route.weight) === largestWeight && largestWeightCount === 1)
+  const weightedPrimary = actualTopLayerCandidates.find(
+    (candidate) =>
+      actualTopLayerCandidates.length === 1 ||
+      (Math.max(0, candidate.weight) === largestWeight && largestWeightCount === 1)
   )
-  let actualPrimaryChannelId = weightedPrimary?.channel_id ?? 0
+  let actualPrimaryChannelId = weightedPrimary?.routes[0]
+    ? channelMonitorSmartScheduleRouteCandidateChannelId(weightedPrimary.routes[0])
+    : 0
   if (actualPrimaryChannelId === 0 && decisionMatchesCurrentRouting) {
-    const recordedPrimaryChannelId = decision?.actual_primary_channel_id ?? 0
-    if (
-      actualTopLayerRoutes.some(
-        (route) => route.channel_id === recordedPrimaryChannelId
+    const recordedPrimaryChannelId =
+      channelMonitorSmartScheduleRecordedCandidateId(
+        routes,
+        decision?.actual_primary_channel_id ?? 0
       )
-    ) {
+    if (actualTopLayerCandidates.some((candidate) =>
+      candidate.routes.some(
+        (route) =>
+          channelMonitorSmartScheduleRouteCandidateChannelId(route) ===
+          recordedPrimaryChannelId
+      )
+    )) {
       actualPrimaryChannelId = recordedPrimaryChannelId
     }
   }
@@ -517,31 +648,96 @@ export function placeChannelMonitorSmartScheduleRoutes(
       getChannelMonitorSmartSchedulePoolRoutingSnapshot(poolRoutes)
     const actualTopLayerChannelIds = snapshot.actualTopLayerChannelIds
     const actualTopLayerChannelIdSet = new Set(actualTopLayerChannelIds)
-    const candidates = poolRoutes.filter(
-      (route) =>
-        actualTopLayerChannelIdSet.has(route.channel_id) &&
-        channelMonitorSmartScheduleRouteIsActive(route)
-    )
-    const recordedScoringWinnerChannelId =
+    const candidatesById = new Map<
+      number,
+      ChannelMonitorSmartScheduleRoute[]
+    >()
+    for (const route of poolRoutes) {
+      const candidateId =
+        channelMonitorSmartScheduleRouteCandidateChannelId(route)
+      const candidateRoutes = candidatesById.get(candidateId)
+      if (candidateRoutes) candidateRoutes.push(route)
+      else candidatesById.set(candidateId, [route])
+    }
+    const candidates = [...candidatesById.entries()]
+      .map(([candidateId, candidateRoutes]) => {
+        const activeRoutes = candidateRoutes.filter(
+          channelMonitorSmartScheduleRouteIsActive
+        )
+        const firstActiveRoute = activeRoutes[0]
+        return {
+          candidateId,
+          routes: candidateRoutes,
+          activeRoutes,
+          priority: firstActiveRoute
+            ? channelMonitorSmartScheduleRouteRuntimePriority(firstActiveRoute)
+            : 0,
+          weight: firstActiveRoute
+            ? channelMonitorSmartScheduleRouteRuntimeWeight(firstActiveRoute)
+            : 0,
+        }
+      })
+      .filter(
+        (candidate) =>
+          actualTopLayerChannelIdSet.has(candidate.candidateId) &&
+          candidate.activeRoutes.length > 0
+      )
+    const recordedScoringWinnerChannelId = channelMonitorSmartScheduleRecordedCandidateId(
+      poolRoutes,
       snapshot.decision?.raw_winner_channel_id ?? 0
+    )
     const scoringWinnerChannelId = poolRoutes.some(
       (route) =>
-        route.channel_id === recordedScoringWinnerChannelId &&
+        channelMonitorSmartScheduleRouteCandidateChannelId(route) ===
+          recordedScoringWinnerChannelId &&
         channelMonitorSmartScheduleRouteIsActive(route)
     )
       ? recordedScoringWinnerChannelId
       : 0
     const totalWeight = candidates.reduce(
-      (total, route) => total + Math.max(0, route.weight),
+      (total, candidate) =>
+        total + Math.max(0, candidate.weight),
       0
     )
-    const shares = new Map<number, number>()
-    for (const route of candidates) {
+    const candidateShares = new Map<number, number>()
+    for (const candidate of candidates) {
       const share =
         totalWeight > 0
-          ? Math.max(0, route.weight) / totalWeight
+          ? Math.max(0, candidate.weight) / totalWeight
           : 1 / candidates.length
-      shares.set(route.channel_id, share)
+      candidateShares.set(candidate.candidateId, share)
+    }
+    const shares = new Map<string, number>()
+    for (const candidate of candidates) {
+      const candidateShare = candidateShares.get(candidate.candidateId) ?? 0
+      const memberRoutes = candidate.activeRoutes
+      const totalMemberWeight = memberRoutes.reduce(
+        (total, route) =>
+          total +
+          Math.max(
+            0,
+            channelMonitorSmartScheduleRouteCandidateMemberWeight(route)
+          ),
+        0
+      )
+      for (const route of candidate.routes) {
+        if (!memberRoutes.includes(route)) {
+          shares.set(channelMonitorSmartScheduleRouteKey(route), 0)
+          continue
+        }
+        const memberWeight = Math.max(
+          0,
+          channelMonitorSmartScheduleRouteCandidateMemberWeight(route)
+        )
+        const memberShare =
+          totalMemberWeight > 0
+            ? memberWeight / totalMemberWeight
+            : 1 / memberRoutes.length
+        shares.set(
+          channelMonitorSmartScheduleRouteKey(route),
+          candidateShare * memberShare
+        )
+      }
     }
     const actualPrimaryChannelId = snapshot.actualPrimaryChannelId
 
@@ -556,8 +752,11 @@ export function placeChannelMonitorSmartScheduleRoutes(
         configured &&
         !paused &&
         channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(route)
-      const isActualTopLayer = actualTopLayerChannelIdSet.has(route.channel_id)
-      if (!channelMonitorSmartScheduleRouteParticipates(route)) {
+      const candidateChannelId =
+        channelMonitorSmartScheduleRouteCandidateChannelId(route)
+      const isActualTopLayer = actualTopLayerChannelIdSet.has(candidateChannelId)
+      const routeShare = shares.get(channelMonitorSmartScheduleRouteKey(route))
+      if (!channelMonitorSmartScheduleRouteRuntimeParticipates(route)) {
         role = 'excluded'
         estimatedShare = 0
       } else if (!configured) {
@@ -567,13 +766,13 @@ export function placeChannelMonitorSmartScheduleRoutes(
         estimatedShare = 0
       } else if (rateLimited) {
         role = 'rate_limited'
-        estimatedShare = isActualTopLayer
-          ? (shares.get(route.channel_id) ?? 0)
-          : 0
+        estimatedShare = isActualTopLayer ? (routeShare ?? 0) : 0
       } else if (isActualTopLayer) {
-        estimatedShare = shares.get(route.channel_id) ?? 0
+        estimatedShare = routeShare ?? 0
         role =
-          route.channel_id === actualPrimaryChannelId ? 'primary' : 'candidate'
+          candidateChannelId === actualPrimaryChannelId
+            ? 'primary'
+            : 'candidate'
       }
       placements.set(channelMonitorSmartScheduleRouteKey(route), {
         role,
@@ -584,8 +783,8 @@ export function placeChannelMonitorSmartScheduleRoutes(
         scoringWinnerChannelId,
         actualHighestPriority: snapshot.actualHighestPriority,
         actualTopLayerChannelIds,
-        isActualPrimary: route.channel_id === actualPrimaryChannelId,
-        isScoringWinner: route.channel_id === scoringWinnerChannelId,
+        isActualPrimary: candidateChannelId === actualPrimaryChannelId,
+        isScoringWinner: candidateChannelId === scoringWinnerChannelId,
         isActualTopLayer,
       })
     }
@@ -597,7 +796,7 @@ export function getChannelMonitorSmartScheduleRouteDisplayStatus(
   route: ChannelMonitorSmartScheduleRoute,
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
 ): ChannelMonitorSmartScheduleRouteDisplayStatus {
-  if (!channelMonitorSmartScheduleRouteParticipates(route)) return 'excluded'
+  if (!channelMonitorSmartScheduleRouteRuntimeParticipates(route)) return 'excluded'
   if (!route.enabled || route.channel_status !== CHANNEL_STATUS.ENABLED) {
     return 'unavailable'
   }
@@ -605,15 +804,16 @@ export function getChannelMonitorSmartScheduleRouteDisplayStatus(
   if (channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(route)) {
     return 'rate_limited'
   }
-  if (route.state.stability_state === 'degraded') return 'degraded'
-  if (route.state.stability_state === 'probing') return 'probing'
-  if (route.state.temporary_traffic_kind === 'insufficient_samples') {
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(route)
+  if (runtimeState.stability_state === 'degraded') return 'degraded'
+  if (runtimeState.stability_state === 'probing') return 'probing'
+  if (runtimeState.temporary_traffic_kind === 'insufficient_samples') {
     return 'insufficient_samples'
   }
-  if (route.state.temporary_traffic_kind === 'adaptive_sampling') {
+  if (runtimeState.temporary_traffic_kind === 'adaptive_sampling') {
     return 'adaptive_sampling'
   }
-  if (route.state.last_schedule_status === 'failed') return 'failed'
+  if (runtimeState.last_schedule_status === 'failed') return 'failed'
   return placement?.role ?? 'unavailable'
 }
 
@@ -634,9 +834,13 @@ function compareChannelMonitorSmartScheduleRouteAttention(
     SMART_SCHEDULE_ROUTE_STATUS_ORDER[firstStatus] -
     SMART_SCHEDULE_ROUTE_STATUS_ORDER[secondStatus]
   if (statusOrder !== 0) return statusOrder
-  const priorityOrder = second.priority - first.priority
+  const priorityOrder =
+    channelMonitorSmartScheduleRouteRuntimePriority(second) -
+    channelMonitorSmartScheduleRouteRuntimePriority(first)
   if (priorityOrder !== 0) return priorityOrder
-  const weightOrder = second.weight - first.weight
+  const weightOrder =
+    channelMonitorSmartScheduleRouteRuntimeWeight(second) -
+    channelMonitorSmartScheduleRouteRuntimeWeight(first)
   return weightOrder
 }
 
@@ -695,11 +899,15 @@ export function summarizeChannelMonitorSmartSchedulePools(
   const poolMap = new Map<string, ChannelMonitorSmartSchedulePoolSummary>()
   const routesByPool = new Map<string, ChannelMonitorSmartScheduleRoute[]>()
   for (const route of routes) {
+    const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(route)
+    const runtimePriority =
+      channelMonitorSmartScheduleRouteRuntimePriority(route)
+    const runtimeWeight = channelMonitorSmartScheduleRouteRuntimeWeight(route)
     const key = `${route.group}\u0000${route.model}`
     const poolRoutes = routesByPool.get(key)
     if (poolRoutes) poolRoutes.push(route)
     else routesByPool.set(key, [route])
-    const participates = channelMonitorSmartScheduleRouteParticipates(route)
+    const participates = channelMonitorSmartScheduleRouteRuntimeParticipates(route)
     const paused =
       participates &&
       route.enabled &&
@@ -717,31 +925,31 @@ export function summarizeChannelMonitorSmartSchedulePools(
         participatingCount: participates ? 1 : 0,
         activeCount: active ? 1 : 0,
         pausedCount: paused ? 1 : 0,
-        priorityMin: route.priority,
-        priorityMax: route.priority,
-        weightMin: route.weight,
-        weightMax: route.weight,
+        priorityMin: runtimePriority,
+        priorityMax: runtimePriority,
+        weightMin: runtimeWeight,
+        weightMax: runtimeWeight,
         degradedCount:
-          available && route.state.stability_state === 'degraded' ? 1 : 0,
+          available && runtimeState.stability_state === 'degraded' ? 1 : 0,
         probingCount:
-          active && route.state.stability_state === 'probing' ? 1 : 0,
+          active && runtimeState.stability_state === 'probing' ? 1 : 0,
         insufficientSampleCount:
           active &&
-          (route.state.temporary_traffic_kind === 'insufficient_samples' ||
-            route.state.temporary_traffic_kind === 'adaptive_sampling')
+          (runtimeState.temporary_traffic_kind === 'insufficient_samples' ||
+            runtimeState.temporary_traffic_kind === 'adaptive_sampling')
             ? 1
             : 0,
         failedCount:
-          active && route.state.last_schedule_status === 'failed' ? 1 : 0,
+          active && runtimeState.last_schedule_status === 'failed' ? 1 : 0,
         breakEvenFallbackCount:
           route.economic_role === 'break_even_fallback' ? 1 : 0,
         breakEvenFallbackFixedCount:
           route.economic_role === 'break_even_fallback' &&
-          route.state.manual_primary_until > 0
+          runtimeState.manual_primary_until > 0
             ? 1
             : 0,
         breakEvenFallbackTakingOver: false,
-        topPriority: active ? route.priority : null,
+        topPriority: active ? runtimePriority : null,
         candidateCount: active ? 1 : 0,
         scoringWinnerChannelId: 0,
         historicalScoringWinnerChannelId: 0,
@@ -756,29 +964,29 @@ export function summarizeChannelMonitorSmartSchedulePools(
     if (participates) existing.participatingCount += 1
     if (active) existing.activeCount += 1
     if (paused) existing.pausedCount += 1
-    existing.priorityMin = Math.min(existing.priorityMin, route.priority)
-    existing.priorityMax = Math.max(existing.priorityMax, route.priority)
-    existing.weightMin = Math.min(existing.weightMin, route.weight)
-    existing.weightMax = Math.max(existing.weightMax, route.weight)
-    if (available && route.state.stability_state === 'degraded') {
+    existing.priorityMin = Math.min(existing.priorityMin, runtimePriority)
+    existing.priorityMax = Math.max(existing.priorityMax, runtimePriority)
+    existing.weightMin = Math.min(existing.weightMin, runtimeWeight)
+    existing.weightMax = Math.max(existing.weightMax, runtimeWeight)
+    if (available && runtimeState.stability_state === 'degraded') {
       existing.degradedCount += 1
     }
-    if (active && route.state.stability_state === 'probing') {
+    if (active && runtimeState.stability_state === 'probing') {
       existing.probingCount += 1
     }
     if (
       active &&
-      (route.state.temporary_traffic_kind === 'insufficient_samples' ||
-        route.state.temporary_traffic_kind === 'adaptive_sampling')
+      (runtimeState.temporary_traffic_kind === 'insufficient_samples' ||
+        runtimeState.temporary_traffic_kind === 'adaptive_sampling')
     ) {
       existing.insufficientSampleCount += 1
     }
-    if (active && route.state.last_schedule_status === 'failed') {
+    if (active && runtimeState.last_schedule_status === 'failed') {
       existing.failedCount += 1
     }
     if (route.economic_role === 'break_even_fallback') {
       existing.breakEvenFallbackCount += 1
-      if (route.state.manual_primary_until > 0) {
+      if (runtimeState.manual_primary_until > 0) {
         existing.breakEvenFallbackFixedCount += 1
       }
     }
@@ -789,26 +997,41 @@ export function summarizeChannelMonitorSmartSchedulePools(
       getChannelMonitorSmartSchedulePoolRoutingSnapshot(poolRoutes)
     const topLayerChannelIdSet = new Set(snapshot.actualTopLayerChannelIds)
     const topLayerRoutes = poolRoutes.filter((route) =>
-      topLayerChannelIdSet.has(route.channel_id)
+      topLayerChannelIdSet.has(
+        channelMonitorSmartScheduleRouteCandidateChannelId(route)
+      ) && channelMonitorSmartScheduleRouteIsActive(route)
     )
+    const scoringWinnerChannelId = channelMonitorSmartScheduleRecordedCandidateId(
+      poolRoutes,
+      snapshot.decision?.raw_winner_channel_id ?? 0
+    )
+    const historicalScoringWinnerChannelId =
+      channelMonitorSmartScheduleRecordedCandidateId(
+        poolRoutes,
+        snapshot.historicalDecision?.raw_winner_channel_id ?? 0
+      )
     return {
       ...summary,
       topPriority: snapshot.actualHighestPriority,
       candidateCount: snapshot.actualTopLayerChannelIds.length,
       scoringWinnerChannelId:
-        poolRoutes.find(
+        poolRoutes.some(
           (route) =>
-            route.channel_id ===
-              (snapshot.decision?.raw_winner_channel_id ?? 0) &&
+            channelMonitorSmartScheduleRouteCandidateChannelId(route) ===
+              scoringWinnerChannelId &&
             channelMonitorSmartScheduleRouteIsActive(route)
-        )?.channel_id ?? 0,
+        )
+          ? scoringWinnerChannelId
+          : 0,
       historicalScoringWinnerChannelId:
-        poolRoutes.find(
+        poolRoutes.some(
           (route) =>
-            route.channel_id ===
-              (snapshot.historicalDecision?.raw_winner_channel_id ?? 0) &&
+            channelMonitorSmartScheduleRouteCandidateChannelId(route) ===
+              historicalScoringWinnerChannelId &&
             channelMonitorSmartScheduleRouteIsActive(route)
-        )?.channel_id ?? 0,
+        )
+          ? historicalScoringWinnerChannelId
+          : 0,
       scoringWinnerSource: snapshot.decisionSource,
       actualPrimaryChannelId: snapshot.actualPrimaryChannelId,
       actualHighestPriority: snapshot.actualHighestPriority,
@@ -818,7 +1041,8 @@ export function summarizeChannelMonitorSmartSchedulePools(
         topLayerRoutes.every(
           (route) =>
             channelMonitorSmartScheduleRouteIsBreakEvenFallback(route) &&
-            route.state.manual_primary_until <= 0
+            channelMonitorSmartScheduleRouteRuntimeState(route)
+              .manual_primary_until <= 0
         ),
     }
   })
@@ -906,7 +1130,8 @@ export function summarizeChannelMonitorSmartScheduleOverview(
   for (const route of routes) {
     channels.add(route.channel_id)
     groups.add(route.group)
-    const participates = channelMonitorSmartScheduleRouteParticipates(route)
+    const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(route)
+    const participates = channelMonitorSmartScheduleRouteRuntimeParticipates(route)
     if (participates) {
       participatingCount += 1
     }
@@ -922,20 +1147,20 @@ export function summarizeChannelMonitorSmartScheduleOverview(
       pausedCount += 1
     }
     if (active) activeCount += 1
-    if (available && route.state.stability_state === 'degraded') {
+    if (available && runtimeState.stability_state === 'degraded') {
       degradedCount += 1
     }
-    if (active && route.state.stability_state === 'probing') {
+    if (active && runtimeState.stability_state === 'probing') {
       probingCount += 1
     }
     if (
       active &&
-      (route.state.temporary_traffic_kind === 'insufficient_samples' ||
-        route.state.temporary_traffic_kind === 'adaptive_sampling')
+      (runtimeState.temporary_traffic_kind === 'insufficient_samples' ||
+        runtimeState.temporary_traffic_kind === 'adaptive_sampling')
     ) {
       insufficientSampleCount += 1
     }
-    if (active && route.state.last_schedule_status === 'failed') {
+    if (active && runtimeState.last_schedule_status === 'failed') {
       failedCount += 1
     }
   }

@@ -22,7 +22,8 @@ import { CHANNEL_STATUS } from '@/features/channels/constants'
 import {
   channelMonitorSmartScheduleRouteIsAvailable,
   channelMonitorSmartScheduleRouteIsTrafficPaused,
-  channelMonitorSmartScheduleRouteParticipates,
+  channelMonitorSmartScheduleRouteRuntimeParticipates,
+  channelMonitorSmartScheduleRouteRuntimeState,
 } from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
 
@@ -35,18 +36,19 @@ export function ChannelMonitorSmartScheduleRouteState(
   props: ChannelMonitorSmartScheduleRouteStateProps
 ) {
   const route = props.route
-  if (!channelMonitorSmartScheduleRouteParticipates(route)) {
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(route)
+  if (!channelMonitorSmartScheduleRouteRuntimeParticipates(route)) {
     return <Badge variant='outline'>未参与</Badge>
   }
 
   let clearProtectionLabel: string | undefined
-  if (route.state.stability_state === 'degraded') {
+  if (runtimeState.stability_state === 'degraded') {
     clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`
-  } else if (route.state.stability_state === 'probing') {
+  } else if (runtimeState.stability_state === 'probing') {
     clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性试放`
-  } else if (route.state.temporary_traffic_kind === 'insufficient_samples') {
+  } else if (runtimeState.temporary_traffic_kind === 'insufficient_samples') {
     clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的统一探索采样`
-  } else if (route.state.temporary_traffic_kind === 'adaptive_sampling') {
+  } else if (runtimeState.temporary_traffic_kind === 'adaptive_sampling') {
     clearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的自适应备援采样`
   }
   if (
@@ -78,7 +80,7 @@ export function ChannelMonitorSmartScheduleRouteState(
     }
     return <Badge variant='destructive'>路由禁用</Badge>
   }
-  if (route.state.stability_state === 'degraded') {
+  if (runtimeState.stability_state === 'degraded') {
     return (
       <Badge
         render={<button type='button' />}
@@ -91,7 +93,7 @@ export function ChannelMonitorSmartScheduleRouteState(
       </Badge>
     )
   }
-  if (route.state.stability_state === 'probing') {
+  if (runtimeState.stability_state === 'probing') {
     return (
       <Badge
         render={<button type='button' />}
@@ -104,7 +106,7 @@ export function ChannelMonitorSmartScheduleRouteState(
       </Badge>
     )
   }
-  if (route.state.temporary_traffic_kind === 'insufficient_samples') {
+  if (runtimeState.temporary_traffic_kind === 'insufficient_samples') {
     return (
       <Badge
         render={<button type='button' />}
@@ -117,7 +119,7 @@ export function ChannelMonitorSmartScheduleRouteState(
       </Badge>
     )
   }
-  if (route.state.temporary_traffic_kind === 'adaptive_sampling') {
+  if (runtimeState.temporary_traffic_kind === 'adaptive_sampling') {
     return (
       <Badge
         render={<button type='button' />}
@@ -130,22 +132,22 @@ export function ChannelMonitorSmartScheduleRouteState(
       </Badge>
     )
   }
-  if (route.state.last_schedule_status === 'failed') {
+  if (runtimeState.last_schedule_status === 'failed') {
     return <Badge variant='destructive'>调度失败</Badge>
   }
   if (
-    route.state.adaptive_health_state === 'high_risk' ||
-    route.state.adaptive_health_state === 'pressure'
+    runtimeState.adaptive_health_state === 'high_risk' ||
+    runtimeState.adaptive_health_state === 'pressure'
   ) {
     return (
       <Badge variant='warning'>
-        {route.state.adaptive_health_state === 'high_risk'
+        {runtimeState.adaptive_health_state === 'high_risk'
           ? '主渠道高风险'
           : '主渠道降压'}
       </Badge>
     )
   }
-  if (route.state.adaptive_health_state === 'observation') {
+  if (runtimeState.adaptive_health_state === 'observation') {
     return <Badge variant='outline'>主渠道观察</Badge>
   }
   return <Badge variant='secondary'>参与调度</Badge>

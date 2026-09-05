@@ -978,6 +978,15 @@ export type ChannelMonitorSmartScheduleRoute = {
   economic_role?: ChannelMonitorSmartScheduleEconomicRole
   current_window_score?: number | null
   current_window_score_details?: ChannelMonitorSmartScheduleScoreDetails | null
+  /** Effective routing state used by request selection for logical groups. */
+  effective_priority?: number
+  effective_weight?: number
+  effective_state?: ChannelMonitorSmartScheduleRouteState | null
+  routing_candidate_channel_id?: number
+  logical_channel_id?: number
+  logical_revision?: number
+  logical_member_ids?: number[]
+  logical_member_weights?: number[]
   state: ChannelMonitorSmartScheduleRouteState
   shared_samples?: ChannelMonitorSmartScheduleSharedSamples
 }
@@ -1159,6 +1168,44 @@ export type ChannelMonitorTaskProgress = {
   progress: number
 }
 
+export type ChannelMonitorTaskRatioChange = {
+  channel_id: number
+  channel_name: string
+  channel_remark?: string
+  old_ratio: number
+  new_ratio: number
+  old_cost_ratio: number
+  new_cost_ratio: number
+}
+
+export type ChannelMonitorTaskBalanceUpdate = {
+  channel_id: number
+  channel_name: string
+  channel_remark?: string
+  previous_balance?: number | null
+  balance: number
+  warning?: boolean
+  warning_threshold?: number | null
+}
+
+export type ChannelMonitorTaskSkippedChannel = {
+  channel_id: number
+  channel_name: string
+  channel_remark?: string
+  reason: string
+}
+
+export type ChannelMonitorTaskFailure = {
+  channel_id: number
+  channel_name: string
+  group?: string
+  model?: string
+  failure_stage?: string
+  channel_remark?: string
+  kind?: 'ratio' | 'balance' | string
+  error: string
+}
+
 export type ChannelMonitorTaskResult = {
   total: number
   updated: number
@@ -1174,6 +1221,12 @@ export type ChannelMonitorTaskResult = {
   groups_skipped?: number
   retried?: number
   recovered_after_retry?: number
+  changed_channels?: ChannelMonitorTaskRatioChange[]
+  changed_details_truncated?: boolean
+  balance_updates?: ChannelMonitorTaskBalanceUpdate[]
+  balance_details_truncated?: boolean
+  skipped_channels?: ChannelMonitorTaskSkippedChannel[]
+  skipped_details_truncated?: boolean
   force_reset?: boolean
   group_policies?: ChannelMonitorSmartScheduleGroupPolicy[]
   group_policy_count?: number
@@ -1209,15 +1262,6 @@ export type ChannelMonitorTaskAdjustment = {
   previous_effective_priority?: number
   previous_effective_weight?: number
   reason: string
-}
-
-export type ChannelMonitorTaskFailure = {
-  channel_id: number
-  channel_name: string
-  group: string
-  model: string
-  failure_stage: string
-  error: string
 }
 
 export type ChannelMonitorTask = {

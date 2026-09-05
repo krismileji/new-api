@@ -307,6 +307,54 @@ describe('smart schedule pool status', () => {
 })
 
 describe('smart schedule route placement', () => {
+  test('treats a logical group as one candidate and splits its traffic by member weight', () => {
+    const logicalMemberA = createRoute(9451, 'vip', 'model-a', 100, 100)
+    const logicalMemberB = createRoute(9452, 'vip', 'model-a', 100, 100)
+    for (const route of [logicalMemberA, logicalMemberB]) {
+      route.effective_priority = 10
+      route.effective_weight = 100
+      route.routing_candidate_channel_id = 9451
+      route.logical_channel_id = 9450
+      route.logical_revision = 2
+      route.logical_member_ids = [9451, 9452]
+      route.logical_member_weights = [1, 3]
+      route.effective_state = { ...route.state }
+    }
+    const standalone = createRoute(9453, 'vip', 'model-a', 50, 100)
+
+    const routes = [logicalMemberA, logicalMemberB, standalone]
+    const summary = summarizeChannelMonitorSmartSchedulePools(routes)[0]
+    const placements = placeChannelMonitorSmartScheduleRoutes(routes)
+
+    assert.equal(summary?.candidateCount, 1)
+    assert.deepEqual(summary?.actualTopLayerChannelIds, [9453])
+    assert.equal(summary?.actualPrimaryChannelId, 9453)
+    assert.equal(
+      placements.get(channelMonitorSmartScheduleRouteKey(logicalMemberA))
+        ?.isActualTopLayer,
+      false
+    )
+
+    logicalMemberA.effective_priority = 60
+    logicalMemberB.effective_priority = 60
+    const logicalOnlyPlacements = placeChannelMonitorSmartScheduleRoutes([
+      logicalMemberA,
+      logicalMemberB,
+    ])
+    assert.equal(
+      logicalOnlyPlacements.get(
+        channelMonitorSmartScheduleRouteKey(logicalMemberA)
+      )?.estimatedShare,
+      0.25
+    )
+    assert.equal(
+      logicalOnlyPlacements.get(
+        channelMonitorSmartScheduleRouteKey(logicalMemberB)
+      )?.estimatedShare,
+      0.75
+    )
+  })
+
   test('uses the current-window winner while preserving the historical winner', () => {
     const currentWinner = createRoute(14, 'default', 'model-a', 3, 1000)
     const actualPrimary = createRoute(22, 'default', 'model-a', 4, 1000)

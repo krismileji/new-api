@@ -47,6 +47,10 @@ import {
   channelMonitorSmartScheduleRouteIsRateLimitCoolingDown,
   channelMonitorSmartScheduleRouteIsTrafficPaused,
   channelMonitorSmartScheduleRouteParticipates,
+  channelMonitorSmartScheduleRouteRuntimeParticipates,
+  channelMonitorSmartScheduleRouteRuntimePriority,
+  channelMonitorSmartScheduleRouteRuntimeState,
+  channelMonitorSmartScheduleRouteRuntimeWeight,
 } from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
 import { ChannelMonitorSmartScheduleClearDialog } from './channel-monitor-smart-schedule-clear-dialog'
@@ -99,7 +103,9 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
   const now = Math.floor(Date.now() / 1000)
   const statuses: SmartScheduleStatusBadge[] = []
   const details: Array<{ label: string; value: string }> = []
-  const participates = channelMonitorSmartScheduleRouteParticipates(route)
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(route)
+  const runtimePriority = channelMonitorSmartScheduleRouteRuntimePriority(route)
+  const participates = channelMonitorSmartScheduleRouteRuntimeParticipates(route)
   const trafficPaused =
     participates &&
     route.channel_status === CHANNEL_STATUS.ENABLED &&
@@ -118,34 +124,34 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     channelMonitorSmartScheduleRouteIsAvailable(route) &&
     !rateLimitCoolingDown
   let unavailableClearProtectionLabel: string | undefined
-  if (participates && route.state.stability_state === 'degraded') {
+  if (participates && runtimeState.stability_state === 'degraded') {
     unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`
-  } else if (participates && route.state.stability_state === 'probing') {
+  } else if (participates && runtimeState.stability_state === 'probing') {
     unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性释放`
   } else if (
     participates &&
-    route.state.temporary_traffic_kind === 'insufficient_samples'
+    runtimeState.temporary_traffic_kind === 'insufficient_samples'
   ) {
     unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的统一探索采样`
   } else if (
     participates &&
-    route.state.temporary_traffic_kind === 'adaptive_sampling'
+    runtimeState.temporary_traffic_kind === 'adaptive_sampling'
   ) {
     unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的自适应备援采样`
   }
   const stabilityRemaining = formatRemainingTime(
-    Math.max(route.state.stability_until, route.state.runtime_protection_until),
+    Math.max(runtimeState.stability_until, runtimeState.runtime_protection_until),
     now
   )
 
-  if (available && route.state.stability_state === 'degraded') {
+  if (available && runtimeState.stability_state === 'degraded') {
     statuses.push({
       key: 'degraded',
       label: `稳定性降级${stabilityRemaining ? ` · ${stabilityRemaining}` : ''}`,
       variant: 'destructive',
       clearProtectionLabel: `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`,
     })
-  } else if (available && route.state.stability_state === 'probing') {
+  } else if (available && runtimeState.stability_state === 'probing') {
     statuses.push({
       key: 'probing',
       label: '稳定性释放',
@@ -163,16 +169,16 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
   }
 
   const fixedRemaining = participates
-    ? formatRemainingTime(route.state.manual_primary_until, now)
+    ? formatRemainingTime(runtimeState.manual_primary_until, now)
     : ''
   const breakEvenFallback =
     channelMonitorSmartScheduleRouteIsBreakEvenFallback(route)
-  const decision = route.state.last_schedule_score_details?.decision
+  const decision = runtimeState.last_schedule_score_details?.decision
   const breakEvenTakingOver =
     breakEvenFallback &&
-    ((decision?.actual_highest_priority === route.priority &&
+    ((decision?.actual_highest_priority === runtimePriority &&
       (decision.actual_top_layer_channel_ids ?? []).includes(
-        route.channel_id
+        route.routing_candidate_channel_id ?? route.channel_id
       )) ||
       decision?.selection_reason.includes('保本兜底层接管') === true)
   if (available && breakEvenFallback) {
@@ -194,21 +200,21 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
 
   if (
     available &&
-    route.state.temporary_traffic_kind === 'insufficient_samples'
+    runtimeState.temporary_traffic_kind === 'insufficient_samples'
   ) {
     statuses.push({
       key: 'exploration',
-      label: `统一探索采样 ${formatTrafficPercent(route.state.temporary_traffic_target_percent)}%`,
+      label: `统一探索采样 ${formatTrafficPercent(runtimeState.temporary_traffic_target_percent)}%`,
       variant: 'warning',
       clearProtectionLabel: `解除 ${route.channel_name} ${route.group} ${route.model} 的统一探索采样`,
     })
   } else if (
     available &&
-    route.state.temporary_traffic_kind === 'adaptive_sampling'
+    runtimeState.temporary_traffic_kind === 'adaptive_sampling'
   ) {
     statuses.push({
       key: 'adaptive-sampling',
-      label: `自适应备援采样 ${formatTrafficPercent(route.state.temporary_traffic_target_percent)}%`,
+      label: `自适应备援采样 ${formatTrafficPercent(runtimeState.temporary_traffic_target_percent)}%`,
       variant: 'warning',
       clearProtectionLabel: `解除 ${route.channel_name} ${route.group} ${route.model} 的自适应备援采样`,
     })
@@ -242,7 +248,7 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
       label: '429 冷却',
       variant: 'warning',
     })
-  } else if (route.state.last_schedule_status === 'failed') {
+  } else if (runtimeState.last_schedule_status === 'failed') {
     statuses.push({ key: 'failed', label: '调度失败', variant: 'destructive' })
   }
 
@@ -252,7 +258,7 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
 
   details.push({
     label: '当前路由',
-    value: `P${route.priority} · W${route.weight}`,
+    value: `P${runtimePriority} · W${route.effective_weight ?? route.weight}`,
   })
   if (trafficPaused) {
     details.push({
@@ -288,55 +294,55 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
       }
     )
   }
-  if (participates && route.state.stability_since > 0) {
+  if (participates && runtimeState.stability_since > 0) {
     details.push({
       label:
-        route.state.stability_state === 'probing' ? '释放开始' : '降级开始',
-      value: formatTimestampToDate(route.state.stability_since),
+        runtimeState.stability_state === 'probing' ? '释放开始' : '降级开始',
+      value: formatTimestampToDate(runtimeState.stability_since),
     })
   }
-  if (participates && route.state.stability_until > 0) {
+  if (participates && runtimeState.stability_until > 0) {
     details.push({
       label: '预计试放',
-      value: formatTimestampToDate(route.state.stability_until),
+      value: formatTimestampToDate(runtimeState.stability_until),
     })
   }
-  if (participates && route.state.runtime_protection_until > now) {
+  if (participates && runtimeState.runtime_protection_until > now) {
     details.push({
       label: '即时保护至',
-      value: formatTimestampToDate(route.state.runtime_protection_until),
+      value: formatTimestampToDate(runtimeState.runtime_protection_until),
     })
   }
-  if (participates && route.state.temporary_traffic_since > 0) {
+  if (participates && runtimeState.temporary_traffic_since > 0) {
     details.push({
       label: '采样开始',
-      value: formatTimestampToDate(route.state.temporary_traffic_since),
+      value: formatTimestampToDate(runtimeState.temporary_traffic_since),
     })
   }
-  if (participates && route.state.temporary_traffic_kind !== '') {
+  if (participates && runtimeState.temporary_traffic_kind !== '') {
     details.push({
       label: '目标流量',
-      value: `${formatTrafficPercent(route.state.temporary_traffic_target_percent)}%`,
+      value: `${formatTrafficPercent(runtimeState.temporary_traffic_target_percent)}%`,
     })
   }
   if (fixedRemaining) {
     details.push(
       {
         label: '固定到期',
-        value: formatTimestampToDate(route.state.manual_primary_until),
+        value: formatTimestampToDate(runtimeState.manual_primary_until),
       },
       {
         label: '稳定性策略',
-        value: route.state.manual_primary_allow_stability_degrade
+        value: runtimeState.manual_primary_allow_stability_degrade
           ? '允许降级'
           : '固定期间不降级',
       }
     )
   }
-  if (route.state.last_schedule_time > 0) {
+  if (runtimeState.last_schedule_time > 0) {
     details.push({
       label: '最近调度',
-      value: formatTimestampToDate(route.state.last_schedule_time),
+      value: formatTimestampToDate(runtimeState.last_schedule_time),
     })
   }
 
@@ -414,11 +420,11 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
             </div>
           ))}
         </dl>
-        {route.state.last_schedule_error ? (
+        {runtimeState.last_schedule_error ? (
           <div className='text-xs'>
             <div className='text-muted-foreground'>最近说明</div>
             <p className='mt-1 max-h-24 overflow-y-auto leading-5 break-words'>
-              {route.state.last_schedule_error}
+              {runtimeState.last_schedule_error}
             </p>
           </div>
         ) : null}
@@ -456,6 +462,9 @@ export function ChannelMonitorSmartScheduleCell(
   const nonParticipatingModelLabel = nonParticipatingRoutes
     .map((route) => `${route.group} / ${route.model}`)
     .join('、')
+  const selectedRuntimeState = selectedRoute
+    ? channelMonitorSmartScheduleRouteRuntimeState(selectedRoute)
+    : undefined
   let participationVariant: 'outline' | 'secondary' | 'warning' = 'outline'
   let participationLabel = `未参与 0/${props.routes.length}`
   if (allParticipating) {
@@ -529,12 +538,16 @@ export function ChannelMonitorSmartScheduleCell(
         <span className='flex min-w-0 flex-1 items-baseline gap-2 text-xs whitespace-nowrap'>
           <span className='text-muted-foreground'>优先级</span>
           <span className='font-mono text-sm font-medium tabular-nums'>
-            {selectedRoute?.priority ?? '—'}
+            {selectedRoute
+              ? channelMonitorSmartScheduleRouteRuntimePriority(selectedRoute)
+              : '—'}
           </span>
           <span className='bg-border h-3.5 w-px shrink-0' aria-hidden='true' />
           <span className='text-muted-foreground'>权重</span>
           <span className='font-mono text-sm font-medium tabular-nums'>
-            {selectedRoute?.weight ?? '—'}
+            {selectedRoute
+              ? channelMonitorSmartScheduleRouteRuntimeWeight(selectedRoute)
+              : '—'}
           </span>
         </span>
       </div>
@@ -552,9 +565,9 @@ export function ChannelMonitorSmartScheduleCell(
           <span className='bg-border h-3.5 w-px shrink-0' aria-hidden='true' />
           <span className='text-muted-foreground'>最近得分</span>
           <span className='font-mono text-sm font-medium tabular-nums'>
-            {selectedRoute?.state.last_schedule_score == null
+            {selectedRuntimeState?.last_schedule_score == null
               ? '—'
-              : (selectedRoute.state.last_schedule_score * 100).toFixed(1)}
+              : (selectedRuntimeState.last_schedule_score * 100).toFixed(1)}
           </span>
         </span>
       </div>
