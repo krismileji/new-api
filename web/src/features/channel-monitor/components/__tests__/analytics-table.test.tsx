@@ -46,16 +46,41 @@ test('renders channel model rows with both physical channel and model columns', 
     <ChannelMonitorAnalyticsTable
       metric='success'
       groupBy='channel_model'
-      channels={new Map([[7, '渠道 A']])}
-      items={[{ ...summary, key: '7:gpt-a', channel_id: 7, model_name: 'gpt-a' }]}
+      channels={new Map([[7, { name: '渠道 A', remark: '主渠道' }]])}
+      items={[
+        { ...summary, key: '7:gpt-a', channel_id: 7, model_name: 'gpt-a' },
+      ]}
     />
   )
 
   assert.match(markup, /渠道 A/)
+  assert.match(markup, /主渠道/)
   assert.match(markup, /gpt-a/)
   assert.match(markup, /10/)
   assert.match(markup, /90\.0%/)
   assert.match(markup, /40\.0%/)
+})
+
+test('renders the user name and ID for channel drill-down rows', () => {
+  const markup = renderToStaticMarkup(
+    <ChannelMonitorAnalyticsTable
+      metric='success'
+      groupBy='user'
+      channels={new Map()}
+      items={[
+        {
+          ...summary,
+          key: '31',
+          user_id: 31,
+          user_name: 'alice',
+          user_display_name: 'Alice',
+        },
+      ]}
+    />
+  )
+
+  assert.match(markup, /Alice/)
+  assert.match(markup, /ID 31/)
 })
 
 test('keeps long lists in a horizontally scrollable bounded table', () => {
@@ -64,7 +89,9 @@ test('keeps long lists in a horizontally scrollable bounded table', () => {
       metric='success'
       groupBy='api_key'
       channels={new Map()}
-      items={[{ ...summary, key: '201', api_key_id: 201, api_key_name: '生产 Key' }]}
+      items={[
+        { ...summary, key: '201', api_key_id: 201, api_key_name: '生产 Key' },
+      ]}
     />
   )
 
@@ -78,8 +105,18 @@ test('renders API Key channel and model details together', () => {
     <ChannelMonitorAnalyticsTable
       metric='cost'
       groupBy='api_key_channel_model'
-      channels={new Map([[7, '渠道 A']])}
-      items={[{ ...summary, key: '201:7:model-a', api_key_id: 201, api_key_name: '生产 Key', channel_id: 7, model_name: 'model-a', cost_nano_cny: 123 }]}
+      channels={new Map([[7, { name: '渠道 A', remark: '主渠道' }]])}
+      items={[
+        {
+          ...summary,
+          key: '201:7:model-a',
+          api_key_id: 201,
+          api_key_name: '生产 Key',
+          channel_id: 7,
+          model_name: 'model-a',
+          cost_nano_cny: 123,
+        },
+      ]}
     />
   )
 

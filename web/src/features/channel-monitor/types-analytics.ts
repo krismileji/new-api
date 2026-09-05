@@ -1,4 +1,9 @@
 export type ChannelMonitorAnalyticsMetric = 'success' | 'cost'
+export type ChannelMonitorAnalyticsChannel = {
+  name: string
+  remark?: string | null
+}
+
 export type ChannelMonitorAnalyticsGroupBy =
   | 'day'
   | 'channel'
@@ -50,6 +55,8 @@ export type ChannelMonitorAnalyticsItem = ChannelMonitorAnalyticsSummary & {
   day_start?: number
   channel_id?: number
   user_id?: number
+  user_name?: string
+  user_display_name?: string
   user_attribution?: string
   api_key_id?: number
   api_key_key?: string
@@ -61,6 +68,7 @@ export type ChannelMonitorAnalyticsItem = ChannelMonitorAnalyticsSummary & {
 
 export type ChannelMonitorAnalyticsResponse = {
   source: 'database_daily' | 'redis_daily'
+  group_by: ChannelMonitorAnalyticsGroupBy
   coverage: {
     status: 'complete' | 'partial' | 'unavailable'
     covered_from: number

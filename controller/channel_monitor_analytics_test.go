@@ -70,6 +70,32 @@ func TestChannelMonitorAnalyticsCurrentAPIKeyRowsRemainVisible(t *testing.T) {
 	assert.Equal(t, "生产 Key", response.Items[0]["api_key_name"])
 }
 
+func TestChannelMonitorAnalyticsCurrentUserRowsIncludeIdentity(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id: 31, Username: "alice", DisplayName: "Alice", Password: "password123",
+	}).Error)
+	now := common.GetTimestamp()
+	dayStart := model.ChannelDailyCostDayStart(now)
+	event := model.NewChannelMonitorEvent(101, model.ChannelMonitorEventSourceBusiness, model.ChannelMonitorEventOutcomeSuccess, now)
+	event.EventId = "analytics-current-user"
+	event.UserId = 31
+	event.RequestDispatched = true
+	event.IsFinalAttempt = true
+	require.NoError(t, service.NewChannelMonitorRedisSharedProjectionWithClient(common.RDB).
+		HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{event}))
+
+	response, err := queryChannelMonitorHistoricalAnalytics(context.Background(), channelMonitorAnalyticsQuery{
+		Metric: "success", GroupBy: "user", From: dayStart, To: dayStart + 24*60*60,
+		Channel: 101, Page: 1, PageSize: 20, Sort: "samples", Direction: "desc",
+	})
+	require.NoError(t, err)
+	require.Len(t, response.Items, 1)
+	assert.Equal(t, 31, response.Items[0]["user_id"])
+	assert.Equal(t, "alice", response.Items[0]["user_name"])
+	assert.Equal(t, "Alice", response.Items[0]["user_display_name"])
+}
+
 func TestChannelMonitorAnalyticsCurrentRedisFailureDoesNotReturnZeroSummary(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
 	originalClient := common.RDB

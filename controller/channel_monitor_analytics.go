@@ -33,6 +33,7 @@ type channelMonitorAnalyticsQuery struct {
 
 type channelMonitorAnalyticsResponse struct {
 	Source       string                         `json:"source"`
+	GroupBy      string                         `json:"group_by"`
 	Coverage     service.ChannelMonitorCoverage `json:"coverage"`
 	Summary      map[string]any                 `json:"summary"`
 	ScopeSummary map[string]any                 `json:"scope_summary"`
@@ -294,10 +295,13 @@ func queryChannelMonitorCurrentSuccessAnalytics(ctx context.Context, query chann
 	for _, row := range rows[start:end] {
 		items = append(items, channelMonitorAnalyticsSuccessItem(query.GroupBy, row))
 	}
+	if err := attachChannelMonitorAnalyticsUserNames(ctx, items); err != nil {
+		return channelMonitorAnalyticsResponse{}, err
+	}
 	coverage := channelMonitorCurrentDayCoverage(ctx, query.From, view.DataCutoffAt)
 	summary := channelMonitorAnalyticsSuccessSummary(summaryRow)
 	return channelMonitorAnalyticsResponse{
-		Source: "redis_daily", Coverage: coverage, Summary: summary, ScopeSummary: summary,
+		Source: "redis_daily", GroupBy: query.GroupBy, Coverage: coverage, Summary: summary, ScopeSummary: summary,
 		Items: items, Page: query.Page, PageSize: query.PageSize, Total: total,
 		GeneratedAt: common.GetTimestamp(),
 	}, nil
@@ -487,8 +491,11 @@ func queryChannelMonitorHistoricalSuccessAnalytics(ctx context.Context, query ch
 	for _, row := range rows {
 		items = append(items, channelMonitorAnalyticsSuccessItem(query.GroupBy, row))
 	}
+	if err := attachChannelMonitorAnalyticsUserNames(ctx, items); err != nil {
+		return channelMonitorAnalyticsResponse{}, err
+	}
 	return channelMonitorAnalyticsResponse{
-		Source: "database_daily", Coverage: service.DeriveChannelMonitorCoverage(true, query.From, query.To, query.From, query.To, nil),
+		Source: "database_daily", GroupBy: query.GroupBy, Coverage: service.DeriveChannelMonitorCoverage(true, query.From, query.To, query.From, query.To, nil),
 		Summary: summary, ScopeSummary: summary, Items: items, Page: query.Page, PageSize: query.PageSize,
 		Total: total, GeneratedAt: common.GetTimestamp(),
 	}, nil
@@ -724,9 +731,12 @@ func queryChannelMonitorHistoricalCostAnalytics(ctx context.Context, query chann
 			"settled_count": item.SettledCount, "unresolved_count": item.UnresolvedCount,
 		})
 	}
+	if err := attachChannelMonitorAnalyticsUserNames(ctx, items); err != nil {
+		return channelMonitorAnalyticsResponse{}, err
+	}
 	summaryMap := map[string]any{"cost_nano_cny": summary.Cost, "settled_count": summary.SettledCount, "unresolved_count": summary.UnresolvedCount}
 	return channelMonitorAnalyticsResponse{
-		Source: "database_daily", Coverage: service.DeriveChannelMonitorCoverage(true, query.From, query.To, query.From, query.To, nil),
+		Source: "database_daily", GroupBy: query.GroupBy, Coverage: service.DeriveChannelMonitorCoverage(true, query.From, query.To, query.From, query.To, nil),
 		Summary: summaryMap, ScopeSummary: summaryMap, Items: items, Page: query.Page, PageSize: query.PageSize,
 		Total: total, GeneratedAt: common.GetTimestamp(),
 	}, nil
@@ -747,6 +757,56 @@ type channelMonitorAnalyticsCostDetailRow struct {
 	GroupProbeCost  int64  `gorm:"column:group_probe_cost_nano_cny"`
 	SettledCount    int64  `gorm:"column:settled_count"`
 	UnresolvedCount int64  `gorm:"column:unresolved_count"`
+}
+
+type channelMonitorAnalyticsUserIdentity struct {
+	ID          int    `gorm:"column:id"`
+	Username    string `gorm:"column:username"`
+	DisplayName string `gorm:"column:display_name"`
+}
+
+func attachChannelMonitorAnalyticsUserNames(ctx context.Context, items []map[string]any) error {
+	userIDs := make([]int, 0)
+	seenUserIDs := make(map[int]struct{})
+	for _, item := range items {
+		userID, ok := item["user_id"].(int)
+		if !ok || userID <= 0 {
+			continue
+		}
+		if _, exists := seenUserIDs[userID]; exists {
+			continue
+		}
+		seenUserIDs[userID] = struct{}{}
+		userIDs = append(userIDs, userID)
+	}
+	if len(userIDs) == 0 || model.DB == nil {
+		return nil
+	}
+	sort.Ints(userIDs)
+	var users []channelMonitorAnalyticsUserIdentity
+	if err := model.DB.WithContext(ctx).Unscoped().Model(&model.User{}).
+		Select("id", "username", "display_name").
+		Where("id IN ?", userIDs).
+		Find(&users).Error; err != nil {
+		return err
+	}
+	userByID := make(map[int]channelMonitorAnalyticsUserIdentity, len(users))
+	for _, user := range users {
+		userByID[user.ID] = user
+	}
+	for _, item := range items {
+		userID, ok := item["user_id"].(int)
+		if !ok || userID <= 0 {
+			continue
+		}
+		user, exists := userByID[userID]
+		if !exists {
+			continue
+		}
+		item["user_name"] = strings.TrimSpace(user.Username)
+		item["user_display_name"] = strings.TrimSpace(user.DisplayName)
+	}
+	return nil
 }
 
 func queryChannelMonitorHistoricalCostDetailAnalytics(ctx context.Context, query channelMonitorAnalyticsQuery) (channelMonitorAnalyticsResponse, error) {
@@ -805,13 +865,16 @@ func queryChannelMonitorHistoricalCostDetailAnalytics(ctx context.Context, query
 			"unresolved_count": row.UnresolvedCount,
 		})
 	}
+	if err := attachChannelMonitorAnalyticsUserNames(ctx, items); err != nil {
+		return channelMonitorAnalyticsResponse{}, err
+	}
 	summaryMap := map[string]any{
 		"cost_nano_cny": summary.Cost, "probe_cost_nano_cny": summary.ProbeCost,
 		"group_probe_cost_nano_cny": summary.GroupProbeCost, "settled_count": summary.SettledCount,
 		"unresolved_count": summary.UnresolvedCount,
 	}
 	return channelMonitorAnalyticsResponse{
-		Source: "database_daily", Coverage: service.DeriveChannelMonitorCoverage(true, query.From, query.To, query.From, query.To, nil),
+		Source: "database_daily", GroupBy: query.GroupBy, Coverage: service.DeriveChannelMonitorCoverage(true, query.From, query.To, query.From, query.To, nil),
 		Summary: summaryMap, ScopeSummary: summaryMap, Items: items, Page: query.Page, PageSize: query.PageSize,
 		Total: total, GeneratedAt: common.GetTimestamp(),
 	}, nil

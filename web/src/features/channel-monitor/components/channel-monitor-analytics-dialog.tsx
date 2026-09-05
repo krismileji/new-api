@@ -39,6 +39,7 @@ import { formatChannelMonitorBeijingDate } from '../lib/cost-date'
 import { isChannelMonitorAnalyticsCoverageIncomplete } from '../lib/coverage'
 import { formatChannelMonitorCost } from '../lib/format'
 import type {
+  ChannelMonitorAnalyticsChannel,
   ChannelMonitorAnalyticsGroupBy,
   ChannelMonitorAnalyticsItem,
   ChannelMonitorAnalyticsMetric,
@@ -52,7 +53,12 @@ type ChannelMonitorAnalyticsDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   metric: ChannelMonitorAnalyticsMetric
-  channels: readonly { id: number; name: string }[]
+  channels: readonly {
+    id: number
+    name: string
+    remark?: string | null
+    channel_remark?: string | null
+  }[]
   initialChannelId?: number
 }
 
@@ -159,17 +165,20 @@ function selectionLabel(
   channel: AnalyticsSelection | null,
   user: AnalyticsSelection | null,
   apiKey: AnalyticsSelection | null,
-  channels: ReadonlyMap<number, string>
+  channels: ReadonlyMap<number, ChannelMonitorAnalyticsChannel>
 ) {
   const labels: string[] = []
   if (tab === 'channels' && channel) {
-    labels.push(
-      channels.get(channel.channel_id ?? 0) ?? `渠道 #${channel.channel_id}`
-    )
+    const channelInfo = channels.get(channel.channel_id ?? 0)
+    labels.push(channelInfo?.name ?? `渠道 #${channel.channel_id}`)
   }
   if (user) {
+    const userLabel = user.user_display_name || user.user_name
     labels.push(
-      user.user_id && user.user_id > 0 ? `用户 #${user.user_id}` : '未归属用户'
+      userLabel ||
+        (user.user_id && user.user_id > 0
+          ? `用户 #${user.user_id}`
+          : '未归属用户')
     )
   }
   if (apiKey) {
@@ -201,7 +210,16 @@ export function ChannelMonitorAnalyticsDialog(
   const [selectedAPIKey, setSelectedAPIKey] =
     useState<AnalyticsSelection | null>(null)
   const channels = useMemo(
-    () => new Map(props.channels.map((channel) => [channel.id, channel.name])),
+    () =>
+      new Map<number, ChannelMonitorAnalyticsChannel>(
+        props.channels.map((channel) => [
+          channel.id,
+          {
+            name: channel.name,
+            remark: channel.channel_remark || channel.remark || '',
+          },
+        ])
+      ),
     [props.channels]
   )
   const dateRange = getDateRange(rangeDays)
@@ -221,7 +239,8 @@ export function ChannelMonitorAnalyticsDialog(
     pageSize: 20,
   }
   const query = useChannelMonitorAnalytics(request, props.open)
-  const response = query.data?.data
+  const response =
+    query.data?.data?.group_by === groupBy ? query.data.data : undefined
   const coverage = response?.coverage
   const coverageIncomplete =
     isChannelMonitorAnalyticsCoverageIncomplete(coverage)
@@ -356,7 +375,8 @@ export function ChannelMonitorAnalyticsDialog(
           !selectedAPIKey &&
           (tab === 'api_keys' ||
             selectedChannel == null ||
-            selectedUser == null)
+            selectedUser == null ||
+            groupBy === 'api_key')
             ? handleSelect
             : undefined
         }
