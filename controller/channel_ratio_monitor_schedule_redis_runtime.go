@@ -213,7 +213,8 @@ func channelSmartScheduleRedisWindowEvents(
 			sample.Outcome == model.ChannelMonitorEventOutcomeUnresolved {
 			continue
 		}
-		if sample.StatusCode != nil && *sample.StatusCode == http.StatusTooManyRequests {
+		if sample.StatusCode != nil && *sample.StatusCode >= http.StatusBadRequest &&
+			*sample.StatusCode < http.StatusInternalServerError {
 			continue
 		}
 		events = append(events, model.ChannelMonitorEvent{

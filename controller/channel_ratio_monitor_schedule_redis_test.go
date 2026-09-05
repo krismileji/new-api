@@ -176,3 +176,48 @@ func TestRedisRuntimeWindowDoesNotReadFutureSequenceSamples(t *testing.T) {
 	require.Len(t, events, 2)
 	assert.Equal(t, []uint64{10, 11}, []uint64{events[0].EventSequence, events[1].EventSequence})
 }
+
+func TestRedisRuntimeWindowExcludesClientErrorsFromSmartScheduleSamples(t *testing.T) {
+	status400 := http.StatusBadRequest
+	status401 := http.StatusUnauthorized
+	status429 := http.StatusTooManyRequests
+	status500 := http.StatusInternalServerError
+	window := service.ChannelMonitorRedisRouteHealthWindow{
+		Snapshot: service.ChannelMonitorRedisRouteHealthSnapshot{CoverageStart: 100},
+		Samples: []service.ChannelMonitorRedisRouteHealthSample{
+			{EventID: "success", EventSequence: 1, OccurredAt: 101,
+				Source: model.ChannelMonitorEventSourceBusiness, Outcome: model.ChannelMonitorEventOutcomeSuccess,
+				RequestDispatched: true, SchedulingEligible: true},
+			{EventID: "bad-request", EventSequence: 2, OccurredAt: 102,
+				Source: model.ChannelMonitorEventSourceBusiness, Outcome: model.ChannelMonitorEventOutcomeFailure,
+				RequestDispatched: true, SchedulingEligible: true, StatusCode: &status400},
+			{EventID: "unauthorized", EventSequence: 3, OccurredAt: 103,
+				Source: model.ChannelMonitorEventSourceBusiness, Outcome: model.ChannelMonitorEventOutcomeFailure,
+				RequestDispatched: true, SchedulingEligible: true, StatusCode: &status401},
+			{EventID: "rate-limited", EventSequence: 4, OccurredAt: 104,
+				Source: model.ChannelMonitorEventSourceBusiness, Outcome: model.ChannelMonitorEventOutcomeFailure,
+				RequestDispatched: true, SchedulingEligible: true, StatusCode: &status429},
+			{EventID: "server-error", EventSequence: 5, OccurredAt: 105,
+				Source: model.ChannelMonitorEventSourceBusiness, Outcome: model.ChannelMonitorEventOutcomeFailure,
+				RequestDispatched: true, SchedulingEligible: true, StatusCode: &status500},
+		},
+	}
+
+	events := channelSmartScheduleRedisWindowEvents(window, 7, "model-a", 100, 0, 10, 0)
+	require.Len(t, events, 2)
+	require.Equal(t, []string{"success", "server-error"}, []string{events[0].EventId, events[1].EventId})
+	metric := channelSmartScheduleRealtimeAdaptiveMetricFromEvents(events, 5, 10)
+	assert.Equal(t, int64(2), metric.RequestCount)
+	assert.Equal(t, int64(1), metric.StabilitySuccessCount)
+	assert.Equal(t, int64(1), metric.StabilityFailureCount)
+	score, sampleCount := channelSmartScheduleStabilityScore(
+		metric.StabilitySuccessCount,
+		metric.StabilityFailureCount,
+		metric.StabilityFinalFailureCount,
+		metric.RetryFailureDurationBuckets,
+		channelSmartSchedulePolicy{FastFailurePenaltyPercent: 100},
+	)
+	require.NotNil(t, score)
+	assert.Equal(t, int64(2), sampleCount)
+	assert.InDelta(t, 0.5, *score, 1e-9)
+}

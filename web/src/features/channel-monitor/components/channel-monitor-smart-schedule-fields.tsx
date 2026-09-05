@@ -271,7 +271,7 @@ export function ChannelMonitorSmartScheduleFields(
             运行设置
           </h3>
           <p className='text-muted-foreground mt-1 text-sm'>
-            控制全局性能窗口、实时样本、429
+            控制全局性能窗口、实时样本、4xx 过滤、429
             临时冷却和响应等待时间；稳定性评分窗口在各分组策略中配置
           </p>
         </div>

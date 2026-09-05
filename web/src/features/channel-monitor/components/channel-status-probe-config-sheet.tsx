@@ -356,7 +356,7 @@ export function ChannelStatusProbeConfigSheet(
                 <div>
                   <FormLabel>计入智能调度样本</FormLabel>
                   <FormDescription>
-                    429 不计入；其他有效成功和失败可能影响路由与稳定性保护
+                    4xx 不计入；其他有效成功和失败可能影响路由与稳定性保护
                   </FormDescription>
                 </div>
                 <FormControl>

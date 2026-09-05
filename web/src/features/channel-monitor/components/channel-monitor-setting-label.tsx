@@ -298,7 +298,7 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     range: '1–1000 的整数',
     defaultValue: '100',
     scheduleRelation: NEXT_OBSERVATION,
-    constraints: '与窗口分钟数共同生效，成功请求进入失败率分母，429 不计入',
+    constraints: '与窗口分钟数共同生效，成功请求进入失败率分母，4xx 不计入',
   }),
   consecutiveFailureThreshold: smartScheduleSettingHelp({
     meaning: '同一渠道模型连续失败达标时立即进入硬保护。',
@@ -306,7 +306,7 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     range: '1–100 的整数',
     defaultValue: '2',
     scheduleRelation: NEXT_OBSERVATION,
-    constraints: '成功会清零连续失败计数，429 不计入',
+    constraints: '成功会清零连续失败计数，4xx 不计入',
   }),
   burstFailureThresholdPercent: smartScheduleSettingHelp({
     meaning: '保护失败窗口内失败请求占比达标时立即进入硬保护。',
@@ -314,7 +314,7 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     range: '>0–100',
     defaultValue: '3',
     scheduleRelation: NEXT_OBSERVATION,
-    constraints: '成功请求进入分母，429 不计入；连续失败阈值仍可独立触发',
+    constraints: '成功请求进入分母，4xx 不计入；连续失败阈值仍可独立触发',
   }),
   recoverySuccessThreshold: smartScheduleSettingHelp({
     meaning: '设定试放或降级探测恢复正常流量所需的连续成功次数。',
@@ -420,15 +420,15 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
       '必须不小于基础预算，范围上限为 49%（正常单主渠道至少保留 51%）；硬不可用时不受该预算限制',
   }),
   adaptiveSamplingErrorWarningPercent: smartScheduleSettingHelp({
-    meaning: '设定主渠道非 429 错误进入软压力计算的告警阈值。',
+    meaning: '设定主渠道非 4xx 错误进入软压力计算的告警阈值。',
     unit: '%',
     range: '0–100',
     defaultValue: '5',
     scheduleRelation: NEXT_OBSERVATION,
-    constraints: '必须小于错误高风险阈值，429 不计入',
+    constraints: '必须小于错误高风险阈值，4xx 不计入',
   }),
   adaptiveSamplingErrorCriticalPercent: smartScheduleSettingHelp({
-    meaning: '设定主渠道非 429 错误达到高风险的阈值。',
+    meaning: '设定主渠道非 4xx 错误达到高风险的阈值。',
     unit: '%',
     range: '0–100',
     defaultValue: '15',
@@ -466,7 +466,7 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     range: '1–1000 的整数',
     defaultValue: '100',
     scheduleRelation: NEXT_OBSERVATION,
-    constraints: '业务请求、手动测试和定时探测共用该上限，429 不计入',
+    constraints: '业务请求、手动测试和定时探测共用该上限，4xx 不计入',
   }),
   adaptiveSamplingFirstTokenWarningRequestPercent: smartScheduleSettingHelp({
     meaning: '设定窗口内有效请求中，成功且首字达到告警秒数的请求占比阈值。',
