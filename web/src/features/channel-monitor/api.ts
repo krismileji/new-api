@@ -60,6 +60,10 @@ import type {
   NewAPIGroupRatioResult,
 } from './types'
 import type {
+  ChannelMonitorAnalyticsQuery,
+  ChannelMonitorAnalyticsResponse,
+} from './types-analytics'
+import type {
   ChannelModelDetectionApiResponse,
   ChannelModelDetectionOverview,
 } from './types-model-detection'
@@ -79,6 +83,45 @@ function ensureChannelMonitorSuccess<T>(
     throw new Error(response.message || '渠道监控请求失败')
   }
   return response
+}
+
+function channelMonitorAnalyticsParams(request: ChannelMonitorAnalyticsQuery) {
+  return {
+    metric: request.metric,
+    group_by: request.groupBy,
+    from: request.from,
+    to: request.to,
+    channel_id: request.channelId,
+    user_id: request.userId,
+    api_key_id: request.apiKeyId,
+    model: request.model,
+    search: request.search,
+    sort: request.sort,
+    direction: request.direction,
+    page: request.page,
+    page_size: request.pageSize,
+  }
+}
+
+export async function getChannelMonitorAnalytics(
+  request: ChannelMonitorAnalyticsQuery
+) {
+  const response = await api.get<
+    ChannelMonitorApiResponse<ChannelMonitorAnalyticsResponse>
+  >(
+    '/api/channel_monitor/analytics/rows',
+    channelMonitorRequestConfig({
+      params: channelMonitorAnalyticsParams(request),
+    })
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function getChannelMonitorAnalyticsOptions() {
+  const response = await api.get<
+    ChannelMonitorApiResponse<{ items: Array<{ id: number; name: string }> }>
+  >('/api/channel_monitor/analytics/options', channelMonitorRequestConfig())
+  return ensureChannelMonitorSuccess(response.data)
 }
 
 export async function getChannelMonitorOverview() {

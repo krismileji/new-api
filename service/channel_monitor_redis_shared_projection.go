@@ -20,17 +20,18 @@ import (
 
 const (
 	channelMonitorRedisSharedMinuteTTL        = 48 * time.Hour
+	channelMonitorRedisSharedSuccessDayTTL    = 48 * time.Hour
 	channelMonitorRedisSharedCostStateTTL     = 48 * time.Hour
 	channelMonitorRedisSharedEventTTL         = 48 * time.Hour
 	channelMonitorRedisSharedOperationTimeout = 5 * time.Second
 	channelMonitorRedisSharedWriteRetries     = 128
 
 	channelMonitorRedisSharedDefaultMaxQueryMinutes       = 1441
-	channelMonitorRedisSharedDefaultMaxHashFields         = 500_000
+	channelMonitorRedisSharedDefaultMaxHashFields         = 1_000_000
 	channelMonitorRedisSharedDefaultMaxTotalHashFields    = 5_000_000
 	channelMonitorRedisSharedDefaultMaxResponseBytes      = 256 << 20
-	channelMonitorRedisSharedDefaultMaxDimensionEntries   = 20_000
-	channelMonitorRedisSharedDefaultMaxResponseDimensions = 50_000
+	channelMonitorRedisSharedDefaultMaxDimensionEntries   = 100_000
+	channelMonitorRedisSharedDefaultMaxResponseDimensions = 100_000
 	// Kept as an internal compatibility alias for existing service tests.
 	channelMonitorRedisSharedMaxQueryMinutes = channelMonitorRedisSharedDefaultMaxQueryMinutes
 
@@ -619,6 +620,7 @@ func (projection *ChannelMonitorRedisSharedProjection) WriteChannelMonitorEvents
 					}
 					if event.Source == model.ChannelMonitorEventSourceBusiness && (event.FinalRetrySummary || costEventIsCurrent) {
 						projection.appendDashboardEventDelta(opCtx, pipe, event)
+						projection.appendSuccessDayEventDelta(opCtx, pipe, event)
 					}
 					projection.appendMetadata(opCtx, pipe, event, processedAt)
 					pipe.Set(opCtx, eventKeys[index], "1", channelMonitorRedisSharedEventTTL)
@@ -649,6 +651,7 @@ func channelMonitorRedisSharedWriteKeys(events []model.ChannelMonitorEvent, stat
 	hashSet := make(map[string]struct{})
 	markerSet := make(map[string]struct{}, len(events))
 	addDashboard := func(minute int64) { hashSet[ChannelMonitorRedisDashboardMinuteKey(minute)] = struct{}{} }
+	addSuccessDay := func(dayStart int64) { hashSet[ChannelMonitorRedisSuccessDayKey(dayStart)] = struct{}{} }
 	addCost := func(state channelMonitorRedisSharedCostState) {
 		hashSet[ChannelMonitorRedisCostDayKey(state.DayStart)] = struct{}{}
 		if state.MinuteStart != 0 {
@@ -658,6 +661,9 @@ func channelMonitorRedisSharedWriteKeys(events []model.ChannelMonitorEvent, stat
 	for _, event := range events {
 		minute := event.OccurredAt - event.OccurredAt%60
 		addDashboard(minute) // metadata is written for every event
+		if event.Source == model.ChannelMonitorEventSourceBusiness {
+			addSuccessDay(model.ChannelDailyCostDayStart(event.OccurredAt))
+		}
 		markerSet[ChannelMonitorRedisSharedEventKey(event.EventId)] = struct{}{}
 		if costID := channelMonitorRealtimeCostEventId(event); costID != "" {
 			if state, ok := states[costID]; ok {
@@ -1123,6 +1129,73 @@ func (projection *ChannelMonitorRedisSharedProjection) appendMetadata(
 	pipe.ExpireNX(ctx, key, channelMonitorRedisSharedMinuteTTL)
 }
 
+func (projection *ChannelMonitorRedisSharedProjection) appendSuccessDayEventDelta(
+	ctx context.Context,
+	pipe redis.Pipeliner,
+	event model.ChannelMonitorEvent,
+) {
+	delta, ok := channelMonitorRedisSharedEventDeltaFromEvent(event)
+	if !ok {
+		return
+	}
+	key := ChannelMonitorRedisSuccessDayKey(model.ChannelDailyCostDayStart(event.OccurredAt))
+	for _, scope := range channelMonitorRedisSuccessDayScopes(event) {
+		projection.appendAggregateDelta(ctx, pipe, key, scope, delta, channelMonitorRedisSharedSuccessDayTTL)
+		projection.setAPIKeyName(ctx, pipe, key, scope, event.APIKeyId, event.APIKeyName)
+	}
+	projection.appendMetadataToKey(ctx, pipe, key, event)
+}
+
+func (projection *ChannelMonitorRedisSharedProjection) appendMetadataToKey(
+	ctx context.Context,
+	pipe redis.Pipeliner,
+	key string,
+	event model.ChannelMonitorEvent,
+) {
+	processedAt := projection.now().Unix()
+	pipe.Eval(ctx, channelMonitorRedisSharedMetadataScript, []string{key},
+		event.OccurredAt,
+		processedAt,
+		strconv.FormatUint(event.EventSequence, 10),
+		channelMonitorRedisSharedScopeMetadata+":"+channelMonitorRedisSharedMetricDataCutoffAt,
+		channelMonitorRedisSharedScopeMetadata+":"+channelMonitorRedisSharedMetricProcessedAt,
+		channelMonitorRedisSharedScopeMetadata+":"+channelMonitorRedisSharedMetricEventWatermark,
+	)
+	pipe.ExpireNX(ctx, key, channelMonitorRedisSharedSuccessDayTTL)
+}
+
+func channelMonitorRedisSuccessDayScopes(event model.ChannelMonitorEvent) []string {
+	modelName := ratio_setting.FormatMatchingModelName(strings.TrimSpace(event.ModelName))
+	scopes := []string{
+		channelMonitorRedisSharedScopeGlobal,
+		channelMonitorRedisSharedScopeChannel + ":" + strconv.Itoa(event.ChannelId),
+		channelMonitorRedisSharedScopeModel + ":" + channelMonitorRedisSharedDimension(modelName),
+		channelMonitorRedisSharedScopeRoute + ":" + channelMonitorRedisSharedRouteIdentity(event.ChannelId, modelName),
+	}
+	if event.UserId > 0 {
+		userID := strconv.Itoa(event.UserId)
+		channelID := strconv.Itoa(event.ChannelId)
+		scopes = append(scopes,
+			"user:"+userID,
+			"channel_user:"+channelID+"."+userID,
+		)
+	}
+	if event.APIKeyId > 0 {
+		scopes = append(scopes,
+			channelMonitorRedisSharedScopeAPIKey+":"+strconv.Itoa(event.APIKeyId),
+			channelMonitorRedisSharedScopeAPIKeyRoute+":"+channelMonitorRedisSharedAPIKeyScopeIdentity(event.APIKeyId, event.ChannelId, modelName, ""),
+		)
+		if event.UserId > 0 {
+			scopes = append(scopes,
+				"user_api_key:"+strconv.Itoa(event.UserId)+"."+strconv.Itoa(event.APIKeyId),
+				"channel_user_api_key:"+strconv.Itoa(event.ChannelId)+"."+strconv.Itoa(event.UserId)+"."+strconv.Itoa(event.APIKeyId),
+				"user_api_key_route:"+strconv.Itoa(event.UserId)+"."+strconv.Itoa(event.APIKeyId)+"."+strconv.Itoa(event.ChannelId)+"."+channelMonitorRedisSharedDimension(modelName),
+			)
+		}
+	}
+	return scopes
+}
+
 type channelMonitorRedisSharedEventDelta struct {
 	Integers map[string]int64
 	Floats   map[string]float64
@@ -1233,7 +1306,10 @@ func (projection *ChannelMonitorRedisSharedProjection) appendCostDelta(ctx conte
 
 func (projection *ChannelMonitorRedisSharedProjection) setAPIKeyName(ctx context.Context, pipe redis.Pipeliner, key, scope string, apiKeyID int, apiKeyName string) {
 	isAPIKeyScope := strings.HasPrefix(scope, channelMonitorRedisSharedScopeAPIKey+":") ||
-		strings.HasPrefix(scope, channelMonitorRedisSharedScopeAPIKeyRoute+":")
+		strings.HasPrefix(scope, channelMonitorRedisSharedScopeAPIKeyRoute+":") ||
+		strings.HasPrefix(scope, "user_api_key:") ||
+		strings.HasPrefix(scope, "channel_user_api_key:") ||
+		strings.HasPrefix(scope, "user_api_key_route:")
 	if apiKeyID <= 0 || strings.TrimSpace(apiKeyName) == "" || !isAPIKeyScope {
 		return
 	}

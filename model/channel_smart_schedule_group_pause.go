@@ -83,7 +83,7 @@ func SaveChannelSmartScheduleGroupPause(
 
 		var ability Ability
 		if err := lockForUpdate(tx).
-			Select("channel_id", "group", "model").
+			Select("channel_id", commonGroupCol, "model").
 			Where(&Ability{ChannelId: channelId, Group: group, Model: modelName}).
 			First(&ability).Error; err != nil {
 			return err

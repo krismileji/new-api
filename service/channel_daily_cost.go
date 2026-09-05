@@ -32,14 +32,17 @@ const (
 )
 
 type channelDailyCostSnapshot struct {
-	ChannelId      int
-	CostRatioCNY   float64
-	QuotaPerUnit   float64
-	Configured     bool
-	APIKeyId       int
-	APIKeyName     string
-	KeyFingerprint string
-	KeyDisplay     string
+	ChannelId       int
+	CostRatioCNY    float64
+	QuotaPerUnit    float64
+	Configured      bool
+	APIKeyId        int
+	APIKeyName      string
+	KeyFingerprint  string
+	KeyDisplay      string
+	UserId          int
+	UserAttribution string
+	ModelName       string
 }
 
 type channelDailyCostSnapshotCacheEntry struct {
@@ -357,6 +360,10 @@ func channelDailyCostSnapshotWithCurrentKey(ctx *gin.Context, snapshot channelDa
 	}
 	snapshot.APIKeyId = ctx.GetInt("token_id")
 	snapshot.APIKeyName = strings.TrimSpace(ctx.GetString("token_name"))
+	snapshot.UserId = common.GetContextKeyInt(ctx, constant.ContextKeyUserId)
+	if snapshot.UserId > 0 {
+		snapshot.UserAttribution = string(model.ChannelMonitorEventUserAttributionRequest)
+	}
 	value, exists := common.GetContextKey(ctx, constant.ContextKeyChannelKey)
 	if !exists {
 		snapshot.KeyFingerprint, snapshot.KeyDisplay = model.ChannelDailyCostAPIKeyIdentityForToken(snapshot.APIKeyId, "")
@@ -368,6 +375,18 @@ func channelDailyCostSnapshotWithCurrentKey(ctx *gin.Context, snapshot channelDa
 		return snapshot
 	}
 	snapshot.KeyFingerprint, snapshot.KeyDisplay = model.ChannelDailyCostAPIKeyIdentityForToken(snapshot.APIKeyId, key)
+	return snapshot
+}
+
+func channelDailyCostSnapshotWithRelayInfo(snapshot channelDailyCostSnapshot, relayInfo *relaycommon.RelayInfo) channelDailyCostSnapshot {
+	if relayInfo == nil {
+		return snapshot
+	}
+	snapshot.UserId = relayInfo.UserId
+	if snapshot.UserId > 0 {
+		snapshot.UserAttribution = string(model.ChannelMonitorEventUserAttributionRequest)
+	}
+	snapshot.ModelName = strings.TrimSpace(relayInfo.OriginModelName)
 	return snapshot
 }
 
@@ -447,6 +466,10 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 		APIKeyName:            snapshot.APIKeyName,
 		KeyFingerprint:        snapshot.KeyFingerprint,
 		KeyDisplay:            snapshot.KeyDisplay,
+		UserId:                snapshot.UserId,
+		UserAttribution:       snapshot.UserAttribution,
+		ModelName:             snapshot.ModelName,
+		SourceKind:            channelDailyCostSourceKind(ctx),
 	}
 	// Validate before selecting the durable path. The Redis consumer also
 	// validates and dead-letters malformed messages, but accepting one here
@@ -474,6 +497,16 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 	return true
 }
 
+func channelDailyCostSourceKind(ctx *gin.Context) string {
+	if ctx != nil && ctx.GetBool(model.ChannelMonitorGroupProbeLogKey) {
+		return "group_probe"
+	}
+	if ctx != nil && ctx.GetBool(model.ChannelMonitorStatusProbeLogKey) {
+		return "status_probe"
+	}
+	return "business"
+}
+
 func channelDailyCostEventId(ctx *gin.Context, channelId int) string {
 	if ctx != nil {
 		if value, exists := ctx.Get(channelDailyCostAttemptContextKey); exists {
@@ -495,6 +528,7 @@ func recordTextChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		return
 	}
 	snapshot := channelDailyCostSnapshotFromContext(ctx, relayInfo.ChannelId)
+	snapshot = channelDailyCostSnapshotWithRelayInfo(snapshot, relayInfo)
 	quotaPerUnit := snapshot.QuotaPerUnit
 	if tieredBillingApplied {
 		if !channelDailyCostUsageIsAuthoritative(ctx, originUsage) {
@@ -545,6 +579,7 @@ func recordAudioChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayI
 		return
 	}
 	snapshot := channelDailyCostSnapshotFromContext(ctx, relayInfo.ChannelId)
+	snapshot = channelDailyCostSnapshotWithRelayInfo(snapshot, relayInfo)
 	if tieredBillingApplied {
 		if !authoritativeUsage {
 			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
@@ -590,6 +625,7 @@ func RecordChannelTestDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		return
 	}
 	snapshot := channelDailyCostSnapshotFromContext(ctx, relayInfo.ChannelId)
+	snapshot = channelDailyCostSnapshotWithRelayInfo(snapshot, relayInfo)
 	quotaPerUnit := snapshot.QuotaPerUnit
 	if relayInfo.TieredBillingSnapshot != nil {
 		quotaPerUnit = relayInfo.TieredBillingSnapshot.QuotaPerUnit
@@ -648,6 +684,7 @@ func RecordChannelTestDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 // RecordPerCallChannelDailyCost records successful task and Midjourney calls.
 func RecordPerCallChannelDailyCost(ctx *gin.Context, channelId int, modelName string, priceData types.PriceData) {
 	snapshot := channelDailyCostSnapshotFromContext(ctx, channelId)
+	snapshot.ModelName = strings.TrimSpace(modelName)
 	quotaBeforeGroup := priceData.ModelPrice * snapshot.QuotaPerUnit
 	if !priceData.UsePrice {
 		quotaBeforeGroup = priceData.ModelRatio / 2 * snapshot.QuotaPerUnit
@@ -663,6 +700,7 @@ func RecordPerCallChannelDailyCost(ctx *gin.Context, channelId int, modelName st
 // submission day without racing the generic daily-cost batcher.
 func RecordTaskChannelDailyCost(ctx *gin.Context, channelId int, occurredAt int64, costEventId string, initialQuota int64, modelName string, priceData types.PriceData) (int64, bool, error) {
 	snapshot := channelDailyCostSnapshotWithCurrentKey(ctx, channelDailyCostSnapshotFromContext(ctx, channelId))
+	snapshot.ModelName = strings.TrimSpace(modelName)
 	quotaBeforeGroup := priceData.ModelPrice * snapshot.QuotaPerUnit
 	if !priceData.UsePrice {
 		quotaBeforeGroup = priceData.ModelRatio / 2 * snapshot.QuotaPerUnit
@@ -677,15 +715,18 @@ func RecordTaskChannelDailyCost(ctx *gin.Context, channelId int, occurredAt int6
 	}
 
 	storedCost, err := model.RegisterChannelTaskCostEvent(channelMonitorPublishContext(ctx), model.ChannelTaskCostEventInput{
-		CostEventId:    costEventId,
-		ChannelId:      snapshot.ChannelId,
-		OccurredAt:     occurredAt,
-		APIKeyId:       snapshot.APIKeyId,
-		APIKeyName:     snapshot.APIKeyName,
-		KeyFingerprint: snapshot.KeyFingerprint,
-		KeyDisplay:     snapshot.KeyDisplay,
-		InitialQuota:   initialQuota,
-		CostNanoCNY:    costNanoCNY,
+		CostEventId:     costEventId,
+		ChannelId:       snapshot.ChannelId,
+		OccurredAt:      occurredAt,
+		APIKeyId:        snapshot.APIKeyId,
+		APIKeyName:      snapshot.APIKeyName,
+		KeyFingerprint:  snapshot.KeyFingerprint,
+		KeyDisplay:      snapshot.KeyDisplay,
+		UserId:          snapshot.UserId,
+		UserAttribution: snapshot.UserAttribution,
+		ModelName:       snapshot.ModelName,
+		InitialQuota:    initialQuota,
+		CostNanoCNY:     costNanoCNY,
 	})
 	if err != nil {
 		return 0, false, err

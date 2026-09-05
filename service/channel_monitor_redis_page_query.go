@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -87,14 +89,79 @@ func QueryChannelMonitorRealtimeTodaySuccessFromRedis(
 	startAt int64,
 	endAt int64,
 ) (ChannelMonitorRealtimePageView, error) {
-	return queryChannelMonitorRealtimePageFromRedis(ctx, startAt, endAt, channelMonitorRedisSharedQuerySelection{
-		patterns: []string{
-			channelMonitorRedisSharedScopeMetadata + ":*",
-			channelMonitorRedisSharedScopeGlobal + ":*",
-			channelMonitorRedisSharedScopeChannel + ":*",
-			channelMonitorRedisSharedScopeAPIKey + ":*",
-		},
+	dayStart := model.ChannelDailyCostDayStart(startAt)
+	daily, err := QueryChannelMonitorRedisDailySuccess(ctx, dayStart, []string{
+		channelMonitorRedisSharedScopeMetadata + ":*",
+		channelMonitorRedisSharedScopeGlobal + ":*",
+		channelMonitorRedisSharedScopeChannel + ":*",
+		channelMonitorRedisSharedScopeAPIKey + ":*",
+		channelMonitorRedisSharedScopeRoute + ":*",
 	})
+	if err != nil {
+		return ChannelMonitorRealtimePageView{}, err
+	}
+	view := ChannelMonitorRealtimePageView{
+		Routes:         make([]ChannelMonitorRealtimePageAggregate, 0),
+		Channels:       make([]ChannelMonitorRealtimePageAggregate, 0),
+		Groups:         make([]ChannelMonitorRealtimePageAggregate, 0),
+		APIKeys:        make([]ChannelMonitorRealtimePageAggregate, 0),
+		Failures:       make([]model.ChannelMonitorFailureCategory, 0),
+		WindowStart:    dayStart,
+		WindowEnd:      endAt,
+		DataCutoffAt:   daily.DataCutoffAt,
+		ProcessedAt:    daily.ProcessedAt,
+		EventWatermark: daily.EventWatermark,
+	}
+	for _, entry := range daily.Entries {
+		aggregate, aggregateErr := channelMonitorRedisSharedPageAggregate(entry.Aggregate)
+		if aggregateErr != nil {
+			return ChannelMonitorRealtimePageView{}, aggregateErr
+		}
+		switch entry.Scope {
+		case channelMonitorRedisSharedScopeGlobal:
+			view.Summary = aggregate
+		case channelMonitorRedisSharedScopeChannel:
+			channelID, parseErr := strconv.Atoi(entry.Identity)
+			if parseErr != nil || channelID <= 0 {
+				continue
+			}
+			aggregate.ChannelId = channelID
+			view.Channels = append(view.Channels, aggregate)
+		case channelMonitorRedisSharedScopeAPIKey:
+			apiKeyID, parseErr := strconv.Atoi(entry.Identity)
+			if parseErr != nil || apiKeyID <= 0 {
+				continue
+			}
+			aggregate.APIKeyId = apiKeyID
+			aggregate.APIKeyName = entry.Aggregate.APIKeyName
+			view.APIKeys = append(view.APIKeys, aggregate)
+		case channelMonitorRedisSharedScopeRoute:
+			parts := strings.SplitN(entry.Identity, ".", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			channelID, parseErr := strconv.Atoi(parts[0])
+			if parseErr != nil || channelID <= 0 {
+				continue
+			}
+			modelName, decodeErr := channelMonitorRedisSharedDimensionDecode(parts[1])
+			if decodeErr != nil {
+				continue
+			}
+			aggregate.ChannelId = channelID
+			aggregate.ModelName = modelName
+			view.Routes = append(view.Routes, aggregate)
+		}
+	}
+	sort.Slice(view.Channels, func(i, j int) bool { return view.Channels[i].ChannelId < view.Channels[j].ChannelId })
+	sort.Slice(view.APIKeys, func(i, j int) bool { return view.APIKeys[i].APIKeyId < view.APIKeys[j].APIKeyId })
+	sort.Slice(view.Routes, func(i, j int) bool {
+		if view.Routes[i].ChannelId != view.Routes[j].ChannelId {
+			return view.Routes[i].ChannelId < view.Routes[j].ChannelId
+		}
+		return view.Routes[i].ModelName < view.Routes[j].ModelName
+	})
+	return view, nil
 }
 
 func queryChannelMonitorRealtimePageFromRedis(
@@ -179,16 +246,11 @@ func QueryChannelMonitorRedisSharedProjectionForCosts(
 	startAt int64,
 	endAt int64,
 ) (map[int]ChannelMonitorRedisSharedAggregate, error) {
-	projection, err := NewChannelMonitorRedisSharedProjection()
+	view, err := QueryChannelMonitorRedisDailyCosts(ctx, model.ChannelDailyCostDayStart(startAt))
 	if err != nil {
 		return nil, err
 	}
-	view, err := projection.Query(ctx, startAt, endAt)
-	if err != nil {
-		return nil, err
-	}
-	day := view.DailyCosts[model.ChannelDailyCostDayStart(startAt)]
-	return day.Channels, nil
+	return view.Channels, nil
 }
 
 func channelMonitorRedisSharedPageView(shared ChannelMonitorRedisSharedProjectionView) (ChannelMonitorRealtimePageView, error) {

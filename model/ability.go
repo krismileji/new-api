@@ -268,7 +268,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 		channel = &current
 	}
 	var currentAbilities []Ability
-	if err := tx.Select("group", "model").Where("channel_id = ?", channel.Id).
+	if err := tx.Select(commonGroupCol, "model").Where("channel_id = ?", channel.Id).
 		Find(&currentAbilities).Error; err != nil {
 		if isNewTx {
 			tx.Rollback()

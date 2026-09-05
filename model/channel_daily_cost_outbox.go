@@ -38,6 +38,10 @@ type ChannelDailyCostOutbox struct {
 	APIKeyName            string `gorm:"size:255;not null"`
 	KeyFingerprint        string `gorm:"size:64;not null"`
 	KeyDisplay            string `gorm:"size:64;not null"`
+	UserId                int    `gorm:"not null;default:0"`
+	UserAttribution       string `gorm:"size:16;not null;default:''"`
+	ModelName             string `gorm:"size:255;not null;default:''"`
+	SourceKind            string `gorm:"size:32;not null;default:''"`
 	AttemptCount          int64  `gorm:"not null"`
 	NextAttemptAt         int64  `gorm:"not null;index:idx_channel_daily_cost_outbox_pending,priority:3"`
 	LeaseOwner            string `gorm:"size:128;not null;index"`
@@ -362,7 +366,9 @@ func channelDailyCostOutboxFromDelta(delta ChannelDailyCostDelta, now int64) Cha
 		CostNanoCNY: delta.CostNanoCNY, ProbeCostNanoCNY: delta.ProbeCostNanoCNY,
 		GroupProbeCostNanoCNY: delta.GroupProbeCostNanoCNY, SettledDelta: delta.SettledDelta,
 		UnresolvedDelta: delta.UnresolvedDelta, APIKeyId: delta.APIKeyId, APIKeyName: delta.APIKeyName,
-		KeyFingerprint: delta.KeyFingerprint, KeyDisplay: delta.KeyDisplay, CreatedAt: now, UpdatedAt: now,
+		KeyFingerprint: delta.KeyFingerprint, KeyDisplay: delta.KeyDisplay, UserId: delta.UserId,
+		UserAttribution: delta.UserAttribution, ModelName: delta.ModelName, SourceKind: delta.SourceKind,
+		CreatedAt: now, UpdatedAt: now,
 	}
 }
 
@@ -371,7 +377,8 @@ func channelDailyCostOutboxMatchesDelta(row ChannelDailyCostOutbox, delta Channe
 		row.CostNanoCNY == delta.CostNanoCNY && row.ProbeCostNanoCNY == delta.ProbeCostNanoCNY &&
 		row.GroupProbeCostNanoCNY == delta.GroupProbeCostNanoCNY && row.SettledDelta == delta.SettledDelta &&
 		row.UnresolvedDelta == delta.UnresolvedDelta && row.APIKeyId == delta.APIKeyId &&
-		row.APIKeyName == delta.APIKeyName && row.KeyFingerprint == delta.KeyFingerprint && row.KeyDisplay == delta.KeyDisplay
+		row.APIKeyName == delta.APIKeyName && row.KeyFingerprint == delta.KeyFingerprint && row.KeyDisplay == delta.KeyDisplay &&
+		row.UserId == delta.UserId && row.UserAttribution == delta.UserAttribution && row.ModelName == delta.ModelName && row.SourceKind == delta.SourceKind
 }
 
 func (row ChannelDailyCostOutbox) channelDailyCostDelta() ChannelDailyCostDelta {
@@ -380,6 +387,7 @@ func (row ChannelDailyCostOutbox) channelDailyCostDelta() ChannelDailyCostDelta 
 		CostNanoCNY: row.CostNanoCNY, ProbeCostNanoCNY: row.ProbeCostNanoCNY,
 		GroupProbeCostNanoCNY: row.GroupProbeCostNanoCNY, SettledDelta: row.SettledDelta,
 		UnresolvedDelta: row.UnresolvedDelta, APIKeyId: row.APIKeyId, APIKeyName: row.APIKeyName,
-		KeyFingerprint: row.KeyFingerprint, KeyDisplay: row.KeyDisplay,
+		KeyFingerprint: row.KeyFingerprint, KeyDisplay: row.KeyDisplay, UserId: row.UserId,
+		UserAttribution: row.UserAttribution, ModelName: row.ModelName, SourceKind: row.SourceKind,
 	}
 }

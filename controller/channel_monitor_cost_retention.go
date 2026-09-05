@@ -147,8 +147,8 @@ func loadChannelMonitorCleanupSettings(ctx context.Context) (channelMonitorClean
 		channelMonitorCleanupIntervalMinutesOption,
 	}
 	if err := model.DB.WithContext(ctx).
-		Select("key", "value").
-		Where(map[string]any{"key": keys}).
+		Select(model.QuotedMainKeyColumn(), "value").
+		Where(model.QuotedMainKeyColumn()+" IN ?", keys).
 		Find(&options).Error; err != nil {
 		return channelMonitorCleanupSettings{}, fmt.Errorf("读取渠道监控清理配置失败: %w", err)
 	}
@@ -244,8 +244,8 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 		channelMonitorSmartScheduleGroupPoliciesOption,
 	}
 	if err := model.DB.WithContext(ctx).
-		Select("key", "value").
-		Where(map[string]any{"key": retentionOptionKeys}).
+		Select(model.QuotedMainKeyColumn(), "value").
+		Where(model.QuotedMainKeyColumn()+" IN ?", retentionOptionKeys).
 		Find(&options).Error; err != nil {
 		return channelMonitorSettings{}, fmt.Errorf("读取渠道监控保留配置失败: %w", err)
 	}

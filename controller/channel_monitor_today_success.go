@@ -84,6 +84,7 @@ type channelMonitorTodaySuccessOverview struct {
 	StreamTrimFailureActive    bool                                                   `json:"stream_trim_failure_active"`
 	RedisPoolStats             map[common.RedisClientRole]common.RedisClientPoolStats `json:"redis_pool_stats"`
 	RealtimeDegraded           bool                                                   `json:"realtime_degraded"`
+	DegradedReasons            []string                                               `json:"degraded_reasons"`
 	DayStart                   int64                                                  `json:"day_start"`
 	DetailDate                 string                                                 `json:"detail_date"`
 	SuccessMetricsAvailable    bool                                                   `json:"success_metrics_available"`
@@ -180,6 +181,9 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 	overview.StreamTrimFailureActive = metadata.StreamTrimFailureActive
 	overview.RedisPoolStats = metadata.RedisPoolStats
 	overview.RealtimeDegraded = metadata.RealtimeDegraded
+	overview.DegradedReasons = metadata.DegradedReasons
+	settings := getChannelMonitorSettings()
+	service.NotifyChannelMonitorHealthAsync(settings.EmailNotificationEnabled, settings.NotificationEmail, metadata.RedisStatus, metadata.DegradedReasons, metadata.WriterDroppedEvents, settings.EmailNotificationTypes...)
 
 	todayMetrics := channelMonitorRealtimeTodaySuccessMetrics(todayView)
 	metrics := todayMetrics

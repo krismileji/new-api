@@ -27,6 +27,15 @@ var commonFalseVal string
 var logKeyCol string
 var logGroupCol string
 
+// QuotedMainKeyColumn returns the dialect-safe reference to the reserved
+// Option.key column for queries built outside the model package.
+func QuotedMainKeyColumn() string {
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		return `"key"`
+	}
+	return "`key`"
+}
+
 // jsonScanBytes 归一化 json 列的驱动返回值:不同驱动/协议模式下同一列可能
 // 以 []byte 或 string 返回,静默丢弃 string 会导致字段被清零而不报错。
 func jsonScanBytes(value interface{}) []byte {
@@ -44,12 +53,12 @@ func initCol() {
 	// init common column names
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
 		commonGroupCol = `"group"`
-		commonKeyCol = `"key"`
+		commonKeyCol = QuotedMainKeyColumn()
 		commonTrueVal = "true"
 		commonFalseVal = "false"
 	} else {
 		commonGroupCol = "`group`"
-		commonKeyCol = "`key`"
+		commonKeyCol = QuotedMainKeyColumn()
 		commonTrueVal = "1"
 		commonFalseVal = "0"
 	}
@@ -449,6 +458,11 @@ func migrateDB() error {
 		&ChannelMonitorMinuteRouteMetric{},
 		&ChannelMonitorMinuteAPIKeyMetric{},
 		&ChannelMonitorMinuteDurationBucket{},
+		&ChannelMonitorDailySuccessLedger{},
+		&ChannelMonitorDailySuccessMinute{},
+		&ChannelMonitorDailyCostDetail{},
+		&ChannelMonitorCostBackfillCheckpoint{},
+		&ChannelMonitorCostReconciliation{},
 		&ChannelMonitorDirtyMinute{},
 		&ChannelMonitorAggregationState{},
 		&ChannelMonitorRedisEffectState{},

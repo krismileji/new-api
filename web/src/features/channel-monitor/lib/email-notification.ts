@@ -25,6 +25,7 @@ export const CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES = [
   'group_membership_removed',
   'upstream_sync_failed',
   'task_failed',
+  'monitoring_health',
 ] as const satisfies readonly ChannelMonitorEmailNotificationType[]
 
 export const DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES: ChannelMonitorEmailNotificationType[] =
@@ -60,6 +61,11 @@ export const CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPE_OPTIONS = [
     value: 'task_failed',
     label: '定时任务失败',
     description: '任务执行或分组倍率写入失败',
+  },
+  {
+    value: 'monitoring_health',
+    label: '监控链路异常',
+    description: 'Redis 不可用、队列满、Stream 积压或监控消费者异常',
   },
 ] as const satisfies ReadonlyArray<{
   value: ChannelMonitorEmailNotificationType

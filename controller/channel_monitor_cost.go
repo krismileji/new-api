@@ -139,6 +139,7 @@ type channelMonitorCostOverview struct {
 	StreamTrimFailureActive        bool                                                   `json:"stream_trim_failure_active"`
 	RedisPoolStats                 map[common.RedisClientRole]common.RedisClientPoolStats `json:"redis_pool_stats"`
 	RealtimeDegraded               bool                                                   `json:"realtime_degraded"`
+	DegradedReasons                []string                                               `json:"degraded_reasons"`
 	DetailDate                     string                                                 `json:"detail_date"`
 	TodayCostCNY                   float64                                                `json:"today_cost_cny"`
 	TodayProbeCostCNY              float64                                                `json:"today_probe_cost_cny"`

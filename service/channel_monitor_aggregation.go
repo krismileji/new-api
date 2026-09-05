@@ -377,6 +377,11 @@ func rebuildChannelMonitorAggregationRange(
 			err,
 		)
 	}
+	if err := withChannelMonitorAggregationSQLiteRetry(ctx, func() error {
+		return model.UpdateChannelMonitorDailySuccessForMinuteRange(ctx, start, targetEnd)
+	}); err != nil {
+		return fmt.Errorf("更新渠道监控日成功率汇总失败: %w", err)
+	}
 	if publishWatermark {
 		channelMonitorAggregationStateMu.Lock()
 		channelMonitorAggregationLocalCompletedThrough[key] = max(

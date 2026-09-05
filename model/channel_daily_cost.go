@@ -163,6 +163,13 @@ func addChannelDailyCost(tx *gorm.DB, channelId int, occurredAt int64, costNanoC
 // from ordinary traffic and status probes. The caller may pass a transaction
 // so the category update commits together with the source settlement event.
 func AddChannelDailyCostWithModelDetection(ctx context.Context, tx *gorm.DB, channelId int, occurredAt int64, costNanoCNY int64, modelDetectionCostNanoCNY int64, settledDelta int64, unresolvedDelta int64) error {
+	return AddChannelDailyCostWithModelDetectionAndModel(ctx, tx, channelId, occurredAt, costNanoCNY, modelDetectionCostNanoCNY, settledDelta, unresolvedDelta, "unknown")
+}
+
+// AddChannelDailyCostWithModelDetectionAndModel records the model-detection
+// category and its drill-down fact in one transaction. Model detection has no
+// inbound user/API Key, so those dimensions intentionally remain unknown.
+func AddChannelDailyCostWithModelDetectionAndModel(ctx context.Context, tx *gorm.DB, channelId int, occurredAt int64, costNanoCNY int64, modelDetectionCostNanoCNY int64, settledDelta int64, unresolvedDelta int64, modelName string) error {
 	if tx == nil {
 		tx = DB
 	}
@@ -170,13 +177,31 @@ func AddChannelDailyCostWithModelDetection(ctx context.Context, tx *gorm.DB, cha
 		return errors.New("channel daily cost database is unavailable")
 	}
 	return tx.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return addChannelDailyCostWithCategories(tx, channelId, occurredAt, costNanoCNY, 0, 0, modelDetectionCostNanoCNY, settledDelta, unresolvedDelta)
+		if err := addChannelDailyCostWithCategories(tx, channelId, occurredAt, costNanoCNY, 0, 0, modelDetectionCostNanoCNY, settledDelta, unresolvedDelta); err != nil {
+			return err
+		}
+		if !tx.Migrator().HasTable(&ChannelMonitorDailyCostDetail{}) {
+			return nil
+		}
+		return addChannelMonitorDailyCostDetail(tx, ChannelDailyCostDelta{
+			ChannelId: channelId, OccurredAt: occurredAt, CostNanoCNY: costNanoCNY,
+			SettledDelta: settledDelta, UnresolvedDelta: unresolvedDelta,
+			UserAttribution: string(ChannelMonitorEventUserAttributionUnknown),
+			ModelName:       modelName, SourceKind: string(ChannelMonitorEventSourceModelDetection),
+		})
 	})
 }
 
 // SettleUnresolvedChannelDailyModelDetectionCost replaces one unresolved
 // model-detection fact with its settled amount on the fact's original day.
 func SettleUnresolvedChannelDailyModelDetectionCost(ctx context.Context, tx *gorm.DB, channelId int, occurredAt int64, costNanoCNY int64) error {
+	return SettleUnresolvedChannelDailyModelDetectionCostWithModel(ctx, tx, channelId, occurredAt, costNanoCNY, "unknown")
+}
+
+// SettleUnresolvedChannelDailyModelDetectionCostWithModel replaces the
+// unresolved model-detection detail at the same time as the authoritative
+// channel ledger replacement.
+func SettleUnresolvedChannelDailyModelDetectionCostWithModel(ctx context.Context, tx *gorm.DB, channelId int, occurredAt int64, costNanoCNY int64, modelName string) error {
 	if channelId <= 0 {
 		return errors.New("channel id must be positive")
 	}
@@ -209,7 +234,7 @@ func SettleUnresolvedChannelDailyModelDetectionCost(ctx context.Context, tx *gor
 			return updated.Error
 		}
 		if updated.RowsAffected == 1 {
-			return nil
+			return settleChannelMonitorModelDetectionDetail(tx, channelId, dayStart, costNanoCNY, modelName, occurredAt)
 		}
 
 		var existingId int64
@@ -224,6 +249,33 @@ func SettleUnresolvedChannelDailyModelDetectionCost(ctx context.Context, tx *gor
 			return err
 		}
 		return errors.New("模型检测日成本结算超过 int64 范围或未解析计数不足")
+	})
+}
+
+func settleChannelMonitorModelDetectionDetail(tx *gorm.DB, channelId int, dayStart int64, costNanoCNY int64, modelName string, updatedAt int64) error {
+	if !tx.Migrator().HasTable(&ChannelMonitorDailyCostDetail{}) {
+		return nil
+	}
+	modelKey := ChannelMonitorDailyCostModelKey(modelName)
+	updated := tx.Model(&ChannelMonitorDailyCostDetail{}).
+		Where("day_start = ? AND channel_id = ? AND user_id = 0 AND api_key_id = 0 AND api_key_key = ? AND model_key = ? AND source_kind = ?", dayStart, channelId, "", modelKey, string(ChannelMonitorEventSourceModelDetection)).
+		Where("cost_nano_cny >= 0 AND cost_nano_cny <= ? AND settled_count >= 0 AND settled_count < ? AND unresolved_count > 0", math.MaxInt64-costNanoCNY, int64(math.MaxInt64)).
+		Updates(map[string]any{
+			"cost_nano_cny":    gorm.Expr("cost_nano_cny + ?", costNanoCNY),
+			"settled_count":    gorm.Expr("settled_count + ?", 1),
+			"unresolved_count": gorm.Expr("unresolved_count - ?", 1),
+			"updated_at":       updatedAt,
+		})
+	if updated.Error != nil {
+		return updated.Error
+	}
+	if updated.RowsAffected == 1 {
+		return nil
+	}
+	return addChannelMonitorDailyCostDetail(tx, ChannelDailyCostDelta{
+		ChannelId: channelId, OccurredAt: updatedAt, CostNanoCNY: costNanoCNY, SettledDelta: 1,
+		UserAttribution: string(ChannelMonitorEventUserAttributionUnknown), ModelName: modelName,
+		SourceKind: string(ChannelMonitorEventSourceModelDetection),
 	})
 }
 

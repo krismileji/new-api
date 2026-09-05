@@ -81,7 +81,7 @@ func updateChannelStatusesByTag(tag string, status int) error {
 		}
 		var abilities []Ability
 		if len(channelIds) > 0 {
-			if err := tx.Select("group", "model").
+			if err := tx.Select(commonGroupCol, "model").
 				Where("channel_id IN ?", channelIds).
 				Find(&abilities).Error; err != nil {
 				return err
@@ -204,7 +204,7 @@ func updateChannelMonitorStatusIfCurrent(
 			return nil
 		}
 		var abilities []Ability
-		if err := tx.Select("group", "model").
+		if err := tx.Select(commonGroupCol, "model").
 			Where("channel_id = ?", channelId).
 			Find(&abilities).Error; err != nil {
 			return err

@@ -26,6 +26,8 @@ const (
 	ChannelMonitorRedisDegradedReasonMarkerReleaseFailure = "marker_release_failure"
 	ChannelMonitorRedisDegradedReasonStreamTrimFailure    = "stream_trim_failure"
 	ChannelMonitorRedisDegradedReasonWriterQueueFull      = "writer_queue_full"
+	ChannelMonitorRedisDegradedReasonWriterStopped        = "writer_stopped"
+	ChannelMonitorRedisDegradedReasonSerializationError   = "serialization_error"
 	ChannelMonitorRedisDegradedReasonCostStreamBacklog    = "cost_stream_backlog"
 	ChannelMonitorRedisDegradedReasonCostOutboxBacklog    = "cost_outbox_backlog"
 	ChannelMonitorRedisDegradedReasonCostPublishFailure   = "cost_publish_failure"
@@ -49,46 +51,50 @@ type ChannelMonitorRedisPoolDegradedRole struct {
 // channel-monitor realtime APIs. PendingCount is the Redis consumer-group
 // pending count; queue_depth remains an API alias for existing callers.
 type ChannelMonitorRedisRealtimeStatus struct {
-	RedisStatus                string                                                 `json:"redis_status"`
-	RedisAvailable             bool                                                   `json:"redis_available"`
-	RedisPoolIsolation         bool                                                   `json:"redis_pool_isolation"`
-	RedisPoolIsolationMode     string                                                 `json:"redis_pool_isolation_mode"`
-	RedisPoolShared            bool                                                   `json:"redis_pool_shared"`
-	RedisPoolDegradedRoles     []ChannelMonitorRedisPoolDegradedRole                  `json:"redis_pool_degraded_roles"`
-	RedisConsumerRunning       bool                                                   `json:"redis_consumer_running"`
-	PendingCount               int64                                                  `json:"pending_count"`
-	WriterQueueDepth           int                                                    `json:"writer_queue_depth"`
-	WriterQueueCapacity        int                                                    `json:"writer_queue_capacity"`
-	WriterQueuedEvents         int64                                                  `json:"writer_queued_events"`
-	WriterDroppedEvents        int64                                                  `json:"writer_dropped_events"`
-	WriterRetryEvents          int64                                                  `json:"writer_retry_events"`
-	WriterOldestQueuedAt       int64                                                  `json:"writer_oldest_queued_at"`
-	WriterQueueAgeSeconds      int64                                                  `json:"writer_queue_age_seconds"`
-	OldestPendingAt            int64                                                  `json:"oldest_pending_at"`
-	ConsumerLagSeconds         int64                                                  `json:"consumer_lag_seconds"`
-	LastPublishedAt            int64                                                  `json:"last_published_at"`
-	LastProcessedAt            int64                                                  `json:"last_processed_at"`
-	RetryCount                 int64                                                  `json:"retry_count"`
-	TakeoverCount              int64                                                  `json:"takeover_count"`
-	QuarantineCount            int64                                                  `json:"quarantine_count"`
-	LastQuarantinedAt          int64                                                  `json:"last_quarantined_at"`
-	RuntimeMarkerFailureCount  int64                                                  `json:"runtime_marker_failure_count"`
-	ScheduleMarkerFailureCount int64                                                  `json:"schedule_marker_failure_count"`
-	MarkerReleaseFailureCount  int64                                                  `json:"marker_release_failure_count"`
-	MarkerReleaseFailureActive bool                                                   `json:"marker_release_failure_active"`
-	StreamTrimFailureCount     int64                                                  `json:"stream_trim_failure_count"`
-	StreamTrimFailureActive    bool                                                   `json:"stream_trim_failure_active"`
-	DegradedReasons            []string                                               `json:"degraded_reasons"`
-	RealtimeDegraded           bool                                                   `json:"realtime_degraded"`
-	RedisPoolStats             map[common.RedisClientRole]common.RedisClientPoolStats `json:"redis_pool_stats"`
-	CostStreamPendingCount     int64                                                  `json:"cost_stream_pending_count"`
-	CostStreamUnreadCount      int64                                                  `json:"cost_stream_unread_count"`
-	CostOutboxPendingCount     int64                                                  `json:"cost_outbox_pending_count"`
-	CostOutboxOldestPendingAt  int64                                                  `json:"cost_outbox_oldest_pending_at"`
-	CostOutboxRetryCount       int64                                                  `json:"cost_outbox_retry_count"`
-	CostLedgerFailedCount      int64                                                  `json:"cost_ledger_failed_count"`
-	CostPublishFailedCount     int64                                                  `json:"cost_publish_failed_count"`
-	CostDeadLetterCount        int64                                                  `json:"cost_dead_letter_count"`
+	RedisStatus                   string                                                 `json:"redis_status"`
+	RedisAvailable                bool                                                   `json:"redis_available"`
+	RedisPoolIsolation            bool                                                   `json:"redis_pool_isolation"`
+	RedisPoolIsolationMode        string                                                 `json:"redis_pool_isolation_mode"`
+	RedisPoolShared               bool                                                   `json:"redis_pool_shared"`
+	RedisPoolDegradedRoles        []ChannelMonitorRedisPoolDegradedRole                  `json:"redis_pool_degraded_roles"`
+	RedisConsumerRunning          bool                                                   `json:"redis_consumer_running"`
+	PendingCount                  int64                                                  `json:"pending_count"`
+	WriterQueueDepth              int                                                    `json:"writer_queue_depth"`
+	WriterQueueCapacity           int                                                    `json:"writer_queue_capacity"`
+	WriterQueuedEvents            int64                                                  `json:"writer_queued_events"`
+	WriterDroppedEvents           int64                                                  `json:"writer_dropped_events"`
+	WriterDroppedQueueFull        int64                                                  `json:"writer_dropped_queue_full"`
+	WriterDroppedRedisUnavailable int64                                                  `json:"writer_dropped_redis_unavailable"`
+	WriterDroppedWriterStopped    int64                                                  `json:"writer_dropped_writer_stopped"`
+	WriterDroppedSerialization    int64                                                  `json:"writer_dropped_serialization"`
+	WriterRetryEvents             int64                                                  `json:"writer_retry_events"`
+	WriterOldestQueuedAt          int64                                                  `json:"writer_oldest_queued_at"`
+	WriterQueueAgeSeconds         int64                                                  `json:"writer_queue_age_seconds"`
+	OldestPendingAt               int64                                                  `json:"oldest_pending_at"`
+	ConsumerLagSeconds            int64                                                  `json:"consumer_lag_seconds"`
+	LastPublishedAt               int64                                                  `json:"last_published_at"`
+	LastProcessedAt               int64                                                  `json:"last_processed_at"`
+	RetryCount                    int64                                                  `json:"retry_count"`
+	TakeoverCount                 int64                                                  `json:"takeover_count"`
+	QuarantineCount               int64                                                  `json:"quarantine_count"`
+	LastQuarantinedAt             int64                                                  `json:"last_quarantined_at"`
+	RuntimeMarkerFailureCount     int64                                                  `json:"runtime_marker_failure_count"`
+	ScheduleMarkerFailureCount    int64                                                  `json:"schedule_marker_failure_count"`
+	MarkerReleaseFailureCount     int64                                                  `json:"marker_release_failure_count"`
+	MarkerReleaseFailureActive    bool                                                   `json:"marker_release_failure_active"`
+	StreamTrimFailureCount        int64                                                  `json:"stream_trim_failure_count"`
+	StreamTrimFailureActive       bool                                                   `json:"stream_trim_failure_active"`
+	DegradedReasons               []string                                               `json:"degraded_reasons"`
+	RealtimeDegraded              bool                                                   `json:"realtime_degraded"`
+	RedisPoolStats                map[common.RedisClientRole]common.RedisClientPoolStats `json:"redis_pool_stats"`
+	CostStreamPendingCount        int64                                                  `json:"cost_stream_pending_count"`
+	CostStreamUnreadCount         int64                                                  `json:"cost_stream_unread_count"`
+	CostOutboxPendingCount        int64                                                  `json:"cost_outbox_pending_count"`
+	CostOutboxOldestPendingAt     int64                                                  `json:"cost_outbox_oldest_pending_at"`
+	CostOutboxRetryCount          int64                                                  `json:"cost_outbox_retry_count"`
+	CostLedgerFailedCount         int64                                                  `json:"cost_ledger_failed_count"`
+	CostPublishFailedCount        int64                                                  `json:"cost_publish_failed_count"`
+	CostDeadLetterCount           int64                                                  `json:"cost_dead_letter_count"`
 }
 
 func getChannelMonitorRedisRealtimeStatus(
@@ -293,6 +299,10 @@ func applyChannelMonitorEventWriterStats(status *ChannelMonitorRedisRealtimeStat
 	status.WriterQueueCapacity = stats.QueueCapacity
 	status.WriterQueuedEvents = stats.QueuedEvents
 	status.WriterDroppedEvents = stats.DroppedEvents
+	status.WriterDroppedQueueFull = stats.DroppedQueueFull
+	status.WriterDroppedRedisUnavailable = stats.DroppedRedisUnavailable
+	status.WriterDroppedWriterStopped = stats.DroppedWriterStopped
+	status.WriterDroppedSerialization = stats.DroppedSerialization
 	status.WriterRetryEvents = stats.RetryEvents
 	status.WriterOldestQueuedAt = stats.OldestQueuedAt
 	status.WriterQueueAgeSeconds = stats.QueueAgeSeconds

@@ -35,19 +35,32 @@ const (
 	ChannelMonitorEventPublishStatusTimeout     ChannelMonitorEventPublishStatus = "timeout"
 )
 
+type ChannelMonitorEventDropReason string
+
+const (
+	ChannelMonitorEventDropReasonQueueFull          ChannelMonitorEventDropReason = "queue_full"
+	ChannelMonitorEventDropReasonRedisUnavailable   ChannelMonitorEventDropReason = "redis_unavailable"
+	ChannelMonitorEventDropReasonWriterStopped      ChannelMonitorEventDropReason = "writer_stopped"
+	ChannelMonitorEventDropReasonSerializationError ChannelMonitorEventDropReason = "serialization_error"
+)
+
 // ChannelMonitorEventPublishStats exposes the durable publisher health state.
 // RealtimeAvailable becomes false after a Redis publish failure and true after
 // the next successful publish.
 type ChannelMonitorEventPublishStats struct {
-	PublishedEvents   int64 `json:"published_events"`
-	QueuedEvents      int64 `json:"queued_events"`
-	DroppedEvents     int64 `json:"dropped_events"`
-	InvalidEvents     int64 `json:"invalid_events"`
-	FailedEvents      int64 `json:"failed_events"`
-	TimeoutEvents     int64 `json:"timeout_events"`
-	LastPublishedAt   int64 `json:"last_published_at"`
-	LastFailureAt     int64 `json:"last_failure_at"`
-	RealtimeAvailable bool  `json:"realtime_available"`
+	PublishedEvents         int64 `json:"published_events"`
+	QueuedEvents            int64 `json:"queued_events"`
+	DroppedEvents           int64 `json:"dropped_events"`
+	InvalidEvents           int64 `json:"invalid_events"`
+	DroppedQueueFull        int64 `json:"dropped_queue_full"`
+	DroppedRedisUnavailable int64 `json:"dropped_redis_unavailable"`
+	DroppedWriterStopped    int64 `json:"dropped_writer_stopped"`
+	DroppedSerialization    int64 `json:"dropped_serialization"`
+	FailedEvents            int64 `json:"failed_events"`
+	TimeoutEvents           int64 `json:"timeout_events"`
+	LastPublishedAt         int64 `json:"last_published_at"`
+	LastFailureAt           int64 `json:"last_failure_at"`
+	RealtimeAvailable       bool  `json:"realtime_available"`
 }
 
 type channelMonitorRedisStreamAppender interface {
@@ -55,15 +68,19 @@ type channelMonitorRedisStreamAppender interface {
 }
 
 type channelMonitorEventPublisherStats struct {
-	publishedEvents   atomic.Int64
-	queuedEvents      atomic.Int64
-	droppedEvents     atomic.Int64
-	invalidEvents     atomic.Int64
-	failedEvents      atomic.Int64
-	timeoutEvents     atomic.Int64
-	lastPublishedAt   atomic.Int64
-	lastFailureAt     atomic.Int64
-	realtimeAvailable atomic.Bool
+	publishedEvents         atomic.Int64
+	queuedEvents            atomic.Int64
+	droppedEvents           atomic.Int64
+	invalidEvents           atomic.Int64
+	failedEvents            atomic.Int64
+	timeoutEvents           atomic.Int64
+	droppedQueueFull        atomic.Int64
+	droppedRedisUnavailable atomic.Int64
+	droppedWriterStopped    atomic.Int64
+	droppedSerialization    atomic.Int64
+	lastPublishedAt         atomic.Int64
+	lastFailureAt           atomic.Int64
+	realtimeAvailable       atomic.Bool
 }
 
 var channelMonitorEventPublisherStatsState channelMonitorEventPublisherStats
@@ -83,6 +100,34 @@ func recordChannelMonitorEventEnqueueStatus(status ChannelMonitorEventPublishSta
 		ChannelMonitorEventPublishStatusTimeout:
 		channelMonitorEventPublisherStatsState.droppedEvents.Add(1)
 	}
+}
+
+func recordChannelMonitorEventDropReason(reason ChannelMonitorEventDropReason) {
+	switch reason {
+	case ChannelMonitorEventDropReasonQueueFull:
+		channelMonitorEventPublisherStatsState.droppedQueueFull.Add(1)
+	case ChannelMonitorEventDropReasonRedisUnavailable:
+		channelMonitorEventPublisherStatsState.droppedRedisUnavailable.Add(1)
+	case ChannelMonitorEventDropReasonWriterStopped:
+		channelMonitorEventPublisherStatsState.droppedWriterStopped.Add(1)
+	case ChannelMonitorEventDropReasonSerializationError:
+		channelMonitorEventPublisherStatsState.droppedSerialization.Add(1)
+	}
+	reasonCode := string(reason)
+	switch reason {
+	case ChannelMonitorEventDropReasonQueueFull:
+		reasonCode = ChannelMonitorRedisDegradedReasonWriterQueueFull
+	case ChannelMonitorEventDropReasonRedisUnavailable:
+		reasonCode = ChannelMonitorRedisDegradedReasonRedisUnavailable
+	case ChannelMonitorEventDropReasonWriterStopped:
+		reasonCode = ChannelMonitorRedisDegradedReasonWriterStopped
+	case ChannelMonitorEventDropReasonSerializationError:
+		reasonCode = ChannelMonitorRedisDegradedReasonSerializationError
+	}
+	NotifyChannelMonitorHealthFromCurrentConfig(
+		string(ChannelMonitorHealthDegraded), []string{reasonCode},
+		channelMonitorEventPublisherStatsState.droppedEvents.Load()+1,
+	)
 }
 
 // ObserveChannelMonitorEventPublishStatus is used by request handlers that
@@ -113,6 +158,7 @@ func PublishChannelMonitorEvent(ctx context.Context, event model.ChannelMonitorE
 	payload, err := event.Marshal()
 	if err != nil {
 		channelMonitorEventPublisherStatsState.invalidEvents.Add(1)
+		recordChannelMonitorEventDropReason(ChannelMonitorEventDropReasonSerializationError)
 		return ChannelMonitorEventPublishStatusInvalid, err
 	}
 	client := common.RedisMonitorWriteClient()
@@ -165,6 +211,7 @@ func publishChannelMonitorEvent(
 	payload, err := event.Marshal()
 	if err != nil {
 		channelMonitorEventPublisherStatsState.invalidEvents.Add(1)
+		recordChannelMonitorEventDropReason(ChannelMonitorEventDropReasonSerializationError)
 		return ChannelMonitorEventPublishStatusInvalid, err
 	}
 	return publishChannelMonitorEventWithPayload(ctx, client, event, payload)
@@ -218,21 +265,29 @@ func markChannelMonitorEventPublishFailure(
 	}
 	channelMonitorEventPublisherStatsState.lastFailureAt.Store(time.Now().Unix())
 	channelMonitorEventPublisherStatsState.realtimeAvailable.Store(false)
+	NotifyChannelMonitorHealthFromCurrentConfig(
+		string(ChannelMonitorHealthDegraded), []string{ChannelMonitorRedisDegradedReasonRedisUnavailable},
+		channelMonitorEventPublisherStatsState.droppedEvents.Load(),
+	)
 	logger.LogWarn(ctx, fmt.Sprintf("渠道监控事件发布失败（%s）: %v", status, err))
 	return status, err
 }
 
 func GetChannelMonitorEventPublishStats() ChannelMonitorEventPublishStats {
 	return ChannelMonitorEventPublishStats{
-		PublishedEvents:   channelMonitorEventPublisherStatsState.publishedEvents.Load(),
-		QueuedEvents:      channelMonitorEventPublisherStatsState.queuedEvents.Load(),
-		DroppedEvents:     channelMonitorEventPublisherStatsState.droppedEvents.Load(),
-		InvalidEvents:     channelMonitorEventPublisherStatsState.invalidEvents.Load(),
-		FailedEvents:      channelMonitorEventPublisherStatsState.failedEvents.Load(),
-		TimeoutEvents:     channelMonitorEventPublisherStatsState.timeoutEvents.Load(),
-		LastPublishedAt:   channelMonitorEventPublisherStatsState.lastPublishedAt.Load(),
-		LastFailureAt:     channelMonitorEventPublisherStatsState.lastFailureAt.Load(),
-		RealtimeAvailable: channelMonitorEventPublisherStatsState.realtimeAvailable.Load(),
+		PublishedEvents:         channelMonitorEventPublisherStatsState.publishedEvents.Load(),
+		QueuedEvents:            channelMonitorEventPublisherStatsState.queuedEvents.Load(),
+		DroppedEvents:           channelMonitorEventPublisherStatsState.droppedEvents.Load(),
+		InvalidEvents:           channelMonitorEventPublisherStatsState.invalidEvents.Load(),
+		DroppedQueueFull:        channelMonitorEventPublisherStatsState.droppedQueueFull.Load(),
+		DroppedRedisUnavailable: channelMonitorEventPublisherStatsState.droppedRedisUnavailable.Load(),
+		DroppedWriterStopped:    channelMonitorEventPublisherStatsState.droppedWriterStopped.Load(),
+		DroppedSerialization:    channelMonitorEventPublisherStatsState.droppedSerialization.Load(),
+		FailedEvents:            channelMonitorEventPublisherStatsState.failedEvents.Load(),
+		TimeoutEvents:           channelMonitorEventPublisherStatsState.timeoutEvents.Load(),
+		LastPublishedAt:         channelMonitorEventPublisherStatsState.lastPublishedAt.Load(),
+		LastFailureAt:           channelMonitorEventPublisherStatsState.lastFailureAt.Load(),
+		RealtimeAvailable:       channelMonitorEventPublisherStatsState.realtimeAvailable.Load(),
 	}
 }
 
@@ -241,6 +296,10 @@ func resetChannelMonitorEventPublishStatsForTest() {
 	channelMonitorEventPublisherStatsState.queuedEvents.Store(0)
 	channelMonitorEventPublisherStatsState.droppedEvents.Store(0)
 	channelMonitorEventPublisherStatsState.invalidEvents.Store(0)
+	channelMonitorEventPublisherStatsState.droppedQueueFull.Store(0)
+	channelMonitorEventPublisherStatsState.droppedRedisUnavailable.Store(0)
+	channelMonitorEventPublisherStatsState.droppedWriterStopped.Store(0)
+	channelMonitorEventPublisherStatsState.droppedSerialization.Store(0)
 	channelMonitorEventPublisherStatsState.failedEvents.Store(0)
 	channelMonitorEventPublisherStatsState.timeoutEvents.Store(0)
 	channelMonitorEventPublisherStatsState.lastPublishedAt.Store(0)

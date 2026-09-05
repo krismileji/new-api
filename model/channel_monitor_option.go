@@ -129,7 +129,7 @@ func MergeChannelMonitorGroupOptionsIfCurrent(
 			if len(membershipGuards) > 0 || len(statusGuards) > 0 {
 				var channels []Channel
 				if err := lockForUpdate(tx).
-					Select("id", "group", "status").
+					Select("id", commonGroupCol, "status").
 					Order("id ASC").
 					Find(&channels).Error; err != nil {
 					return err

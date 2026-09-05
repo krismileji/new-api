@@ -39,6 +39,7 @@ const (
 	ChannelMonitorRedisProjectionPrefix          = ChannelMonitorRedisKeyPrefix + ":projection:"
 	ChannelMonitorRedisRouteProjectionPrefix     = ChannelMonitorRedisProjectionPrefix + "route:"
 	ChannelMonitorRedisDashboardProjectionPrefix = ChannelMonitorRedisProjectionPrefix + "dashboard:"
+	ChannelMonitorRedisSuccessProjectionPrefix   = ChannelMonitorRedisProjectionPrefix + "success:"
 	ChannelMonitorRedisCostProjectionPrefix      = ChannelMonitorRedisProjectionPrefix + "cost:"
 	ChannelMonitorRedisDedupProjectionPrefix     = ChannelMonitorRedisProjectionPrefix + "dedup:"
 	ChannelMonitorRedisSharedEventPrefix         = ChannelMonitorRedisProjectionPrefix + "shared:event:"
@@ -105,6 +106,12 @@ func ChannelMonitorRedisProjectionKeyForCost(scope string) string {
 // for one UTC minute.
 func ChannelMonitorRedisDashboardMinuteKey(minuteStart int64) string {
 	return ChannelMonitorRedisDashboardProjectionPrefix + "minute:" + strconv.FormatInt(minuteStart, 10)
+}
+
+// ChannelMonitorRedisSuccessDayKey is the dedicated same-day success/cache
+// read model updated by the Stream consumer.
+func ChannelMonitorRedisSuccessDayKey(dayStart int64) string {
+	return ChannelMonitorRedisSuccessProjectionPrefix + "day:" + strconv.FormatInt(dayStart, 10)
 }
 
 // ChannelMonitorRedisCostDayKey returns the compact daily-cost hash for one

@@ -72,6 +72,10 @@ type channelDailyCostOutboxPayload struct {
 	APIKeyName            string `json:"api_key_name"`
 	KeyFingerprint        string `json:"key_fingerprint"`
 	KeyDisplay            string `json:"key_display"`
+	UserId                int    `json:"user_id"`
+	UserAttribution       string `json:"user_attribution"`
+	ModelName             string `json:"model_name"`
+	SourceKind            string `json:"source_kind"`
 }
 
 type ChannelDailyCostOutboxRuntime struct {
@@ -636,7 +640,8 @@ func channelDailyCostOutboxPayloadFromDelta(delta model.ChannelDailyCostDelta) c
 		ProbeCostNanoCNY: delta.ProbeCostNanoCNY, GroupProbeCostNanoCNY: delta.GroupProbeCostNanoCNY,
 		SettledDelta: delta.SettledDelta, UnresolvedDelta: delta.UnresolvedDelta,
 		APIKeyId: delta.APIKeyId, APIKeyName: delta.APIKeyName,
-		KeyFingerprint: delta.KeyFingerprint, KeyDisplay: delta.KeyDisplay,
+		KeyFingerprint: delta.KeyFingerprint, KeyDisplay: delta.KeyDisplay, UserId: delta.UserId,
+		UserAttribution: delta.UserAttribution, ModelName: delta.ModelName, SourceKind: delta.SourceKind,
 	}
 }
 
@@ -646,7 +651,8 @@ func (payload channelDailyCostOutboxPayload) delta(eventID string) model.Channel
 		CostNanoCNY: payload.CostNanoCNY, ProbeCostNanoCNY: payload.ProbeCostNanoCNY,
 		GroupProbeCostNanoCNY: payload.GroupProbeCostNanoCNY, SettledDelta: payload.SettledDelta,
 		UnresolvedDelta: payload.UnresolvedDelta, APIKeyId: payload.APIKeyId, APIKeyName: payload.APIKeyName,
-		KeyFingerprint: payload.KeyFingerprint, KeyDisplay: payload.KeyDisplay,
+		KeyFingerprint: payload.KeyFingerprint, KeyDisplay: payload.KeyDisplay, UserId: payload.UserId,
+		UserAttribution: payload.UserAttribution, ModelName: payload.ModelName, SourceKind: payload.SourceKind,
 	}
 }
 

@@ -27,6 +27,9 @@ type ChannelTaskCostEvent struct {
 	APIKeyName         string `gorm:"size:255;not null;default:''"`
 	KeyFingerprint     string `gorm:"size:64;not null;default:''"`
 	KeyDisplay         string `gorm:"size:64;not null;default:''"`
+	UserId             int    `gorm:"not null;default:0"`
+	UserAttribution    string `gorm:"size:16;not null;default:''"`
+	ModelName          string `gorm:"size:255;not null;default:''"`
 	InitialQuota       int64  `gorm:"not null"`
 	InitialCostNanoCNY int64  `gorm:"not null"`
 	CostNanoCNY        int64  `gorm:"not null"`
@@ -35,15 +38,18 @@ type ChannelTaskCostEvent struct {
 }
 
 type ChannelTaskCostEventInput struct {
-	CostEventId    string
-	ChannelId      int
-	OccurredAt     int64
-	APIKeyId       int
-	APIKeyName     string
-	KeyFingerprint string
-	KeyDisplay     string
-	InitialQuota   int64
-	CostNanoCNY    int64
+	CostEventId     string
+	ChannelId       int
+	OccurredAt      int64
+	APIKeyId        int
+	APIKeyName      string
+	KeyFingerprint  string
+	KeyDisplay      string
+	UserId          int
+	UserAttribution string
+	ModelName       string
+	InitialQuota    int64
+	CostNanoCNY     int64
 }
 
 // RegisterChannelTaskCostEvent atomically creates the task cost state and
@@ -55,6 +61,8 @@ func RegisterChannelTaskCostEvent(ctx context.Context, input ChannelTaskCostEven
 	}
 	input.CostEventId = strings.TrimSpace(input.CostEventId)
 	input.APIKeyName = strings.TrimSpace(input.APIKeyName)
+	input.UserAttribution = strings.TrimSpace(input.UserAttribution)
+	input.ModelName = strings.TrimSpace(input.ModelName)
 	if err := validateChannelTaskCostEventInput(input); err != nil {
 		return 0, err
 	}
@@ -72,6 +80,9 @@ func RegisterChannelTaskCostEvent(ctx context.Context, input ChannelTaskCostEven
 			APIKeyName:         input.APIKeyName,
 			KeyFingerprint:     input.KeyFingerprint,
 			KeyDisplay:         input.KeyDisplay,
+			UserId:             input.UserId,
+			UserAttribution:    input.UserAttribution,
+			ModelName:          input.ModelName,
 			InitialQuota:       input.InitialQuota,
 			InitialCostNanoCNY: input.CostNanoCNY,
 			CostNanoCNY:        input.CostNanoCNY,
@@ -93,6 +104,16 @@ func RegisterChannelTaskCostEvent(ctx context.Context, input ChannelTaskCostEven
 			}
 			if input.KeyFingerprint != "" {
 				if err := addChannelDailyAPIKeyCost(tx, input.ChannelId, input.OccurredAt, input.CostNanoCNY, 1, 0, input.APIKeyId, input.APIKeyName, input.KeyFingerprint, input.KeyDisplay); err != nil {
+					return err
+				}
+			}
+			if tx.Migrator().HasTable(&ChannelMonitorDailyCostDetail{}) {
+				if err := addChannelMonitorDailyCostDetail(tx, ChannelDailyCostDelta{
+					ChannelId: input.ChannelId, OccurredAt: input.OccurredAt, CostNanoCNY: input.CostNanoCNY,
+					SettledDelta: 1, APIKeyId: input.APIKeyId, APIKeyName: input.APIKeyName,
+					KeyFingerprint: input.KeyFingerprint, KeyDisplay: input.KeyDisplay, UserId: input.UserId,
+					UserAttribution: input.UserAttribution, ModelName: input.ModelName, SourceKind: "business",
+				}); err != nil {
 					return err
 				}
 			}
@@ -237,27 +258,42 @@ func replaceChannelDailyCostValue(tx *gorm.DB, event ChannelTaskCostEvent, targe
 		return errors.New("channel daily cost changed concurrently")
 	}
 
-	if event.KeyFingerprint == "" {
+	if event.KeyFingerprint != "" {
+		var keyCost ChannelDailyAPIKeyCost
+		if err := lockForUpdate(tx).
+			Where("channel_id = ? AND day_start = ? AND key_fingerprint = ?", event.ChannelId, event.DayStart, event.KeyFingerprint).
+			First(&keyCost).Error; err != nil {
+			return err
+		}
+		newKeyCost, err := replaceCostComponent(keyCost.CostNanoCNY, event.CostNanoCNY, targetCost)
+		if err != nil {
+			return err
+		}
+		result = tx.Model(&ChannelDailyAPIKeyCost{}).
+			Where("id = ? AND cost_nano_cny = ?", keyCost.Id, keyCost.CostNanoCNY).
+			Updates(map[string]any{"cost_nano_cny": newKeyCost, "updated_at": updatedAt})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return errors.New("channel daily API key cost changed concurrently")
+		}
+	}
+	if !tx.Migrator().HasTable(&ChannelMonitorDailyCostDetail{}) {
 		return nil
 	}
-	var keyCost ChannelDailyAPIKeyCost
-	if err := lockForUpdate(tx).
-		Where("channel_id = ? AND day_start = ? AND key_fingerprint = ?", event.ChannelId, event.DayStart, event.KeyFingerprint).
-		First(&keyCost).Error; err != nil {
+	var detail ChannelMonitorDailyCostDetail
+	if err := lockForUpdate(tx).Where("day_start = ? AND channel_id = ? AND user_id = ? AND api_key_id = ? AND api_key_key = ? AND model_key = ? AND source_kind = ?",
+		event.DayStart, event.ChannelId, event.UserId, event.APIKeyId, event.KeyFingerprint, ChannelMonitorDailyCostModelKey(event.ModelName), "business").First(&detail).Error; err == nil {
+		newDetailCost, detailErr := replaceCostComponent(detail.CostNanoCNY, event.CostNanoCNY, targetCost)
+		if detailErr != nil {
+			return detailErr
+		}
+		if err := tx.Model(&ChannelMonitorDailyCostDetail{}).Where("id = ? AND cost_nano_cny = ?", detail.Id, detail.CostNanoCNY).Updates(map[string]any{"cost_nano_cny": newDetailCost, "updated_at": updatedAt}).Error; err != nil {
+			return err
+		}
+	} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return err
-	}
-	newKeyCost, err := replaceCostComponent(keyCost.CostNanoCNY, event.CostNanoCNY, targetCost)
-	if err != nil {
-		return err
-	}
-	result = tx.Model(&ChannelDailyAPIKeyCost{}).
-		Where("id = ? AND cost_nano_cny = ?", keyCost.Id, keyCost.CostNanoCNY).
-		Updates(map[string]any{"cost_nano_cny": newKeyCost, "updated_at": updatedAt})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected != 1 {
-		return errors.New("channel daily API key cost changed concurrently")
 	}
 	return nil
 }
@@ -286,6 +322,9 @@ func validateChannelTaskCostEventInput(input ChannelTaskCostEventInput) error {
 	if input.APIKeyId < 0 || len(input.APIKeyName) > ChannelMonitorEventMaxNameLength {
 		return errors.New("task cost API key metadata is invalid")
 	}
+	if input.UserId < 0 || (input.UserAttribution != "" && input.UserAttribution != string(ChannelMonitorEventUserAttributionRequest) && input.UserAttribution != string(ChannelMonitorEventUserAttributionUnknown)) || len(input.ModelName) > ChannelMonitorEventMaxNameLength {
+		return errors.New("task cost attribution metadata is invalid")
+	}
 	if input.CostNanoCNY < 0 || input.InitialQuota < 0 {
 		return errors.New("task cost and quota must not be negative")
 	}
@@ -309,5 +348,6 @@ func channelTaskCostEventMatchesInput(event ChannelTaskCostEvent, input ChannelT
 		event.KeyFingerprint == input.KeyFingerprint &&
 		event.KeyDisplay == input.KeyDisplay &&
 		event.InitialQuota == input.InitialQuota &&
-		event.InitialCostNanoCNY == input.CostNanoCNY
+		event.InitialCostNanoCNY == input.CostNanoCNY &&
+		event.UserId == input.UserId && event.UserAttribution == input.UserAttribution && event.ModelName == input.ModelName
 }

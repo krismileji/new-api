@@ -100,6 +100,11 @@ func (runtime *ChannelMonitorRedisRuntime) run(ctx context.Context) {
 		if runtime.reportFailure != nil {
 			runtime.reportFailure(err)
 		}
+		NotifyChannelMonitorHealthFromCurrentConfig(
+			string(ChannelMonitorHealthDegraded),
+			[]string{ChannelMonitorRedisDegradedReasonConsumerStopped},
+			0,
+		)
 		incrementChannelMonitorRedisObservation(
 			common.RedisMonitorConsumerClient(),
 			ChannelMonitorRedisObservabilityFieldRetryCount,

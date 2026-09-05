@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -45,6 +46,37 @@ func TestChannelMonitorEventRoundTripPreservesExplicitZeroMeasurements(t *testin
 	assert.Zero(t, *decoded.FirstTokenMs)
 	require.NotNil(t, decoded.CacheReadTokens)
 	assert.Zero(t, *decoded.CacheReadTokens)
+}
+
+func TestChannelMonitorEventV1PayloadRemainsConsumableWithUnknownUserAttribution(t *testing.T) {
+	legacy := map[string]any{
+		"event_id":       "legacy-event",
+		"schema_version": ChannelMonitorEventLegacySchemaVersion,
+		"occurred_at":    int64(1_700_000_000),
+		"created_at":     int64(1_700_000_001),
+		"channel_id":     7,
+		"source":         ChannelMonitorEventSourceBusiness,
+		"outcome":        ChannelMonitorEventOutcomeSuccess,
+		"cost_status":    ChannelMonitorEventCostNone,
+	}
+	payload, err := common.Marshal(legacy)
+	require.NoError(t, err)
+
+	event, err := UnmarshalChannelMonitorEvent(payload)
+	require.NoError(t, err)
+	assert.Equal(t, ChannelMonitorEventLegacySchemaVersion, event.SchemaVersion)
+	assert.Equal(t, 0, event.UserId)
+	assert.Equal(t, ChannelMonitorEventUserAttributionUnknown, event.UserAttribution)
+}
+
+func TestChannelMonitorEventRejectsUnsupportedSchemaAndUserAttribution(t *testing.T) {
+	event := NewChannelMonitorEvent(1, ChannelMonitorEventSourceBusiness, ChannelMonitorEventOutcomeSuccess, 1_700_000_000)
+	event.SchemaVersion = ChannelMonitorEventLegacySchemaVersion + 2
+	assert.Error(t, event.Validate())
+
+	event.SchemaVersion = ChannelMonitorEventSchemaVersion
+	event.UserAttribution = "token_lookup"
+	assert.Error(t, event.Validate())
 }
 
 func TestChannelMonitorEventTPSMeasurement(t *testing.T) {

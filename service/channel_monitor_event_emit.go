@@ -57,6 +57,10 @@ func EmitChannelMonitorSuccessEvent(
 	event.ModelName = strings.TrimSpace(relayInfo.OriginModelName)
 	event.RequestId = channelMonitorRequestId(ctx, relayInfo.RequestId)
 	event.APIKeyId = relayInfo.TokenId
+	event.UserId = relayInfo.UserId
+	if event.UserId > 0 {
+		event.UserAttribution = model.ChannelMonitorEventUserAttributionRequest
+	}
 	if ctx != nil {
 		event.APIKeyName = channelMonitorBoundedString(
 			strings.TrimSpace(ctx.GetString("token_name")),
@@ -133,6 +137,10 @@ func EmitChannelMonitorFailureEvent(
 	event.RequestId = channelMonitorRequestId(ctx, "")
 	if ctx != nil {
 		event.APIKeyId = ctx.GetInt("token_id")
+		event.UserId = common.GetContextKeyInt(ctx, constant.ContextKeyUserId)
+		if event.UserId > 0 {
+			event.UserAttribution = model.ChannelMonitorEventUserAttributionRequest
+		}
 		event.APIKeyName = channelMonitorBoundedString(
 			strings.TrimSpace(ctx.GetString("token_name")),
 			model.ChannelMonitorEventMaxNameLength,

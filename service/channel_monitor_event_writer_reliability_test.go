@@ -43,7 +43,7 @@ func setupChannelMonitorEventWriterReliabilityDB(t *testing.T) *gorm.DB {
 	return db
 }
 
-func TestChannelMonitorEventWriterPersistsQueueOverflow(t *testing.T) {
+func TestChannelMonitorEventWriterDropsQueueOverflowWithoutPersistence(t *testing.T) {
 	db := setupChannelMonitorEventWriterReliabilityDB(t)
 	writer := newChannelMonitorEventWriter(nil, channelMonitorEventWriterConfig{
 		QueueCapacity:       1,
@@ -59,13 +59,12 @@ func TestChannelMonitorEventWriterPersistsQueueOverflow(t *testing.T) {
 	secondPayload, err := second.Marshal()
 	require.NoError(t, err)
 	status, enqueueErr := writer.enqueue(channelMonitorEventWriterItem{event: second, payload: secondPayload})
-	require.NoError(t, enqueueErr)
-	assert.Equal(t, ChannelMonitorEventPublishStatusPersisted, status)
-	assert.Zero(t, writer.droppedEvents.Load())
+	require.ErrorIs(t, enqueueErr, ErrChannelMonitorEventWriterQueueFull)
+	assert.Equal(t, ChannelMonitorEventPublishStatusDropped, status)
+	assert.Equal(t, int64(1), writer.droppedEvents.Load())
 
 	var row model.ChannelMonitorEventOutbox
-	require.NoError(t, db.Where("event_id = ?", second.EventId).First(&row).Error)
-	assert.Equal(t, string(secondPayload), row.Payload)
+	assert.ErrorIs(t, db.Where("event_id = ?", second.EventId).First(&row).Error, gorm.ErrRecordNotFound)
 }
 
 func TestChannelMonitorEventWriterStartOutboxSkipsStoppedWriter(t *testing.T) {
@@ -125,52 +124,15 @@ func TestPublishChannelMonitorEventPersistsWhenRedisUnavailable(t *testing.T) {
 	assert.NotEmpty(t, row.Payload)
 }
 
-func TestEnqueueChannelMonitorEventWithoutWriterBoundsOutboxFallback(t *testing.T) {
-	db := setupChannelMonitorEventWriterReliabilityDB(t)
-	require.NoError(t, db.Exec("PRAGMA busy_timeout = 5000").Error)
-	lockTx := db.Begin()
-	require.NoError(t, lockTx.Error)
-	lockEvent := newChannelMonitorPublisherTestEvent("writer-nil-outbox-lock")
-	lockPayload, err := lockEvent.Marshal()
-	require.NoError(t, err)
-	require.NoError(t, lockTx.Create(&model.ChannelMonitorEventOutbox{
-		EventId: lockEvent.EventId, Payload: string(lockPayload), NextAttemptAt: time.Now().Unix(),
-		CreatedAt: time.Now().Unix(), UpdatedAt: time.Now().Unix(),
-	}).Error)
-	t.Cleanup(func() { _ = lockTx.Rollback().Error })
-
+func TestEnqueueChannelMonitorEventWithoutWriterDropsImmediately(t *testing.T) {
+	setupChannelMonitorEventWriterReliabilityDB(t)
 	setChannelMonitorEventWriterForTest(t, nil)
 	event := newChannelMonitorPublisherTestEvent("writer-nil-outbox-timeout")
-	result := make(chan struct {
-		status ChannelMonitorEventPublishStatus
-		err    error
-	}, 1)
 	startedAt := time.Now()
-	go func() {
-		status, enqueueErr := EnqueueChannelMonitorEvent(event)
-		result <- struct {
-			status ChannelMonitorEventPublishStatus
-			err    error
-		}{status: status, err: enqueueErr}
-	}()
-	completed := false
-	select {
-	case outcome := <-result:
-		completed = true
-		assert.Less(t, time.Since(startedAt), 2*time.Second)
-		assert.Equal(t, ChannelMonitorEventPublishStatusDropped, outcome.status)
-		assert.Error(t, outcome.err)
-	case <-time.After(2 * time.Second):
-		t.Fatal("writer=nil outbox fallback blocked past its timeout")
-	}
-	require.NoError(t, lockTx.Rollback().Error)
-	if !completed {
-		select {
-		case <-result:
-		case <-time.After(2 * time.Second):
-			t.Fatal("writer=nil outbox fallback worker did not exit after database lock release")
-		}
-	}
+	status, enqueueErr := EnqueueChannelMonitorEvent(event)
+	assert.Less(t, time.Since(startedAt), 100*time.Millisecond)
+	assert.Equal(t, ChannelMonitorEventPublishStatusDropped, status)
+	assert.ErrorIs(t, enqueueErr, ErrChannelMonitorEventRedisUnavailable)
 }
 
 func TestEnqueueChannelMonitorEventWithoutOutboxTableFailsBoundedly(t *testing.T) {
@@ -195,20 +157,8 @@ func TestEnqueueChannelMonitorEventWithoutOutboxTableFailsBoundedly(t *testing.T
 	assert.Error(t, enqueueErr)
 }
 
-func TestChannelMonitorEventWriterQueueOverflowOutboxFallbackIsBounded(t *testing.T) {
+func TestChannelMonitorEventWriterQueueOverflowDoesNotTouchDatabase(t *testing.T) {
 	db := setupChannelMonitorEventWriterReliabilityDB(t)
-	require.NoError(t, db.Exec("PRAGMA busy_timeout = 5000").Error)
-	lockTx := db.Begin()
-	require.NoError(t, lockTx.Error)
-	lockEvent := newChannelMonitorPublisherTestEvent("writer-overflow-outbox-lock")
-	lockPayload, err := lockEvent.Marshal()
-	require.NoError(t, err)
-	now := time.Now().Unix()
-	require.NoError(t, lockTx.Create(&model.ChannelMonitorEventOutbox{
-		EventId: lockEvent.EventId, Payload: string(lockPayload), NextAttemptAt: now,
-		CreatedAt: now, UpdatedAt: now,
-	}).Error)
-
 	writer := newChannelMonitorEventWriter(nil, channelMonitorEventWriterConfig{
 		QueueCapacity:       1,
 		DirectPublishOnFull: false,
@@ -220,67 +170,25 @@ func TestChannelMonitorEventWriterQueueOverflowOutboxFallbackIsBounded(t *testin
 	setChannelMonitorEventWriterForTest(t, writer)
 
 	event := newChannelMonitorPublisherTestEvent("writer-overflow-outbox-timeout")
-	startedAt := time.Now()
 	status, enqueueErr := EnqueueChannelMonitorEvent(event)
-	assert.Less(t, time.Since(startedAt), 2*time.Second)
 	assert.Equal(t, ChannelMonitorEventPublishStatusDropped, status)
 	assert.ErrorIs(t, enqueueErr, ErrChannelMonitorEventWriterQueueFull)
-
-	require.NoError(t, lockTx.Rollback().Error)
+	assert.Equal(t, int64(1), writer.droppedEvents.Load())
+	var row model.ChannelMonitorEventOutbox
+	assert.ErrorIs(t, db.Where("event_id = ?", event.EventId).First(&row).Error, gorm.ErrRecordNotFound)
 }
 
-func TestChannelMonitorEventOutboxFallbackCapsBlockedWriters(t *testing.T) {
+func TestChannelMonitorEventOutboxIsNotTouchedByRequestEnqueue(t *testing.T) {
 	db := setupChannelMonitorEventWriterReliabilityDB(t)
-	require.NoError(t, db.Exec("PRAGMA busy_timeout = 5000").Error)
-	lockTx := db.Begin()
-	require.NoError(t, lockTx.Error)
-	lockEvent := newChannelMonitorPublisherTestEvent("writer-outbox-concurrency-lock")
-	lockPayload, err := lockEvent.Marshal()
-	require.NoError(t, err)
-	now := time.Now().Unix()
-	require.NoError(t, lockTx.Create(&model.ChannelMonitorEventOutbox{
-		EventId: lockEvent.EventId, Payload: string(lockPayload), NextAttemptAt: now,
-		CreatedAt: now, UpdatedAt: now,
-	}).Error)
-	t.Cleanup(func() { _ = lockTx.Rollback().Error })
 	setChannelMonitorEventWriterForTest(t, nil)
-
-	type enqueueResult struct {
-		status ChannelMonitorEventPublishStatus
-		err    error
+	for index := 0; index < 32; index++ {
+		status, enqueueErr := EnqueueChannelMonitorEvent(newChannelMonitorPublisherTestEvent(fmt.Sprintf("writer-outbox-request-%d", index)))
+		assert.Equal(t, ChannelMonitorEventPublishStatusDropped, status)
+		assert.ErrorIs(t, enqueueErr, ErrChannelMonitorEventRedisUnavailable)
 	}
-	requestCount := channelMonitorEventOutboxStoreConcurrency * 2
-	startGate := make(chan struct{})
-	results := make(chan enqueueResult, requestCount)
-	startedAt := time.Now()
-	for index := 0; index < requestCount; index++ {
-		go func(index int) {
-			<-startGate
-			status, enqueueErr := EnqueueChannelMonitorEvent(
-				newChannelMonitorPublisherTestEvent(fmt.Sprintf("writer-outbox-concurrency-%d", index)),
-			)
-			results <- enqueueResult{status: status, err: enqueueErr}
-		}(index)
-	}
-	close(startGate)
-	busyCount := 0
-	for index := 0; index < requestCount; index++ {
-		select {
-		case outcome := <-results:
-			assert.Equal(t, ChannelMonitorEventPublishStatusDropped, outcome.status)
-			if errors.Is(outcome.err, ErrChannelMonitorEventOutboxStoreBusy) {
-				busyCount++
-			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("concurrent outbox fallback calls exceeded their bound")
-		}
-	}
-	assert.Less(t, time.Since(startedAt), 2*time.Second)
-	assert.Greater(t, busyCount, 0)
-	require.NoError(t, lockTx.Rollback().Error)
-	require.Eventually(t, func() bool {
-		return len(channelMonitorEventOutboxStoreSlots) == 0
-	}, 2*time.Second, 10*time.Millisecond)
+	var count int64
+	require.NoError(t, db.Model(&model.ChannelMonitorEventOutbox{}).Count(&count).Error)
+	assert.Zero(t, count)
 }
 
 func TestChannelMonitorEventWriterReplaysOutboxOnceByEventID(t *testing.T) {

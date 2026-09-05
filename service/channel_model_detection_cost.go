@@ -601,10 +601,10 @@ func settleChannelModelDetectionCostEvent(ctx context.Context, tx *gorm.DB, inpu
 		return model.ChannelModelDetectionCostEvent{}, ErrChannelModelDetectionCostConflict
 	}
 	if previousSettlementStatus == model.ChannelModelDetectionSettlementUnresolved {
-		if err := model.SettleUnresolvedChannelDailyModelDetectionCost(ctx, useDB, settled.ChannelId, settled.CreatedAt, costNanoCNY); err != nil {
+		if err := model.SettleUnresolvedChannelDailyModelDetectionCostWithModel(ctx, useDB, settled.ChannelId, settled.CreatedAt, costNanoCNY, settled.RequestModel); err != nil {
 			return model.ChannelModelDetectionCostEvent{}, err
 		}
-	} else if err := model.AddChannelDailyCostWithModelDetection(ctx, useDB, settled.ChannelId, settled.CreatedAt, costNanoCNY, costNanoCNY, 1, 0); err != nil {
+	} else if err := model.AddChannelDailyCostWithModelDetectionAndModel(ctx, useDB, settled.ChannelId, settled.CreatedAt, costNanoCNY, costNanoCNY, 1, 0, settled.RequestModel); err != nil {
 		return model.ChannelModelDetectionCostEvent{}, err
 	}
 	return settled, nil
@@ -742,7 +742,7 @@ func markChannelModelDetectionCostEventUnresolved(ctx context.Context, tx *gorm.
 		return model.ChannelModelDetectionCostEvent{}, ErrChannelModelDetectionCostConflict
 	}
 	if previousSettlementStatus == model.ChannelModelDetectionSettlementPending {
-		if err := model.AddChannelDailyCostWithModelDetection(ctx, useDB, unresolved.ChannelId, unresolved.CreatedAt, 0, 0, 0, 1); err != nil {
+		if err := model.AddChannelDailyCostWithModelDetectionAndModel(ctx, useDB, unresolved.ChannelId, unresolved.CreatedAt, 0, 0, 0, 1, unresolved.RequestModel); err != nil {
 			return model.ChannelModelDetectionCostEvent{}, err
 		}
 	}

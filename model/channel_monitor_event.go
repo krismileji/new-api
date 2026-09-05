@@ -12,7 +12,8 @@ import (
 )
 
 const (
-	ChannelMonitorEventSchemaVersion           = 1
+	ChannelMonitorEventSchemaVersion           = 2
+	ChannelMonitorEventLegacySchemaVersion     = 1
 	ChannelMonitorEventMaxIdentityLength       = 128
 	ChannelMonitorEventMaxNameLength           = 255
 	ChannelMonitorEventMaxOtherJsonBytes       = 64 * 1024
@@ -47,6 +48,14 @@ const (
 	ChannelMonitorEventCostUnresolved ChannelMonitorEventCostStatus = "unresolved"
 )
 
+type ChannelMonitorEventUserAttribution string
+
+const (
+	ChannelMonitorEventUserAttributionRequest  ChannelMonitorEventUserAttribution = "request"
+	ChannelMonitorEventUserAttributionInferred ChannelMonitorEventUserAttribution = "inferred"
+	ChannelMonitorEventUserAttributionUnknown  ChannelMonitorEventUserAttribution = "unknown"
+)
+
 // ChannelMonitorEvent is the shared request-level input for channel monitor
 // projections. Optional scalar measurements use pointers so an explicit zero
 // remains distinguishable from an absent measurement.
@@ -58,13 +67,15 @@ type ChannelMonitorEvent struct {
 	CreatedAt     int64  `json:"created_at"`
 	ProcessedAt   int64  `json:"processed_at,omitempty"`
 
-	ChannelId  int    `json:"channel_id"`
-	GroupName  string `json:"group,omitempty"`
-	ModelName  string `json:"model,omitempty"`
-	RequestId  string `json:"request_id,omitempty"`
-	NodeId     string `json:"node_id,omitempty"`
-	APIKeyId   int    `json:"api_key_id,omitempty"`
-	APIKeyName string `json:"api_key_name,omitempty"`
+	ChannelId       int                                `json:"channel_id"`
+	UserId          int                                `json:"user_id,omitempty"`
+	UserAttribution ChannelMonitorEventUserAttribution `json:"user_attribution,omitempty"`
+	GroupName       string                             `json:"group,omitempty"`
+	ModelName       string                             `json:"model,omitempty"`
+	RequestId       string                             `json:"request_id,omitempty"`
+	NodeId          string                             `json:"node_id,omitempty"`
+	APIKeyId        int                                `json:"api_key_id,omitempty"`
+	APIKeyName      string                             `json:"api_key_name,omitempty"`
 
 	Source     ChannelMonitorEventSource     `json:"source"`
 	Outcome    ChannelMonitorEventOutcome    `json:"outcome"`
@@ -118,15 +129,16 @@ func (event ChannelMonitorEvent) TPSMeasurement() (int64, int64, bool) {
 func NewChannelMonitorEvent(channelId int, source ChannelMonitorEventSource, outcome ChannelMonitorEventOutcome, occurredAt int64) ChannelMonitorEvent {
 	now := time.Now().Unix()
 	return ChannelMonitorEvent{
-		EventId:       uuid.NewString(),
-		SchemaVersion: ChannelMonitorEventSchemaVersion,
-		OccurredAt:    occurredAt,
-		CreatedAt:     now,
-		ChannelId:     channelId,
-		NodeId:        common.GetNodeIdentity().Name,
-		Source:        source,
-		Outcome:       outcome,
-		CostStatus:    ChannelMonitorEventCostNone,
+		EventId:         uuid.NewString(),
+		SchemaVersion:   ChannelMonitorEventSchemaVersion,
+		OccurredAt:      occurredAt,
+		CreatedAt:       now,
+		ChannelId:       channelId,
+		UserAttribution: ChannelMonitorEventUserAttributionUnknown,
+		NodeId:          common.GetNodeIdentity().Name,
+		Source:          source,
+		Outcome:         outcome,
+		CostStatus:      ChannelMonitorEventCostNone,
 		SchedulingEligible: source == ChannelMonitorEventSourceBusiness ||
 			source == ChannelMonitorEventSourceSmartProbe,
 	}
@@ -137,7 +149,7 @@ func (event ChannelMonitorEvent) Validate() error {
 	if eventId == "" || len(eventId) > ChannelMonitorEventMaxIdentityLength {
 		return errors.New("渠道监控事件 ID 不能为空且长度不能超过 128")
 	}
-	if event.SchemaVersion != ChannelMonitorEventSchemaVersion {
+	if event.SchemaVersion != ChannelMonitorEventSchemaVersion && event.SchemaVersion != ChannelMonitorEventLegacySchemaVersion {
 		return fmt.Errorf("不支持的渠道监控事件版本: %d", event.SchemaVersion)
 	}
 	if event.OccurredAt <= 0 || event.CreatedAt <= 0 {
@@ -145,6 +157,15 @@ func (event ChannelMonitorEvent) Validate() error {
 	}
 	if event.ChannelId <= 0 {
 		return errors.New("渠道监控事件渠道 ID 无效")
+	}
+	if event.UserId < 0 {
+		return errors.New("渠道监控事件用户 ID 无效")
+	}
+	if event.UserAttribution != "" &&
+		event.UserAttribution != ChannelMonitorEventUserAttributionRequest &&
+		event.UserAttribution != ChannelMonitorEventUserAttributionInferred &&
+		event.UserAttribution != ChannelMonitorEventUserAttributionUnknown {
+		return fmt.Errorf("渠道监控事件用户归属来源无效: %s", event.UserAttribution)
 	}
 	if len(event.GroupName) > ChannelMonitorEventMaxNameLength || len(event.ModelName) > ChannelMonitorEventMaxNameLength {
 		return errors.New("渠道监控事件模型或分组名称过长")
@@ -276,6 +297,9 @@ func UnmarshalChannelMonitorEvent(data []byte) (ChannelMonitorEvent, error) {
 	var event ChannelMonitorEvent
 	if err := common.Unmarshal(data, &event); err != nil {
 		return ChannelMonitorEvent{}, err
+	}
+	if event.SchemaVersion == ChannelMonitorEventLegacySchemaVersion && event.UserAttribution == "" {
+		event.UserAttribution = ChannelMonitorEventUserAttributionUnknown
 	}
 	if err := event.Validate(); err != nil {
 		return ChannelMonitorEvent{}, err

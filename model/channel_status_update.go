@@ -71,7 +71,7 @@ func updateChannelStatusAtomically(channelId int, usingKey string, status int, r
 		}
 		if statusChanged {
 			var abilities []Ability
-			if err := tx.Select("group", "model").
+			if err := tx.Select(commonGroupCol, "model").
 				Where("channel_id = ?", channel.Id).
 				Find(&abilities).Error; err != nil {
 				return err

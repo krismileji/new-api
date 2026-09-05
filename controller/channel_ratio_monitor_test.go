@@ -678,6 +678,10 @@ func TestChannelMonitorEmailNotificationTypesDistinguishesMissingFromExplicitEmp
 		channelMonitorEmailNotificationTypesOption: "[]",
 	})
 	assert.Empty(t, getChannelMonitorSettings().EmailNotificationTypes)
+
+	notificationTypes, err := normalizeChannelMonitorEmailNotificationTypes([]string{channelMonitorEmailTypeMonitoringHealth})
+	require.NoError(t, err)
+	assert.Equal(t, []string{channelMonitorEmailTypeMonitoringHealth}, notificationTypes)
 }
 
 func TestChannelSmartScheduleHandlerIsEventDriven(t *testing.T) {

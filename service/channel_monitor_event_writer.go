@@ -98,10 +98,9 @@ func StartChannelMonitorEventWriter() (*channelMonitorEventWriter, error) {
 			),
 			MaxAttempts: channelMonitorEventWriterMaxAttempts,
 			RetryDelay:  channelMonitorEventWriterRetryDelay,
-			DirectPublishOnFull: common.GetEnvOrDefaultBool(
-				"CHANNEL_MONITOR_EVENT_WRITER_DIRECT_OVERFLOW",
-				true,
-			),
+			// Queue overflow is an allowed loss for monitoring samples. The
+			// request path must never publish directly or write an outbox row.
+			DirectPublishOnFull: false,
 			PersistOverflow: common.GetEnvOrDefaultBool(
 				"CHANNEL_MONITOR_EVENT_WRITER_PERSIST_OVERFLOW",
 				true,
@@ -243,6 +242,7 @@ func EnqueueChannelMonitorEvent(event model.ChannelMonitorEvent) (ChannelMonitor
 	payload, err := event.Marshal()
 	if err != nil {
 		channelMonitorEventPublisherStatsState.invalidEvents.Add(1)
+		recordChannelMonitorEventDropReason(ChannelMonitorEventDropReasonSerializationError)
 		return ChannelMonitorEventPublishStatusInvalid, err
 	}
 	// Keep the registry read lock through the non-blocking send. Stop takes the
@@ -260,21 +260,9 @@ func EnqueueChannelMonitorEvent(event model.ChannelMonitorEvent) (ChannelMonitor
 	}
 	channelMonitorEventWriterState.RUnlock()
 
-	// A disabled/stopped writer must not turn an accepted event into a silent
-	// loss. The same idempotent DB outbox used by overflow/retry handling is
-	// safe to call directly and allows Redis to be brought back independently.
-	stored, storeErr := storeChannelMonitorEventOutboxBounded(
-		event,
-		payload,
-		channelMonitorEventWriterOverflowTimeout,
-	)
-	if stored {
-		recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusPersisted, nil)
-		return ChannelMonitorEventPublishStatusPersisted, nil
-	} else if storeErr != nil {
-		recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusDropped, storeErr)
-		return ChannelMonitorEventPublishStatusDropped, storeErr
-	}
+	// A missing writer is a monitoring outage. Do not synchronously probe Redis
+	// or write the database from the request goroutine.
+	recordChannelMonitorEventDropReason(ChannelMonitorEventDropReasonWriterStopped)
 	recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusDropped, ErrChannelMonitorEventRedisUnavailable)
 	return ChannelMonitorEventPublishStatusDropped, ErrChannelMonitorEventRedisUnavailable
 }
@@ -283,15 +271,7 @@ func (writer *channelMonitorEventWriter) enqueue(
 	item channelMonitorEventWriterItem,
 ) (ChannelMonitorEventPublishStatus, error) {
 	if writer == nil || writer.stopping.Load() {
-		if writer != nil && writer.persistOverflowEnabled() {
-			if stored, err := writer.persistOutbox(item); stored {
-				recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusPersisted, nil)
-				return ChannelMonitorEventPublishStatusPersisted, nil
-			} else if err != nil {
-				recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusDropped, err)
-				return ChannelMonitorEventPublishStatusDropped, err
-			}
-		}
+		recordChannelMonitorEventDropReason(ChannelMonitorEventDropReasonWriterStopped)
 		recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusDropped, ErrChannelMonitorEventRedisUnavailable)
 		return ChannelMonitorEventPublishStatusDropped, ErrChannelMonitorEventRedisUnavailable
 	}
@@ -302,37 +282,8 @@ func (writer *channelMonitorEventWriter) enqueue(
 		recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusQueued, nil)
 		return ChannelMonitorEventPublishStatusQueued, nil
 	default:
-		if writer.config.DirectPublishOnFull {
-			publishCtx, cancel := context.WithTimeout(context.Background(), writer.config.OverflowPublishTimeout)
-			status, err := publishChannelMonitorEventWithPayload(publishCtx, writer.client, item.event, item.payload)
-			cancel()
-			if status == ChannelMonitorEventPublishStatusPublished && err == nil {
-				recordChannelMonitorEventEnqueueStatus(status, nil)
-				return status, nil
-			}
-			if err == nil {
-				err = ErrChannelMonitorEventRedisUnavailable
-			}
-			err = fmt.Errorf("%w: %w", ErrChannelMonitorEventWriterQueueFull, err)
-			if writer.persistOverflowEnabled() {
-				stored, _ := writer.persistOutbox(item)
-				if stored {
-					recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusPersisted, nil)
-					return ChannelMonitorEventPublishStatusPersisted, nil
-				}
-			}
-			writer.droppedEvents.Add(1)
-			recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusDropped, err)
-			return ChannelMonitorEventPublishStatusDropped, err
-		}
-		if writer.persistOverflowEnabled() {
-			stored, _ := writer.persistOutbox(item)
-			if stored {
-				recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusPersisted, nil)
-				return ChannelMonitorEventPublishStatusPersisted, nil
-			}
-		}
 		writer.droppedEvents.Add(1)
+		recordChannelMonitorEventDropReason(ChannelMonitorEventDropReasonQueueFull)
 		recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusDropped, ErrChannelMonitorEventWriterQueueFull)
 		return ChannelMonitorEventPublishStatusDropped, ErrChannelMonitorEventWriterQueueFull
 	}
@@ -435,7 +386,9 @@ func (writer *channelMonitorEventWriter) persistOrDrop(item channelMonitorEventW
 			return true
 		}
 	}
+	recordChannelMonitorEventDropReason(ChannelMonitorEventDropReasonRedisUnavailable)
 	writer.dropItem()
+	recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusDropped, ErrChannelMonitorEventRedisUnavailable)
 	return false
 }
 
@@ -548,6 +501,8 @@ func (writer *channelMonitorEventWriter) dropQueued() {
 		case item := <-writer.queue:
 			stored, _ := writer.persistOutbox(item)
 			if !writer.persistOverflowEnabled() || !stored {
+				recordChannelMonitorEventDropReason(ChannelMonitorEventDropReasonWriterStopped)
+				recordChannelMonitorEventEnqueueStatus(ChannelMonitorEventPublishStatusDropped, ErrChannelMonitorEventRedisUnavailable)
 				dropped++
 			}
 		default:
@@ -611,6 +566,7 @@ func (writer *channelMonitorEventWriter) Stop(ctx context.Context) error {
 }
 
 func GetChannelMonitorEventWriterStats() ChannelMonitorEventWriterStats {
+	publishStats := GetChannelMonitorEventPublishStats()
 	channelMonitorEventWriterState.RLock()
 	writer := channelMonitorEventWriterState.writer
 	channelMonitorEventWriterState.RUnlock()
@@ -623,28 +579,36 @@ func GetChannelMonitorEventWriterStats() ChannelMonitorEventWriterStats {
 		queueAgeSeconds = max(0, time.Now().Unix()-oldestQueuedAt)
 	}
 	return ChannelMonitorEventWriterStats{
-		QueueDepth:         len(writer.queue),
-		QueueCapacity:      cap(writer.queue),
-		QueuedEvents:       writer.queuedEvents.Load(),
-		DroppedEvents:      writer.droppedEvents.Load(),
-		RetryEvents:        writer.retryEvents.Load(),
-		OldestQueuedAt:     oldestQueuedAt,
-		QueueAgeSeconds:    queueAgeSeconds,
-		WorkerCount:        writer.config.WorkerCount,
-		OutboxStoredEvents: writer.outboxStoredEvents.Load(),
-		OutboxFailedEvents: writer.outboxFailedEvents.Load(),
+		QueueDepth:              len(writer.queue),
+		QueueCapacity:           cap(writer.queue),
+		QueuedEvents:            writer.queuedEvents.Load(),
+		DroppedEvents:           publishStats.DroppedEvents,
+		DroppedQueueFull:        publishStats.DroppedQueueFull,
+		DroppedRedisUnavailable: publishStats.DroppedRedisUnavailable,
+		DroppedWriterStopped:    publishStats.DroppedWriterStopped,
+		DroppedSerialization:    publishStats.DroppedSerialization,
+		RetryEvents:             writer.retryEvents.Load(),
+		OldestQueuedAt:          oldestQueuedAt,
+		QueueAgeSeconds:         queueAgeSeconds,
+		WorkerCount:             writer.config.WorkerCount,
+		OutboxStoredEvents:      writer.outboxStoredEvents.Load(),
+		OutboxFailedEvents:      writer.outboxFailedEvents.Load(),
 	}
 }
 
 type ChannelMonitorEventWriterStats struct {
-	QueueDepth         int   `json:"queue_depth"`
-	QueueCapacity      int   `json:"queue_capacity"`
-	QueuedEvents       int64 `json:"queued_events"`
-	DroppedEvents      int64 `json:"dropped_events"`
-	RetryEvents        int64 `json:"retry_events"`
-	OldestQueuedAt     int64 `json:"oldest_queued_at"`
-	QueueAgeSeconds    int64 `json:"queue_age_seconds"`
-	WorkerCount        int   `json:"worker_count"`
-	OutboxStoredEvents int64 `json:"outbox_stored_events"`
-	OutboxFailedEvents int64 `json:"outbox_failed_events"`
+	QueueDepth              int   `json:"queue_depth"`
+	QueueCapacity           int   `json:"queue_capacity"`
+	QueuedEvents            int64 `json:"queued_events"`
+	DroppedEvents           int64 `json:"dropped_events"`
+	DroppedQueueFull        int64 `json:"dropped_queue_full"`
+	DroppedRedisUnavailable int64 `json:"dropped_redis_unavailable"`
+	DroppedWriterStopped    int64 `json:"dropped_writer_stopped"`
+	DroppedSerialization    int64 `json:"dropped_serialization"`
+	RetryEvents             int64 `json:"retry_events"`
+	OldestQueuedAt          int64 `json:"oldest_queued_at"`
+	QueueAgeSeconds         int64 `json:"queue_age_seconds"`
+	WorkerCount             int   `json:"worker_count"`
+	OutboxStoredEvents      int64 `json:"outbox_stored_events"`
+	OutboxFailedEvents      int64 `json:"outbox_failed_events"`
 }

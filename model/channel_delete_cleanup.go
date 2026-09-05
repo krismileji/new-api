@@ -99,7 +99,7 @@ func deleteChannelRowsWithMonitorDataTx(tx *gorm.DB, channelIds []int) (int64, b
 		end := min(start+channelDeleteBatchSize, len(existingChannelIds))
 		existingIds := existingChannelIds[start:end]
 		var abilities []Ability
-		if err := tx.Select("channel_id", "group", "model").
+		if err := tx.Select("channel_id", commonGroupCol, "model").
 			Where("channel_id IN ?", existingIds).
 			Order("channel_id ASC").
 			Find(&abilities).Error; err != nil {

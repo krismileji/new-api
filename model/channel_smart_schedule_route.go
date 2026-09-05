@@ -773,7 +773,7 @@ func SaveChannelSmartScheduleChannelConfig(channelId int, excluded bool) (result
 		}
 
 		var configuredAbilities []Ability
-		if err := tx.Select("group", "model").
+		if err := tx.Select(commonGroupCol, "model").
 			Where("channel_id = ?", channelId).
 			Find(&configuredAbilities).Error; err != nil {
 			return err

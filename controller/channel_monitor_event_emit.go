@@ -78,6 +78,10 @@ func emitChannelTestMonitorEvent(
 	event.ModelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
 	event.GroupName = common.GetContextKeyString(ctx, constant.ContextKeyUsingGroup)
 	event.RequestId = strings.TrimSpace(ctx.GetString(common.RequestIdKey))
+	event.UserId = common.GetContextKeyInt(ctx, constant.ContextKeyUserId)
+	if event.UserId > 0 {
+		event.UserAttribution = model.ChannelMonitorEventUserAttributionRequest
+	}
 	event.IsFinalAttempt = true
 	event.RequestDispatched = true
 	event.SchedulingEligible = ctx.GetBool(model.ChannelMonitorSchedulingEligibleContextKey)

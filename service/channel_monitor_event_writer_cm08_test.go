@@ -95,7 +95,7 @@ func (appender *cm08FailingXAddAppender) callCount() int {
 	return appender.calls
 }
 
-func TestCM08ChannelMonitorEventWriterDirectlyPublishesOnQueueOverflowWhenEnabled(t *testing.T) {
+func TestCM08ChannelMonitorEventWriterDropsOnQueueOverflowEvenWhenLegacyDirectFlagEnabled(t *testing.T) {
 	useChannelMonitorEventPublishStatsIsolation(t)
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
@@ -122,12 +122,11 @@ func TestCM08ChannelMonitorEventWriterDirectlyPublishesOnQueueOverflowWhenEnable
 	require.NoError(t, err)
 	require.Equal(t, ChannelMonitorEventPublishStatusQueued, status)
 	status, err = EnqueueChannelMonitorEvent(second)
-	require.NoError(t, err)
-	assert.Equal(t, ChannelMonitorEventPublishStatusPublished, status)
+	require.ErrorIs(t, err, ErrChannelMonitorEventWriterQueueFull)
+	assert.Equal(t, ChannelMonitorEventPublishStatusDropped, status)
 	messages, err := client.XRange(context.Background(), ChannelMonitorRedisEventStream, "-", "+").Result()
 	require.NoError(t, err)
-	require.Len(t, messages, 1)
-	assert.Equal(t, "cm08-overflow-second", fmt.Sprint(messages[0].Values[ChannelMonitorRedisEventFieldEventID]))
+	assert.Empty(t, messages)
 }
 
 func TestCM08ChannelMonitorEventWriterStopDrainsAcceptedEvents(t *testing.T) {

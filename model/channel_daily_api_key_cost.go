@@ -56,6 +56,10 @@ type ChannelDailyCostDelta struct {
 	APIKeyName            string
 	KeyFingerprint        string
 	KeyDisplay            string
+	UserId                int
+	UserAttribution       string
+	ModelName             string
+	SourceKind            string
 }
 
 // ValidateChannelDailyCostDelta checks the ledger invariants without mutating
@@ -234,6 +238,13 @@ func addChannelDailyCostBatch(tx *gorm.DB, deltas []ChannelDailyCostDelta) error
 			return err
 		}
 	}
+	if tx.Migrator().HasTable(&ChannelMonitorDailyCostDetail{}) {
+		for _, delta := range normalized {
+			if err := addChannelMonitorDailyCostDetail(tx, delta); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -265,9 +276,24 @@ func normalizeChannelDailyCostDelta(delta *ChannelDailyCostDelta) error {
 	if delta.APIKeyId < 0 {
 		return errors.New("API key id must not be negative")
 	}
+	if delta.UserId < 0 {
+		return errors.New("user id must not be negative")
+	}
+	delta.UserAttribution = strings.TrimSpace(delta.UserAttribution)
+	if delta.UserAttribution != "" && delta.UserAttribution != string(ChannelMonitorEventUserAttributionRequest) && delta.UserAttribution != string(ChannelMonitorEventUserAttributionInferred) && delta.UserAttribution != string(ChannelMonitorEventUserAttributionUnknown) {
+		return errors.New("user attribution is invalid")
+	}
 	delta.APIKeyName = strings.TrimSpace(delta.APIKeyName)
 	if len(delta.APIKeyName) > 255 {
 		return errors.New("API key name must contain at most 255 bytes")
+	}
+	delta.ModelName = strings.TrimSpace(delta.ModelName)
+	if len(delta.ModelName) > ChannelMonitorEventMaxNameLength {
+		return errors.New("model name must contain at most 255 bytes")
+	}
+	delta.SourceKind = strings.TrimSpace(delta.SourceKind)
+	if len(delta.SourceKind) > 32 {
+		return errors.New("cost source kind must contain at most 32 bytes")
 	}
 	if delta.KeyFingerprint == "" {
 		return nil

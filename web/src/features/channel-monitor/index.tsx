@@ -95,6 +95,7 @@ import {
   updateMonitoredChannelStatus,
 } from './api'
 import { ChannelGroupMonitorSettingsSheet } from './components/channel-group-monitor-settings-sheet'
+import { ChannelMonitorAnalyticsDialog } from './components/channel-monitor-analytics-dialog'
 import { ChannelMonitorChannelView } from './components/channel-monitor-channel-view'
 import { ChannelMonitorGroupView } from './components/channel-monitor-group-view'
 import { ChannelMonitorModelPerformanceView } from './components/channel-monitor-model-performance-view'
@@ -202,18 +203,6 @@ import type {
   GroupMonitorItem,
 } from './types'
 
-const LazyChannelMonitorCostHistoryDialog = lazy(() =>
-  import('./components/channel-monitor-cost-history-dialog').then((module) => ({
-    default: module.ChannelMonitorCostHistoryDialog,
-  }))
-)
-const LazyChannelMonitorTodaySuccessDialog = lazy(() =>
-  import('./components/channel-monitor-today-success-dialog').then(
-    (module) => ({
-      default: module.ChannelMonitorTodaySuccessDialog,
-    })
-  )
-)
 const LazyChannelBatchTestDialog = lazy(() =>
   import('@/features/channels/components/dialogs/channel-batch-test-dialog').then(
     (module) => ({ default: module.ChannelBatchTestDialog })
@@ -417,12 +406,10 @@ export function ChannelMonitor() {
   const [taskHistoryOpen, setTaskHistoryOpen] = useState(false)
   const [smartScheduleHistoryOpen, setSmartScheduleHistoryOpen] =
     useState(false)
-  const [costHistoryOpen, setCostHistoryOpen] = useState(false)
-  const [costHistoryChannel, setCostHistoryChannel] = useState<{
-    id: number
-    name: string
-  } | null>(null)
-  const [todaySuccessOpen, setTodaySuccessOpen] = useState(false)
+  const [analyticsOpen, setAnalyticsOpen] = useState(false)
+  const [analyticsMetric, setAnalyticsMetric] =
+    useState<'cost' | 'success'>('cost')
+  const [analyticsChannelId, setAnalyticsChannelId] = useState<number>()
   const [smartScheduleDisplaySelection, setSmartScheduleDisplaySelection] =
     useState<SmartScheduleDisplaySelection>(() => {
       try {
@@ -1057,10 +1044,15 @@ export function ChannelMonitor() {
   ).length
 
   const openCostHistory = (channel?: ChannelMonitorItem) => {
-    setCostHistoryChannel(
-      channel ? { id: channel.id, name: channel.name } : null
-    )
-    setCostHistoryOpen(true)
+    setAnalyticsMetric('cost')
+    setAnalyticsChannelId(channel?.id)
+    setAnalyticsOpen(true)
+  }
+
+  const openSuccessAnalytics = () => {
+    setAnalyticsMetric('success')
+    setAnalyticsChannelId(undefined)
+    setAnalyticsOpen(true)
   }
 
   const openSmartScheduleSettings = () => {
@@ -1110,7 +1102,7 @@ export function ChannelMonitor() {
             result={todaySuccessQuery.data?.data}
             isLoading={todaySuccessQuery.isLoading}
             isError={todaySuccessQuery.isError}
-            onOpen={() => setTodaySuccessOpen(true)}
+            onOpen={openSuccessAnalytics}
           />
         </div>
         <Tabs
@@ -1835,29 +1827,17 @@ export function ChannelMonitor() {
           />
         </Suspense>
       )}
-      {costHistoryOpen && (
-        <Suspense fallback={null}>
-          <LazyChannelMonitorCostHistoryDialog
-            open
-            channelId={costHistoryChannel?.id}
-            channelName={costHistoryChannel?.name}
-            onOpenChange={(open) => {
-              setCostHistoryOpen(open)
-              if (!open) {
-                setCostHistoryChannel(null)
-              }
-            }}
-          />
-        </Suspense>
-      )}
-      {todaySuccessOpen && (
-        <Suspense fallback={null}>
-          <LazyChannelMonitorTodaySuccessDialog
-            channels={channels}
-            open
-            onOpenChange={setTodaySuccessOpen}
-          />
-        </Suspense>
+      {analyticsOpen && (
+        <ChannelMonitorAnalyticsDialog
+          open
+          metric={analyticsMetric}
+          channels={channels}
+          initialChannelId={analyticsChannelId}
+          onOpenChange={(open) => {
+            setAnalyticsOpen(open)
+            if (!open) setAnalyticsChannelId(undefined)
+          }}
+        />
       )}
       {batchTestOpen && (
         <Suspense fallback={null}>

@@ -253,7 +253,7 @@ const notificationTypeFields = [
 const notificationTypeCheckboxes = notificationTypeFields.map((field) =>
   field.querySelector<HTMLButtonElement>('[role="checkbox"]')
 )
-assert.equal(notificationTypeCheckboxes.length, 6)
+assert.equal(notificationTypeCheckboxes.length, 7)
 assert.ok(notificationTypeCheckboxes.every(Boolean))
 const allNotificationTypesSelected = notificationTypeCheckboxes.every(
   (checkbox) => checkbox?.getAttribute('aria-checked') === 'true'

@@ -81,7 +81,7 @@ func updateAbilityStatusWithPrimaries(channelId int, enabled bool) error {
 			return err
 		}
 		var abilities []Ability
-		if err := tx.Select("group", "model").
+		if err := tx.Select(commonGroupCol, "model").
 			Where("channel_id = ?", channelId).
 			Order("channel_id ASC").
 			Find(&abilities).Error; err != nil {
@@ -120,7 +120,7 @@ func updateAbilitiesByTagWithPrimaries(tag string, enabled bool) error {
 			channelIds[index] = channels[index].Id
 		}
 		var abilities []Ability
-		if err := tx.Select("group", "model").
+		if err := tx.Select(commonGroupCol, "model").
 			Where("channel_id IN ?", channelIds).
 			Order("channel_id ASC").
 			Find(&abilities).Error; err != nil {
@@ -150,7 +150,7 @@ func deleteChannelAbilities(channelId int) error {
 			return err
 		}
 		var abilities []Ability
-		if err := tx.Select("group", "model").
+		if err := tx.Select(commonGroupCol, "model").
 			Where("channel_id = ?", channelId).
 			Order("channel_id ASC").
 			Find(&abilities).Error; err != nil {

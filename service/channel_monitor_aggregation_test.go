@@ -38,6 +38,8 @@ func TestRunChannelMonitorAggregationAggregatesEachNormalMinuteOnceAndRepairsDir
 		&model.Log{},
 		&model.ChannelMonitorMinuteRouteMetric{},
 		&model.ChannelMonitorMinuteAPIKeyMetric{},
+		&model.ChannelMonitorDailySuccessLedger{},
+		&model.ChannelMonitorDailySuccessMinute{},
 		&model.ChannelMonitorAggregationState{},
 		&model.ChannelMonitorDirtyMinute{},
 		&model.ChannelSmartScheduleRouteState{},
@@ -138,6 +140,8 @@ func TestRepairChannelMonitorDirtyMinutesKeepsMarkerAfterFailure(t *testing.T) {
 	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	require.NoError(t, db.AutoMigrate(
 		&model.Log{},
+		&model.ChannelMonitorDailySuccessLedger{},
+		&model.ChannelMonitorDailySuccessMinute{},
 		&model.ChannelMonitorAggregationState{},
 		&model.ChannelMonitorDirtyMinute{},
 	))
@@ -201,6 +205,8 @@ func TestRepairChannelMonitorDirtyMinutesRenewsLeaseDuringSlowRebuild(t *testing
 	require.NoError(t, mainDB.AutoMigrate(
 		&model.ChannelMonitorMinuteRouteMetric{},
 		&model.ChannelMonitorMinuteAPIKeyMetric{},
+		&model.ChannelMonitorDailySuccessLedger{},
+		&model.ChannelMonitorDailySuccessMinute{},
 		&model.ChannelMonitorAggregationState{},
 		&model.ChannelMonitorDirtyMinute{},
 	))
@@ -261,6 +267,8 @@ func TestRunChannelMonitorAggregationUpgradesLegacyCacheUtilizationForCurrentDay
 		&model.Log{},
 		&model.ChannelMonitorMinuteRouteMetric{},
 		&model.ChannelMonitorMinuteAPIKeyMetric{},
+		&model.ChannelMonitorDailySuccessLedger{},
+		&model.ChannelMonitorDailySuccessMinute{},
 		&model.ChannelMonitorAggregationState{},
 		&model.ChannelMonitorDirtyMinute{},
 		&model.ChannelSmartScheduleRouteState{},
@@ -336,6 +344,8 @@ func TestChannelMonitorAggregationBackfillCoversConfiguredScheduleWindow(t *test
 		&model.Log{},
 		&model.ChannelMonitorMinuteRouteMetric{},
 		&model.ChannelMonitorMinuteAPIKeyMetric{},
+		&model.ChannelMonitorDailySuccessLedger{},
+		&model.ChannelMonitorDailySuccessMinute{},
 		&model.ChannelMonitorAggregationState{},
 		&model.ChannelMonitorDirtyMinute{},
 		&model.ChannelSmartScheduleRouteState{},
@@ -522,6 +532,8 @@ func TestChannelMonitorAggregationReadsUpdatedMetricsAfterSharedAdvance(t *testi
 	require.NoError(t, db.AutoMigrate(
 		&model.ChannelMonitorMinuteRouteMetric{},
 		&model.ChannelMonitorMinuteAPIKeyMetric{},
+		&model.ChannelMonitorDailySuccessLedger{},
+		&model.ChannelMonitorDailySuccessMinute{},
 		&model.ChannelMonitorAggregationState{},
 		&model.ChannelSmartScheduleModelSampleState{},
 	))

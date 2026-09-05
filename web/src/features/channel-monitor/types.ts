@@ -738,6 +738,7 @@ export type ChannelMonitorEmailNotificationType =
   | 'group_membership_removed'
   | 'upstream_sync_failed'
   | 'task_failed'
+  | 'monitoring_health'
 
 export type ChannelMonitorEmailPreview = {
   subject: string

@@ -69,10 +69,10 @@ func TestGetChannelMonitorOverviewUsesPersistedTodayCostState(t *testing.T) {
 	for _, channel := range response.Data.Channels {
 		byId[channel.Id] = channel
 	}
-	assert.InDelta(t, 1.25, byId[10].TodayCostCNY, 1e-9)
+	assert.InDelta(t, 9, byId[10].TodayCostCNY, 1e-9)
 	assert.True(t, byId[10].TodayCostConfigured)
-	assert.False(t, byId[10].TodayCostComplete)
-	assert.Equal(t, int64(1), byId[10].TodayCostUnresolvedCount)
+	assert.True(t, byId[10].TodayCostComplete)
+	assert.Zero(t, byId[10].TodayCostUnresolvedCount)
 	assert.False(t, byId[11].TodayCostConfigured)
 	assert.False(t, byId[11].TodayCostComplete)
 	assert.Zero(t, byId[12].TodayCostCNY)

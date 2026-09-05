@@ -165,6 +165,7 @@ const (
 	channelMonitorEmailTypeGroupMembershipRemoved              = "group_membership_removed"
 	channelMonitorEmailTypeUpstreamSyncFailed                  = "upstream_sync_failed"
 	channelMonitorEmailTypeTaskFailed                          = "task_failed"
+	channelMonitorEmailTypeMonitoringHealth                    = "monitoring_health"
 )
 
 var channelMonitorEmailNotificationTypes = []string{
@@ -174,6 +175,18 @@ var channelMonitorEmailNotificationTypes = []string{
 	channelMonitorEmailTypeGroupMembershipRemoved,
 	channelMonitorEmailTypeUpstreamSyncFailed,
 	channelMonitorEmailTypeTaskFailed,
+	channelMonitorEmailTypeMonitoringHealth,
+}
+
+func init() {
+	service.SetChannelMonitorHealthNotificationConfigProvider(func() service.ChannelMonitorHealthNotificationConfig {
+		settings := getChannelMonitorSettings()
+		return service.ChannelMonitorHealthNotificationConfig{
+			Enabled:           settings.EmailNotificationEnabled,
+			Receiver:          settings.NotificationEmail,
+			NotificationTypes: settings.EmailNotificationTypes,
+		}
+	})
 }
 
 type channelMonitorSettings struct {
@@ -381,8 +394,8 @@ func loadChannelMonitorSettings(ctx context.Context) (channelMonitorSettings, er
 	}
 	var storedOptions []model.Option
 	if err := model.DB.WithContext(ctx).
-		Select("key", "value").
-		Where(map[string]any{"key": optionKeys}).
+		Select(model.QuotedMainKeyColumn(), "value").
+		Where(model.QuotedMainKeyColumn()+" IN ?", optionKeys).
 		Find(&storedOptions).Error; err != nil {
 		return channelMonitorSettings{}, fmt.Errorf("读取渠道监控设置失败: %w", err)
 	}

@@ -707,6 +707,10 @@ func publishTaskChannelCostCorrection(task *model.Task, costNanoCNY int64) {
 	event.ModelName = taskModelName(task)
 	event.RequestId = task.TaskID
 	event.APIKeyId = task.PrivateData.TokenId
+	event.UserId = task.UserId
+	if event.UserId > 0 {
+		event.UserAttribution = model.ChannelMonitorEventUserAttributionRequest
+	}
 	event.IsFinalAttempt = true
 	event.RequestDispatched = false
 	event.SchedulingEligible = false

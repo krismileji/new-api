@@ -36,7 +36,7 @@ func getChannelSmartScheduleRuntimeAbilityRoutes(channelId int, modelName string
 	}
 
 	var abilities []Ability
-	if err := DB.Select("group", "model").
+	if err := DB.Select(commonGroupCol, "model").
 		Where("channel_id = ? AND model IN ? AND enabled = ?", channelId, modelNames, true).
 		Find(&abilities).Error; err != nil {
 		return nil, nil, err
