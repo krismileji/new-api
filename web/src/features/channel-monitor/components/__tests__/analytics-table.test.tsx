@@ -61,7 +61,21 @@ test('renders channel model rows with both physical channel and model columns', 
   assert.match(markup, /40\.0%/)
 })
 
-test('renders the user name and ID for channel drill-down rows', () => {
+test('renders an expandable action when a row selection handler is provided', () => {
+  const markup = renderToStaticMarkup(
+    <ChannelMonitorAnalyticsTable
+      metric='success'
+      groupBy='channel'
+      channels={new Map([[7, { name: '渠道 A', remark: '主渠道' }]])}
+      items={[{ ...summary, key: '7', channel_id: 7 }]}
+      onSelect={() => undefined}
+    />
+  )
+
+  assert.match(markup, /查看渠道 A明细/)
+})
+
+test('renders the user name and ID for expanded user rows', () => {
   const markup = renderToStaticMarkup(
     <ChannelMonitorAnalyticsTable
       metric='success'

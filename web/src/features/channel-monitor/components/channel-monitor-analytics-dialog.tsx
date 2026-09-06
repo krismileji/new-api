@@ -4,13 +4,7 @@ import {
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -34,19 +28,18 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
 import { useChannelMonitorAnalytics } from '../hooks/use-channel-monitor-analytics'
-import { shouldHandleChannelMonitorAnalyticsBackspace } from '../lib/analytics-navigation'
+import type { ChannelMonitorAnalyticsExpansionContext } from '../lib/analytics-expansion'
 import { formatChannelMonitorBeijingDate } from '../lib/cost-date'
 import { isChannelMonitorAnalyticsCoverageIncomplete } from '../lib/coverage'
 import { formatChannelMonitorCost } from '../lib/format'
 import type {
   ChannelMonitorAnalyticsChannel,
   ChannelMonitorAnalyticsGroupBy,
-  ChannelMonitorAnalyticsItem,
   ChannelMonitorAnalyticsMetric,
   ChannelMonitorAnalyticsQuery,
   ChannelMonitorAnalyticsSummary,
 } from '../types-analytics'
-import { ChannelMonitorAnalyticsTable } from './channel-monitor-analytics-table'
+import { ChannelMonitorAnalyticsExpandableTable } from './channel-monitor-analytics-table'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 
 type ChannelMonitorAnalyticsDialogProps = {
@@ -64,8 +57,6 @@ type ChannelMonitorAnalyticsDialogProps = {
 
 type AnalyticsTab = 'channels' | 'api_keys'
 type RangeDays = 1 | 7 | 30 | 90
-type AnalyticsSelection = Pick<ChannelMonitorAnalyticsItem, 'key'> &
-  Partial<Omit<ChannelMonitorAnalyticsItem, 'key'>>
 
 const RANGE_OPTIONS: Array<{ value: string; label: string }> = [
   { value: '1', label: '今日' },
@@ -82,21 +73,6 @@ function getDateRange(days: RangeDays) {
   const to = new Date(`${today}T00:00:00+08:00`)
   to.setUTCDate(to.getUTCDate() + 1)
   return { from: fromDate, to: formatChannelMonitorBeijingDate(to), today }
-}
-
-function getGroupBy(
-  tab: AnalyticsTab,
-  channel: AnalyticsSelection | null,
-  user: AnalyticsSelection | null,
-  apiKey: AnalyticsSelection | null
-): ChannelMonitorAnalyticsGroupBy {
-  if (tab === 'api_keys') {
-    return apiKey ? 'api_key_channel_model' : 'api_key'
-  }
-  if (apiKey) return 'api_key_channel_model'
-  if (user) return 'api_key'
-  if (channel) return 'user'
-  return 'channel'
 }
 
 function AnalyticsSummary(props: {
@@ -160,30 +136,6 @@ function formatRate(value: number, denominator: number) {
   return `${(value * 100).toFixed(1)}%`
 }
 
-function selectionLabel(
-  tab: AnalyticsTab,
-  channel: AnalyticsSelection | null,
-  user: AnalyticsSelection | null,
-  apiKey: AnalyticsSelection | null,
-  channels: ReadonlyMap<number, ChannelMonitorAnalyticsChannel>
-) {
-  const labels: string[] = []
-  if (tab === 'channels' && channel) {
-    const channelInfo = channels.get(channel.channel_id ?? 0)
-    labels.push(channelInfo?.name ?? `渠道 #${channel.channel_id}`)
-  }
-  if (user) {
-    const userLabel = user.user_display_name || user.user_name
-    const userID =
-      user.user_id && user.user_id > 0 ? `用户 #${user.user_id}` : ''
-    labels.push(userLabel || userID || '未归属用户')
-  }
-  if (apiKey) {
-    labels.push(apiKey.api_key_name || `API Key #${apiKey.api_key_id ?? 0}`)
-  }
-  return labels.join(' > ')
-}
-
 export function ChannelMonitorAnalyticsDialog(
   props: ChannelMonitorAnalyticsDialogProps
 ) {
@@ -192,20 +144,6 @@ export function ChannelMonitorAnalyticsDialog(
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
-  const [selectedChannel, setSelectedChannel] =
-    useState<AnalyticsSelection | null>(() =>
-      props.initialChannelId
-        ? {
-            key: String(props.initialChannelId),
-            channel_id: props.initialChannelId,
-          }
-        : null
-    )
-  const [selectedUser, setSelectedUser] = useState<AnalyticsSelection | null>(
-    null
-  )
-  const [selectedAPIKey, setSelectedAPIKey] =
-    useState<AnalyticsSelection | null>(null)
   const channels = useMemo(
     () =>
       new Map<number, ChannelMonitorAnalyticsChannel>(
@@ -220,26 +158,29 @@ export function ChannelMonitorAnalyticsDialog(
     [props.channels]
   )
   const dateRange = getDateRange(rangeDays)
-  const groupBy = getGroupBy(tab, selectedChannel, selectedUser, selectedAPIKey)
-  const request: ChannelMonitorAnalyticsQuery = {
+  let rootGroupBy: ChannelMonitorAnalyticsGroupBy = 'channel'
+  if (tab === 'api_keys') {
+    rootGroupBy = 'api_key'
+  } else if (props.initialChannelId != null) {
+    rootGroupBy = 'user'
+  }
+  const rootRequest: ChannelMonitorAnalyticsQuery = {
     metric: props.metric,
-    groupBy,
+    groupBy: rootGroupBy,
     from: dateRange.from,
     to: dateRange.to,
-    channelId: selectedChannel?.channel_id,
-    userId: selectedUser?.user_id,
-    apiKeyId: selectedAPIKey?.api_key_id,
+    channelId: props.initialChannelId,
     search: search || undefined,
     sort: props.metric === 'success' ? 'samples' : undefined,
     direction: 'desc',
     page,
     pageSize: 20,
   }
-  const query = useChannelMonitorAnalytics(request, props.open)
-  const queryResponse = query.data?.data
+  const rootQuery = useChannelMonitorAnalytics(rootRequest, props.open)
+  const rootQueryResponse = rootQuery.data?.data
   const response =
-    !query.isFetching && queryResponse?.group_by === groupBy
-      ? queryResponse
+    !rootQuery.isFetching && rootQueryResponse?.group_by === rootGroupBy
+      ? rootQueryResponse
       : undefined
   const coverage = response?.coverage
   const coverageIncomplete =
@@ -247,13 +188,16 @@ export function ChannelMonitorAnalyticsDialog(
   const pageCount = response
     ? Math.max(1, Math.ceil(response.total / response.page_size))
     : 1
-  const breadcrumb = selectionLabel(
+  const expansionContext: ChannelMonitorAnalyticsExpansionContext = {
     tab,
-    selectedChannel,
-    selectedUser,
-    selectedAPIKey,
-    channels
-  )
+    metric: props.metric,
+    from: dateRange.from,
+    to: dateRange.to,
+    channelId: props.initialChannelId,
+    search: search || undefined,
+    sort: props.metric === 'success' ? 'samples' : undefined,
+    direction: 'desc',
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => setSearch(searchInput.trim()), 300)
@@ -262,19 +206,7 @@ export function ChannelMonitorAnalyticsDialog(
 
   useEffect(() => {
     setPage(1)
-  }, [groupBy, rangeDays, search])
-
-  useEffect(() => {
-    if (props.open && props.initialChannelId) {
-      setSelectedChannel({
-        key: String(props.initialChannelId),
-        channel_id: props.initialChannelId,
-      })
-      setSelectedUser(null)
-      setSelectedAPIKey(null)
-      setPage(1)
-    }
-  }, [props.initialChannelId, props.open])
+  }, [rootGroupBy, rangeDays, search])
 
   useEffect(() => {
     if (!props.open) {
@@ -283,70 +215,20 @@ export function ChannelMonitorAnalyticsDialog(
       setSearchInput('')
       setSearch('')
       setPage(1)
-      setSelectedChannel(null)
-      setSelectedUser(null)
-      setSelectedAPIKey(null)
     }
   }, [props.open])
 
   const handleTabChange = (nextTab: AnalyticsTab) => {
     setTab(nextTab)
     setPage(1)
-    setSelectedChannel(null)
-    setSelectedUser(null)
-    setSelectedAPIKey(null)
     setSearchInput('')
     setSearch('')
   }
 
-  const handleSelect = (item: ChannelMonitorAnalyticsItem) => {
-    if (tab === 'api_keys') {
-      if (!selectedAPIKey) {
-        setSelectedAPIKey(item)
-        setPage(1)
-      }
-      return
-    }
-    if (!selectedChannel) {
-      setSelectedChannel(item)
-    } else if (!selectedUser) {
-      setSelectedUser(item)
-    } else if (!selectedAPIKey) {
-      setSelectedAPIKey(item)
-    }
-    setPage(1)
-  }
-
-  const goBack = useCallback(() => {
-    if (selectedAPIKey) setSelectedAPIKey(null)
-    else if (selectedUser) setSelectedUser(null)
-    else if (selectedChannel) setSelectedChannel(null)
-    setPage(1)
-  }, [selectedAPIKey, selectedChannel, selectedUser])
-
-  useEffect(() => {
-    if (!props.open) return
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const hasSelection =
-        selectedChannel != null ||
-        selectedUser != null ||
-        selectedAPIKey != null
-      if (!shouldHandleChannelMonitorAnalyticsBackspace(event, hasSelection)) {
-        return
-      }
-      event.preventDefault()
-      goBack()
-    }
-
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [goBack, props.open, selectedAPIKey, selectedChannel, selectedUser])
-
   let table: ReactNode
-  if (query.isLoading || (query.isFetching && !response)) {
+  if (rootQuery.isLoading || (rootQuery.isFetching && !response)) {
     table = <Skeleton className='h-72 w-full' />
-  } else if (query.isError) {
+  } else if (rootQuery.isError) {
     table = (
       <Alert variant='destructive'>
         <AlertTitle>统计加载失败</AlertTitle>
@@ -356,7 +238,7 @@ export function ChannelMonitorAnalyticsDialog(
             type='button'
             variant='outline'
             size='sm'
-            onClick={() => void query.refetch()}
+            onClick={() => void rootQuery.refetch()}
           >
             <HugeiconsIcon icon={Refresh01Icon} data-icon='inline-start' />
             重试
@@ -366,20 +248,12 @@ export function ChannelMonitorAnalyticsDialog(
     )
   } else {
     table = (
-      <ChannelMonitorAnalyticsTable
+      <ChannelMonitorAnalyticsExpandableTable
         metric={props.metric}
-        groupBy={groupBy}
+        groupBy={rootGroupBy}
         items={response?.items ?? []}
         channels={channels}
-        onSelect={
-          !selectedAPIKey &&
-          (tab === 'api_keys' ||
-            selectedChannel == null ||
-            selectedUser == null ||
-            groupBy === 'api_key')
-            ? handleSelect
-            : undefined
-        }
+        context={expansionContext}
       />
     )
   }
@@ -392,25 +266,13 @@ export function ChannelMonitorAnalyticsDialog(
         )}
       >
         <DialogHeader className='shrink-0 pr-10'>
-          <div className='flex flex-wrap items-center gap-2'>
-            {selectedChannel || selectedUser || selectedAPIKey ? (
-              <Button
-                type='button'
-                variant='ghost'
-                size='icon-sm'
-                onClick={goBack}
-                aria-label='返回上一级'
-                title='返回上一级'
-              >
-                <HugeiconsIcon icon={ArrowLeft01Icon} />
-              </Button>
-            ) : null}
-            <DialogTitle>
-              {props.metric === 'success' ? '成功率与缓存分析' : '渠道成本分析'}
-            </DialogTitle>
-          </div>
+          <DialogTitle>
+            {props.metric === 'success' ? '成功率与缓存分析' : '渠道成本分析'}
+          </DialogTitle>
           <DialogDescription>
-            {breadcrumb || '按北京时间查看当前范围汇总；明细按当前层分页读取'}
+            {props.initialChannelId != null
+              ? '按北京时间查看当前渠道汇总；点击维度可展开明细'
+              : '按北京时间查看当前范围汇总；点击维度可展开明细'}
           </DialogDescription>
         </DialogHeader>
         <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1'>
@@ -432,7 +294,7 @@ export function ChannelMonitorAnalyticsDialog(
               >
                 API Key 明细
               </Button>
-              {selectedChannel ? (
+              {props.initialChannelId != null ? (
                 <span className='text-muted-foreground text-xs'>
                   当前渠道内
                 </span>
@@ -479,7 +341,7 @@ export function ChannelMonitorAnalyticsDialog(
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
               placeholder={
-                tab === 'channels' && !selectedChannel
+                tab === 'channels' && !props.initialChannelId
                   ? '搜索渠道、用户或 Key'
                   : '搜索名称或 ID'
               }
@@ -509,7 +371,7 @@ export function ChannelMonitorAnalyticsDialog(
           <div
             className={cn(
               'min-h-0',
-              query.isFetching && 'opacity-70 transition-opacity'
+              rootQuery.isFetching && 'opacity-70 transition-opacity'
             )}
           >
             {table}
@@ -523,7 +385,7 @@ export function ChannelMonitorAnalyticsDialog(
                 type='button'
                 variant='outline'
                 size='sm'
-                disabled={page <= 1 || query.isFetching}
+                disabled={page <= 1 || rootQuery.isFetching}
                 onClick={() => setPage((value) => Math.max(1, value - 1))}
                 aria-label='上一页'
                 title='上一页'
@@ -534,7 +396,7 @@ export function ChannelMonitorAnalyticsDialog(
                 type='button'
                 variant='outline'
                 size='sm'
-                disabled={page >= pageCount || query.isFetching}
+                disabled={page >= pageCount || rootQuery.isFetching}
                 onClick={() =>
                   setPage((value) => Math.min(pageCount, value + 1))
                 }
