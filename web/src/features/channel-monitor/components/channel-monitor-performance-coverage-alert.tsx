@@ -48,6 +48,14 @@ export function ChannelMonitorPerformanceCoverageAlert(
     props.coverage.aggregated_through > 0
       ? formatTimestampToDate(props.coverage.aggregated_through)
       : '尚未建立'
+  const requestedFrom =
+    props.coverage.window_start > 0
+      ? formatTimestampToDate(props.coverage.window_start)
+      : '未知'
+  const requestedThrough =
+    props.metadata?.generated_at && props.metadata.generated_at > 0
+      ? formatTimestampToDate(props.metadata.generated_at)
+      : '当前'
   const reasons = props.metadata?.degraded_reasons ?? []
   const issueDescriptions: string[] = []
 
@@ -59,16 +67,20 @@ export function ChannelMonitorPerformanceCoverageAlert(
         )
         break
       case 'consumer_stopped':
-        issueDescriptions.push('事件处理服务已停止，当前没有处理实时事件。')
+        issueDescriptions.push(
+          '负责汇总实时事件的处理服务已停止，新的统计数据暂时不会更新。'
+        )
         break
       case 'consumer_group_missing':
-        issueDescriptions.push('实时事件处理组尚未建立，事件无法进入分钟汇总。')
+        issueDescriptions.push(
+          '实时事件处理组尚未建立，事件还不能进入分钟汇总。'
+        )
         break
       case 'event_backlog': {
         const pendingCount = props.metadata?.pending_count ?? 0
         const oldestPendingAt = props.metadata?.oldest_pending_at ?? 0
         const consumerLagSeconds = props.metadata?.consumer_lag_seconds ?? 0
-        let description = '实时事件队列中还有未处理完成的事件'
+        let description = '实时事件队列中还有事件没有处理完'
         if (pendingCount > 0) {
           description += `，其中 ${pendingCount} 条已交付但尚未确认`
         }
@@ -83,17 +95,23 @@ export function ChannelMonitorPerformanceCoverageAlert(
       }
       case 'publisher_unavailable':
         issueDescriptions.push(
-          '最近一次实时事件发布失败，且之后尚无成功发布记录。'
+          '最近的实时事件没有成功发布，后续统计可能收不到新数据。'
         )
         break
       case 'marker_release_failure':
-        issueDescriptions.push('事件标记清理失败，后续重试可能受到影响。')
+        issueDescriptions.push(
+          '事件处理完成后的清理步骤失败，可能导致重试或统计延迟。'
+        )
         break
       case 'stream_trim_failure':
-        issueDescriptions.push('实时事件队列清理失败，实时统计仍处于异常状态。')
+        issueDescriptions.push(
+          '实时事件队列清理失败，异常事件可能继续占用队列。'
+        )
         break
       default:
-        issueDescriptions.push(`未识别的实时链路降级原因：${reason}。`)
+        issueDescriptions.push(
+          `系统返回了未分类的实时统计异常（${reason}），请查看服务端日志。`
+        )
     }
   }
 
@@ -107,40 +125,58 @@ export function ChannelMonitorPerformanceCoverageAlert(
       )
     }
     if (props.metadata?.redis_consumer_running === false) {
-      issueDescriptions.push('事件处理服务已停止，当前没有处理实时事件。')
+      issueDescriptions.push(
+        '负责汇总实时事件的处理服务已停止，新的统计数据暂时不会更新。'
+      )
     }
     if (
       (props.metadata?.pending_count ?? props.metadata?.queue_depth ?? 0) > 0 ||
       (props.metadata?.oldest_pending_at ?? 0) > 0
     ) {
       issueDescriptions.push(
-        `实时事件队列中还有未处理完成的事件，当前延迟 ${props.metadata?.consumer_lag_seconds ?? 0} 秒。`
+        `实时事件队列中还有事件没有处理完，当前延迟 ${props.metadata?.consumer_lag_seconds ?? 0} 秒。`
       )
     }
     if (props.metadata?.marker_release_failure_active) {
-      issueDescriptions.push('事件标记清理失败，后续重试可能受到影响。')
+      issueDescriptions.push(
+        '事件处理完成后的清理步骤失败，可能导致重试或统计延迟。'
+      )
     }
     if (props.metadata?.stream_trim_failure_active) {
-      issueDescriptions.push('实时事件队列清理失败，实时统计仍处于异常状态。')
+      issueDescriptions.push(
+        '实时事件队列清理失败，异常事件可能继续占用队列。'
+      )
     }
   }
 
   if (issueDescriptions.length === 0) {
     issueDescriptions.push(
-      '实时统计链路已被标记为降级，但接口未返回具体故障原因，请查看服务端日志。'
+      '系统检测到实时统计链路异常，但没有返回更具体的原因。若几分钟后仍未恢复，请查看服务端日志。'
     )
   }
 
   return (
     <Alert>
       <HugeiconsIcon icon={Alert02Icon} aria-hidden='true' />
-      <AlertTitle>{props.rangeLabel}统计窗口数据尚未覆盖完整</AlertTitle>
+      <AlertTitle>{props.rangeLabel}监控数据暂不完整</AlertTitle>
       <AlertDescription className='flex flex-col gap-1.5'>
         <span>
-          当前分钟汇总覆盖从 {coveredFrom} 到 {coveredThrough}
-          ，当前请求数、成功率和性能数据可能偏低。
+          这段时间的监控数据还没有全部写入分钟汇总，因此请求数可能偏低，成功率和性能指标可能暂时不准确。
         </span>
-        <span>具体原因：</span>
+        <div className='rounded-md bg-muted/50 px-3 py-2 text-xs leading-5'>
+          <div>
+            <span className='text-muted-foreground'>查询范围：</span>
+            {requestedFrom} 至 {requestedThrough}
+          </div>
+          <div>
+            <span className='text-muted-foreground'>已汇总范围：</span>
+            {coveredFrom} 至 {coveredThrough}
+          </div>
+        </div>
+        <span>
+          这只影响监控页面的统计展示，不影响实际渠道请求。
+        </span>
+        <span className='font-medium'>可能原因：</span>
         <ul className='list-disc pl-5'>
           {issueDescriptions.map((description) => (
             <li key={description}>{description}</li>

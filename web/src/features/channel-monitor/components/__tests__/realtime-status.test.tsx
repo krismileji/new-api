@@ -78,7 +78,7 @@ describe('channel monitor realtime status', () => {
 
     expect(within(summary).getByText('Redis 故障')).toBeInTheDocument()
     expect(within(summary).getByText('事件处理 已停止')).toBeInTheDocument()
-    expect(within(summary).getByText('实时数据已降级')).toBeInTheDocument()
+    expect(within(summary).getByText('监控数据不完整')).toBeInTheDocument()
     expect(within(summary).getByText('实时事件待处理 6')).toBeInTheDocument()
     expect(
       within(summary).getByText('监控写入队列 2/100（9 秒）')
@@ -198,7 +198,7 @@ describe('channel monitor realtime status', () => {
     expect(within(summary).getByText('Redis 故障')).toBeInTheDocument()
     expect(within(summary).getByText('事件处理 已停止')).toBeInTheDocument()
     expect(
-      within(summary).queryByText('实时数据已降级')
+      within(summary).queryByText('监控数据不完整')
     ).not.toBeInTheDocument()
     expect(
       within(summary).queryByText(/实时事件待处理/)

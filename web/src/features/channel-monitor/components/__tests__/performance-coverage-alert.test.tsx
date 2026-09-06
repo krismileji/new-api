@@ -40,9 +40,12 @@ describe('channel monitor performance coverage alert', () => {
       />
     )
 
-    assert.ok(markup.includes('近60分钟统计窗口数据尚未覆盖完整'))
-    assert.ok(markup.includes('当前请求数、成功率和性能数据可能偏低'))
-    assert.ok(markup.includes('接口未返回具体故障原因'))
+    assert.ok(markup.includes('近60分钟监控数据暂不完整'))
+    assert.ok(markup.includes('请求数可能偏低，成功率和性能指标可能暂时不准确'))
+    assert.ok(markup.includes('查询范围：'))
+    assert.ok(markup.includes('已汇总范围：'))
+    assert.ok(markup.includes('不影响实际渠道请求'))
+    assert.ok(markup.includes('系统检测到实时统计链路异常'))
   })
 
   test('lists every reported degradation reason with backlog details', () => {
@@ -73,8 +76,8 @@ describe('channel monitor performance coverage alert', () => {
 
     assert.ok(markup.includes('其中 3 条已交付但尚未确认'))
     assert.ok(markup.includes('当前延迟 45 秒'))
-    assert.ok(markup.includes('最近一次实时事件发布失败'))
-    assert.ok(markup.includes('事件标记清理失败'))
+    assert.ok(markup.includes('最近的实时事件没有成功发布'))
+    assert.ok(markup.includes('事件处理完成后的清理步骤失败'))
   })
 
   test('stays hidden after the requested window is fully covered', () => {

@@ -154,7 +154,12 @@ function RealtimeAlertBadges(props: {
   return (
     <>
       {props.metadata.realtime_degraded ? (
-        <Badge variant='destructive'>实时数据已降级</Badge>
+        <Badge
+          variant='destructive'
+          title='实时统计尚未处理完全部事件，监控页面上的数据可能暂时不完整'
+        >
+          监控数据不完整
+        </Badge>
       ) : null}
       {pendingCount > 0 ? (
         <Badge variant='warning'>实时事件待处理 {pendingCount}</Badge>
