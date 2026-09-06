@@ -63,9 +63,15 @@ function item(key: string, fields: Partial<ChannelMonitorAnalyticsItem> = {}) {
 
 describe('ChannelMonitorAnalyticsDialog expansion', () => {
   beforeEach(() => {
+    useChannelMonitorAnalyticsMock.mockClear()
     useChannelMonitorAnalyticsMock.mockImplementation(
       (
-        request: { groupBy: ChannelMonitorAnalyticsResponse['group_by'] },
+        request: {
+          groupBy: ChannelMonitorAnalyticsResponse['group_by']
+          channelId?: number
+          apiKeyId?: number
+          model?: string
+        },
         enabled: boolean
       ) => {
         if (!enabled) {
@@ -78,8 +84,26 @@ describe('ChannelMonitorAnalyticsDialog expansion', () => {
           }
         }
         let data: ReturnType<typeof response>
-        if (request.groupBy === 'channel') {
+        if (request.groupBy === 'channel' && request.apiKeyId === 201) {
+          data = response('channel', [
+            item('7:model-a', {
+              api_key_id: 201,
+              channel_id: 7,
+              model_name: 'model-a',
+            }),
+          ])
+        } else if (request.groupBy === 'channel') {
           data = response('channel', [item('7', { channel_id: 7 })])
+        } else if (request.groupBy === 'model') {
+          data = response('model', [
+            item('model-a', {
+              api_key_id: request.apiKeyId,
+              api_key_name: request.apiKeyId ? '生产 Key' : undefined,
+              channel_id: request.channelId,
+              model_key: 'model-a',
+              model_name: 'model-a',
+            }),
+          ])
         } else if (request.groupBy === 'user') {
           data = response('user', [
             item('31', {
@@ -129,25 +153,179 @@ describe('ChannelMonitorAnalyticsDialog expansion', () => {
     fireEvent.click(channelRowButton)
 
     expect(channelRowButton).toHaveAttribute('aria-expanded', 'true')
-    expect(screen.getByText('Alice')).toBeInTheDocument()
+    const modelRowButton = screen.getByRole('button', {
+      name: '查看model-a明细',
+    })
     expect(channelRowButton).toBeInTheDocument()
     expect(screen.getAllByRole('table')).toHaveLength(1)
+    expect(screen.getByRole('table').parentElement?.parentElement).toHaveClass(
+      'shrink-0'
+    )
     expect(useChannelMonitorAnalyticsMock).toHaveBeenCalledWith(
-      expect.objectContaining({ groupBy: 'user', channelId: 7 }),
+      expect.objectContaining({ groupBy: 'model', channelId: 7 }),
       true
     )
 
-    fireEvent.click(screen.getByRole('button', { name: '查看Alice明细' }))
-    expect(
-      screen.getByRole('button', { name: '查看生产 Key明细' })
-    ).toBeInTheDocument()
+    fireEvent.click(modelRowButton)
+    const userRowButton = screen.getByRole('button', { name: '查看alice明细' })
+    expect(useChannelMonitorAnalyticsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupBy: 'user',
+        channelId: 7,
+        model: 'model-a',
+      }),
+      true
+    )
 
-    fireEvent.click(screen.getByRole('button', { name: '查看生产 Key明细' }))
-    expect(screen.getByText(/模型 model-a/)).toBeInTheDocument()
+    fireEvent.click(userRowButton)
+    expect(screen.getByText('生产 Key')).toBeInTheDocument()
+    expect(useChannelMonitorAnalyticsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupBy: 'api_key',
+        channelId: 7,
+        model: 'model-a',
+        userId: 31,
+      }),
+      true
+    )
     expect(screen.getAllByRole('table')).toHaveLength(1)
 
     fireEvent.click(channelRowButton)
     expect(channelRowButton).toHaveAttribute('aria-expanded', 'false')
     expect(screen.queryByText('Alice')).not.toBeInTheDocument()
+  })
+
+  test('expands API keys into models and then channels', () => {
+    render(
+      <ChannelMonitorAnalyticsDialog
+        open
+        metric='success'
+        channels={[{ id: 7, name: '渠道 A' }]}
+        onOpenChange={() => undefined}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'API Key 明细' }))
+
+    const apiKeyRowButton = screen.getByRole('button', {
+      name: '查看生产 Key明细',
+    })
+    fireEvent.click(apiKeyRowButton)
+
+    const modelRowButton = screen.getByRole('button', {
+      name: '查看model-a明细',
+    })
+    expect(modelRowButton).toBeInTheDocument()
+    expect(useChannelMonitorAnalyticsMock).toHaveBeenCalledWith(
+      expect.objectContaining({ groupBy: 'model', apiKeyId: 201 }),
+      true
+    )
+
+    fireEvent.click(modelRowButton)
+
+    expect(screen.getByText('渠道 A')).toBeInTheDocument()
+    expect(useChannelMonitorAnalyticsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupBy: 'channel',
+        apiKeyId: 201,
+        model: 'model-a',
+      }),
+      true
+    )
+  })
+
+  test('sorts success analysis by call count by default and toggles header sorting', () => {
+    render(
+      <ChannelMonitorAnalyticsDialog
+        open
+        metric='success'
+        channels={[{ id: 7, name: '渠道 A' }]}
+        onOpenChange={() => undefined}
+      />
+    )
+
+    expect(useChannelMonitorAnalyticsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupBy: 'channel',
+        sort: 'samples',
+        direction: 'desc',
+      }),
+      true
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '按成功率排序（当前未排序）' })
+    )
+    expect(useChannelMonitorAnalyticsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupBy: 'channel',
+        sort: 'success_rate',
+        direction: 'desc',
+      }),
+      true
+    )
+  })
+
+  test('sorts cost analysis by cost descending by default and toggles direction', () => {
+    render(
+      <ChannelMonitorAnalyticsDialog
+        open
+        metric='cost'
+        channels={[{ id: 7, name: '渠道 A' }]}
+        onOpenChange={() => undefined}
+      />
+    )
+
+    expect(useChannelMonitorAnalyticsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupBy: 'channel',
+        sort: 'cost',
+        direction: 'desc',
+      }),
+      true
+    )
+
+    fireEvent.click(
+      screen.getByRole('button', { name: '按成本排序（当前降序）' })
+    )
+    expect(useChannelMonitorAnalyticsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupBy: 'channel',
+        sort: 'cost',
+        direction: 'asc',
+      }),
+      true
+    )
+  })
+
+  test('defaults to today and accepts a selected date range', () => {
+    render(
+      <ChannelMonitorAnalyticsDialog
+        open
+        metric='cost'
+        channels={[{ id: 7, name: '渠道 A' }]}
+        onOpenChange={() => undefined}
+      />
+    )
+
+    const rangeTrigger = screen.getByRole('button', { name: '统计日期范围' })
+    expect(rangeTrigger).toHaveTextContent('当日')
+    fireEvent.click(rangeTrigger)
+    fireEvent.change(screen.getByLabelText('开始日期'), {
+      target: { value: '2026-09-01' },
+    })
+    fireEvent.change(screen.getByLabelText('结束日期'), {
+      target: { value: '2026-09-03' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: '应用' }))
+
+    expect(useChannelMonitorAnalyticsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        groupBy: 'channel',
+        from: '2026-09-01',
+        to: '2026-09-04',
+      }),
+      true
+    )
   })
 })

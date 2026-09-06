@@ -91,7 +91,8 @@ describe('channel monitor API key cost table', () => {
     assert.ok(markup.includes(`title="${channelName}"`))
     assert.ok(markup.includes(`备注：${channelRemark}`))
     assert.ok(markup.includes(`title="${channelRemark}"`))
-    assert.ok(markup.includes(`title="${maskedKey}"`))
+    assert.equal(markup.includes(`上游 Key ${maskedKey}`), false)
+    assert.equal(markup.includes('ID 7'), false)
     assert.ok(markup.includes(formatChannelMonitorCost(12.3456)))
     assert.ok(markup.includes('2 个渠道'))
     assert.ok(markup.includes('仅未确认渠道'))
@@ -137,7 +138,7 @@ describe('channel monitor API key cost table', () => {
     assert.ok(markup.includes('0 个渠道'))
   })
 
-  test('uses the masked upstream key when historical rows have no stored name', () => {
+  test('uses the masked upstream key as the API key label when historical rows have no stored name', () => {
     const markup = renderToStaticMarkup(
       <ChannelMonitorAPIKeyCostTable
         items={[
@@ -164,7 +165,8 @@ describe('channel monitor API key cost table', () => {
       />
     )
 
-    assert.ok(markup.includes('上游 Key sk-a**********lpha'))
+    assert.ok(markup.includes('sk-a**********lpha'))
+    assert.equal(markup.includes('上游 Key sk-a**********lpha'), false)
     assert.ok(markup.includes('1 个渠道'))
     assert.ok(markup.includes('渠道三'))
   })
@@ -216,11 +218,38 @@ describe('channel monitor API key cost table', () => {
       />
     )
 
-    assert.equal(markup.match(/title="Alice"/g)?.length, 1)
-    assert.equal(markup.match(/title="Bob"/g)?.length, 1)
-    assert.ok(markup.includes('@alice'))
-    assert.ok(markup.includes('@bob'))
+    assert.equal(markup.match(/title="alice"/g)?.length, 1)
+    assert.equal(markup.match(/title="bob"/g)?.length, 1)
+    assert.ok(markup.includes('ID 101 · Alice'))
+    assert.ok(markup.includes('ID 202 · Bob'))
+    assert.equal(markup.includes('@alice'), false)
+    assert.equal(markup.includes('@bob'), false)
     assert.ok(markup.indexOf('Alice 主 Key') < markup.indexOf('Bob Key'))
+  })
+
+  test('shows username and ID when a user has no display name', () => {
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorAPIKeyCostTable
+        items={[
+          {
+            id: 41,
+            api_key_id: 31,
+            api_key_name: '主业务 Key',
+            api_key: '',
+            user_id: 301,
+            username: 'li_ming',
+            user_display_name: '',
+            cost_cny: 1,
+            settled_count: 1,
+            unresolved_count: 0,
+            channels: [],
+          },
+        ]}
+      />
+    )
+
+    assert.ok(markup.includes('li_ming'))
+    assert.ok(markup.includes('ID 301'))
   })
 
   test('exposes sorting controls for API key summary metrics', () => {

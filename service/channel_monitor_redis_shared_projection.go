@@ -259,6 +259,8 @@ const (
 	channelMonitorRedisSharedMetricDataCutoffAt           = "data_cutoff_at"
 	channelMonitorRedisSharedMetricProcessedAt            = "processed_at"
 	channelMonitorRedisSharedMetricEventWatermark         = "event_watermark"
+	channelMonitorRedisSharedMetricDatabaseThrough        = "database_through"
+	channelMonitorRedisSharedMetricDatabaseSnapshotAt     = "database_snapshot_at"
 
 	channelMonitorRedisSharedCostStatus        = "cost_status"
 	channelMonitorRedisSharedCostSettled       = "settled_cost_nano_cny"
@@ -581,6 +583,10 @@ func (projection *ChannelMonitorRedisSharedProjection) WriteChannelMonitorEvents
 			if err := channelMonitorRedisSharedValidateWriteKeys(opCtx, tx, writeHashKeys, markerKeys); err != nil {
 				return err
 			}
+			dailyCostDatabaseSnapshots, dailySuccessDatabaseThrough, err := projection.loadDailyDatabaseMarkers(opCtx, tx, writeHashKeys)
+			if err != nil {
+				return err
+			}
 			seenEventIDs := make(map[string]struct{}, len(events))
 			_, err = tx.TxPipelined(opCtx, func(pipe redis.Pipeliner) error {
 				mutated := false
@@ -602,11 +608,11 @@ func (projection *ChannelMonitorRedisSharedProjection) WriteChannelMonitorEvents
 								costEventIsCurrent = false
 							} else {
 								if exists {
-									projection.appendCostDelta(opCtx, pipe, state, -1, state.Source == string(model.ChannelMonitorEventSourceBusiness))
+									projection.appendCostDelta(opCtx, pipe, state, -1, state.Source == string(model.ChannelMonitorEventSourceBusiness), !dailyCostDatabaseSnapshots[ChannelMonitorRedisCostDayKey(state.DayStart)])
 								}
 								if event.CostStatus != model.ChannelMonitorEventCostNone {
 									current := channelMonitorRedisSharedCostStateFromEvent(costID, event)
-									projection.appendCostDelta(opCtx, pipe, current, 1, event.Source == model.ChannelMonitorEventSourceBusiness)
+									projection.appendCostDelta(opCtx, pipe, current, 1, event.Source == model.ChannelMonitorEventSourceBusiness, !dailyCostDatabaseSnapshots[ChannelMonitorRedisCostDayKey(current.DayStart)])
 									projection.setCostState(opCtx, pipe, costID, current)
 									states[costID] = current
 								} else {
@@ -615,12 +621,16 @@ func (projection *ChannelMonitorRedisSharedProjection) WriteChannelMonitorEvents
 								}
 							}
 						} else if event.CostStatus != model.ChannelMonitorEventCostNone {
-							projection.appendCostDelta(opCtx, pipe, channelMonitorRedisSharedCostStateFromEvent("", event), 1, event.Source == model.ChannelMonitorEventSourceBusiness)
+							current := channelMonitorRedisSharedCostStateFromEvent("", event)
+							projection.appendCostDelta(opCtx, pipe, current, 1, event.Source == model.ChannelMonitorEventSourceBusiness, !dailyCostDatabaseSnapshots[ChannelMonitorRedisCostDayKey(current.DayStart)])
 						}
 					}
 					if event.Source == model.ChannelMonitorEventSourceBusiness && (event.FinalRetrySummary || costEventIsCurrent) {
 						projection.appendDashboardEventDelta(opCtx, pipe, event)
-						projection.appendSuccessDayEventDelta(opCtx, pipe, event)
+						successDayKey := ChannelMonitorRedisSuccessDayKey(model.ChannelDailyCostDayStart(event.OccurredAt))
+						if cutoff := dailySuccessDatabaseThrough[successDayKey]; cutoff == 0 || event.OccurredAt >= cutoff {
+							projection.appendSuccessDayEventDelta(opCtx, pipe, event)
+						}
 					}
 					projection.appendMetadata(opCtx, pipe, event, processedAt)
 					pipe.Set(opCtx, eventKeys[index], "1", channelMonitorRedisSharedEventTTL)
@@ -1269,7 +1279,7 @@ func channelMonitorRedisSharedEventDeltaFromEvent(event model.ChannelMonitorEven
 	return delta, true
 }
 
-func (projection *ChannelMonitorRedisSharedProjection) appendCostDelta(ctx context.Context, pipe redis.Pipeliner, state channelMonitorRedisSharedCostState, sign int64, includeDashboard bool) {
+func (projection *ChannelMonitorRedisSharedProjection) appendCostDelta(ctx context.Context, pipe redis.Pipeliner, state channelMonitorRedisSharedCostState, sign int64, includeDashboard bool, includeDaily bool) {
 	delta := channelMonitorRedisSharedEventDelta{Integers: make(map[string]int64)}
 	if state.Status == model.ChannelMonitorEventCostSettled {
 		delta.Integers[channelMonitorRedisSharedMetricSettledCost] = sign * state.SettledCost
@@ -1290,10 +1300,12 @@ func (projection *ChannelMonitorRedisSharedProjection) appendCostDelta(ctx conte
 	if len(delta.Integers) == 0 {
 		return
 	}
-	dayKey := ChannelMonitorRedisCostDayKey(state.DayStart)
-	for _, scope := range channelMonitorRedisSharedScopes(state.ChannelID, state.Model, state.Group, state.APIKeyID) {
-		projection.appendAggregateDelta(ctx, pipe, dayKey, scope, delta, channelMonitorRedisSharedMinuteTTL)
-		projection.setAPIKeyName(ctx, pipe, dayKey, scope, state.APIKeyID, state.APIKeyName)
+	if includeDaily {
+		dayKey := ChannelMonitorRedisCostDayKey(state.DayStart)
+		for _, scope := range channelMonitorRedisSharedScopes(state.ChannelID, state.Model, state.Group, state.APIKeyID) {
+			projection.appendAggregateDelta(ctx, pipe, dayKey, scope, delta, channelMonitorRedisSharedMinuteTTL)
+			projection.setAPIKeyName(ctx, pipe, dayKey, scope, state.APIKeyID, state.APIKeyName)
+		}
 	}
 	if includeDashboard {
 		minuteKey := ChannelMonitorRedisDashboardMinuteKey(state.MinuteStart)
@@ -1302,6 +1314,47 @@ func (projection *ChannelMonitorRedisSharedProjection) appendCostDelta(ctx conte
 			projection.setAPIKeyName(ctx, pipe, minuteKey, scope, state.APIKeyID, state.APIKeyName)
 		}
 	}
+}
+
+func (projection *ChannelMonitorRedisSharedProjection) loadDailyDatabaseMarkers(
+	ctx context.Context,
+	tx *redis.Tx,
+	writeHashKeys []string,
+) (map[string]bool, map[string]int64, error) {
+	costSnapshots := make(map[string]bool)
+	successThrough := make(map[string]int64)
+	for _, key := range writeHashKeys {
+		var field string
+		switch {
+		case strings.HasPrefix(key, ChannelMonitorRedisCostProjectionPrefix+"day:"):
+			field = channelMonitorRedisSharedScopeMetadata + ":" + channelMonitorRedisSharedMetricDatabaseSnapshotAt
+		case strings.HasPrefix(key, ChannelMonitorRedisSuccessProjectionPrefix+"day:"):
+			field = channelMonitorRedisSharedScopeMetadata + ":" + channelMonitorRedisSharedMetricDatabaseThrough
+		default:
+			continue
+		}
+		values, err := tx.HMGet(ctx, key, field).Result()
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(values) != 1 || values[0] == nil {
+			continue
+		}
+		raw := channelMonitorRedisSharedRedisValueString(values[0])
+		if raw == "" {
+			continue
+		}
+		if field == channelMonitorRedisSharedScopeMetadata+":"+channelMonitorRedisSharedMetricDatabaseSnapshotAt {
+			if parsed, parseErr := strconv.ParseInt(raw, 10, 64); parseErr == nil && parsed > 0 {
+				costSnapshots[key] = true
+			}
+			continue
+		}
+		if parsed, parseErr := strconv.ParseInt(raw, 10, 64); parseErr == nil && parsed > 0 {
+			successThrough[key] = parsed
+		}
+	}
+	return costSnapshots, successThrough, nil
 }
 
 func (projection *ChannelMonitorRedisSharedProjection) setAPIKeyName(ctx context.Context, pipe redis.Pipeliner, key, scope string, apiKeyID int, apiKeyName string) {

@@ -75,6 +75,7 @@ type APIKeyCostItem = ChannelMonitorCostAPIKey & {
 type APIKeyCostUserGroup = {
   user_id: number
   username: string
+  user_display_name: string
   display_name: string
   items: APIKeyCostItem[]
   channel_count: number
@@ -91,13 +92,13 @@ const apiKeyCostItemGridClassName =
 function getAPIKeyName(item: ChannelMonitorCostAPIKey) {
   if (item.api_key_name) return item.api_key_name
   if (item.api_key_id > 0) return `未命名 API Key #${item.api_key_id}`
-  if (item.api_key) return `上游 Key ${item.api_key}`
+  if (item.api_key) return item.api_key
   return '未识别 API Key'
 }
 
 function getUserName(item: ChannelMonitorCostAPIKey) {
-  if (item.user_display_name) return item.user_display_name
   if (item.username) return item.username
+  if (item.user_display_name) return item.user_display_name
   const userId = item.user_id ?? 0
   if (userId > 0) return `用户 #${userId}`
   return '未归属用户'
@@ -240,19 +241,6 @@ function APIKeyCostItemRow(props: { item: APIKeyCostItem }) {
             >
               {item.display_name}
             </span>
-            {item.api_key_id > 0 ? (
-              <span className='text-muted-foreground block truncate text-xs'>
-                ID {item.api_key_id}
-              </span>
-            ) : null}
-            {item.api_key ? (
-              <span
-                className='text-muted-foreground block truncate font-mono text-xs'
-                title={item.api_key}
-              >
-                上游 Key {item.api_key}
-              </span>
-            ) : null}
           </span>
         </span>
         <span
@@ -311,6 +299,7 @@ export function ChannelMonitorAPIKeyCostTable(
       const group = existingGroup ?? {
         user_id: userId,
         username,
+        user_display_name: item.user_display_name ?? '',
         display_name: getUserName(item),
         items: [],
         channel_ids: new Set<number>(),
@@ -337,6 +326,7 @@ export function ChannelMonitorAPIKeyCostTable(
       (group) => ({
         user_id: group.user_id,
         username: group.username,
+        user_display_name: group.user_display_name,
         display_name: group.display_name,
         channel_count: group.channel_ids.size,
         settled_count: group.settled_count,
@@ -472,10 +462,13 @@ export function ChannelMonitorAPIKeyCostTable(
                       >
                         {group.display_name}
                       </span>
-                      {group.username &&
-                      group.username !== group.display_name ? (
+                      {group.user_id > 0 ? (
                         <span className='text-muted-foreground block truncate text-xs'>
-                          @{group.username}
+                          ID {group.user_id}
+                          {group.user_display_name &&
+                          group.user_display_name !== group.display_name
+                            ? ` · ${group.user_display_name}`
+                            : ''}
                         </span>
                       ) : null}
                     </span>

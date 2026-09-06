@@ -40,7 +40,12 @@ import type {
   ChannelMonitorAnalyticsItem,
   ChannelMonitorAnalyticsMetric,
   ChannelMonitorAnalyticsQuery,
+  ChannelMonitorAnalyticsSort,
 } from '../types-analytics'
+import {
+  ChannelMonitorSortableTableHead,
+  type ChannelMonitorSortDirection,
+} from './channel-monitor-sortable-table-head'
 
 type ChannelMonitorAnalyticsTableProps = {
   metric: ChannelMonitorAnalyticsMetric
@@ -69,8 +74,8 @@ function getPrimaryLabel(
   }
   if (groupBy === 'user') {
     return (
-      item.user_display_name ||
       item.user_name ||
+      item.user_display_name ||
       (item.user_id && item.user_id > 0
         ? `用户 #${item.user_id}`
         : '未归属用户')
@@ -100,13 +105,32 @@ function formatDay(timestamp: number) {
   }).format(new Date(timestamp * 1000))
 }
 
-function AnalyticsTableHeader(props: {
+type AnalyticsTableHeaderProps = {
   metric: ChannelMonitorAnalyticsMetric
   groupBy: ChannelMonitorAnalyticsGroupBy
-}) {
+  sort?: ChannelMonitorAnalyticsSort
+  direction?: ChannelMonitorSortDirection
+  onSort?: (sort: ChannelMonitorAnalyticsSort) => void
+}
+
+function AnalyticsTableHeader(props: AnalyticsTableHeaderProps) {
   let primaryLabel = '维度'
   if (props.groupBy === 'channel_model') primaryLabel = '渠道'
   if (props.groupBy === 'api_key_channel_model') primaryLabel = 'API Key'
+  const metricHead = (label: string, sort: ChannelMonitorAnalyticsSort) => {
+    if (!props.onSort) {
+      return <TableHead className='text-right'>{label}</TableHead>
+    }
+    return (
+      <ChannelMonitorSortableTableHead
+        label={label}
+        align='right'
+        className='min-w-24'
+        direction={props.sort === sort ? props.direction : undefined}
+        onSort={() => props.onSort?.(sort)}
+      />
+    )
+  }
   return (
     <TableHeader className='bg-muted/30'>
       <TableRow>
@@ -117,17 +141,17 @@ function AnalyticsTableHeader(props: {
         ) : null}
         {props.metric === 'success' ? (
           <>
-            <TableHead className='text-right'>调用数</TableHead>
-            <TableHead className='text-right'>成功率</TableHead>
-            <TableHead className='text-right'>缓存利用率</TableHead>
-            <TableHead className='text-right'>缓存写入</TableHead>
+            {metricHead('调用数', 'samples')}
+            {metricHead('成功率', 'success_rate')}
+            {metricHead('缓存利用率', 'cache_utilization')}
+            {metricHead('缓存写入', 'cache_write')}
           </>
         ) : (
           <>
-            <TableHead className='text-right'>成本</TableHead>
-            <TableHead className='text-right'>已结算</TableHead>
-            <TableHead className='text-right'>未解析</TableHead>
-            <TableHead className='text-right'>解析率</TableHead>
+            {metricHead('成本', 'cost')}
+            {metricHead('已结算', 'settled')}
+            {metricHead('未解析', 'unresolved')}
+            {metricHead('解析率', 'resolution_rate')}
           </>
         )}
       </TableRow>
@@ -147,6 +171,7 @@ function AnalyticsTableRow(props: {
   const selectable = props.onSelect != null
   const expanded = selectable && props.expandedKey === item.key
   const primaryLabel = getPrimaryLabel(props.groupBy, item, props.channels)
+  const secondaryLabel = getSecondaryLabel(props.groupBy, item, props.channels)
   const action = selectable ? (
     <Button
       type='button'
@@ -174,9 +199,11 @@ function AnalyticsTableRow(props: {
     <TableRow>
       <TableCell className='min-w-48'>
         {action}
-        <span className='text-muted-foreground block truncate pl-6 text-xs'>
-          {getSecondaryLabel(props.groupBy, item, props.channels)}
-        </span>
+        {secondaryLabel ? (
+          <span className='text-muted-foreground block truncate pl-6 text-xs'>
+            {secondaryLabel}
+          </span>
+        ) : null}
       </TableCell>
       {props.groupBy === 'channel_model' ||
       props.groupBy === 'api_key_channel_model' ? (
@@ -263,14 +290,17 @@ function getSecondaryLabel(
       : `${channelLabel} · ${keyLabel}`
   }
   if (groupBy === 'api_key') {
-    return item.api_key_id && item.api_key_id > 0
-      ? `ID ${item.api_key_id}`
-      : 'ID 未知'
+    return ''
   }
   if (groupBy === 'user') {
-    if (!item.user_id || item.user_id <= 0) return '历史归属未知'
+    const labels: string[] = []
+    if (item.user_id && item.user_id > 0) labels.push(`ID ${item.user_id}`)
+    const displayName = item.user_display_name?.trim()
     const username = item.user_name?.trim()
-    return username ? `ID ${item.user_id} · ${username}` : `ID ${item.user_id}`
+    if (displayName && displayName !== username) {
+      labels.push(displayName)
+    }
+    return labels.join(' · ') || '历史归属未知'
   }
   if (groupBy === 'channel' || groupBy === 'channel_model') {
     const channelID = item.channel_id ? `ID ${item.channel_id}` : '渠道未知'
@@ -301,6 +331,11 @@ function queryFromExpansionContext(
     apiKeyId:
       context.apiKeyId ??
       (parentGroupBy === 'api_key' ? item?.api_key_id : undefined),
+    model:
+      context.model ??
+      (parentGroupBy === 'model'
+        ? item?.model_name || item?.model_key
+        : undefined),
     search: context.search,
     sort: context.sort,
     direction: context.direction,
@@ -347,12 +382,18 @@ function AnalyticsExpandableTableRow(props: {
     props.item,
     props.channels
   )
+  const secondaryLabel = getSecondaryLabel(
+    props.groupBy,
+    props.item,
+    props.channels
+  )
   const childContext = childRequest
     ? {
         ...props.context,
         channelId: childRequest.channelId,
         userId: childRequest.userId,
         apiKeyId: childRequest.apiKeyId,
+        model: childRequest.model,
       }
     : null
   let action: ReactNode
@@ -454,9 +495,11 @@ function AnalyticsExpandableTableRow(props: {
           style={{ paddingInlineStart: `${0.5 + props.depth * 1.25}rem` }}
         >
           {action}
-          <span className='text-muted-foreground block truncate pl-6 text-xs'>
-            {getSecondaryLabel(props.groupBy, props.item, props.channels)}
-          </span>
+          {secondaryLabel ? (
+            <span className='text-muted-foreground block truncate pl-6 text-xs'>
+              {secondaryLabel}
+            </span>
+          ) : null}
         </TableCell>
         <AnalyticsTableMetricCells metric={props.metric} item={props.item} />
       </TableRow>
@@ -471,6 +514,7 @@ type ChannelMonitorAnalyticsExpandableTableProps = {
   items: readonly ChannelMonitorAnalyticsItem[]
   channels: ReadonlyMap<number, ChannelMonitorAnalyticsChannel>
   context: ChannelMonitorAnalyticsExpansionContext
+  onSort: (sort: ChannelMonitorAnalyticsSort) => void
 }
 
 export function ChannelMonitorAnalyticsExpandableTable(
@@ -495,9 +539,15 @@ export function ChannelMonitorAnalyticsExpandableTable(
       ? 6
       : 5
   return (
-    <div className='overflow-x-auto rounded-lg border'>
+    <div className='shrink-0 overflow-x-auto rounded-lg border'>
       <Table className='min-w-[42rem]'>
-        <AnalyticsTableHeader metric={props.metric} groupBy={props.groupBy} />
+        <AnalyticsTableHeader
+          metric={props.metric}
+          groupBy={props.groupBy}
+          sort={props.context.sort}
+          direction={props.context.direction}
+          onSort={props.onSort}
+        />
         <TableBody>
           {props.items.map((item) => (
             <AnalyticsExpandableTableRow
@@ -534,7 +584,7 @@ export function ChannelMonitorAnalyticsTable(
     )
   }
   return (
-    <div className='overflow-x-auto rounded-lg border'>
+    <div className='shrink-0 overflow-x-auto rounded-lg border'>
       <Table className='min-w-[42rem]'>
         <AnalyticsTableHeader metric={props.metric} groupBy={props.groupBy} />
         <TableBody>

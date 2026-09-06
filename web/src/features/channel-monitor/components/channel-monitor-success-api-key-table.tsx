@@ -42,6 +42,7 @@ type SuccessAPIKeyItem = ChannelMonitorSuccessAPIKeyMetric & {
 type SuccessAPIKeyUserGroup = {
   user_id: number
   username: string
+  user_display_name: string
   display_name: string
   items: SuccessAPIKeyItem[]
   summary: ChannelMonitorSuccessSummary
@@ -138,8 +139,8 @@ function getAPIKeyName(item: ChannelMonitorSuccessAPIKeyMetric) {
 }
 
 function getUserName(item: ChannelMonitorSuccessAPIKeyMetric) {
-  if (item.user_display_name) return item.user_display_name
   if (item.username) return item.username
+  if (item.user_display_name) return item.user_display_name
   if ((item.user_id ?? 0) > 0) return `用户 #${item.user_id}`
   return '未归属用户'
 }
@@ -246,11 +247,6 @@ function SuccessAPIKeyItemRow(props: { item: SuccessAPIKeyItem }) {
           >
             {item.display_name}
           </span>
-          {item.api_key_id > 0 ? (
-            <span className='text-muted-foreground block truncate text-xs'>
-              ID {item.api_key_id}
-            </span>
-          ) : null}
         </span>
       </span>
       <span className='text-right font-mono text-sm tabular-nums'>
@@ -293,6 +289,7 @@ export function ChannelMonitorSuccessAPIKeyTable(
         group = {
           user_id: userId,
           username: item.username ?? '',
+          user_display_name: item.user_display_name ?? '',
           display_name: getUserName(item),
           items: [],
           summary: emptySummary(),
@@ -400,10 +397,13 @@ export function ChannelMonitorSuccessAPIKeyTable(
                       >
                         {group.display_name}
                       </span>
-                      {group.username &&
-                      group.username !== group.display_name ? (
+                      {group.user_id > 0 ? (
                         <span className='text-muted-foreground block truncate text-xs'>
-                          @{group.username}
+                          ID {group.user_id}
+                          {group.user_display_name &&
+                          group.user_display_name !== group.display_name
+                            ? ` · ${group.user_display_name}`
+                            : ''}
                         </span>
                       ) : null}
                     </span>

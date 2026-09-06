@@ -57,6 +57,9 @@ func QueryChannelMonitorRedisDailyCosts(
 		if len(parts) != 3 {
 			continue
 		}
+		if parts[0] == channelMonitorRedisSharedScopeMetadata {
+			continue
+		}
 		entryKey := parts[0] + "\x00" + parts[1]
 		entry := entries[entryKey]
 		if entry == nil {

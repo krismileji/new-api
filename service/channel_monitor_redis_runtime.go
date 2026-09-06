@@ -37,6 +37,14 @@ func StartChannelMonitorRedisRuntime() (*ChannelMonitorRedisRuntime, error) {
 	if err := InitChannelMonitorRedisStream(context.Background()); err != nil {
 		return nil, err
 	}
+	if common.IsMasterNode {
+		if err := RebuildChannelMonitorRedisDailySuccess(context.Background(), common.GetTimestamp()); err != nil {
+			common.SysError("渠道监控 Redis 当日成功率汇总重建失败: " + err.Error())
+		}
+		if err := RebuildChannelMonitorRedisDailyCosts(context.Background(), common.GetTimestamp()); err != nil {
+			common.SysError("渠道监控 Redis 当日成本汇总重建失败: " + err.Error())
+		}
+	}
 	aggregator, err := NewChannelMonitorRedisLogicalAggregator()
 	if err != nil {
 		return nil, fmt.Errorf("渠道监控 Redis 聚合器初始化失败: %w", err)

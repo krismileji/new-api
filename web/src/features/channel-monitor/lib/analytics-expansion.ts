@@ -1,6 +1,7 @@
 import type {
   ChannelMonitorAnalyticsGroupBy,
   ChannelMonitorAnalyticsMetric,
+  ChannelMonitorAnalyticsSort,
 } from '../types-analytics'
 
 export type ChannelMonitorAnalyticsExpansionTab = 'channels' | 'api_keys'
@@ -13,8 +14,9 @@ export type ChannelMonitorAnalyticsExpansionContext = {
   channelId?: number
   userId?: number
   apiKeyId?: number
+  model?: string
   search?: string
-  sort?: 'samples' | 'success' | 'failure' | 'cache_tokens'
+  sort?: ChannelMonitorAnalyticsSort
   direction?: 'asc' | 'desc'
 }
 
@@ -23,10 +25,12 @@ export function getChannelMonitorAnalyticsChildGroupBy(
   groupBy: ChannelMonitorAnalyticsGroupBy
 ): ChannelMonitorAnalyticsGroupBy | null {
   if (tab === 'api_keys') {
-    return groupBy === 'api_key' ? 'api_key_channel_model' : null
+    if (groupBy === 'api_key') return 'model'
+    if (groupBy === 'model') return 'channel'
+    return null
   }
-  if (groupBy === 'channel' || groupBy === 'channel_model') return 'user'
+  if (groupBy === 'channel') return 'model'
+  if (groupBy === 'model' || groupBy === 'channel_model') return 'user'
   if (groupBy === 'user') return 'api_key'
-  if (groupBy === 'api_key') return 'api_key_channel_model'
   return null
 }

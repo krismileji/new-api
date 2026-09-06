@@ -1,4 +1,16 @@
 export type ChannelMonitorAnalyticsMetric = 'success' | 'cost'
+export type ChannelMonitorAnalyticsSort =
+  | 'samples'
+  | 'success'
+  | 'failure'
+  | 'success_rate'
+  | 'cache_tokens'
+  | 'cache_utilization'
+  | 'cache_write'
+  | 'cost'
+  | 'settled'
+  | 'unresolved'
+  | 'resolution_rate'
 export type ChannelMonitorAnalyticsChannel = {
   name: string
   remark?: string | null
@@ -23,7 +35,7 @@ export type ChannelMonitorAnalyticsQuery = {
   apiKeyId?: number
   model?: string
   search?: string
-  sort?: 'samples' | 'success' | 'failure' | 'cache_tokens'
+  sort?: ChannelMonitorAnalyticsSort
   direction?: 'asc' | 'desc'
   page?: number
   pageSize?: number

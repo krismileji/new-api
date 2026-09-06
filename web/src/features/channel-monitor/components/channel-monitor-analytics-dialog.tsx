@@ -17,13 +17,10 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
@@ -37,6 +34,7 @@ import type {
   ChannelMonitorAnalyticsGroupBy,
   ChannelMonitorAnalyticsMetric,
   ChannelMonitorAnalyticsQuery,
+  ChannelMonitorAnalyticsSort,
   ChannelMonitorAnalyticsSummary,
 } from '../types-analytics'
 import { ChannelMonitorAnalyticsExpandableTable } from './channel-monitor-analytics-table'
@@ -56,23 +54,151 @@ type ChannelMonitorAnalyticsDialogProps = {
 }
 
 type AnalyticsTab = 'channels' | 'api_keys'
-type RangeDays = 1 | 7 | 30 | 90
 
-const RANGE_OPTIONS: Array<{ value: string; label: string }> = [
-  { value: '1', label: '今日' },
-  { value: '7', label: '近 7 天' },
-  { value: '30', label: '近 30 天' },
-  { value: '90', label: '近 90 天' },
-]
+function getDefaultAnalyticsSort(
+  metric: ChannelMonitorAnalyticsMetric
+): ChannelMonitorAnalyticsSort {
+  return metric === 'cost' ? 'cost' : 'samples'
+}
 
-function getDateRange(days: RangeDays) {
+function addBeijingDays(date: string, days: number) {
+  const value = new Date(`${date}T00:00:00+08:00`)
+  value.setUTCDate(value.getUTCDate() + days)
+  return formatChannelMonitorBeijingDate(value)
+}
+
+function getDateRange(from: string, through: string) {
+  return {
+    from,
+    to: addBeijingDays(through, 1),
+    today: formatChannelMonitorBeijingDate(new Date()),
+  }
+}
+
+function getPresetDateRange(days: 1 | 7 | 30 | 90) {
   const today = formatChannelMonitorBeijingDate(new Date())
-  const from = new Date(`${today}T00:00:00+08:00`)
-  from.setUTCDate(from.getUTCDate() - days + 1)
-  const fromDate = formatChannelMonitorBeijingDate(from)
-  const to = new Date(`${today}T00:00:00+08:00`)
-  to.setUTCDate(to.getUTCDate() + 1)
-  return { from: fromDate, to: formatChannelMonitorBeijingDate(to), today }
+  return {
+    from: addBeijingDays(today, -days + 1),
+    through: today,
+  }
+}
+
+function formatDateRangeLabel(from: string, through: string, today: string) {
+  if (from === today && through === today) return '当日'
+  if (from === through) return from
+  return `${from} ~ ${through}`
+}
+
+function ChannelMonitorAnalyticsDateRangeControl(props: {
+  from: string
+  through: string
+  today: string
+  onChange: (range: { from: string; through: string }) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [draftFrom, setDraftFrom] = useState(props.from)
+  const [draftThrough, setDraftThrough] = useState(props.through)
+  const label = formatDateRangeLabel(props.from, props.through, props.today)
+
+  const openDraft = (nextOpen: boolean) => {
+    if (nextOpen) {
+      setDraftFrom(props.from)
+      setDraftThrough(props.through)
+    }
+    setOpen(nextOpen)
+  }
+
+  const applyRange = (range: { from: string; through: string }) => {
+    if (!range.from || !range.through || range.from > range.through) return
+    if (range.through > props.today) return
+    const span =
+      Math.floor(
+        (new Date(`${range.through}T00:00:00+08:00`).getTime() -
+          new Date(`${range.from}T00:00:00+08:00`).getTime()) /
+          86_400_000
+      ) + 1
+    if (span > 90) return
+    props.onChange(range)
+    setOpen(false)
+  }
+
+  return (
+    <Popover open={open} onOpenChange={openDraft}>
+      <PopoverTrigger
+        render={
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            className='w-full justify-start font-normal tabular-nums sm:w-auto'
+            aria-label='统计日期范围'
+          />
+        }
+      >
+        {label}
+      </PopoverTrigger>
+      <PopoverContent
+        align='end'
+        className='w-[min(26rem,calc(100vw-2rem))] p-3'
+      >
+        <div className='flex flex-col gap-3'>
+          <div className='text-muted-foreground text-xs'>
+            选择单日或日期范围（最多 90 天）
+          </div>
+          <div className='grid gap-2 sm:grid-cols-2'>
+            <label className='flex flex-col gap-1 text-xs'>
+              开始日期
+              <Input
+                type='date'
+                value={draftFrom}
+                max={props.today}
+                onChange={(event) => setDraftFrom(event.target.value)}
+              />
+            </label>
+            <label className='flex flex-col gap-1 text-xs'>
+              结束日期
+              <Input
+                type='date'
+                value={draftThrough}
+                max={props.today}
+                onChange={(event) => setDraftThrough(event.target.value)}
+              />
+            </label>
+          </div>
+          <div className='flex flex-wrap gap-1.5'>
+            {[1, 7, 30, 90].map((days) => (
+              <Button
+                key={days}
+                type='button'
+                variant='secondary'
+                size='sm'
+                className='h-7 flex-1 px-2 text-xs'
+                onClick={() => {
+                  const range = getPresetDateRange(days as 1 | 7 | 30 | 90)
+                  setDraftFrom(range.from)
+                  setDraftThrough(range.through)
+                  applyRange(range)
+                }}
+              >
+                {days === 1 ? '当日' : `近 ${days} 天`}
+              </Button>
+            ))}
+          </div>
+          <div className='flex justify-end'>
+            <Button
+              type='button'
+              size='sm'
+              onClick={() =>
+                applyRange({ from: draftFrom, through: draftThrough })
+              }
+            >
+              应用
+            </Button>
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  )
 }
 
 function AnalyticsSummary(props: {
@@ -140,10 +266,16 @@ export function ChannelMonitorAnalyticsDialog(
   props: ChannelMonitorAnalyticsDialogProps
 ) {
   const [tab, setTab] = useState<AnalyticsTab>('channels')
-  const [rangeDays, setRangeDays] = useState<RangeDays>(1)
+  const initialDate = formatChannelMonitorBeijingDate(new Date())
+  const [dateFrom, setDateFrom] = useState(initialDate)
+  const [dateThrough, setDateThrough] = useState(initialDate)
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
+  const [sort, setSort] = useState<ChannelMonitorAnalyticsSort>(() =>
+    getDefaultAnalyticsSort(props.metric)
+  )
+  const [direction, setDirection] = useState<'asc' | 'desc'>('desc')
   const channels = useMemo(
     () =>
       new Map<number, ChannelMonitorAnalyticsChannel>(
@@ -157,12 +289,10 @@ export function ChannelMonitorAnalyticsDialog(
       ),
     [props.channels]
   )
-  const dateRange = getDateRange(rangeDays)
+  const dateRange = getDateRange(dateFrom, dateThrough)
   let rootGroupBy: ChannelMonitorAnalyticsGroupBy = 'channel'
   if (tab === 'api_keys') {
     rootGroupBy = 'api_key'
-  } else if (props.initialChannelId != null) {
-    rootGroupBy = 'user'
   }
   const rootRequest: ChannelMonitorAnalyticsQuery = {
     metric: props.metric,
@@ -171,8 +301,8 @@ export function ChannelMonitorAnalyticsDialog(
     to: dateRange.to,
     channelId: props.initialChannelId,
     search: search || undefined,
-    sort: props.metric === 'success' ? 'samples' : undefined,
-    direction: 'desc',
+    sort,
+    direction,
     page,
     pageSize: 20,
   }
@@ -195,8 +325,8 @@ export function ChannelMonitorAnalyticsDialog(
     to: dateRange.to,
     channelId: props.initialChannelId,
     search: search || undefined,
-    sort: props.metric === 'success' ? 'samples' : undefined,
-    direction: 'desc',
+    sort,
+    direction,
   }
 
   useEffect(() => {
@@ -206,12 +336,22 @@ export function ChannelMonitorAnalyticsDialog(
 
   useEffect(() => {
     setPage(1)
-  }, [rootGroupBy, rangeDays, search])
+  }, [rootGroupBy, dateFrom, dateThrough, search, sort, direction])
+
+  useEffect(() => {
+    setSort(getDefaultAnalyticsSort(props.metric))
+    setDirection('desc')
+    const today = formatChannelMonitorBeijingDate(new Date())
+    setDateFrom(today)
+    setDateThrough(today)
+  }, [props.metric, props.open])
 
   useEffect(() => {
     if (!props.open) {
       setTab('channels')
-      setRangeDays(1)
+      const today = formatChannelMonitorBeijingDate(new Date())
+      setDateFrom(today)
+      setDateThrough(today)
       setSearchInput('')
       setSearch('')
       setPage(1)
@@ -223,6 +363,15 @@ export function ChannelMonitorAnalyticsDialog(
     setPage(1)
     setSearchInput('')
     setSearch('')
+  }
+
+  const handleSort = (nextSort: ChannelMonitorAnalyticsSort) => {
+    if (sort === nextSort) {
+      setDirection((value) => (value === 'desc' ? 'asc' : 'desc'))
+      return
+    }
+    setSort(nextSort)
+    setDirection('desc')
   }
 
   let table: ReactNode
@@ -254,6 +403,7 @@ export function ChannelMonitorAnalyticsDialog(
         items={response?.items ?? []}
         channels={channels}
         context={expansionContext}
+        onSort={handleSort}
       />
     )
   }
@@ -300,37 +450,16 @@ export function ChannelMonitorAnalyticsDialog(
                 </span>
               ) : null}
             </div>
-            <Select
-              items={RANGE_OPTIONS}
-              value={String(rangeDays)}
-              onValueChange={(value) => {
-                if (
-                  value === '1' ||
-                  value === '7' ||
-                  value === '30' ||
-                  value === '90'
-                ) {
-                  setRangeDays(Number(value) as RangeDays)
-                }
+            <ChannelMonitorAnalyticsDateRangeControl
+              from={dateFrom}
+              through={dateThrough}
+              today={dateRange.today}
+              onChange={(range) => {
+                setDateFrom(range.from)
+                setDateThrough(range.through)
+                setPage(1)
               }}
-            >
-              <SelectTrigger
-                size='sm'
-                className='w-full sm:w-28'
-                aria-label='统计时间范围'
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false}>
-                <SelectGroup>
-                  {RANGE_OPTIONS.map((option) => (
-                    <SelectItem key={option.value} value={option.value}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+            />
           </div>
           <AnalyticsSummary
             metric={props.metric}
@@ -370,7 +499,7 @@ export function ChannelMonitorAnalyticsDialog(
           ) : null}
           <div
             className={cn(
-              'min-h-0',
+              'min-h-0 shrink-0',
               rootQuery.isFetching && 'opacity-70 transition-opacity'
             )}
           >

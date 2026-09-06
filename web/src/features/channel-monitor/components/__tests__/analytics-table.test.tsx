@@ -93,7 +93,8 @@ test('renders the user name and ID for expanded user rows', () => {
     />
   )
 
-  assert.match(markup, /Alice/)
+  assert.match(markup, /title="alice"/)
+  assert.match(markup, /ID 31 · Alice/)
   assert.match(markup, /ID 31/)
   assert.match(markup, /alice/)
 })
@@ -111,8 +112,10 @@ test('keeps long lists in a horizontally scrollable bounded table', () => {
   )
 
   assert.match(markup, /overflow-x-auto/)
+  assert.match(markup, /shrink-0 overflow-x-auto/)
   assert.match(markup, /min-w-\[42rem\]/)
   assert.match(markup, /生产 Key/)
+  assert.equal(markup.includes('ID 201'), false)
 })
 
 test('renders API Key channel and model details together', () => {

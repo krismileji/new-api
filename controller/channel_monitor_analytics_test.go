@@ -89,6 +89,48 @@ func TestChannelMonitorAnalyticsCurrentAPIKeyRowsRemainVisible(t *testing.T) {
 	assert.Equal(t, 201, detailResponse.Items[0]["api_key_id"])
 	assert.Equal(t, int64(1), detailResponse.Items[0]["actual_sample_count"])
 
+	modelQuery := userQuery
+	modelQuery.GroupBy = "model"
+	modelQuery.APIKey = 201
+	modelQuery.Channel = 0
+	modelQuery.User = 0
+	modelResponse, err := queryChannelMonitorHistoricalAnalytics(context.Background(), modelQuery)
+	require.NoError(t, err)
+	require.Len(t, modelResponse.Items, 1)
+	assert.Equal(t, "gpt-4.1", modelResponse.Items[0]["model_name"])
+
+	channelQuery := modelQuery
+	channelQuery.GroupBy = "channel"
+	channelQuery.Model = "gpt-4.1"
+	channelResponse, err := queryChannelMonitorHistoricalAnalytics(context.Background(), channelQuery)
+	require.NoError(t, err)
+	require.Len(t, channelResponse.Items, 1)
+	assert.Equal(t, 101, channelResponse.Items[0]["channel_id"])
+
+	channelModelQuery := userQuery
+	channelModelQuery.GroupBy = "model"
+	channelModelQuery.Channel = 101
+	channelModelQuery.User = 0
+	channelModelResponse, err := queryChannelMonitorHistoricalAnalytics(context.Background(), channelModelQuery)
+	require.NoError(t, err)
+	require.Len(t, channelModelResponse.Items, 1)
+	assert.Equal(t, "gpt-4.1", channelModelResponse.Items[0]["model_name"])
+
+	modelUserQuery := channelModelQuery
+	modelUserQuery.GroupBy = "user"
+	modelUserQuery.Model = "gpt-4.1"
+	modelUserResponse, err := queryChannelMonitorHistoricalAnalytics(context.Background(), modelUserQuery)
+	require.NoError(t, err)
+	require.Len(t, modelUserResponse.Items, 1)
+	assert.Equal(t, 31, modelUserResponse.Items[0]["user_id"])
+
+	modelAPIKeyQuery := modelUserQuery
+	modelAPIKeyQuery.GroupBy = "api_key"
+	modelAPIKeyResponse, err := queryChannelMonitorHistoricalAnalytics(context.Background(), modelAPIKeyQuery)
+	require.NoError(t, err)
+	require.Len(t, modelAPIKeyResponse.Items, 1)
+	assert.Equal(t, 201, modelAPIKeyResponse.Items[0]["api_key_id"])
+
 	backResponse, err := queryChannelMonitorHistoricalAnalytics(context.Background(), userQuery)
 	require.NoError(t, err)
 	require.Len(t, backResponse.Items, 1)
@@ -165,6 +207,23 @@ func TestChannelMonitorAnalyticsCostAPIKeyDrillsIntoChannelAndModel(t *testing.T
 	assert.Equal(t, 201, pageOne.Items[0]["api_key_id"])
 	assert.Equal(t, 201, pageTwo.Items[0]["api_key_id"])
 	assert.NotEqual(t, pageOne.Items[0]["channel_id"], pageTwo.Items[0]["channel_id"])
+
+	modelQuery := query
+	modelQuery.GroupBy = "model"
+	modelQuery.Model = "model-a"
+	modelQuery.Page = 1
+	modelQuery.PageSize = 20
+	modelResponse, err := queryChannelMonitorHistoricalAnalytics(context.Background(), modelQuery)
+	require.NoError(t, err)
+	require.Len(t, modelResponse.Items, 1)
+	assert.Equal(t, "model-a", modelResponse.Items[0]["model_name"])
+
+	channelQuery := modelQuery
+	channelQuery.GroupBy = "channel"
+	channelResponse, err := queryChannelMonitorHistoricalAnalytics(context.Background(), channelQuery)
+	require.NoError(t, err)
+	require.Len(t, channelResponse.Items, 1)
+	assert.Equal(t, 7, channelResponse.Items[0]["channel_id"])
 }
 
 func TestChannelMonitorAnalyticsHistoricalPaginationKeepsScopeSummaryStable(t *testing.T) {

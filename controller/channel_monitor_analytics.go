@@ -131,7 +131,6 @@ func parseChannelMonitorAnalyticsQuery(c *gin.Context) (channelMonitorAnalyticsQ
 	query := channelMonitorAnalyticsQuery{
 		Metric:    strings.TrimSpace(c.DefaultQuery("metric", "success")),
 		GroupBy:   strings.TrimSpace(c.DefaultQuery("group_by", "channel")),
-		Sort:      strings.TrimSpace(c.DefaultQuery("sort", "samples")),
 		Direction: strings.TrimSpace(c.DefaultQuery("direction", "desc")),
 		Search:    strings.TrimSpace(c.Query("search")),
 		Page:      1,
@@ -140,14 +139,22 @@ func parseChannelMonitorAnalyticsQuery(c *gin.Context) (channelMonitorAnalyticsQ
 	if query.Metric != "success" && query.Metric != "cost" {
 		return query, &channelMonitorAnalyticsQueryError{"metric 必须为 success 或 cost"}
 	}
+	defaultSort := "samples"
+	if query.Metric == "cost" {
+		defaultSort = "cost"
+	}
+	query.Sort = strings.TrimSpace(c.DefaultQuery("sort", defaultSort))
+	if !channelMonitorAnalyticsSortAllowed(query.Metric, query.Sort) {
+		return query, &channelMonitorAnalyticsQueryError{"sort 参数不受支持"}
+	}
 	if !channelMonitorAnalyticsGroupByAllowed(query.GroupBy) {
 		return query, &channelMonitorAnalyticsQueryError{"group_by 参数不受支持"}
 	}
 	if query.Direction != "asc" && query.Direction != "desc" {
 		return query, &channelMonitorAnalyticsQueryError{"direction 必须为 asc 或 desc"}
 	}
-	if query.Metric == "cost" && query.GroupBy != "day" && query.GroupBy != "channel" && query.GroupBy != "user" && query.GroupBy != "api_key" && query.GroupBy != "api_key_channel_model" {
-		return query, &channelMonitorAnalyticsQueryError{"成本指标目前只支持 day、channel、user、api_key、api_key_channel_model 分组"}
+	if query.Metric == "cost" && query.GroupBy != "day" && query.GroupBy != "channel" && query.GroupBy != "user" && query.GroupBy != "api_key" && query.GroupBy != "model" && query.GroupBy != "channel_model" && query.GroupBy != "api_key_channel_model" {
+		return query, &channelMonitorAnalyticsQueryError{"成本指标目前只支持 day、channel、user、api_key、model、channel_model、api_key_channel_model 分组"}
 	}
 	var err error
 	query.From, err = channelMonitorAnalyticsTimestamp(c.Query("from"))
@@ -189,6 +196,23 @@ func parseChannelMonitorAnalyticsQuery(c *gin.Context) (channelMonitorAnalyticsQ
 func channelMonitorAnalyticsGroupByAllowed(groupBy string) bool {
 	switch groupBy {
 	case "day", "channel", "user", "api_key", "model", "channel_model", "api_key_channel_model":
+		return true
+	default:
+		return false
+	}
+}
+
+func channelMonitorAnalyticsSortAllowed(metric, sortKey string) bool {
+	if metric == "cost" {
+		switch sortKey {
+		case "cost", "settled", "unresolved", "resolution_rate":
+			return true
+		default:
+			return false
+		}
+	}
+	switch sortKey {
+	case "samples", "success", "failure", "success_rate", "cache_tokens", "cache_utilization", "cache_write":
 		return true
 	default:
 		return false
@@ -357,18 +381,33 @@ func channelMonitorAnalyticsCurrentRowMatches(query channelMonitorAnalyticsQuery
 	}
 	switch query.GroupBy {
 	case "channel":
+		if query.APIKey > 0 {
+			return row.ChannelID > 0 && row.UserID == 0 && row.APIKeyID == query.APIKey && row.ModelName != ""
+		}
 		return row.ChannelID > 0 && row.UserID == 0 && row.APIKeyID == 0 && row.ModelName == ""
 	case "user":
+		if query.Channel > 0 && query.Model != "" {
+			return row.ChannelID == query.Channel && row.UserID > 0 && row.APIKeyID > 0 && row.ModelName != ""
+		}
 		if query.Channel > 0 {
 			return row.ChannelID == query.Channel && row.UserID > 0 && row.APIKeyID == 0 && row.ModelName == ""
 		}
 		return row.ChannelID == 0 && row.UserID > 0 && row.APIKeyID == 0 && row.ModelName == ""
 	case "api_key":
+		if query.Model != "" {
+			return row.ChannelID > 0 && row.UserID > 0 && row.APIKeyID > 0 && row.ModelName != ""
+		}
 		if query.Channel > 0 || query.User > 0 {
 			return row.ChannelID > 0 && row.UserID > 0 && row.APIKeyID > 0 && row.ModelName == ""
 		}
 		return row.ChannelID == 0 && row.UserID == 0 && row.APIKeyID > 0 && row.ModelName == ""
 	case "model":
+		if query.APIKey > 0 {
+			return row.ChannelID > 0 && row.UserID == 0 && row.APIKeyID == query.APIKey && row.ModelName != ""
+		}
+		if query.Channel > 0 {
+			return row.ChannelID == query.Channel && row.UserID == 0 && row.APIKeyID == 0 && row.ModelName != ""
+		}
 		return row.ChannelID == 0 && row.UserID == 0 && row.APIKeyID == 0 && row.ModelName != ""
 	case "channel_model":
 		if query.APIKey > 0 {
@@ -394,16 +433,22 @@ func channelMonitorAnalyticsAddSuccessRow(target *channelMonitorAnalyticsSuccess
 	target.CacheWriteCount += source.CacheWriteCount
 }
 
-func channelMonitorAnalyticsSuccessSortValue(row channelMonitorAnalyticsSuccessRow, sortKey string) int64 {
+func channelMonitorAnalyticsSuccessSortValue(row channelMonitorAnalyticsSuccessRow, sortKey string) float64 {
 	switch sortKey {
+	case "success_rate":
+		return channelMonitorAnalyticsRate(row.ActualSuccess, row.ActualSuccess+row.ActualFailure)
+	case "cache_utilization":
+		return channelMonitorAnalyticsRate(row.CacheReadTokens, row.InputTokens)
+	case "cache_write":
+		return float64(row.CacheWriteCount)
 	case "success":
-		return row.ActualSuccess
+		return float64(row.ActualSuccess)
 	case "failure":
-		return row.ActualFailure
+		return float64(row.ActualFailure)
 	case "cache_tokens":
-		return row.CacheReadTokens
+		return float64(row.CacheReadTokens)
 	default:
-		return row.ActualSuccess + row.ActualFailure
+		return float64(row.ActualSuccess + row.ActualFailure)
 	}
 }
 
@@ -562,12 +607,18 @@ func channelMonitorAnalyticsSelectDimension(column string, groupColumns []string
 func channelMonitorAnalyticsSuccessOrder(sortKey, direction string, groupColumns []string) string {
 	order := "SUM(actual_success_count) + SUM(actual_failure_count)"
 	switch sortKey {
+	case "success_rate":
+		order = "SUM(actual_success_count) * 1.0 / NULLIF(SUM(actual_success_count) + SUM(actual_failure_count), 0)"
 	case "success":
 		order = "SUM(actual_success_count)"
 	case "failure":
 		order = "SUM(actual_failure_count)"
 	case "cache_tokens":
 		order = "SUM(cache_read_tokens)"
+	case "cache_utilization":
+		order = "SUM(cache_read_tokens) * 1.0 / NULLIF(SUM(input_tokens), 0)"
+	case "cache_write":
+		order = "SUM(cache_write_count)"
 	}
 	return order + " " + direction + ", " + groupColumns[0] + " ASC"
 }
@@ -635,8 +686,22 @@ func channelMonitorAnalyticsRate(numerator, denominator int64) float64 {
 	return float64(numerator) / float64(denominator)
 }
 
+func channelMonitorAnalyticsCostOrder(sortKey string) string {
+	switch sortKey {
+	case "settled":
+		return "SUM(settled_count)"
+	case "unresolved":
+		return "SUM(unresolved_count)"
+	case "resolution_rate":
+		return "SUM(settled_count) * 1.0 / NULLIF(SUM(settled_count) + SUM(unresolved_count), 0)"
+	default:
+		return "SUM(cost_nano_cny)"
+	}
+}
+
 func queryChannelMonitorHistoricalCostAnalytics(ctx context.Context, query channelMonitorAnalyticsQuery) (channelMonitorAnalyticsResponse, error) {
-	if query.GroupBy != "day" && query.GroupBy != "channel" && model.DB != nil && model.DB.Migrator().HasTable(&model.ChannelMonitorDailyCostDetail{}) {
+	if model.DB != nil && model.DB.Migrator().HasTable(&model.ChannelMonitorDailyCostDetail{}) &&
+		(query.GroupBy != "day" && (query.GroupBy != "channel" || query.APIKey > 0 || query.Model != "")) {
 		return queryChannelMonitorHistoricalCostDetailAnalytics(ctx, query)
 	}
 	type row struct {
@@ -705,7 +770,7 @@ func queryChannelMonitorHistoricalCostAnalytics(ctx context.Context, query chann
 	}
 	countGrouped := base.Session(&gorm.Session{}).Select(groupSQL).Group(groupSQL)
 	grouped := base.Select(selectSQL).Group(groupSQL)
-	grouped = grouped.Order("cost " + query.Direction + ", " + orderKey + " ASC")
+	grouped = grouped.Order(channelMonitorAnalyticsCostOrder(query.Sort) + " " + query.Direction + ", " + orderKey + " ASC")
 	var total int64
 	countQuery := model.DB.WithContext(ctx).Table("(?) AS grouped_rows", countGrouped)
 	if err := countQuery.Count(&total).Error; err != nil {
@@ -832,7 +897,7 @@ func queryChannelMonitorHistoricalCostDetailAnalytics(ctx context.Context, query
 	groupSQL := strings.Join(groupColumns, ", ")
 	countGrouped := base.Session(&gorm.Session{}).Select(groupSQL).Group(groupSQL)
 	grouped := base.Select(strings.Join(selectColumns, ", ")).Group(groupSQL)
-	grouped = grouped.Order("cost_nano_cny " + query.Direction + ", " + groupColumns[0] + " ASC")
+	grouped = grouped.Order(channelMonitorAnalyticsCostOrder(query.Sort) + " " + query.Direction + ", " + groupColumns[0] + " ASC")
 	var total int64
 	countQuery := model.DB.WithContext(ctx).Table("(?) AS grouped_rows", countGrouped)
 	if err := countQuery.Count(&total).Error; err != nil {

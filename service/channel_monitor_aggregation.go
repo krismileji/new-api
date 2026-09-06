@@ -165,7 +165,18 @@ func runChannelMonitorAggregationAt(ctx context.Context, now int64, startup bool
 			return err
 		}
 	}
-	return repairChannelMonitorDirtyMinutes(ctx, key, targetEnd)
+	if err := repairChannelMonitorDirtyMinutes(ctx, key, targetEnd); err != nil {
+		return err
+	}
+	if common.RedisEnabled && common.IsMasterNode {
+		if err := RebuildChannelMonitorRedisDailySuccess(ctx, targetEnd); err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("渠道监控 Redis 当日成功率汇总刷新失败: %v", err))
+		}
+		if err := RebuildChannelMonitorRedisDailyCosts(ctx, targetEnd); err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("渠道监控 Redis 当日成本汇总刷新失败: %v", err))
+		}
+	}
+	return nil
 }
 
 func upgradeChannelMonitorCacheUtilizationForCurrentDay(ctx context.Context, targetEnd int64) error {

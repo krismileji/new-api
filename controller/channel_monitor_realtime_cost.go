@@ -76,32 +76,8 @@ func applyChannelMonitorRealtimeCost(
 	_ = detailDayStart
 	_ = summaryOnly
 	todayStart := channelMonitorCostDayStart(now)
-	if daily, err := service.QueryChannelMonitorRedisDailyCosts(ctx, todayStart); err == nil {
-		var today channelMonitorRealtimeChannelCost
-		for channelID, aggregate := range daily.Channels {
-			if channelId > 0 && channelID != channelId {
-				continue
-			}
-			today.CostNanoCNY += aggregate.SettledCostNanoCNY
-			today.ProbeCostNanoCNY += aggregate.ProbeSettledCostNanoCNY
-			today.GroupProbeCostNanoCNY += aggregate.GroupProbeSettledCostNanoCNY
-			today.ModelDetectionCostNanoCNY += aggregate.ModelDetectionSettledCostNanoCNY
-			today.SettledCount += aggregate.SettledRequestCount
-			today.UnresolvedCount += aggregate.UnresolvedRequestCount
-		}
-		if today.CostNanoCNY > 0 || overview.TodayCostCNY == 0 {
-			overview.TodayCostCNY = channelMonitorCostCNY(today.CostNanoCNY)
-		}
-		if today.ProbeCostNanoCNY > 0 || overview.TodayProbeCostCNY == 0 {
-			overview.TodayProbeCostCNY = channelMonitorCostCNY(today.ProbeCostNanoCNY)
-		}
-		if today.GroupProbeCostNanoCNY > 0 || overview.TodayGroupProbeCostCNY == 0 {
-			overview.TodayGroupProbeCostCNY = channelMonitorCostCNY(today.GroupProbeCostNanoCNY)
-		}
-		if today.ModelDetectionCostNanoCNY > 0 || overview.TodayModelDetectionCostCNY == 0 {
-			overview.TodayModelDetectionCostCNY = channelMonitorCostCNY(today.ModelDetectionCostNanoCNY)
-		}
-	}
+	// The database ledger is authoritative for monetary totals. Redis is a
+	// rebuildable read model and may briefly lag the latest durable settlement.
 	metadata := channelMonitorRealtimeMetadataWithContext(ctx, todayStart)
 	overview.DataCutoffAt = metadata.DataCutoffAt
 	overview.ProcessedAt = metadata.ProcessedAt

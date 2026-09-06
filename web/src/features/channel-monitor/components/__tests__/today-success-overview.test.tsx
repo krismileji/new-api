@@ -506,16 +506,37 @@ describe('channel monitor today success overview', () => {
     )
 
     assert.ok(markup.includes('先按用户分组'))
-    assert.equal(markup.match(/title="Alice"/g)?.length, 1)
-    assert.equal(markup.match(/title="Bob"/g)?.length, 1)
-    assert.ok(markup.includes('@alice'))
-    assert.ok(markup.includes('@bob'))
+    assert.equal(markup.match(/title="alice"/g)?.length, 1)
+    assert.equal(markup.match(/title="bob"/g)?.length, 1)
+    assert.ok(markup.includes('ID 101 · Alice'))
+    assert.ok(markup.includes('ID 202 · Bob'))
+    assert.equal(markup.includes('@alice'), false)
+    assert.equal(markup.includes('@bob'), false)
     assert.ok(markup.includes('API Key 数'))
     assert.ok(markup.includes('请求数'))
     assert.ok(markup.includes('高缓存利用率 Key'))
     assert.ok(markup.includes('高成功率 Key'))
     assert.ok(markup.includes('生产 Key'))
     assert.equal(markup.match(/<details/g)?.length, 2)
+  })
+
+  test('shows username and ID when a user has no display name', () => {
+    const result = createResult()
+    const markup = renderToStaticMarkup(
+      <ChannelMonitorSuccessAPIKeyTable
+        items={[
+          {
+            ...result.api_key_items[0],
+            user_id: 301,
+            username: 'li_ming',
+            user_display_name: '',
+          },
+        ]}
+      />
+    )
+
+    assert.ok(markup.includes('li_ming'))
+    assert.ok(markup.includes('ID 301'))
   })
 
   test('shows loading placeholders while the daily summary is loading', () => {
