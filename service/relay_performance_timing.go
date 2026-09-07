@@ -20,6 +20,7 @@ type RelayPerformanceTiming struct {
 }
 
 func BeginChannelMonitorPerformanceAttempt(ctx *gin.Context, startedAt time.Time) {
+	beginChannelRoutingAttempt(ctx)
 	if ctx == nil {
 		return
 	}

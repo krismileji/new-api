@@ -73,6 +73,7 @@ type ChannelMonitorEvent struct {
 	GroupName       string                             `json:"group,omitempty"`
 	ModelName       string                             `json:"model,omitempty"`
 	RequestId       string                             `json:"request_id,omitempty"`
+	Routing         *ChannelRoutingDecision            `json:"routing,omitempty"`
 	NodeId          string                             `json:"node_id,omitempty"`
 	APIKeyId        int                                `json:"api_key_id,omitempty"`
 	APIKeyName      string                             `json:"api_key_name,omitempty"`

@@ -245,7 +245,6 @@ export function channelMonitorSmartScheduleRouteRuntimeParticipates(
 ) {
   const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(route)
   return (
-    channelMonitorSmartScheduleRouteParticipates(route) &&
     runtimeState.participation_set &&
     !runtimeState.excluded
   )
@@ -272,6 +271,7 @@ export function channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(
   route: ChannelMonitorSmartScheduleRoute,
   nowSeconds = Date.now() / 1000
 ) {
+  if (route.rate_limit_cooling_down === false) return false
   return (
     (route.rate_limit_bypass_until ?? 0) <= nowSeconds &&
     (route.rate_limit_cooldown_until ?? 0) > nowSeconds
@@ -710,7 +710,12 @@ export function placeChannelMonitorSmartScheduleRoutes(
     const shares = new Map<string, number>()
     for (const candidate of candidates) {
       const candidateShare = candidateShares.get(candidate.candidateId) ?? 0
-      const memberRoutes = candidate.activeRoutes
+      const membersOutsideCooldown = candidate.activeRoutes.filter(
+        (route) => !channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(route)
+      )
+      const memberRoutes = membersOutsideCooldown.length > 0
+        ? membersOutsideCooldown
+        : candidate.activeRoutes
       const totalMemberWeight = memberRoutes.reduce(
         (total, route) =>
           total +

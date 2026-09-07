@@ -137,6 +137,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam, options ...model.ChannelS
 			selectionOptions.RequestBodyBytes = providedOptions.RequestBodyBytes
 		}
 	}
+	selectionOptions.ObserveRouting = observeChannelRouting(param.Ctx, isRetrySelection)
 	filters := append([]dto.ChannelFilter(nil), GetChannelConstraints(param.Ctx).Filters...)
 	if param.RequestPath != "" {
 		filters = append(filters, dto.ChannelFilter{

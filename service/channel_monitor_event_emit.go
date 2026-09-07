@@ -69,6 +69,7 @@ func EmitChannelMonitorSuccessEvent(
 	}
 	event.IsStream = relayInfo.IsStream
 	event.IsRetryAttempt = relayInfo.RetryIndex > 0
+	event.Routing = channelRoutingDecisionForAttempt(ctx, relayInfo.ChannelId)
 	event.IsFinalAttempt = true
 	event.RequestDispatched = true
 	event.SchedulingEligible = channelMonitorEventSchedulingEligible(ctx, source)
@@ -148,6 +149,7 @@ func EmitChannelMonitorFailureEvent(
 	}
 	event.IsStream = common.GetContextKeyBool(ctx, constant.ContextKeyIsStream)
 	event.IsRetryAttempt = isRetryAttempt
+	event.Routing = channelRoutingDecisionForAttempt(ctx, channelId)
 	event.IsFinalAttempt = isFinalAttempt
 	event.FinalRetrySummary = finalRetrySummary
 	event.RequestDispatched = requestDispatched && !finalRetrySummary

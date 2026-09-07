@@ -2,9 +2,11 @@ package model
 
 import (
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 )
 
 type ChannelSmartScheduleAffinityStatus int
@@ -57,6 +59,10 @@ func ChannelSmartScheduleAffinityEligibility(
 	}
 
 	selectionOptions := channelSelectionOptions(options)
+	if common.MemoryCacheEnabled && channelSmartScheduleRefreshWorkerIsStarted() &&
+		!channelSmartScheduleRouteSnapshotUsable(time.Now()) {
+		return ChannelSmartScheduleAffinityTemporarilyUnavailable
+	}
 	if !common.MemoryCacheEnabled {
 		return channelSmartScheduleAffinityEligibilityFromDatabase(
 			group, requestModelName, modelNames, channelId, requestPath, selectionOptions, trafficPolicy,
@@ -78,6 +84,12 @@ func ChannelSmartScheduleAffinityCandidateEligibilityExcluding(
 	excludedChannelIDs map[int]struct{},
 	options ...ChannelSelectionOptions,
 ) ChannelSmartScheduleAffinityStatus {
+	selectionOptions := channelSelectionOptions(options)
+	selectionOptions.ExcludedChannelIds = append([]int(nil), selectionOptions.ExcludedChannelIds...)
+	for id := range excludedChannelIDs {
+		selectionOptions.ExcludedChannelIds = append(selectionOptions.ExcludedChannelIds, id)
+	}
+	options = []ChannelSelectionOptions{selectionOptions}
 	identity, err := ResolveChannelLogicalIdentity(preferredChannelID)
 	if err != nil {
 		return ChannelSmartScheduleAffinityInvalid
@@ -146,16 +158,77 @@ func SelectChannelSmartScheduleAffinityMemberExcluding(
 	excludedChannelIDs map[int]struct{},
 	options ...ChannelSelectionOptions,
 ) (*Channel, error) {
+	trafficPolicy := currentChannelSmartScheduleTrafficPolicy()
+	managed := trafficPolicy != nil && trafficPolicy.managesAnyPool(group, channelSmartScheduleRouteModelNames(modelName))
+	if common.MemoryCacheEnabled && managed {
+		if channelSmartScheduleRefreshWorkerIsStarted() && !channelSmartScheduleRouteSnapshotUsable(time.Now()) {
+			return nil, ErrChannelSmartScheduleRouteSnapshotUnavailable
+		}
+		selectionOptions := channelSelectionOptions(options)
+		selectionOptions.ExcludedChannelIds = append([]int(nil), selectionOptions.ExcludedChannelIds...)
+		for id := range excludedChannelIDs {
+			selectionOptions.ExcludedChannelIds = append(selectionOptions.ExcludedChannelIds, id)
+		}
+		selectionOptions.Filters = append([]dto.ChannelFilter(nil), selectionOptions.Filters...)
+		if requestPath != "" {
+			selectionOptions.Filters = append(selectionOptions.Filters, dto.ChannelFilter{Kind: dto.FilterRequestPath, RequestPath: requestPath})
+		}
+		channelSyncLock.RLock()
+		defer channelSyncLock.RUnlock()
+		if IsLogicalChannelGroupingEnabled() && logicalChannelRuntimeCache == nil &&
+			channelSmartScheduleRouteNeedsRuntime(group, channelSmartScheduleRouteModelNames(modelName)) {
+			return nil, ErrLogicalChannelRuntimeUnavailable
+		}
+		preferredLogicalID := int64(0)
+		if IsLogicalChannelGroupingEnabled() && logicalChannelRuntimeCache != nil {
+			identity := logicalChannelRuntimeCache.Channels[preferredChannelID]
+			if identity.Revision > 0 {
+				preferredLogicalID = identity.LogicalChannelID
+			}
+		}
+		for _, poolModel := range channelSmartScheduleRouteModelNames(modelName) {
+			poolManaged := trafficPolicy.managesPool(group, poolModel)
+			routes := prepareChannelSmartScheduleCachedRoutes(channelSmartScheduleRouteCache[group][poolModel],
+				group, poolModel, modelName, requestPath, selectionOptions, trafficPolicy, false, poolManaged)
+			if len(routes) == 0 {
+				continue
+			}
+			for _, route := range routes {
+				matches := route.logicalChannelID == 0 && route.channelId == preferredChannelID ||
+					preferredLogicalID > 0 && route.logicalChannelID == preferredLogicalID
+				if !matches {
+					continue
+				}
+				memberID, err := selectLogicalSmartScheduleMemberID(route, logicalChannelRuntimeCache)
+				if err != nil {
+					return nil, err
+				}
+				if channelSmartScheduleCandidateAffinityStatus(routes, memberID, poolManaged) != ChannelSmartScheduleAffinityEligible {
+					return nil, ErrLogicalChannelSelectionNoAvailableMembers
+				}
+				recordChannelRoutingDecision(selectionOptions, route, memberID, group, poolModel, "affinity", true)
+				return channelsIDM[memberID], nil
+			}
+			break
+		}
+		return nil, ErrLogicalChannelSelectionNoAvailableMembers
+	}
+	if ChannelSmartScheduleAffinityCandidateEligibilityExcluding(
+		group, modelName, preferredChannelID, requestPath, excludedChannelIDs, options...,
+	) != ChannelSmartScheduleAffinityEligible {
+		return nil, ErrLogicalChannelSelectionNoAvailableMembers
+	}
 	identity, err := ResolveChannelLogicalIdentity(preferredChannelID)
 	if err != nil {
 		return nil, err
 	}
-	trafficPolicy := currentChannelSmartScheduleTrafficPolicy()
 	if identity.Revision == 0 || identity.LogicalChannelID == int64(preferredChannelID) ||
 		trafficPolicy == nil || !trafficPolicy.managesAnyPool(group, channelSmartScheduleRouteModelNames(modelName)) {
 		if _, excluded := excludedChannelIDs[preferredChannelID]; excluded {
 			return nil, ErrLogicalChannelSelectionNoAvailableMembers
 		}
+		recordChannelRoutingDecision(channelSelectionOptions(options), channelSmartScheduleCachedRoute{channelId: preferredChannelID},
+			preferredChannelID, group, modelName, "affinity", false)
 		return CacheGetChannel(preferredChannelID)
 	}
 	snapshot, err := GetLogicalChannelSelectionSnapshot(identity)
@@ -163,6 +236,10 @@ func SelectChannelSmartScheduleAffinityMemberExcluding(
 		return nil, err
 	}
 	selectionOptions := channelSelectionOptions(options)
+	selectionOptions.ExcludedChannelIds = append([]int(nil), selectionOptions.ExcludedChannelIds...)
+	for id := range excludedChannelIDs {
+		selectionOptions.ExcludedChannelIds = append(selectionOptions.ExcludedChannelIds, id)
+	}
 	availability := make([]LogicalChannelMemberAvailability, 0, len(snapshot.Members))
 	for _, member := range snapshot.Members {
 		status := ChannelSmartScheduleAffinityEligibility(
@@ -178,6 +255,15 @@ func SelectChannelSmartScheduleAffinityMemberExcluding(
 	if err != nil {
 		return nil, err
 	}
+	candidateID := channelID
+	for _, member := range availability {
+		if member.Available && member.ChannelID < candidateID {
+			candidateID = member.ChannelID
+		}
+	}
+	recordChannelRoutingDecision(selectionOptions, channelSmartScheduleCachedRoute{channelId: candidateID,
+		logicalChannelID: identity.LogicalChannelID, logicalRevision: identity.Revision},
+		channelID, group, modelName, "affinity", false)
 	return CacheGetChannel(channelID)
 }
 
@@ -228,120 +314,74 @@ func channelSmartScheduleAffinityEligibilityFromDatabase(
 	selectionOptions ChannelSelectionOptions,
 	trafficPolicy *channelSmartScheduleTrafficPolicy,
 ) ChannelSmartScheduleAffinityStatus {
-	preferredPaused := false
-	preferredFilteredByRequestLimit := false
+	knownRoute := false
+	selectionOptions.Filters = append([]dto.ChannelFilter(nil), selectionOptions.Filters...)
+	if requestPath != "" {
+		selectionOptions.Filters = append(selectionOptions.Filters, dto.ChannelFilter{Kind: dto.FilterRequestPath, RequestPath: requestPath})
+	}
 	for _, candidateModel := range modelNames {
 		managedPool := trafficPolicy.managesPool(group, candidateModel)
 		var abilities []Ability
-		if err := DB.Select("channel_id", "priority", "weight").
-			Where(&Ability{Group: group, Model: candidateModel, Enabled: true}).
-			Find(&abilities).Error; err != nil {
+		if err := DB.Where(&Ability{Group: group, Model: candidateModel, Enabled: true}).Find(&abilities).Error; err != nil {
 			return ChannelSmartScheduleAffinityTemporarilyUnavailable
 		}
 		var err error
-		abilities, err = filterChannelSmartScheduleTrafficAbilities(
-			abilities, group, candidateModel, trafficPolicy, false,
-		)
+		abilities, err = filterChannelSmartScheduleParticipatingAbilities(abilities, group, candidateModel, trafficPolicy)
 		if err != nil {
 			return ChannelSmartScheduleAffinityTemporarilyUnavailable
 		}
 		if len(abilities) == 0 {
 			continue
 		}
-
+		knownRoute = knownRoute || containsAbilityChannel(abilities, channelId)
 		channelIDs := make([]int, 0, len(abilities))
 		for _, ability := range abilities {
 			channelIDs = append(channelIDs, ability.ChannelId)
 		}
-		pausedChannelIDs, err := loadActiveChannelSmartSchedulePausedChannelIds(
-			DB, group, candidateModel, channelIDs, common.GetTimestamp(),
-		)
+		paused, err := loadActiveChannelSmartSchedulePausedChannelIds(DB, group, candidateModel, channelIDs, common.GetTimestamp())
 		if err != nil {
 			return ChannelSmartScheduleAffinityTemporarilyUnavailable
 		}
-		if _, paused := pausedChannelIDs[channelId]; paused {
-			preferredPaused = true
-		}
-
 		var channels []Channel
-		if err := DB.Where("id IN ? AND status = ?", channelIDs, common.ChannelStatusEnabled).
-			Find(&channels).Error; err != nil {
+		if err := DB.Where("id IN ? AND status = ?", channelIDs, common.ChannelStatusEnabled).Find(&channels).Error; err != nil {
 			return ChannelSmartScheduleAffinityTemporarilyUnavailable
 		}
 		channelByID := make(map[int]*Channel, len(channels))
 		for index := range channels {
 			channel := &channels[index]
-			if requestPath != "" && channel.Type == constant.ChannelTypeAdvancedCustom {
-				config := channel.GetOtherSettings().AdvancedCustom
-				if config == nil || !config.SupportsPathForModel(requestPath, requestModelName) {
-					continue
-				}
+			if matches, _ := ChannelSatisfiesFilters(channel, requestModelName, selectionOptions.Filters); matches {
+				channelByID[channel.Id] = channel
 			}
-			channelByID[channel.Id] = channel
 		}
-
+		allowedIDs := filterChannelIDsBySelectionOptions(channelIDs, selectionOptions)
+		allowed := make(map[int]bool, len(allowedIDs))
+		for _, id := range allowedIDs {
+			allowed[id] = true
+		}
 		available := make([]Ability, 0, len(abilities))
 		for _, ability := range abilities {
-			if _, paused := pausedChannelIDs[ability.ChannelId]; paused {
-				continue
-			}
-			if channelByID[ability.ChannelId] != nil {
+			_, isPaused := paused[ability.ChannelId]
+			if allowed[ability.ChannelId] && !isPaused && channelByID[ability.ChannelId] != nil {
 				available = append(available, ability)
 			}
 		}
-		if len(available) == 0 {
-			continue
-		}
-
-		preferredAvailable := containsAbilityChannel(available, channelId)
-		if selectionOptions.HasRequestSize() {
-			requestLimitStates, err := loadChannelSmartScheduleRequestLimitStates(
-				group, candidateModel, channelIDs,
-			)
-			if err != nil {
-				return ChannelSmartScheduleAffinityTemporarilyUnavailable
-			}
-			available = filterAbilitiesBySmartScheduleRequestLimits(
-				available, requestLimitStates, selectionOptions,
-			)
-			if preferredAvailable && !containsAbilityChannel(available, channelId) {
-				preferredFilteredByRequestLimit = true
-			}
-		}
-		if len(available) == 0 {
-			continue
-		}
-		if !managedPool {
-			if containsAbilityChannel(available, channelId) {
-				return ChannelSmartScheduleAffinityEligible
-			}
-			return ChannelSmartScheduleAffinityInvalid
-		}
-
-		highestPriority := int64(0)
-		highestPrioritySet := false
-		preferredPriority := int64(0)
-		preferredFound := false
-		for _, ability := range available {
-			priority, _ := channelSmartScheduleAbilityRouting(ability)
-			if !highestPrioritySet || priority > highestPriority {
-				highestPriority = priority
-				highestPrioritySet = true
-			}
-			if ability.ChannelId == channelId {
-				preferredPriority = priority
-				preferredFound = true
-			}
-		}
-		if preferredFound && preferredPriority == highestPriority {
-			return ChannelSmartScheduleAffinityEligible
-		}
-		if preferredFound || preferredPaused || preferredFilteredByRequestLimit {
+		routes, _, err := channelSmartScheduleDatabaseRoutes(available, channelByID, group, candidateModel, trafficPolicy)
+		if err != nil {
 			return ChannelSmartScheduleAffinityTemporarilyUnavailable
 		}
-		return ChannelSmartScheduleAffinityInvalid
+		routes = filterChannelSmartScheduleParticipatingCachedRoutes(routes, group, candidateModel, trafficPolicy)
+		routes = filterChannelSmartScheduleStableCachedRoutes(routes, group, candidateModel, trafficPolicy, false)
+		routes = filterChannelSmartScheduleRequestLimits(routes, selectionOptions)
+		if len(routes) == 0 {
+			continue
+		}
+		status := channelSmartScheduleCandidateAffinityStatus(routes, channelId, managedPool)
+		if status == ChannelSmartScheduleAffinityInvalid && knownRoute {
+			return ChannelSmartScheduleAffinityTemporarilyUnavailable
+		}
+		return status
 	}
-	if preferredPaused || preferredFilteredByRequestLimit {
+	if knownRoute {
 		return ChannelSmartScheduleAffinityTemporarilyUnavailable
 	}
 	return ChannelSmartScheduleAffinityInvalid
@@ -356,76 +396,92 @@ func channelSmartScheduleAffinityEligibilityFromCache(
 	selectionOptions ChannelSelectionOptions,
 	trafficPolicy *channelSmartScheduleTrafficPolicy,
 ) ChannelSmartScheduleAffinityStatus {
-	baseOptions := selectionOptions
-	baseOptions.EstimatedPromptTokens = 0
-	baseOptions.RequestBodyBytes = 0
-	preferredPaused := false
-	preferredFilteredByRequestLimit := false
-	now := common.GetTimestamp()
-
+	selectionOptions.Filters = append([]dto.ChannelFilter(nil), selectionOptions.Filters...)
+	if requestPath != "" {
+		selectionOptions.Filters = append(selectionOptions.Filters, dto.ChannelFilter{Kind: dto.FilterRequestPath, RequestPath: requestPath})
+	}
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 	if channelSmartScheduleRouteCache == nil {
-		return ChannelSmartScheduleAffinityInvalid
+		return ChannelSmartScheduleAffinityTemporarilyUnavailable
 	}
+	knownRoute := false
 	for _, candidateModel := range modelNames {
 		managedPool := trafficPolicy.managesPool(group, candidateModel)
-		routes := filterChannelSmartScheduleTrafficCachedRoutes(
-			channelSmartScheduleRouteCache[group][candidateModel],
-			group,
-			candidateModel,
-			trafficPolicy,
-			false,
-		)
-		for _, route := range routes {
-			if route.channelId == channelId && route.trafficPausedUntil > now {
-				preferredPaused = true
+		pool := channelSmartScheduleRouteCache[group][candidateModel]
+		for _, route := range pool {
+			if route.channelId == channelId && (!managedPool || route.participates) {
+				knownRoute = true
 			}
 		}
-		allRoutes := filterChannelSmartScheduleCachedRoutes(
-			routes, requestPath, requestModelName, baseOptions,
-		)
-		availableRoutes := filterChannelSmartScheduleCachedRoutes(
-			routes, requestPath, requestModelName, selectionOptions,
-		)
-		preferredInAll := containsChannelSmartScheduleCachedRoute(allRoutes, channelId)
-		if preferredInAll && !containsChannelSmartScheduleCachedRoute(availableRoutes, channelId) {
-			preferredFilteredByRequestLimit = true
-		}
-		if len(availableRoutes) == 0 {
+		routes := prepareChannelSmartScheduleCachedRoutes(pool, group, candidateModel,
+			requestModelName, requestPath, selectionOptions, trafficPolicy, false, managedPool)
+		if len(routes) == 0 {
 			continue
 		}
-		if !managedPool {
-			if containsChannelSmartScheduleCachedRoute(availableRoutes, channelId) {
-				return ChannelSmartScheduleAffinityEligible
-			}
-			return ChannelSmartScheduleAffinityInvalid
-		}
-
-		highestPriority := availableRoutes[0].priority
-		preferredPriority := int64(0)
-		preferredFound := false
-		for _, route := range availableRoutes {
-			if route.priority > highestPriority {
-				highestPriority = route.priority
-			}
-			if route.channelId == channelId {
-				preferredPriority = route.priority
-				preferredFound = true
-			}
-		}
-		if preferredFound && preferredPriority == highestPriority {
-			return ChannelSmartScheduleAffinityEligible
-		}
-		if preferredFound || preferredPaused || preferredFilteredByRequestLimit {
+		status := channelSmartScheduleCandidateAffinityStatus(routes, channelId, managedPool)
+		if status == ChannelSmartScheduleAffinityInvalid && knownRoute {
 			return ChannelSmartScheduleAffinityTemporarilyUnavailable
 		}
-		return ChannelSmartScheduleAffinityInvalid
+		return status
 	}
-	if preferredPaused || preferredFilteredByRequestLimit {
+	if knownRoute {
 		return ChannelSmartScheduleAffinityTemporarilyUnavailable
 	}
 	return ChannelSmartScheduleAffinityInvalid
+}
+
+// Affinity may retain a member only while its effective candidate is in the
+// same first-attempt layer used by normal selection. Zero weights follow the
+// selector's all-zero fallback semantics.
+func channelSmartScheduleCandidateAffinityStatus(
+	routes []channelSmartScheduleCachedRoute, channelID int, managed bool,
+) ChannelSmartScheduleAffinityStatus {
+	var preferred *channelSmartScheduleCachedRoute
+	highestPriority := int64(0)
+	highestSet := false
+	positiveWeight := false
+	for index := range routes {
+		route := &routes[index]
+		priority, weight := channelSmartScheduleCachedRouteRouting(*route, managed)
+		if !highestSet || priority > highestPriority {
+			highestPriority, highestSet, positiveWeight = priority, true, weight > 0
+		} else if priority == highestPriority && weight > 0 {
+			positiveWeight = true
+		}
+		if route.logicalChannelID == 0 && route.channelId == channelID {
+			preferred = route
+		}
+		for _, member := range route.logicalMembers {
+			if member.channelID == channelID {
+				preferred = route
+			}
+		}
+	}
+	if preferred == nil {
+		return ChannelSmartScheduleAffinityInvalid
+	}
+	if !managed {
+		return ChannelSmartScheduleAffinityEligible
+	}
+	priority, weight := channelSmartScheduleCachedRouteRouting(*preferred, true)
+	if priority != highestPriority || (weight == 0 && positiveWeight) {
+		return ChannelSmartScheduleAffinityTemporarilyUnavailable
+	}
+	if len(preferred.logicalMembers) > 0 {
+		memberWeight := uint(0)
+		positiveMember := false
+		for _, member := range preferred.logicalMembers {
+			positiveMember = positiveMember || member.weight > 0
+			if member.channelID == channelID {
+				memberWeight = member.weight
+			}
+		}
+		if memberWeight == 0 && positiveMember {
+			return ChannelSmartScheduleAffinityTemporarilyUnavailable
+		}
+	}
+	return ChannelSmartScheduleAffinityEligible
 }
 
 func containsAbilityChannel(abilities []Ability, channelId int) bool {

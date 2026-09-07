@@ -39,3 +39,13 @@ func channelAffinityCooldownExclusions(modelName string) map[int]struct{} {
 	}
 	return excluded
 }
+
+func ChannelRateLimitCooldownExclusionsForModels(models []string) map[string][]int {
+	result := make(map[string][]int, len(models))
+	for _, modelName := range models {
+		if _, loaded := result[modelName]; !loaded {
+			result[modelName] = channelRateLimitCooldownChannelIds(modelName, common.GetTimestamp())
+		}
+	}
+	return result
+}

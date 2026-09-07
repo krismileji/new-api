@@ -2,6 +2,7 @@ package service
 
 import (
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
@@ -16,6 +17,8 @@ func ChannelSelectionOptionsForRequest(c *gin.Context, estimatedPromptTokens int
 	if c == nil || c.Request == nil {
 		return options
 	}
+	options.ObserveRouting = observeChannelRouting(c, false)
+	options.Filters = append([]dto.ChannelFilter(nil), GetChannelConstraints(c).Filters...)
 	if storage, exists := c.Get(common.KeyBodyStorage); exists {
 		if bodyStorage, ok := storage.(common.BodyStorage); ok {
 			options.RequestBodyBytes = bodyStorage.Size()

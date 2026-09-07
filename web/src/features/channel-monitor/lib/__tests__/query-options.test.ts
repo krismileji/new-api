@@ -394,13 +394,14 @@ describe('channel monitor query policy', () => {
     )
   })
 
-  test('keeps schedule summaries and metric details current and manual-refresh only', () => {
+  test('refreshes schedule details every thirty seconds while summaries stay manual', () => {
     const summary = getChannelMonitorSmartScheduleQueryOptions(false)
     const metrics = getChannelMonitorSmartScheduleQueryOptions(true)
 
     assert.notDeepEqual(summary.queryKey, metrics.queryKey)
     assert.equal(summary.refetchInterval, false)
-    assert.equal(metrics.refetchInterval, false)
+    assert.equal(metrics.refetchInterval, 30_000)
+    assert.equal(metrics.refetchIntervalInBackground, false)
     assert.equal(summary.staleTime, 0)
     assert.equal(metrics.staleTime, 0)
     assert.equal(summary.refetchOnWindowFocus, false)

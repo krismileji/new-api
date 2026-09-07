@@ -185,14 +185,18 @@ func channelSmartScheduleRouteSnapshotNeedsRenewal(now time.Time) bool {
 }
 
 func GetChannelSmartScheduleRouteSnapshotStatus() ChannelSmartScheduleRouteSnapshotStatus {
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	return channelSmartScheduleRouteSnapshotStatusLocked()
+}
+
+func channelSmartScheduleRouteSnapshotStatusLocked() ChannelSmartScheduleRouteSnapshotStatus {
 	now := time.Now()
 	maxAge := channelSmartScheduleRouteSnapshotMaxAgeDuration()
-	channelSyncLock.RLock()
 	metadata := channelSmartScheduleLocalSnapshotMetadataCache
 	routesAvailable := channelSmartScheduleRouteCache != nil
 	dirty := logicalChannelRuntimeDirty || len(channelSmartScheduleRouteCacheDirty) > 0 ||
 		channelSmartScheduleRouteSnapshotDirtySince > 0
-	channelSyncLock.RUnlock()
 	status := ChannelSmartScheduleRouteSnapshotStatus{
 		Available: routesAvailable && metadata != nil && (!metadata.FromRedis || metadata.Revision > 0),
 		Dirty:     dirty, MaxAgeSeconds: int64(maxAge / time.Second),

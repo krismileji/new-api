@@ -107,9 +107,10 @@ func TestChannelMonitorRedisLogicalAggregatorDoesNotScheduleIneligibleEvents(t *
 	assert.Equal(t, int64(1), view.Summary.EventCount)
 	route, err := NewChannelMonitorRedisRouteHealthProjectionForClient(client)
 	require.NoError(t, err)
-	_, available, err := route.GetRouteHealthWindow(context.Background(), event.ChannelId, event.ModelName)
+	window, available, err := route.GetRouteHealthWindow(context.Background(), event.ChannelId, event.ModelName)
 	require.NoError(t, err)
-	assert.False(t, available)
+	require.True(t, available)
+	assert.Zero(t, window.Snapshot.EventCount)
 }
 
 func TestChannelMonitorRedisLogicalAggregatorOmitsFullScheduleForRequestEvents(t *testing.T) {

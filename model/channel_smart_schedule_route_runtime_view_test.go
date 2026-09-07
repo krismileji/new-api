@@ -68,7 +68,7 @@ func TestChannelSmartScheduleRouteRuntimeViewsUsePublishedLogicalCandidate(t *te
 			Participates: state.Participates(), State: &state,
 		}
 	}
-	applyChannelSmartScheduleCachedRuntimeViews(views, routes, cachedRoutes, nil, runtime, routings)
+	applyChannelSmartScheduleCachedRuntimeViews(views, routes, cachedRoutes, nil, runtime, routings, currentChannelSmartScheduleTrafficPolicy())
 	logicalView := views[ChannelSmartScheduleRouteKey{ChannelId: 9451, Group: "vip", Model: "model-a"}]
 	assert.Equal(t, int64(10), logicalView.Priority)
 	assert.Equal(t, uint(100), logicalView.Weight)

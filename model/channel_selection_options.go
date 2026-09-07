@@ -12,6 +12,8 @@ type ChannelSelectionOptions struct {
 	EstimatedPromptTokens int
 	RequestBodyBytes      int64
 	Filters               []dto.ChannelFilter
+	ObserveRouting        func(ChannelRoutingDecision)
+	RateLimitFallback     bool
 	// IgnoreSmartScheduleRequestLimits is used only for the fallback pass
 	// after all non-limited candidates have been tried. It never changes the
 	// configured route state or the effective priority and weight.

@@ -18,11 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
-import { describe, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
 import type { ChannelMonitorSmartScheduleRoute } from '../../types'
 import {
   channelMonitorSmartScheduleRouteParticipates,
+  channelMonitorSmartScheduleRouteRuntimeParticipates,
   channelMonitorSmartScheduleRouteKey,
   compareChannelMonitorSmartScheduleGroupsByRatio,
   compareChannelMonitorSmartScheduleRoutesByAttention,
@@ -36,6 +37,29 @@ import {
   summarizeChannelMonitorSmartScheduleOverview,
   summarizeChannelMonitorSmartSchedulePools,
 } from '../smart-schedule-summary'
+
+test('数据库已排除但已发布快照仍参与时，预计流量保留该渠道', () => {
+  const route = createRoute(1, 'vip', 'model-a', 100, 100)
+  route.effective_state = { ...route.state }
+  route.state.excluded = true
+  expect(channelMonitorSmartScheduleRouteParticipates(route)).toBe(false)
+  expect(channelMonitorSmartScheduleRouteRuntimeParticipates(route)).toBe(true)
+  expect(placeChannelMonitorSmartScheduleRoutes([route]).get(channelMonitorSmartScheduleRouteKey(route))?.estimatedShare).toBe(1)
+})
+
+test('逻辑组内一个成员冷却时，仅可用成员分配预计流量', () => {
+  const first = createRoute(1, 'vip', 'model-a', 100, 100)
+  const second = createRoute(2, 'vip', 'model-a', 100, 100)
+  for (const route of [first, second]) {
+    route.routing_candidate_channel_id = 1
+    route.logical_member_ids = [1, 2]
+    route.logical_member_weights = [100, 100]
+  }
+  first.rate_limit_cooldown_until = Date.now() / 1000 + 3600
+  const placements = placeChannelMonitorSmartScheduleRoutes([first, second])
+  expect(placements.get(channelMonitorSmartScheduleRouteKey(first))?.estimatedShare).toBe(0)
+  expect(placements.get(channelMonitorSmartScheduleRouteKey(second))?.estimatedShare).toBe(1)
+})
 
 test('marks a manual smart schedule snapshot stale after a fixed ten minutes', () => {
   const generatedAt = 1_700_000_000

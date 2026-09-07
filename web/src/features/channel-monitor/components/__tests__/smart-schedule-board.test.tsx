@@ -180,6 +180,13 @@ function createRoute(
 function createResult(): ChannelMonitorSmartScheduleRouteResult {
   return {
     generated_at: 1_752_777_845,
+    route_snapshot: {
+      available: true, revision: 7, generated_at: 1_752_777_845,
+      source_watermark: 7, snapshot_age_seconds: 0, max_age_seconds: 300,
+      redis_backed: true, dirty: false, stale: false, degraded: false,
+      protection_mode: false, last_redis_success_at: 1_752_777_845,
+      last_redis_failure_at: 0,
+    },
     data_cutoff_at: 1_752_777_840,
     processed_at: 1_752_777_845,
     event_watermark: 42,
@@ -370,6 +377,24 @@ function createResult(): ChannelMonitorSmartScheduleRouteResult {
     ],
   }
 }
+
+test('路由快照不可用时隐藏全部预计占比', () => {
+  const result = createResult()
+  result.route_snapshot = undefined
+  const markup = renderBoard({ result })
+  assert.ok(markup.includes('路由快照不可用'))
+  assert.ok(markup.includes('预计占比未知'))
+  assert.equal(markup.includes('100.0%'), false)
+})
+
+test('页面刚刷新但近期没有请求时，不把路由标记为过期', () => {
+  const result = createResult()
+  result.generated_at = Date.now() / 1000
+  result.data_cutoff_at = result.generated_at - 7200
+  const markup = renderBoard({ result })
+  assert.equal(markup.includes('页面数据可能已过期'), false)
+  assert.equal(markup.includes('手动快照可能已过期'), false)
+})
 
 function renderBoard(
   options: {

@@ -431,6 +431,11 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 	if channel == nil {
 		return nil, true, fmt.Errorf("数据库一致性错误，渠道# %d 不存在，请联系管理员修复", channelId)
 	}
+	source := "weighted"
+	if managedPool {
+		source = "smart_schedule"
+	}
+	recordChannelRoutingDecision(options, *selectedRoute, channelId, group, selectionModelName, source, true)
 	return channel, true, nil
 }
 
@@ -474,6 +479,7 @@ func prepareChannelSmartScheduleCachedRoutes(
 		routes = coalesceChannelSmartScheduleLogicalRoutesWithRouting(
 			routes, logicalChannelRuntimeCache, group, selectionModelName,
 			channelLogicalSmartScheduleRoutingCache,
+			allowDegradedFallback,
 		)
 	}
 	routes = filterChannelSmartScheduleParticipatingCachedRoutes(

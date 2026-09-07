@@ -703,6 +703,7 @@ func AppendChannelAffinityAdminInfo(c *gin.Context, adminInfo map[string]interfa
 	if c == nil || adminInfo == nil {
 		return
 	}
+	appendChannelRoutingAdminInfo(c, adminInfo)
 	anyInfo, ok := c.Get(ginKeyChannelAffinityLogInfo)
 	if !ok || anyInfo == nil {
 		return

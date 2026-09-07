@@ -972,6 +972,7 @@ export type ChannelMonitorSmartScheduleRoute = {
   weight: number
   traffic_paused_until?: number
   rate_limit_cooldown_until?: number
+  rate_limit_cooling_down?: boolean
   rate_limit_bypass_until?: number
   cost_ratio?: number | null
   group_ratio?: number | null
@@ -1069,7 +1070,30 @@ export type ChannelMonitorSmartScheduleRouteResult =
     stability_metrics_available: boolean
     stability_items: ChannelMonitorSmartScheduleRouteStability[]
     route_snapshot?: ChannelMonitorSmartScheduleRouteSnapshotStatus
+    actual_traffic?: ChannelMonitorSmartScheduleTraffic[]
+    actual_traffic_scope?: 'listed_routes'
+    metrics_error?: string
   }
+
+export type ChannelMonitorSmartScheduleTraffic = {
+  channel_id: number
+  group: string
+  model: string
+  window_start: number
+  window_end: number
+  coverage_start: number
+  data_cutoff_at: number
+  event_watermark: number
+  available: boolean
+  complete: boolean
+  attempt_count: number
+  final_success_count: number
+  retry_request_count: number
+  retry_count_known: boolean
+  source_counts: Record<string, number>
+  logical_member_count: number
+  rate_limit_fallback_count: number
+}
 
 export type ChannelMonitorSmartScheduleRouteSnapshotStatus = {
   available: boolean

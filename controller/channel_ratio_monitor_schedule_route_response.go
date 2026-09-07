@@ -20,6 +20,7 @@ type channelSmartScheduleRouteResponse struct {
 	Weight                    uint                                    `json:"weight"`
 	TrafficPausedUntil        int64                                   `json:"traffic_paused_until"`
 	RateLimitCooldownUntil    int64                                   `json:"rate_limit_cooldown_until"`
+	RateLimitCoolingDown      *bool                                   `json:"rate_limit_cooling_down,omitempty"`
 	RateLimitBypassUntil      int64                                   `json:"rate_limit_bypass_until"`
 	CostRatio                 *float64                                `json:"cost_ratio,omitempty"`
 	GroupRatio                *float64                                `json:"group_ratio,omitempty"`
@@ -68,18 +69,26 @@ func channelSmartScheduleRouteResponses(
 			}
 		}
 		var effectiveState *model.ChannelSmartScheduleRouteState
+		enabled, channelStatus := route.Enabled, route.ChannelStatus
+		if runtimeView.Enabled != nil {
+			enabled = *runtimeView.Enabled
+		}
+		if runtimeView.ChannelStatus != nil {
+			channelStatus = *runtimeView.ChannelStatus
+		}
 		if runtimeView.State != nil {
 			state := *runtimeView.State
 			effectiveState = &state
 		}
 		responses = append(responses, channelSmartScheduleRouteResponse{
 			ChannelId: route.ChannelId, ChannelName: route.ChannelName,
-			ChannelStatus: route.ChannelStatus, ChannelPriority: route.ChannelPriority,
+			ChannelStatus: channelStatus, ChannelPriority: route.ChannelPriority,
 			ChannelWeight: route.ChannelWeight, Group: route.Group, Model: route.Model,
 			SampleModel: ratio_setting.FormatMatchingModelName(route.Model),
-			Enabled:     route.Enabled, Priority: runtimeView.Priority, Weight: runtimeView.Weight,
+			Enabled:     enabled, Priority: runtimeView.Priority, Weight: runtimeView.Weight,
 			TrafficPausedUntil:     runtimeView.TrafficPausedUntil,
 			RateLimitCooldownUntil: service.ChannelRateLimitCooldownUntilMatching(route.ChannelId, route.Model),
+			RateLimitCoolingDown:   runtimeView.RateLimitCoolingDown,
 			RateLimitBypassUntil:   service.ChannelRateLimitBypassUntilMatching(route.ChannelId, route.Model),
 			CostRatio:              route.CostRatio, GroupRatio: route.GroupRatio,
 			GrossMargin: route.GrossMargin, EconomicRole: route.EconomicRole,

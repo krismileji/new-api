@@ -200,6 +200,9 @@ func acquireRelayChannelConcurrency(
 			continue
 		}
 		channel = selected
+		if len(saturatedChannels) > 0 {
+			service.MarkChannelRoutingConcurrencyFallback(c)
+		}
 		if retryParam.TokenGroup == "auto" && selectGroup != "" {
 			common.SetContextKey(c, constant.ContextKeyAutoGroup, selectGroup)
 		}

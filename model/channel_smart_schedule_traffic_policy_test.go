@@ -270,7 +270,7 @@ func TestChannelSmartScheduleTrafficPolicySelectionSkipsDegradedRouteUntilRetry(
 				InitChannelCache()
 			}
 
-			assert.Equal(t, ChannelSmartScheduleAffinityInvalid,
+			assert.Equal(t, ChannelSmartScheduleAffinityTemporarilyUnavailable,
 				ChannelSmartScheduleAffinityEligibility("vip", "model-a", 5222, ""))
 
 			channel, err := GetRandomSatisfiedChannel("vip", "model-a", 0, nil)

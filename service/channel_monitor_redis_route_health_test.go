@@ -149,7 +149,7 @@ func TestChannelMonitorRedisRouteHealthWindowsReadsNormalizedRoutesInOnePipeline
 	assert.Equal(t, now.Unix(), batch.ProjectionStartedAt)
 	hook.mu.Lock()
 	assert.Equal(t, 1, hook.pipelineCalls)
-	assert.Equal(t, 7, hook.commandCount)
+	assert.Equal(t, 8, hook.commandCount)
 	hook.mu.Unlock()
 }
 
@@ -411,14 +411,16 @@ func TestChannelMonitorRedisRouteHealthProjectionConcurrentWritesConverge(t *tes
 	assert.Equal(t, "concurrent-00", window.Samples[len(window.Samples)-1].EventID)
 }
 
-func TestChannelMonitorRedisRouteHealthProjectionSkipsNonSchedulingEvents(t *testing.T) {
+func TestChannelMonitorRedisRouteHealthProjectionKeepsUnscoredBusinessOutsideHealthCounts(t *testing.T) {
 	server, projection := useChannelMonitorRedisRouteHealthTestProjection(t)
 	now := time.Unix(1_750_000_000, 0)
 	server.SetTime(now)
 	event := newChannelMonitorRedisRouteHealthTestEvent("not-eligible", 7, "model-a", now.Unix(), 1)
 	event.SchedulingEligible = false
 	require.NoError(t, projection.HandleChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{event}))
-	_, available, err := projection.GetRouteHealthWindow(context.Background(), 7, "model-a")
+	window, available, err := projection.GetRouteHealthWindow(context.Background(), 7, "model-a")
 	require.NoError(t, err)
-	assert.False(t, available)
+	require.True(t, available)
+	assert.Zero(t, window.Snapshot.EventCount)
+	assert.Len(t, window.Samples, 1)
 }

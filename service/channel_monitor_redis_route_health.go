@@ -20,6 +20,7 @@ const (
 	channelMonitorRedisRouteHealthMetaSuffix    = ":health:v2:meta"
 	channelMonitorRedisRouteHealthIndexKey      = ChannelMonitorRedisRouteProjectionPrefix + "health:index:v2"
 	channelMonitorRedisRouteHealthStartedAtKey  = ChannelMonitorRedisRouteProjectionPrefix + "health:started_at:v2"
+	channelMonitorRedisTrafficStartedAtKey      = ChannelMonitorRedisRouteProjectionPrefix + "traffic:started_at:v1"
 
 	channelMonitorRedisRouteHealthMaxBatchRoutes       = 2048
 	channelMonitorRedisRouteHealthMaxBatchSamples      = 200000
@@ -43,6 +44,7 @@ local retention_minutes = tonumber(ARGV[8])
 local index_member = ARGV[9]
 
 redis.call('SETNX', started_at_key, tostring(now))
+redis.call('SETNX', KEYS[5], tostring(now))
 local projection_started_at = tonumber(redis.call('GET', started_at_key) or tostring(now))
 local previous_retention = tonumber(redis.call('HGET', meta_key, 'retention_minutes') or '0')
 local coverage_floor = tonumber(redis.call('HGET', meta_key, 'coverage_floor') or '0')
@@ -110,6 +112,9 @@ type ChannelMonitorRedisRouteHealthSample struct {
 	EventSequence             uint64                           `json:"event_sequence"`
 	OccurredAt                int64                            `json:"occurred_at"`
 	GroupName                 string                           `json:"group,omitempty"`
+	RequestFingerprint        string                           `json:"request_fingerprint,omitempty"`
+	RequestModel              string                           `json:"request_model,omitempty"`
+	Routing                   *model.ChannelRoutingDecision    `json:"routing,omitempty"`
 	Source                    model.ChannelMonitorEventSource  `json:"source"`
 	Outcome                   model.ChannelMonitorEventOutcome `json:"outcome"`
 	IsRetryAttempt            bool                             `json:"is_retry_attempt"`
@@ -173,9 +178,10 @@ type ChannelMonitorRedisRouteHealthRouteKey struct {
 }
 
 type ChannelMonitorRedisRouteHealthWindowBatch struct {
-	Windows             map[ChannelMonitorRedisRouteHealthRouteKey]ChannelMonitorRedisRouteHealthWindow
-	CoverageStart       int64
-	ProjectionStartedAt int64
+	Windows              map[ChannelMonitorRedisRouteHealthRouteKey]ChannelMonitorRedisRouteHealthWindow
+	CoverageStart        int64
+	ProjectionStartedAt  int64
+	TrafficCoverageStart int64
 }
 
 type channelMonitorRedisRouteHealthRouteKey struct {
@@ -346,10 +352,9 @@ func (projection *ChannelMonitorRedisRouteHealthProjection) HandleChannelMonitor
 			return err
 		}
 		modelName := ratio_setting.FormatMatchingModelName(strings.TrimSpace(event.ModelName))
-		if !event.SchedulingEligible || event.ChannelId <= 0 || modelName == "" {
+		if (!event.SchedulingEligible && event.Source != model.ChannelMonitorEventSourceBusiness) || event.ChannelId <= 0 || modelName == "" {
 			continue
 		}
-		event.ModelName = modelName
 		key := channelMonitorRedisRouteHealthRouteKey{channelID: event.ChannelId, modelName: modelName}
 		grouped[key] = append(grouped[key], channelMonitorRedisRouteHealthSampleFromEvent(event))
 	}
@@ -417,7 +422,7 @@ func (projection *ChannelMonitorRedisRouteHealthProjection) updateRoute(
 	_, err := channelMonitorRedisRouteHealthWriteScript.Run(
 		ctx,
 		projection.client,
-		[]string{windowKey, metaKey, channelMonitorRedisRouteHealthIndexKey, channelMonitorRedisRouteHealthStartedAtKey},
+		[]string{windowKey, metaKey, channelMonitorRedisRouteHealthIndexKey, channelMonitorRedisRouteHealthStartedAtKey, channelMonitorRedisTrafficStartedAtKey},
 		args...,
 	).Result()
 	return err
@@ -493,15 +498,17 @@ func (projection *ChannelMonitorRedisRouteHealthProjection) GetRouteHealthWindow
 	}
 	commands := make([]routeReadCommands, len(normalizedRoutes))
 	var startedAtCommand *redis.StringCmd
+	var trafficStartedAtCommand *redis.StringCmd
 	_, err = projection.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		startedAtCommand = pipe.Get(ctx, channelMonitorRedisRouteHealthStartedAtKey)
+		trafficStartedAtCommand = pipe.Get(ctx, channelMonitorRedisTrafficStartedAtKey)
 		for index, key := range normalizedRoutes {
 			windowKey := ChannelMonitorRedisRouteHealthWindowKey(key.ChannelID, key.ModelName)
 			commands[index] = routeReadCommands{
-				key:            key,
-				windowKey:      windowKey,
-				metaKey:        channelMonitorRedisRouteHealthMetaKey(key.ChannelID, key.ModelName),
-				metaCommand:    pipe.HGetAll(ctx, channelMonitorRedisRouteHealthMetaKey(key.ChannelID, key.ModelName)),
+				key:         key,
+				windowKey:   windowKey,
+				metaKey:     channelMonitorRedisRouteHealthMetaKey(key.ChannelID, key.ModelName),
+				metaCommand: pipe.HGetAll(ctx, channelMonitorRedisRouteHealthMetaKey(key.ChannelID, key.ModelName)),
 				// Read one sentinel sample beyond the configured budget.  Using
 				// ZRANGE ... -1 would materialize an unbounded sorted set before
 				// the length check below could reject it.
@@ -514,10 +521,12 @@ func (projection *ChannelMonitorRedisRouteHealthProjection) GetRouteHealthWindow
 		return ChannelMonitorRedisRouteHealthWindowBatch{}, err
 	}
 	projectionStartedAt, _ := startedAtCommand.Int64()
+	trafficStartedAt, _ := trafficStartedAtCommand.Int64()
 	result := ChannelMonitorRedisRouteHealthWindowBatch{
-		Windows:             make(map[ChannelMonitorRedisRouteHealthRouteKey]ChannelMonitorRedisRouteHealthWindow, len(commands)),
-		CoverageStart:       max(cutoff, projectionStartedAt),
-		ProjectionStartedAt: projectionStartedAt,
+		Windows:              make(map[ChannelMonitorRedisRouteHealthRouteKey]ChannelMonitorRedisRouteHealthWindow, len(commands)),
+		CoverageStart:        max(cutoff, projectionStartedAt),
+		ProjectionStartedAt:  projectionStartedAt,
+		TrafficCoverageStart: trafficStartedAt,
 	}
 	totalSamples := 0
 	totalPayloadBytes := 0
@@ -821,12 +830,17 @@ func channelMonitorRedisRouteHealthSampleFromEvent(event model.ChannelMonitorEve
 	}
 	sample := ChannelMonitorRedisRouteHealthSample{
 		EventID: event.EventId, EventSequence: event.EventSequence, OccurredAt: event.OccurredAt,
-		GroupName: event.GroupName,
-		Source:    event.Source, Outcome: event.Outcome, IsRetryAttempt: event.IsRetryAttempt,
+		GroupName:    event.GroupName,
+		RequestModel: event.ModelName,
+		Routing:      event.Routing,
+		Source:       event.Source, Outcome: event.Outcome, IsRetryAttempt: event.IsRetryAttempt,
 		IsFinalAttempt: event.IsFinalAttempt, FinalRetrySummary: event.FinalRetrySummary,
 		RequestDispatched: event.RequestDispatched, SchedulingEligible: event.SchedulingEligible,
 		RuntimeProtectionEligible: event.RuntimeProtectionEligible, ErrorCode: event.ErrorCode,
 		ErrorMessage: errorMessage,
+	}
+	if event.RequestId != "" {
+		sample.RequestFingerprint = fmt.Sprintf("%x", common.Sha256Raw([]byte(event.RequestId)))
 	}
 	if event.StatusCode != nil {
 		value := *event.StatusCode
@@ -890,6 +904,9 @@ func buildChannelMonitorRedisRouteHealthSnapshot(
 		SourceCounts:         make(map[model.ChannelMonitorEventSource]int64),
 	}
 	for _, sample := range samples {
+		if !sample.SchedulingEligible {
+			continue
+		}
 		snapshot.EventCount++
 		snapshot.SourceCounts[sample.Source]++
 		snapshot.EventWatermark = max(snapshot.EventWatermark, sample.EventSequence)

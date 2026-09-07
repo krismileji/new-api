@@ -15,6 +15,7 @@ type channelSmartScheduleRealtimeRouteMetrics struct {
 	sampleItem          channelSmartScheduleSampleItem
 	events              []model.ChannelMonitorEvent
 	snapshot            service.ChannelMonitorRedisRouteHealthSnapshot
+	traffic             *channelSmartScheduleTraffic
 }
 
 type channelSmartScheduleMetricCoverageResponse struct {
@@ -95,9 +96,11 @@ func channelSmartScheduleRealtimeRouteMetricViews(
 			ProjectionStartedAt: batch.ProjectionStartedAt,
 		}
 		var events []model.ChannelMonitorEvent
+		trafficWindow := service.ChannelMonitorRedisRouteHealthWindow{Snapshot: snapshot}
 		redisKey, valid := service.NewChannelMonitorRedisRouteHealthRouteKey(route.ChannelId, route.Model)
 		if valid {
 			if window, available := batch.Windows[redisKey]; available {
+				trafficWindow = window
 				snapshot = window.Snapshot
 				events = channelSmartScheduleRedisWindowEvents(
 					window,
@@ -111,9 +114,12 @@ func channelSmartScheduleRealtimeRouteMetricViews(
 			}
 		}
 		key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
-		views[key] = channelSmartScheduleRealtimeRouteMetricViewFromEvents(
+		view := channelSmartScheduleRealtimeRouteMetricViewFromEvents(
 			route, policy, performanceStart, generatedAt, events, snapshot,
 		)
+		traffic := channelSmartScheduleActualTraffic(route, trafficWindow, performanceStart, generatedAt, batch.TrafficCoverageStart)
+		view.traffic = &traffic
+		views[key] = view
 	}
 	return views, nil
 }

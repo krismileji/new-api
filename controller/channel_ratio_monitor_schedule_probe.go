@@ -865,9 +865,3 @@ func selectChannelSmartScheduleProbeEndpointType(channel *model.Channel) string 
 	}
 	return string(constant.EndpointTypeOpenAIResponse)
 }
-		return &value, int(probeCount)
-	}
-	totalCount := int64(currentCount) + probeCount
-	value := *current + (*probe-*current)*float64(probeCount)/float64(totalCount)
-	return &value, int(totalCount)
-}

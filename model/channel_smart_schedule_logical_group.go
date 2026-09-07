@@ -34,6 +34,7 @@ func coalesceChannelSmartScheduleLogicalRoutesWithRouting(
 	groupName string,
 	modelName string,
 	routingByLogicalKey map[channelLogicalSmartScheduleRouteKey]channelLogicalSmartScheduleRouteOverlay,
+	allowDegradedFallback ...bool,
 ) []channelSmartScheduleCachedRoute {
 	if len(routes) == 0 || runtime == nil || !IsLogicalChannelGroupingEnabled() {
 		return routes
@@ -50,6 +51,14 @@ func coalesceChannelSmartScheduleLogicalRoutesWithRouting(
 		group, ok := runtime.Groups[identity.LogicalChannelID]
 		if !ok || group.Status != ChannelLogicalGroupStatusEnabled || len(group.Members) < 2 {
 			result = append(result, route)
+			continue
+		}
+		_, sharedState := routingByLogicalKey[channelLogicalSmartScheduleRouteKey{
+			logicalID: identity.LogicalChannelID, revision: identity.Revision,
+			group: groupName, model: channelSmartScheduleModelName(modelName),
+		}]
+		if !sharedState && route.stabilityState == ChannelSmartScheduleStabilityDegraded &&
+			(len(allowDegradedFallback) == 0 || !allowDegradedFallback[0]) {
 			continue
 		}
 
@@ -144,6 +153,7 @@ func channelSmartScheduleDatabaseRoutes(
 	group string,
 	modelName string,
 	trafficPolicy *channelSmartScheduleTrafficPolicy,
+	allowDegradedFallback ...bool,
 ) ([]channelSmartScheduleCachedRoute, *LogicalChannelRuntimeSnapshot, error) {
 	routes := make([]channelSmartScheduleCachedRoute, 0, len(abilities))
 	channelIDs := make([]int, 0, len(abilities))
@@ -203,7 +213,7 @@ func channelSmartScheduleDatabaseRoutes(
 		return nil, nil, err
 	}
 	return coalesceChannelSmartScheduleLogicalRoutesWithRouting(
-		routes, runtime, group, modelName, routings,
+		routes, runtime, group, modelName, routings, allowDegradedFallback...,
 	), runtime, nil
 }
 

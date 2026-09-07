@@ -80,8 +80,13 @@ func getChannelMonitorSmartScheduleRoutes(
 		common.ApiError(c, err)
 		return
 	}
-	runtimeViews, err := model.GetChannelSmartScheduleRouteRuntimeViewsWithContext(
-		c.Request.Context(), routes,
+	routeModels := make([]string, 0, len(routes))
+	for _, route := range routes {
+		routeModels = append(routeModels, route.Model)
+	}
+	cooldowns := service.ChannelRateLimitCooldownExclusionsForModels(routeModels)
+	routes, runtimeViews, routeSnapshotStatus, err := model.GetChannelSmartScheduleMonitorRuntimeSnapshot(
+		c.Request.Context(), routes, cooldowns,
 	)
 	if err != nil {
 		common.ApiError(c, err)
@@ -115,7 +120,6 @@ func getChannelMonitorSmartScheduleRoutes(
 	responseRoutes := channelSmartScheduleRouteResponses(routes, runtimeViews)
 	if !loadMetrics {
 		executionSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
-		routeSnapshotStatus := model.GetChannelSmartScheduleRouteSnapshotStatus()
 		common.ApiSuccess(c, gin.H{
 			"generated_at":                  generatedAt,
 			"performance_window_minutes":    settings.SmartSchedulePerformanceWindowMinutes,
@@ -160,18 +164,23 @@ func getChannelMonitorSmartScheduleRoutes(
 	sampleItems := make([]channelSmartScheduleSampleItem, 0, len(selectedRoutes))
 	snapshots := make([]service.ChannelMonitorRedisRouteHealthSnapshot, 0, len(selectedRoutes))
 	combinedSnapshot := service.ChannelMonitorRedisRouteHealthSnapshot{}
+	trafficItems := make([]channelSmartScheduleTraffic, 0, len(selectedRoutes))
+	metricsError := ""
 	metricViewsByRoute := make(map[channelSmartScheduleRouteKey]channelSmartScheduleRealtimeRouteMetrics, len(selectedRoutes))
-	if needsPerformance || needsStability {
+	if len(selectedRoutes) > 0 {
 		metricViewsByRoute, err = loadMetricViews(
 			c.Request.Context(), selectedRoutes, policyByGroup, performanceStart, generatedAt,
 		)
 		if err != nil {
-			common.ApiError(c, err)
-			return
+			metricsError = "实时请求统计暂不可用"
+			metricViewsByRoute = make(map[channelSmartScheduleRouteKey]channelSmartScheduleRealtimeRouteMetrics)
 		}
 		for _, route := range selectedRoutes {
 			key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
 			view := metricViewsByRoute[key]
+			if view.traffic != nil {
+				trafficItems = append(trafficItems, *view.traffic)
+			}
 			if view.performance != nil {
 				performanceByRoute = append(performanceByRoute, *view.performance)
 			}
@@ -222,7 +231,7 @@ func getChannelMonitorSmartScheduleRoutes(
 		}
 		return businessPerformanceByRoute[i].ChannelId < businessPerformanceByRoute[j].ChannelId
 	})
-	if needsPerformance || needsStability {
+	if metricsError == "" && (needsPerformance || needsStability) {
 		if err := channelSmartScheduleApplyCurrentWindowScores(
 			responseRoutes,
 			selectedRoutes,
@@ -236,7 +245,6 @@ func getChannelMonitorSmartScheduleRoutes(
 		}
 	}
 	executionSnapshotMetrics := model.GetChannelSmartScheduleExecutionDetailMetrics()
-	routeSnapshotStatus := model.GetChannelSmartScheduleRouteSnapshotStatus()
 	redisStatus := service.GetChannelMonitorRedisRealtimeStatus(c.Request.Context())
 	projectionStartedAt := combinedSnapshot.ProjectionStartedAt
 	if projectionStartedAt == 0 {
@@ -287,7 +295,10 @@ func getChannelMonitorSmartScheduleRoutes(
 		"stream_trim_failure_active":    redisStatus.StreamTrimFailureActive,
 		"redis_pool_stats":              redisStatus.RedisPoolStats,
 		"route_snapshot":                routeSnapshotStatus,
-		"realtime_degraded":             windowIncomplete || redisStatus.RealtimeDegraded,
+		"realtime_degraded":             metricsError != "" || windowIncomplete || redisStatus.RealtimeDegraded,
+		"metrics_error":                 metricsError,
+		"actual_traffic":                trafficItems,
+		"actual_traffic_scope":          "listed_routes",
 		"performance_window_minutes":    settings.SmartSchedulePerformanceWindowMinutes,
 		"stability_window_minutes":      stabilityWindowMinutes,
 		"sample_scope":                  model.ChannelSmartScheduleSampleScopeChannelModel,
@@ -297,9 +308,9 @@ func getChannelMonitorSmartScheduleRoutes(
 		"routes":                        responseRoutes,
 		"sample_items":                  sampleItems,
 		"business_performance_items":    businessPerformanceByRoute,
-		"performance_metrics_available": needsPerformance,
+		"performance_metrics_available": metricsError == "" && needsPerformance,
 		"performance_items":             performanceByRoute,
-		"stability_metrics_available":   needsStability,
+		"stability_metrics_available":   metricsError == "" && needsStability,
 		"stability_items":               stabilityMetrics,
 		"execution_snapshot_metrics":    executionSnapshotMetrics,
 	})

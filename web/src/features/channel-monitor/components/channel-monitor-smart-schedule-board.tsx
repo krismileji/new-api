@@ -91,6 +91,7 @@ import type {
   ChannelMonitorSmartScheduleSampleItem,
 } from '../types'
 import { ChannelMonitorRealtimeStatus } from './channel-monitor-realtime-status'
+import { ChannelMonitorSmartScheduleSnapshotStatus } from './channel-monitor-smart-schedule-traffic'
 import { ChannelMonitorSmartScheduleClearDialog } from './channel-monitor-smart-schedule-clear-dialog'
 import {
   ChannelMonitorSmartSchedulePool,
@@ -159,10 +160,17 @@ export function ChannelMonitorSmartScheduleBoard(
       ),
     [props.groupPolicies, props.result?.enabled, props.result?.routes]
   )
-  const placements = useMemo(
-    () => placeChannelMonitorSmartScheduleRoutes(routes),
-    [routes]
-  )
+  const routingAvailable = props.result?.route_snapshot?.available === true &&
+    props.result.route_snapshot.protection_mode !== true
+  const placements = useMemo(() => {
+    const placed = placeChannelMonitorSmartScheduleRoutes(routes)
+    if (!routingAvailable) {
+      for (const [key, placement] of placed) {
+        placed.set(key, { ...placement, estimatedShare: null })
+      }
+    }
+    return placed
+  }, [routes, routingAvailable])
   const summary = useMemo(
     () => summarizeChannelMonitorSmartScheduleOverview(routes),
     [routes]
@@ -464,7 +472,7 @@ export function ChannelMonitorSmartScheduleBoard(
         })
       : null
   const stale = isChannelMonitorSmartScheduleResultStale(
-    props.result?.data_cutoff_at || props.result?.generated_at || 0
+    props.result?.generated_at || 0
   )
   const metricCoverage = props.result?.metric_coverage
   const incompleteMetricWindows: string[] = []
@@ -527,8 +535,9 @@ export function ChannelMonitorSmartScheduleBoard(
                   <Badge variant='destructive'>刷新失败，显示上次结果</Badge>
                 ) : null}
                 <ChannelMonitorRealtimeStatus metadata={props.result} />
+                <ChannelMonitorSmartScheduleSnapshotStatus snapshot={props.result?.route_snapshot} />
                 {stale ? (
-                  <Badge variant='warning'>手动快照可能已过期</Badge>
+                  <Badge variant='warning'>页面数据可能已过期</Badge>
                 ) : null}
               </div>
               <div className='text-muted-foreground mt-0.5 text-xs'>
@@ -877,6 +886,8 @@ export function ChannelMonitorSmartScheduleBoard(
                 businessPerformanceByRoute={businessPerformanceByRoute}
                 stabilityByRoute={stabilityByRoute}
                 samplesByModel={samplesByModel}
+                actualTraffic={props.result?.actual_traffic}
+                routingAvailable={routingAvailable}
                 realtimeDegraded={props.result?.realtime_degraded === true}
                 updateRouteKey={updateRouteKey}
                 groupPauseKey={groupPauseKey}

@@ -127,7 +127,7 @@ func getChannelFromDatabasePoolWithTrafficPolicy(
 		return nil, nil
 	}
 	routes, logicalRuntime, err := channelSmartScheduleDatabaseRoutes(
-		available, channelById, group, poolModelName, trafficPolicy,
+		available, channelById, group, poolModelName, trafficPolicy, retry > 0,
 	)
 	if err != nil {
 		return nil, err
@@ -185,6 +185,11 @@ func getChannelFromDatabasePoolWithTrafficPolicy(
 		if err != nil {
 			return nil, err
 		}
+		source := "weighted"
+		if managedPool {
+			source = "smart_schedule"
+		}
+		recordChannelRoutingDecision(options, route, channelId, group, poolModelName, source, false)
 		break
 	}
 	return channelById[channelId], nil

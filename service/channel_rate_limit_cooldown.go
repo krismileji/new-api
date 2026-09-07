@@ -1022,6 +1022,8 @@ func getRandomSatisfiedChannelWithRateLimitFallback(
 			break
 		}
 	}
+	options.RateLimitFallback = hasFallbackCandidate
+	optionsWithoutRateLimitCooldown.RateLimitFallback = hasFallbackCandidate
 	channel, err := model.GetRandomSatisfiedChannel(group, modelName, retry, filters, options)
 	if err != nil || channel != nil || !hasFallbackCandidate {
 		return channel, err
