@@ -18,8 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
+import { render, screen } from '@testing-library/react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
 import type { ChannelMonitorSmartScheduleRoute } from '../../types'
 import { ChannelMonitorSmartScheduleRouteStatus } from '../channel-monitor-smart-schedule-route-details'
@@ -100,6 +101,74 @@ function createProtectedRoute(
 }
 
 describe('smart schedule route protection state', () => {
+  test.each([
+    {
+      label: '渠道禁用',
+      channelStatus: 2,
+      enabled: true,
+      excluded: false,
+      bypass: 0,
+    },
+    {
+      label: '渠道禁用',
+      channelStatus: 3,
+      enabled: true,
+      excluded: false,
+      bypass: 0,
+    },
+    {
+      label: '路由禁用',
+      channelStatus: 1,
+      enabled: false,
+      excluded: false,
+      bypass: 0,
+    },
+    {
+      label: '渠道禁用',
+      channelStatus: 2,
+      enabled: false,
+      excluded: true,
+      bypass: 0,
+    },
+    {
+      label: '路由禁用',
+      channelStatus: 1,
+      enabled: false,
+      excluded: true,
+      bypass: 0,
+    },
+    {
+      label: '渠道禁用',
+      channelStatus: 2,
+      enabled: false,
+      excluded: false,
+      bypass: 4_102_444_800,
+    },
+  ])(
+    'shows $label when status is $channelStatus, enabled is $enabled, excluded is $excluded and bypass is $bypass',
+    ({ label, channelStatus, enabled, excluded, bypass }) => {
+      const route = createProtectedRoute('degraded')
+      route.channel_status = channelStatus
+      route.enabled = enabled
+      route.state.stability_state = ''
+      route.state.excluded = excluded
+      route.rate_limit_bypass_until = bypass
+
+      render(
+        <ChannelMonitorSmartScheduleRouteStatus
+          route={route}
+          placement={undefined}
+          onClearProtection={() => {}}
+        />
+      )
+
+      expect(screen.getByText(label)).toBeVisible()
+      expect(screen.queryByText('未参与')).not.toBeInTheDocument()
+      expect(screen.queryByText('不可调度')).not.toBeInTheDocument()
+      expect(screen.queryByText('429 限制已暂停')).not.toBeInTheDocument()
+    }
+  )
+
   test('shows nonparticipation before stale pause and protection state', () => {
     const route = createProtectedRoute('degraded')
     route.channel_status = 1

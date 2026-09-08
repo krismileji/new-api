@@ -930,6 +930,16 @@ describe('smart schedule route ordering', () => {
     )
   })
 
+  test('classifies a disabled nonparticipating route as unavailable for status filtering', () => {
+    const route = createRoute(1, 'vip', 'model-a', 100, 100)
+    route.channel_status = 2
+    route.state.excluded = true
+
+    expect(
+      getChannelMonitorSmartScheduleRouteDisplayStatus(route, undefined)
+    ).toBe('unavailable')
+  })
+
   test('groups detail rows by group and model before applying attention order', () => {
     const aModelAHealthy = createRoute(1, 'a-group', 'model-a', 80, 50)
     const aModelADegraded = createRoute(2, 'a-group', 'model-a', 70, 40)

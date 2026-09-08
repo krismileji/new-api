@@ -31,6 +31,7 @@ import {
 } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
+import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestampToDate } from '@/lib/format'
 
 import { formatMonitorRatio } from '../lib/format'
@@ -93,6 +94,17 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
   onClearProtection: () => void
 }) {
+  if (
+    !props.route.enabled ||
+    props.route.channel_status !== CHANNEL_STATUS.ENABLED
+  ) {
+    return (
+      <ChannelMonitorSmartScheduleRouteState
+        route={props.route}
+        onProtectedStatusClick={props.onClearProtection}
+      />
+    )
+  }
   if ((props.route.rate_limit_bypass_until ?? 0) > Date.now() / 1000) {
     return <Badge variant='default'>429 限制已暂停</Badge>
   }

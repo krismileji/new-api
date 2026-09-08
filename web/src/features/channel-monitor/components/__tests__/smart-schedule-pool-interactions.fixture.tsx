@@ -399,7 +399,7 @@ await act(async () => clearSearch.click())
 const sortFilter = filtered.container.querySelector<HTMLButtonElement>(
   '[aria-label="按渠道排序"]'
 )
-assert.ok(sortFilter?.textContent?.includes('成本倍率从低到高'))
+assert.ok(sortFilter?.textContent?.includes('渠道视图顺序'))
 const statusFilter = filtered.container.querySelector<HTMLButtonElement>(
   '[aria-label="按状态筛选"]'
 )

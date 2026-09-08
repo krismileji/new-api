@@ -26,6 +26,7 @@ import { describe, expect, test } from 'vitest'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestampToDate } from '@/lib/format'
 
+import { sortChannelMonitorItems } from '../../lib/sort'
 import type {
   ChannelMonitorItem,
   ChannelMonitorSmartScheduleGroupPolicy,
@@ -673,53 +674,55 @@ describe('channel monitor smart schedule board', () => {
     assert.equal(markup.includes('备用与未参与路由'), false)
   })
 
-  test('uses ascending cost ratio as the default pool channel order', () => {
-    const enabledChannel = createChannel(11, '启用高倍率', 1.5, '启用线路')
-    const disabledChannel = {
-      ...createChannel(12, '禁用低倍率', 0.5, '禁用线路'),
-      status: CHANNEL_STATUS.MANUAL_DISABLED,
+  test.each(['ratio_asc', 'ratio_desc', 'channel_desc', 'custom'] as const)(
+    'follows the channel view order for %s, including disabled channels',
+    (sortMode) => {
+      const channels = [
+        createChannel(11, '渠道 A', 1.5, '启用高倍率'),
+        createChannel(12, '渠道 B', 0.9, '启用低倍率'),
+        {
+          ...createChannel(13, '渠道 C', 0.5, '手动禁用低倍率'),
+          status: CHANNEL_STATUS.MANUAL_DISABLED,
+        },
+        {
+          ...createChannel(14, '渠道 D', 0.3, '系统禁用低倍率'),
+          status: CHANNEL_STATUS.AUTO_DISABLED,
+        },
+      ]
+      const orderedChannels = sortChannelMonitorItems(
+        channels,
+        sortMode,
+        [14, 11, 13, 12],
+        new Map()
+      )
+      const result = createResult()
+      result.routes = channels.map((channel) =>
+        createRoute(channel.id, {
+          channel_name: channel.name,
+          channel_status: channel.status,
+        })
+      )
+      const container = document.createElement('div')
+      container.innerHTML = renderBoard({ result, channels: orderedChannels })
+      const table = within(container).getByRole('table')
+      const channelNames = within(table)
+        .getAllByRole('row')
+        .slice(1)
+        .map((row) => {
+          const channelCell = within(row).getAllByRole('cell')[0]
+          return within(channelCell).getByTitle(/^渠道 [A-D]$/).textContent
+        })
+
+      expect(channelNames).toEqual(
+        orderedChannels.map((channel) => channel.name)
+      )
+      expect(
+        within(container).getByRole('combobox', { name: '按渠道排序' })
+          .textContent
+      ).toContain('渠道视图顺序')
+      expect(within(table).getAllByText('渠道禁用')).toHaveLength(2)
     }
-    const result = createResult()
-    result.routes = [
-      createRoute(enabledChannel.id, {
-        channel_name: enabledChannel.name,
-      }),
-      createRoute(disabledChannel.id, {
-        channel_name: disabledChannel.name,
-        channel_status: CHANNEL_STATUS.MANUAL_DISABLED,
-        state: {
-          stability_state: 'degraded',
-        } as ChannelMonitorSmartScheduleRoute['state'],
-      }),
-    ]
-
-    const markup = renderBoard({
-      result,
-      channels: [disabledChannel, enabledChannel],
-    })
-
-    assert.ok(markup.indexOf('禁用线路') < markup.indexOf('启用线路'))
-  })
-
-  test('keeps the default pool channel order ascending by cost ratio', () => {
-    const result = createResult()
-    result.routes = [
-      createRoute(11, { channel_name: '主渠道', priority: 100 }),
-      createRoute(12, { channel_name: '低成本第 3 名', priority: 80 }),
-      createRoute(13, { channel_name: '第 2 名渠道', priority: 90 }),
-    ]
-
-    const markup = renderBoard({
-      result,
-      channels: [
-        createChannel(11, '主渠道', 1, '主线路'),
-        createChannel(12, '低成本第 3 名', 0.7, '基础排名第 3'),
-        createChannel(13, '第 2 名渠道', 0.9, '基础排名第 2'),
-      ],
-    })
-
-    assert.ok(markup.indexOf('低成本第 3 名') < markup.indexOf('第 2 名渠道'))
-  })
+  )
 
   test('orders model pool cards by the configured order before the name fallback', () => {
     const result = createResult()

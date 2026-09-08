@@ -37,7 +37,13 @@ export function ChannelMonitorSmartScheduleRouteState(
 ) {
   const route = props.route
   const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(route)
-  if (!channelMonitorSmartScheduleRouteRuntimeParticipates(route)) {
+  const participates =
+    channelMonitorSmartScheduleRouteRuntimeParticipates(route)
+  if (
+    !participates &&
+    route.enabled &&
+    route.channel_status === CHANNEL_STATUS.ENABLED
+  ) {
     return <Badge variant='outline'>未参与</Badge>
   }
 
@@ -61,7 +67,7 @@ export function ChannelMonitorSmartScheduleRouteState(
   if (!channelMonitorSmartScheduleRouteIsAvailable(route)) {
     const unavailableLabel =
       route.channel_status !== CHANNEL_STATUS.ENABLED ? '渠道禁用' : '路由禁用'
-    if (clearProtectionLabel) {
+    if (clearProtectionLabel && participates) {
       return (
         <Badge
           render={<button type='button' />}

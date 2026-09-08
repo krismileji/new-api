@@ -135,7 +135,7 @@ type ChannelMonitorSmartSchedulePoolProps = {
 }
 
 type RouteFilter = 'all' | 'traffic' | 'attention' | 'backup' | 'excluded'
-type RouteSort = 'schedule' | 'traffic' | 'score' | 'cost' | 'name'
+type RouteSort = 'channel' | 'schedule' | 'traffic' | 'score' | 'cost' | 'name'
 
 const ROUTE_FILTER_OPTIONS = [
   { value: 'all', label: '全部状态' },
@@ -146,6 +146,7 @@ const ROUTE_FILTER_OPTIONS = [
 ]
 
 const ROUTE_SORT_OPTIONS = [
+  { value: 'channel', label: '渠道视图顺序' },
   { value: 'schedule', label: '调度顺序' },
   { value: 'traffic', label: '预计流量从高到低' },
   { value: 'score', label: '当前窗口预计得分从高到低' },
@@ -742,7 +743,7 @@ export function ChannelMonitorSmartSchedulePool(
 ) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<RouteFilter>('all')
-  const [sort, setSort] = useState<RouteSort>('cost')
+  const [sort, setSort] = useState<RouteSort>('channel')
   const [detailRouteKey, setDetailRouteKey] = useState<string | null>(null)
   const status = getChannelMonitorSmartSchedulePoolStatus(props.pool.summary)
   const filteredRoutes = useMemo(() => {
@@ -763,6 +764,7 @@ export function ChannelMonitorSmartSchedulePool(
         )
       })
       .sort((first, second) => {
+        if (sort === 'channel') return 0
         const firstKey = channelMonitorSmartScheduleRouteKey(first)
         const secondKey = channelMonitorSmartScheduleRouteKey(second)
         if (sort === 'traffic') {
@@ -983,6 +985,7 @@ export function ChannelMonitorSmartSchedulePool(
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false}>
               <SelectGroup>
+                <SelectItem value='channel'>渠道视图顺序</SelectItem>
                 <SelectItem value='schedule'>调度顺序</SelectItem>
                 <SelectItem value='traffic'>预计流量从高到低</SelectItem>
                 <SelectItem value='score'>当前窗口预计得分从高到低</SelectItem>

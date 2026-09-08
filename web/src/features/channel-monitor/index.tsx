@@ -1535,7 +1535,7 @@ export function ChannelMonitor() {
             <ChannelMonitorSmartScheduleBoard
               active={view === 'smart-schedule'}
               result={smartScheduleResult}
-              channels={channels}
+              channels={orderedChannels}
               groupPolicies={settings.smart_schedule_group_policies}
               groupRatios={groupRatios}
               groupOrder={groupOrder}

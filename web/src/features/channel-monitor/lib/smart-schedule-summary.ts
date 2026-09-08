@@ -802,10 +802,10 @@ export function getChannelMonitorSmartScheduleRouteDisplayStatus(
   route: ChannelMonitorSmartScheduleRoute,
   placement: ChannelMonitorSmartScheduleRoutePlacement | undefined
 ): ChannelMonitorSmartScheduleRouteDisplayStatus {
-  if (!channelMonitorSmartScheduleRouteRuntimeParticipates(route)) return 'excluded'
   if (!route.enabled || route.channel_status !== CHANNEL_STATUS.ENABLED) {
     return 'unavailable'
   }
+  if (!channelMonitorSmartScheduleRouteRuntimeParticipates(route)) return 'excluded'
   if (channelMonitorSmartScheduleRouteIsTrafficPaused(route)) return 'paused'
   if (channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(route)) {
     return 'rate_limited'

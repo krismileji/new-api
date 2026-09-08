@@ -48,7 +48,6 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
-import { compareChannelStatusesEnabledFirst } from '@/features/channels/lib/channel-status-order'
 import { formatTimestampToDate } from '@/lib/format'
 import { orderGroupNames } from '@/lib/group-order'
 import { cn } from '@/lib/utils'
@@ -237,6 +236,9 @@ export function ChannelMonitorSmartScheduleBoard(
     [props.result?.stability_items]
   )
   const pools = useMemo(() => {
+    const channelOrder = new Map(
+      props.channels.map((channel, index) => [channel.id, index])
+    )
     const routesByPool = new Map<string, ChannelMonitorSmartScheduleRoute[]>()
     for (const route of routes) {
       const key = `${route.group}\u0000${route.model}`
@@ -251,20 +253,10 @@ export function ChannelMonitorSmartScheduleBoard(
           routesByPool.get(`${poolSummary.group}\u0000${poolSummary.model}`) ??
           []
         ).sort((first, second) => {
-          const statusOrder = compareChannelStatusesEnabledFirst(
-            first.channel_status,
-            second.channel_status
-          )
-          if (statusOrder !== 0) return statusOrder
-
-          const firstRatio = channelsById.get(first.channel_id)?.cost_ratio
-          const secondRatio = channelsById.get(second.channel_id)?.cost_ratio
-          if (firstRatio == null && secondRatio != null) return 1
-          if (firstRatio != null && secondRatio == null) return -1
-          if (firstRatio != null && secondRatio != null) {
-            const ratioOrder = firstRatio - secondRatio
-            if (ratioOrder !== 0) return ratioOrder
-          }
+          const referenceOrder =
+            (channelOrder.get(first.channel_id) ?? Number.MAX_SAFE_INTEGER) -
+            (channelOrder.get(second.channel_id) ?? Number.MAX_SAFE_INTEGER)
+          if (referenceOrder !== 0) return referenceOrder
           const nameOrder = first.channel_name.localeCompare(
             second.channel_name
           )
@@ -284,7 +276,7 @@ export function ChannelMonitorSmartScheduleBoard(
           policyByGroup.get(first.summary.group)?.model_order
         )
       })
-  }, [channelsById, policyByGroup, poolSummaries, props.groupRatios, routes])
+  }, [policyByGroup, poolSummaries, props.channels, props.groupRatios, routes])
   const poolCountByGroup = useMemo(() => {
     const counts = new Map<string, number>()
     for (const pool of pools) {
