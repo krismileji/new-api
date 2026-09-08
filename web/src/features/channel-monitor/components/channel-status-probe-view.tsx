@@ -82,7 +82,6 @@ import { runChannelMonitorBatchExecution } from '../lib/batch-execution'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-  CHANNEL_MONITOR_LIVE_REFRESH_INTERVAL_MS,
   getChannelMonitorActiveRefetchInterval,
 } from '../lib/query-options'
 import { orderChannelsByReferenceOrder } from '../lib/sort'
@@ -171,7 +170,7 @@ export const ChannelStatusProbeView = memo(function ChannelStatusProbeView(
         statusProbeQuery.state.data?.data.channels.some(
           isChannelStatusProbeActive
         ) ?? false
-      ) || CHANNEL_MONITOR_LIVE_REFRESH_INTERVAL_MS,
+      ),
   })
   const channels = query.data?.data.channels ?? EMPTY_CHANNELS
   const enabledChannels = useMemo(

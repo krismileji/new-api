@@ -18,8 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
-import { QueryClient, QueryObserver, focusManager } from '@tanstack/react-query'
+import {
+  QueryClient,
+  QueryObserver,
+  focusManager,
+  onlineManager,
+} from '@tanstack/react-query'
 import { describe, test, expect, vi } from 'vitest'
+
+import { api } from '@/lib/api'
 
 import type {
   ChannelMonitorApiResponse,
@@ -28,7 +35,6 @@ import type {
 import {
   CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS,
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-  CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
   getChannelMonitorActiveRefetchInterval,
   getChannelMonitorConcurrencyQueryOptions,
   getChannelMonitorManualRefreshScopeKey,
@@ -43,34 +49,51 @@ import {
 } from '../query-options'
 
 describe('channel monitor query policy', () => {
-  test('visible polling updates the result and pauses while the page is hidden', async () => {
+  test('overview stays unchanged until manual refresh, including after focus and reconnect', async () => {
     vi.useFakeTimers()
     focusManager.setFocused(true)
+    onlineManager.setOnline(true)
     const client = new QueryClient()
     client.mount()
     let value = 0
-    const observer = new QueryObserver(client, {
-      ...CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
-      queryKey: ['channel-monitor-polling-test'],
-      queryFn: async () => ({ success: true, message: '', data: ++value }),
+    const originalAdapter = api.defaults.adapter
+    api.defaults.adapter = async (config) => ({
+      config,
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      data: {
+        success: true,
+        message: '',
+        data: { generated_at: ++value },
+      },
     })
+    const observer = new QueryObserver(
+      client,
+      getChannelMonitorOverviewQueryOptions()
+    )
     const unsubscribe = observer.subscribe(() => undefined)
     try {
       await observer.refetch()
-      expect(observer.getCurrentResult().data?.data).toBe(1)
+      expect(observer.getCurrentResult().data?.data.generated_at).toBe(1)
       await vi.advanceTimersByTimeAsync(5000)
-      expect(observer.getCurrentResult().data?.data).toBe(2)
+      expect(observer.getCurrentResult().data?.data.generated_at).toBe(1)
       focusManager.setFocused(false)
       await vi.advanceTimersByTimeAsync(10000)
-      expect(observer.getCurrentResult().data?.data).toBe(2)
       focusManager.setFocused(true)
+      onlineManager.setOnline(false)
+      onlineManager.setOnline(true)
       await vi.advanceTimersByTimeAsync(0)
-      expect(observer.getCurrentResult().data?.data).toBe(3)
+      expect(observer.getCurrentResult().data?.data.generated_at).toBe(1)
+      await refetchChannelMonitorQueries(client, { view: 'channels' })
+      expect(observer.getCurrentResult().data?.data.generated_at).toBe(2)
     } finally {
       unsubscribe()
       client.unmount()
       client.clear()
+      api.defaults.adapter = originalAdapter
       focusManager.setFocused(undefined)
+      onlineManager.setOnline(true)
       vi.useRealTimers()
     }
   })
@@ -98,28 +121,28 @@ describe('channel monitor query policy', () => {
     assert.equal(getChannelMonitorActiveRefetchInterval(false), false)
   })
 
-  test('refreshes visible overview and performance every five seconds', () => {
+  test('overview and performance only refresh on demand', () => {
     const overviewOptions = getChannelMonitorOverviewQueryOptions()
     const performanceOptions = getChannelMonitorPerformanceQueryOptions(
       15,
       'manual'
     )
 
-    assert.equal(overviewOptions.refetchInterval, 5000)
-    assert.equal(performanceOptions.refetchInterval, 5000)
-    assert.equal(overviewOptions.refetchOnWindowFocus, true)
-    assert.equal(performanceOptions.refetchOnWindowFocus, true)
-    assert.equal(overviewOptions.refetchOnReconnect, true)
-    assert.equal(performanceOptions.refetchOnReconnect, true)
+    expect(overviewOptions.refetchInterval).toBe(false)
+    expect(performanceOptions.refetchInterval).toBe(false)
+    expect(overviewOptions.refetchOnWindowFocus).toBe(false)
+    expect(performanceOptions.refetchOnWindowFocus).toBe(false)
+    expect(overviewOptions.refetchOnReconnect).toBe(false)
+    expect(performanceOptions.refetchOnReconnect).toBe(false)
   })
 
-  test('refreshes enabled concurrency data every five seconds', () => {
+  test('enabled concurrency data only refreshes on demand', () => {
     const enabled = getChannelMonitorConcurrencyQueryOptions()
     const disabled = getChannelMonitorConcurrencyQueryOptions(false)
 
     assert.equal(enabled.enabled, true)
     assert.equal(enabled.staleTime, 0)
-    assert.equal(enabled.refetchInterval, 5000)
+    expect(enabled.refetchInterval).toBe(false)
     assert.equal(enabled.refetchOnMount, 'always')
     assert.equal(disabled.enabled, false)
     assert.deepEqual(enabled.queryKey, ['channel-monitor', 'concurrency'])
@@ -176,7 +199,7 @@ describe('channel monitor query policy', () => {
     await queryClient.refetchQueries({ queryKey: options.queryKey })
     assert.equal(requestCount, 2)
     assert.equal(options.staleTime, 0)
-    assert.equal(options.refetchInterval, 5000)
+    expect(options.refetchInterval).toBe(false)
   })
 
   test('separates manual and smart schedule results with the same range', () => {
@@ -186,7 +209,7 @@ describe('channel monitor query policy', () => {
     assert.notDeepEqual(manual.queryKey, smart.queryKey)
   })
 
-  test('pauses performance polling while the status probe view is active', () => {
+  test('disables performance queries while the status probe view is active', () => {
     const options = getChannelMonitorPerformanceQueryOptions(
       60,
       'manual',
@@ -194,7 +217,7 @@ describe('channel monitor query policy', () => {
     )
 
     assert.equal(options.enabled, false)
-    assert.equal(options.refetchInterval, 5000)
+    expect(options.refetchInterval).toBe(false)
   })
 
   test('skips manual performance refresh while a dedicated monitor view is active', () => {
@@ -326,6 +349,8 @@ describe('channel monitor query policy', () => {
         queryKey: ['channel-monitor-smart-schedule-executions', 1],
       },
       { name: 'overview', queryKey: ['channel-monitor'] },
+      { name: 'health', queryKey: ['channel-monitor', 'health'] },
+      { name: 'concurrency', queryKey: ['channel-monitor', 'concurrency'] },
       {
         name: 'today-cost',
         queryKey: ['channel-monitor', 'cost', 'summary', 2],
@@ -372,6 +397,8 @@ describe('channel monitor query policy', () => {
         'task-history': 1,
         'schedule-history': 0,
         overview: 1,
+        health: 1,
+        concurrency: 1,
         'today-cost': 1,
         'open-analytics': 1,
       })
@@ -389,6 +416,8 @@ describe('channel monitor query policy', () => {
         'task-history': 0,
         'schedule-history': 1,
         overview: 1,
+        health: 1,
+        concurrency: 1,
         'today-cost': 1,
         'open-analytics': 1,
       })
@@ -444,24 +473,24 @@ describe('channel monitor query policy', () => {
     )
   })
 
-  test('refreshes schedule details and summaries every five seconds', () => {
+  test('schedule details and summaries only refresh on demand', () => {
     const summary = getChannelMonitorSmartScheduleQueryOptions(false)
     const metrics = getChannelMonitorSmartScheduleQueryOptions(true)
 
     assert.notDeepEqual(summary.queryKey, metrics.queryKey)
-    assert.equal(summary.refetchInterval, 5000)
-    assert.equal(metrics.refetchInterval, 5000)
+    expect(summary.refetchInterval).toBe(false)
+    expect(metrics.refetchInterval).toBe(false)
     assert.equal(metrics.refetchIntervalInBackground, false)
     assert.equal(summary.staleTime, 0)
     assert.equal(metrics.staleTime, 0)
-    assert.equal(summary.refetchOnWindowFocus, true)
-    assert.equal(metrics.refetchOnWindowFocus, true)
+    expect(summary.refetchOnWindowFocus).toBe(false)
+    expect(metrics.refetchOnWindowFocus).toBe(false)
   })
 
-  test('revalidates schedule routes on mount and window focus', () => {
+  test('loads schedule routes on mount without refreshing on window focus', () => {
     const options = getChannelMonitorSmartScheduleQueryOptions()
 
     assert.equal(options.refetchOnMount, 'always')
-    assert.equal(options.refetchOnWindowFocus, true)
+    expect(options.refetchOnWindowFocus).toBe(false)
   })
 })

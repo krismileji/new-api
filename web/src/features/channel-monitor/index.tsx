@@ -130,8 +130,6 @@ import { isChannelModelDetectionRunActive } from './lib/model-detection'
 import { aggregateChannelMonitorPerformanceByChannel } from './lib/performance'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-  CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
-  CHANNEL_MONITOR_LIVE_REFRESH_INTERVAL_MS,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
   getChannelMonitorActiveRefetchInterval,
   getChannelMonitorManualRefreshScopeKey,
@@ -526,7 +524,7 @@ export function ChannelMonitor() {
             channel.active_run != null &&
             isChannelModelDetectionRunActive(channel.active_run.status)
         ) ?? false
-      ) || CHANNEL_MONITOR_LIVE_REFRESH_INTERVAL_MS,
+      ),
   })
   const groupMonitorSettingsQuery = useQuery({
     queryKey: ['channel-monitor', 'group-monitor', 'settings'],
@@ -540,14 +538,14 @@ export function ChannelMonitor() {
     queryKey: ['channel-monitor', 'cost', 'summary', 2],
     queryFn: () => getChannelMonitorCostOverview(2, undefined, 1, true),
     staleTime: 0,
-    ...CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
   const todaySuccessQuery = useQuery({
     queryKey: ['channel-monitor', 'success', 'today'],
     queryFn: () => getChannelMonitorTodaySuccess(),
     staleTime: 0,
-    ...CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
 

@@ -1,12 +1,35 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react'
-import { expect, test } from 'vitest'
+import { expect, test, vi } from 'vitest'
 
+import { refetchChannelMonitorQueries } from '../../lib/query-options'
 import type { ChannelMonitorAnalyticsResponse } from '../../types-analytics'
 import {
   analyticsItem,
   analyticsResponse,
   renderAnalyticsQuery,
 } from './analytics-query.fixture'
+
+test('today analytics stays idle until a manual refresh', async () => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+  const view = renderAnalyticsQuery('cost', (params) =>
+    analyticsResponse(params, [analyticsItem('7', { channel_id: 7 })])
+  )
+  try {
+    await screen.findByRole('button', { name: '查看渠道 A明细' })
+    expect(view.requests).toHaveLength(1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000)
+    })
+    expect(view.requests).toHaveLength(1)
+    await act(async () => {
+      await refetchChannelMonitorQueries(view.client, { view: 'channels' })
+    })
+    expect(view.requests).toHaveLength(2)
+  } finally {
+    view.unmount()
+    vi.useRealTimers()
+  }
+})
 
 test('background refresh keeps the expanded descendants while loading and after it completes', async () => {
   let refreshing = false

@@ -38,15 +38,6 @@ export const CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS = {
   gcTime: 0,
 } as const
 
-export const CHANNEL_MONITOR_LIVE_REFRESH_INTERVAL_MS = 5_000
-
-export const CHANNEL_MONITOR_LIVE_QUERY_OPTIONS = {
-  ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-  refetchInterval: CHANNEL_MONITOR_LIVE_REFRESH_INTERVAL_MS,
-  refetchOnWindowFocus: true,
-  refetchOnReconnect: true,
-} as const
-
 // Keep the active-task interval shared so the status-probe and model-detection
 // views cannot drift apart.
 export const CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS = 1000
@@ -119,6 +110,8 @@ function getChannelMonitorManualRefreshTargets(
 ): ChannelMonitorRefreshTarget[] {
   const targets: ChannelMonitorRefreshTarget[] = [
     { queryKey: ['channel-monitor'], exact: true },
+    { queryKey: ['channel-monitor', 'health'], exact: true },
+    { queryKey: CHANNEL_MONITOR_CONCURRENCY_QUERY_KEY, exact: true },
     { queryKey: ['channel-monitor-performance'] },
     { queryKey: ['channel-monitor', 'cost', 'summary', 2], exact: true },
     { queryKey: ['channel-monitor', 'success', 'today'], exact: true },
@@ -161,7 +154,7 @@ export function getChannelMonitorOverviewQueryOptions() {
     queryKey: ['channel-monitor'],
     queryFn: getChannelMonitorOverview,
     staleTime: 0,
-    ...CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
 }
@@ -172,7 +165,7 @@ export function getChannelMonitorConcurrencyQueryOptions(enabled = true) {
     queryFn: getChannelMonitorConcurrency,
     enabled,
     staleTime: 0,
-    ...CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
 }
@@ -187,7 +180,7 @@ export function getChannelMonitorPerformanceQueryOptions(
     queryFn: () => getChannelMonitorPerformance(minutes),
     enabled: active,
     staleTime: 0,
-    ...CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
 }
@@ -213,7 +206,7 @@ export function getChannelMonitorSmartScheduleQueryOptions(
     ],
     queryFn: () => getChannelMonitorSmartScheduleRoutes(metrics),
     staleTime: 0,
-    ...CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
 }
