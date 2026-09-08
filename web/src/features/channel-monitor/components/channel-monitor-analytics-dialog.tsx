@@ -37,6 +37,7 @@ import type {
   ChannelMonitorAnalyticsSort,
   ChannelMonitorAnalyticsSummary,
 } from '../types-analytics'
+import { ChannelMonitorAnalyticsCoverage } from './channel-monitor-analytics-coverage'
 import { ChannelMonitorAnalyticsExpandableTable } from './channel-monitor-analytics-table'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 
@@ -210,16 +211,16 @@ function AnalyticsSummary(props: {
   const values: Array<[string, string | number]> = []
   if (props.metric === 'success') {
     values.push(
-      ['调用数', summary.actual_sample_count],
+      ['上游尝试数', summary.actual_sample_count],
       [
-        '成功率',
+        '上游成功率',
         formatRate(summary.actual_success_rate, summary.actual_sample_count),
       ],
       [
-        '缓存利用率',
+        '流式缓存利用率',
         formatRate(summary.cache_utilization_rate, summary.input_tokens),
       ],
-      ['缓存写入', summary.cache_write_request_count]
+      ['缓存写入次数', summary.cache_write_request_count]
     )
   } else {
     const settled = summary.settled_count ?? 0
@@ -292,7 +293,7 @@ export function ChannelMonitorAnalyticsDialog(
   const dateRange = getDateRange(dateFrom, dateThrough)
   let rootGroupBy: ChannelMonitorAnalyticsGroupBy = 'channel'
   if (tab === 'api_keys') {
-    rootGroupBy = 'api_key'
+    rootGroupBy = 'user'
   }
   const rootRequest: ChannelMonitorAnalyticsQuery = {
     metric: props.metric,
@@ -309,9 +310,7 @@ export function ChannelMonitorAnalyticsDialog(
   const rootQuery = useChannelMonitorAnalytics(rootRequest, props.open)
   const rootQueryResponse = rootQuery.data?.data
   const response =
-    !rootQuery.isFetching && rootQueryResponse?.group_by === rootGroupBy
-      ? rootQueryResponse
-      : undefined
+    rootQueryResponse?.group_by === rootGroupBy ? rootQueryResponse : undefined
   const coverage = response?.coverage
   const coverageIncomplete =
     isChannelMonitorAnalyticsCoverageIncomplete(coverage)
@@ -377,12 +376,12 @@ export function ChannelMonitorAnalyticsDialog(
   let table: ReactNode
   if (rootQuery.isLoading || (rootQuery.isFetching && !response)) {
     table = <Skeleton className='h-72 w-full' />
-  } else if (rootQuery.isError) {
+  } else if (rootQuery.isError && !response) {
     table = (
       <Alert variant='destructive'>
         <AlertTitle>统计加载失败</AlertTitle>
         <AlertDescription className='flex items-center justify-between gap-3'>
-          <span>请稍后重试</span>
+          <span>{rootQuery.error?.message || '请稍后重试'}</span>
           <Button
             type='button'
             variant='outline'
@@ -395,9 +394,12 @@ export function ChannelMonitorAnalyticsDialog(
         </AlertDescription>
       </Alert>
     )
+  } else if (coverage?.status === 'unavailable') {
+    table = null
   } else {
     table = (
       <ChannelMonitorAnalyticsExpandableTable
+        key={JSON.stringify(rootRequest)}
         metric={props.metric}
         groupBy={rootGroupBy}
         items={response?.items ?? []}
@@ -421,8 +423,8 @@ export function ChannelMonitorAnalyticsDialog(
           </DialogTitle>
           <DialogDescription>
             {props.initialChannelId != null
-              ? '按北京时间查看当前渠道汇总；点击维度可展开明细'
-              : '按北京时间查看当前范围汇总；点击维度可展开明细'}
+              ? '按北京时间查看当前渠道内全部用户及 API Key 的汇总'
+              : '按北京时间查看全部用户及 API Key 的汇总'}
           </DialogDescription>
         </DialogHeader>
         <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1'>
@@ -463,48 +465,79 @@ export function ChannelMonitorAnalyticsDialog(
           </div>
           <AnalyticsSummary
             metric={props.metric}
-            summary={response?.scope_summary ?? response?.summary}
+            summary={
+              coverage?.status === 'unavailable'
+                ? undefined
+                : (response?.scope_summary ?? response?.summary)
+            }
           />
+          <p className='text-muted-foreground text-xs'>
+            {tab === 'api_keys'
+              ? '按用户 → API Key → 模型 → 渠道逐级展开'
+              : '按渠道 → 模型 → 用户 → API Key 逐级展开'}
+          </p>
+          <p className='text-muted-foreground text-xs'>
+            {props.metric === 'success'
+              ? '成功率按实际派发的上游尝试统计，包含重试。缓存利用率按流式请求的输入 Token 加权；缓存写入次数包含流式和非流式请求。'
+              : '成本为已结算的渠道成本，包含业务、探测和模型检测。未解析记录的金额尚不能确定；未归属用户可能包含系统探测和历史记录。'}
+          </p>
+          {rootQuery.isError && response ? (
+            <Alert variant='destructive'>
+              <AlertTitle>统计更新失败，保留上次结果</AlertTitle>
+              <AlertDescription>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  onClick={() => void rootQuery.refetch()}
+                >
+                  重试
+                </Button>
+              </AlertDescription>
+            </Alert>
+          ) : null}
           <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
             <Input
               value={searchInput}
               onChange={(event) => setSearchInput(event.target.value)}
-              placeholder={
-                tab === 'channels' && !props.initialChannelId
-                  ? '搜索渠道、用户或 Key'
-                  : '搜索名称或 ID'
-              }
+              placeholder='搜索用户、API Key、模型、渠道名称或 ID'
               aria-label='搜索分析明细'
               className='sm:max-w-xs'
             />
             <div className='text-muted-foreground flex items-center gap-2 text-xs'>
               <span>
                 {response?.source === 'redis_daily'
-                  ? '实时 Redis 日汇总'
-                  : '数据库日汇总'}
+                  ? '今日实时汇总'
+                  : '历史日汇总'}
                 {response?.source === 'redis_and_database_daily'
-                  ? ' · 今日来自 Redis'
+                  ? ' · 含今日实时数据'
                   : null}
               </span>
               {coverageIncomplete ? (
                 <span className='text-warning'>覆盖不完整</span>
               ) : null}
-              <span>共 {response?.total ?? 0} 条</span>
+              {coverage?.status !== 'unavailable' ? (
+                <span>共 {response?.total ?? 0} 条</span>
+              ) : null}
             </div>
           </div>
-          {coverageIncomplete ? (
-            <Alert>
-              <AlertTitle>统计覆盖不完整</AlertTitle>
-              <AlertDescription>
-                {coverage?.reasons.join('、') || '数据仍在异步处理'}
-              </AlertDescription>
-            </Alert>
+          {response?.processed_at ? (
+            <span className='text-muted-foreground text-xs'>
+              数据更新于{' '}
+              {new Date(response.processed_at * 1000).toLocaleString('zh-CN', {
+                timeZone: 'Asia/Shanghai',
+                hour12: false,
+              })}
+              （北京时间）
+            </span>
           ) : null}
+          <ChannelMonitorAnalyticsCoverage coverage={coverage} />
           <div
             className={cn(
               'min-h-0 shrink-0',
               rootQuery.isFetching && 'opacity-70 transition-opacity'
             )}
+            aria-busy={rootQuery.isFetching}
           >
             {table}
           </div>

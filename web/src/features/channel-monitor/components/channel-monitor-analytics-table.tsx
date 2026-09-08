@@ -1,5 +1,6 @@
 import {
   ArrowDown01Icon,
+  ArrowLeft01Icon,
   ArrowRight01Icon,
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
@@ -24,12 +25,14 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { formatTokens } from '@/features/rankings/lib/format'
 
 import { useChannelMonitorAnalytics } from '../hooks/use-channel-monitor-analytics'
 import {
   getChannelMonitorAnalyticsChildGroupBy,
   type ChannelMonitorAnalyticsExpansionContext,
 } from '../lib/analytics-expansion'
+import { isChannelMonitorAnalyticsCoverageIncomplete } from '../lib/coverage'
 import {
   formatChannelMonitorCost,
   formatChannelMonitorResolutionRate,
@@ -42,6 +45,7 @@ import type {
   ChannelMonitorAnalyticsQuery,
   ChannelMonitorAnalyticsSort,
 } from '../types-analytics'
+import { ChannelMonitorAnalyticsCoverage } from './channel-monitor-analytics-coverage'
 import {
   ChannelMonitorSortableTableHead,
   type ChannelMonitorSortDirection,
@@ -88,7 +92,9 @@ function getPrimaryLabel(
       : '未识别 API Key'
   }
   if (groupBy === 'model') {
-    return item.model_name || item.model_key || '未知模型'
+    return item.model_name && item.model_name !== 'unknown'
+      ? item.model_name
+      : '未知模型'
   }
   if (groupBy === 'day') {
     return item.day_start ? formatDay(item.day_start) : item.key
@@ -115,6 +121,10 @@ type AnalyticsTableHeaderProps = {
 
 function AnalyticsTableHeader(props: AnalyticsTableHeaderProps) {
   let primaryLabel = '维度'
+  if (props.groupBy === 'user') primaryLabel = '用户'
+  if (props.groupBy === 'api_key') primaryLabel = 'API Key'
+  if (props.groupBy === 'model') primaryLabel = '模型'
+  if (props.groupBy === 'channel') primaryLabel = '渠道'
   if (props.groupBy === 'channel_model') primaryLabel = '渠道'
   if (props.groupBy === 'api_key_channel_model') primaryLabel = 'API Key'
   const metricHead = (label: string, sort: ChannelMonitorAnalyticsSort) => {
@@ -141,10 +151,10 @@ function AnalyticsTableHeader(props: AnalyticsTableHeaderProps) {
         ) : null}
         {props.metric === 'success' ? (
           <>
-            {metricHead('调用数', 'samples')}
-            {metricHead('成功率', 'success_rate')}
-            {metricHead('缓存利用率', 'cache_utilization')}
-            {metricHead('缓存写入', 'cache_write')}
+            {metricHead('上游尝试数', 'samples')}
+            {metricHead('上游成功率', 'success_rate')}
+            {metricHead('流式缓存利用率', 'cache_utilization')}
+            {metricHead('缓存写入次数', 'cache_write')}
           </>
         ) : (
           <>
@@ -234,12 +244,23 @@ function AnalyticsTableMetricCells(props: {
             props.item.actual_success_rate,
             props.item.actual_sample_count
           )}
+          <span className='text-muted-foreground block text-xs'>
+            {props.item.actual_success_count} / {props.item.actual_sample_count}{' '}
+            次
+          </span>
         </TableCell>
         <TableCell className='text-right font-mono tabular-nums'>
           {formatRate(
             props.item.cache_utilization_rate,
             props.item.input_tokens
           )}
+          <span
+            className='text-muted-foreground block text-xs'
+            title={`${(props.item.cache_read_tokens ?? 0).toLocaleString('zh-CN')} / ${(props.item.input_tokens ?? 0).toLocaleString('zh-CN')} Token`}
+          >
+            {formatTokens(props.item.cache_read_tokens)} /{' '}
+            {formatTokens(props.item.input_tokens)} Token
+          </span>
         </TableCell>
         <TableCell className='text-right font-mono tabular-nums'>
           {props.item.cache_write_request_count}
@@ -290,7 +311,9 @@ function getSecondaryLabel(
       : `${channelLabel} · ${keyLabel}`
   }
   if (groupBy === 'api_key') {
-    return ''
+    return item.api_key_id && item.api_key_id > 0
+      ? `Key ID ${item.api_key_id}`
+      : 'Key ID 未知'
   }
   if (groupBy === 'user') {
     const labels: string[] = []
@@ -307,7 +330,7 @@ function getSecondaryLabel(
     const channel = channels.get(item.channel_id ?? 0)
     return channel?.remark ? `${channelID} · ${channel.remark}` : channelID
   }
-  if (groupBy === 'model') return item.model_key || '模型标识未知'
+  if (groupBy === 'model') return ''
   if (groupBy === 'day') return item.key
   return channels.size > 0 ? '' : item.key
 }
@@ -331,17 +354,38 @@ function queryFromExpansionContext(
     apiKeyId:
       context.apiKeyId ??
       (parentGroupBy === 'api_key' ? item?.api_key_id : undefined),
+    apiKeyKey:
+      context.apiKeyKey ??
+      (parentGroupBy === 'api_key' ? item?.api_key_key : undefined),
     model:
       context.model ??
       (parentGroupBy === 'model'
         ? item?.model_name || item?.model_key
         : undefined),
+    modelKey:
+      context.modelKey ??
+      (parentGroupBy === 'model' ? item?.model_key : undefined),
     search: context.search,
     sort: context.sort,
     direction: context.direction,
     page: 1,
     pageSize: 20,
   }
+}
+
+function getAnalyticsRowKey(
+  groupBy: ChannelMonitorAnalyticsGroupBy,
+  item: ChannelMonitorAnalyticsItem
+) {
+  if (groupBy === 'user') return `user:${item.user_id ?? 0}`
+  if (groupBy === 'api_key') {
+    return `key:${item.user_id ?? 0}:${item.api_key_id ?? 0}:${item.api_key_key ?? ''}`
+  }
+  if (groupBy === 'model') {
+    return `model:${item.model_key ?? item.model_name ?? item.key}`
+  }
+  if (groupBy === 'channel') return `channel:${item.channel_id ?? 0}`
+  return `${groupBy}:${item.key}:${item.channel_id ?? 0}:${item.user_id ?? 0}:${item.api_key_id ?? 0}:${item.api_key_key ?? ''}:${item.model_key ?? ''}`
 }
 
 function AnalyticsExpandableTableRow(props: {
@@ -358,13 +402,17 @@ function AnalyticsExpandableTableRow(props: {
     props.groupBy
   )
   const [expanded, setExpanded] = useState(false)
+  const [childPage, setChildPage] = useState(1)
   const childRequest = childGroupBy
-    ? queryFromExpansionContext(
-        props.context,
-        childGroupBy,
-        props.item,
-        props.groupBy
-      )
+    ? {
+        ...queryFromExpansionContext(
+          props.context,
+          childGroupBy,
+          props.item,
+          props.groupBy
+        ),
+        page: childPage,
+      }
     : null
   const childQuery = useChannelMonitorAnalytics(
     childRequest ?? queryFromExpansionContext(props.context, props.groupBy),
@@ -372,9 +420,7 @@ function AnalyticsExpandableTableRow(props: {
   )
   const childQueryResponse = childQuery.data?.data
   const childResponse =
-    childGroupBy != null &&
-    !childQuery.isFetching &&
-    childQueryResponse?.group_by === childGroupBy
+    childGroupBy != null && childQueryResponse?.group_by === childGroupBy
       ? childQueryResponse
       : undefined
   const primaryLabel = getPrimaryLabel(
@@ -393,7 +439,9 @@ function AnalyticsExpandableTableRow(props: {
         channelId: childRequest.channelId,
         userId: childRequest.userId,
         apiKeyId: childRequest.apiKeyId,
+        apiKeyKey: childRequest.apiKeyKey,
         model: childRequest.model,
+        modelKey: childRequest.modelKey,
       }
     : null
   let action: ReactNode
@@ -434,14 +482,27 @@ function AnalyticsExpandableTableRow(props: {
           </TableCell>
         </TableRow>
       )
-    } else if (childQuery.isError) {
+    } else if (childQuery.isError && !childResponse) {
       expandedRows = (
         <TableRow className='bg-muted/5'>
           <TableCell colSpan={props.columnCount}>
             <Alert variant='destructive'>
               <AlertTitle>明细加载失败</AlertTitle>
               <AlertDescription className='flex items-center justify-between gap-3'>
-                <span>请稍后重试</span>
+                <span>{childQuery.error?.message || '请稍后重试'}</span>
+                {childPage > 1 ? (
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    aria-label={`${primaryLabel}明细上一页`}
+                    onClick={() =>
+                      setChildPage((page) => Math.max(1, page - 1))
+                    }
+                  >
+                    上一页
+                  </Button>
+                ) : null}
                 <Button
                   type='button'
                   variant='outline'
@@ -460,10 +521,12 @@ function AnalyticsExpandableTableRow(props: {
           </TableCell>
         </TableRow>
       )
+    } else if (childResponse?.coverage.status === 'unavailable') {
+      expandedRows = null
     } else if (childResponse && childResponse.items.length > 0) {
       expandedRows = childResponse.items.map((item) => (
         <AnalyticsExpandableTableRow
-          key={`${childGroupBy}:${item.key}:${item.channel_id ?? 0}:${item.user_id ?? 0}:${item.api_key_id ?? 0}:${item.model_key ?? ''}`}
+          key={getAnalyticsRowKey(childGroupBy, item)}
           metric={props.metric}
           groupBy={childGroupBy}
           item={item}
@@ -487,6 +550,10 @@ function AnalyticsExpandableTableRow(props: {
     }
   }
 
+  const childPageCount = childResponse
+    ? Math.max(1, Math.ceil(childResponse.total / childResponse.page_size))
+    : 1
+
   return (
     <>
       <TableRow className={props.depth > 0 ? 'bg-muted/10' : undefined}>
@@ -503,7 +570,78 @@ function AnalyticsExpandableTableRow(props: {
         </TableCell>
         <AnalyticsTableMetricCells metric={props.metric} item={props.item} />
       </TableRow>
+      {expanded &&
+      isChannelMonitorAnalyticsCoverageIncomplete(childResponse?.coverage) ? (
+        <TableRow>
+          <TableCell colSpan={props.columnCount}>
+            <ChannelMonitorAnalyticsCoverage
+              coverage={childResponse?.coverage}
+              scope={`${primaryLabel}明细`}
+            />
+          </TableCell>
+        </TableRow>
+      ) : null}
+      {expanded && childQuery.isError && childResponse ? (
+        <TableRow>
+          <TableCell colSpan={props.columnCount}>
+            <Alert variant='destructive'>
+              <AlertTitle>明细更新失败，保留上次结果</AlertTitle>
+              <AlertDescription>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  onClick={() => void childQuery.refetch()}
+                >
+                  重试
+                </Button>
+              </AlertDescription>
+            </Alert>
+          </TableCell>
+        </TableRow>
+      ) : null}
       {expandedRows}
+      {expanded && childResponse && (childPageCount > 1 || childPage > 1) ? (
+        <TableRow className='bg-muted/5'>
+          <TableCell colSpan={props.columnCount}>
+            <nav
+              aria-label={`${primaryLabel}明细分页`}
+              className='flex items-center justify-between gap-3 text-xs'
+            >
+              <span className='text-muted-foreground'>
+                第 {childResponse.page} / {childPageCount} 页 · 共{' '}
+                {childResponse.total} 条
+              </span>
+              <div className='flex items-center gap-2'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  aria-label={`${primaryLabel}明细上一页`}
+                  disabled={childPage <= 1 || childQuery.isFetching}
+                  onClick={() => setChildPage((page) => Math.max(1, page - 1))}
+                >
+                  <HugeiconsIcon icon={ArrowLeft01Icon} />
+                </Button>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  aria-label={`${primaryLabel}明细下一页`}
+                  disabled={
+                    childPage >= childPageCount || childQuery.isFetching
+                  }
+                  onClick={() =>
+                    setChildPage((page) => Math.min(childPageCount, page + 1))
+                  }
+                >
+                  <HugeiconsIcon icon={ArrowRight01Icon} />
+                </Button>
+              </div>
+            </nav>
+          </TableCell>
+        </TableRow>
+      ) : null}
     </>
   )
 }
@@ -551,7 +689,7 @@ export function ChannelMonitorAnalyticsExpandableTable(
         <TableBody>
           {props.items.map((item) => (
             <AnalyticsExpandableTableRow
-              key={`${props.groupBy}:${item.key}:${item.channel_id ?? 0}:${item.user_id ?? 0}:${item.api_key_id ?? 0}:${item.model_key ?? ''}`}
+              key={getAnalyticsRowKey(props.groupBy, item)}
               metric={props.metric}
               groupBy={props.groupBy}
               item={item}

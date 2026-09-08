@@ -16,19 +16,25 @@ import (
 )
 
 type channelMonitorAnalyticsQuery struct {
-	Metric    string
-	GroupBy   string
-	From      int64
-	To        int64
-	Channel   int
-	User      int
-	APIKey    int
-	Model     string
-	Search    string
-	Sort      string
-	Direction string
-	Page      int
-	PageSize  int
+	Metric           string
+	GroupBy          string
+	From             int64
+	To               int64
+	Channel          int
+	User             int
+	UserSet          bool
+	APIKey           int
+	APIKeySet        bool
+	APIKeyKey        *string
+	Model            string
+	ModelKey         *string
+	Search           string
+	SearchUserIDs    []int
+	SearchChannelIDs []int
+	Sort             string
+	Direction        string
+	Page             int
+	PageSize         int
 }
 
 type channelMonitorAnalyticsResponse struct {
@@ -171,15 +177,27 @@ func parseChannelMonitorAnalyticsQuery(c *gin.Context) (channelMonitorAnalyticsQ
 	if err != nil {
 		return query, err
 	}
-	query.User, err = channelMonitorAnalyticsPositiveInt(c.Query("user_id"))
+	query.User, query.UserSet, err = channelMonitorAnalyticsOptionalID(c.Query("user_id"))
 	if err != nil {
 		return query, err
 	}
-	query.APIKey, err = channelMonitorAnalyticsPositiveInt(c.Query("api_key_id"))
+	query.APIKey, query.APIKeySet, err = channelMonitorAnalyticsOptionalID(c.Query("api_key_id"))
 	if err != nil {
 		return query, err
 	}
 	query.Model = strings.TrimSpace(c.Query("model"))
+	for _, identity := range []struct {
+		name   string
+		target **string
+	}{{"api_key_key", &query.APIKeyKey}, {"model_key", &query.ModelKey}} {
+		if values, exists := c.Request.URL.Query()[identity.name]; exists && len(values) > 0 {
+			value := strings.TrimSpace(values[0])
+			if len(value) > 64 {
+				return query, &channelMonitorAnalyticsQueryError{"统计维度标识不能超过 64 字节"}
+			}
+			*identity.target = &value
+		}
+	}
 	if raw := c.Query("page"); raw != "" {
 		query.Page, err = strconv.Atoi(raw)
 		if err != nil || query.Page < 1 {
@@ -254,6 +272,11 @@ func queryChannelMonitorHistoricalAnalytics(ctx context.Context, query channelMo
 	if query.To-query.From > 90*24*60*60 {
 		return channelMonitorAnalyticsResponse{}, &channelMonitorAnalyticsQueryError{"时间范围不能超过 90 天"}
 	}
+	var err error
+	query, err = prepareChannelMonitorAnalyticsSearch(ctx, query)
+	if err != nil {
+		return channelMonitorAnalyticsResponse{}, err
+	}
 	today := model.ChannelDailyCostDayStart(common.GetTimestamp())
 	if query.From < today && query.To > today && common.RedisEnabled {
 		return queryChannelMonitorMixedAnalytics(ctx, query, today)
@@ -278,70 +301,7 @@ func queryChannelMonitorCurrentSuccessAnalytics(ctx context.Context, query chann
 	if view.Revision > 0 || len(view.Facts) > 0 {
 		return queryChannelMonitorCurrentSuccessFacts(ctx, query, view)
 	}
-	rows := make([]channelMonitorAnalyticsSuccessRow, 0, len(view.Rows))
-	var summaryRow channelMonitorAnalyticsSuccessRow
-	userScopedRoutes := make(map[string]bool)
-	for _, redisRow := range view.Rows {
-		if redisRow.UserID > 0 && redisRow.APIKeyID > 0 && redisRow.ChannelID > 0 && redisRow.ModelName != "" {
-			userScopedRoutes[strconv.Itoa(redisRow.APIKeyID)+":"+strconv.Itoa(redisRow.ChannelID)+":"+redisRow.ModelName] = true
-		}
-	}
-	for _, redisRow := range view.Rows {
-		if query.GroupBy == "api_key_channel_model" && redisRow.UserID == 0 && userScopedRoutes[strconv.Itoa(redisRow.APIKeyID)+":"+strconv.Itoa(redisRow.ChannelID)+":"+redisRow.ModelName] {
-			continue
-		}
-		if !channelMonitorAnalyticsCurrentRowMatches(query, redisRow) {
-			continue
-		}
-		row := channelMonitorAnalyticsSuccessRow{
-			DayStart: query.From, ChannelID: redisRow.ChannelID, UserID: redisRow.UserID,
-			UserAttribution: redisRow.UserAttribution, APIKeyID: redisRow.APIKeyID,
-			APIKeyKey: redisRow.APIKeyKey, APIKeyName: redisRow.APIKeyName,
-			ModelKey: redisRow.ModelKey, ModelName: redisRow.ModelName,
-			ActualSuccess: redisRow.Aggregate.ActualSuccessCount, ActualFailure: redisRow.Aggregate.ActualFailureCount,
-			FinalSuccess: redisRow.Aggregate.FinalSuccessCount, FinalFailure: redisRow.Aggregate.FinalFailureCount,
-			CacheHit: redisRow.Aggregate.CacheHitCount, CacheSample: redisRow.Aggregate.CacheSampleCount,
-			CacheReadTokens: redisRow.Aggregate.CacheReadTokens, InputTokens: redisRow.Aggregate.InputTokens,
-			CacheWriteCount: redisRow.Aggregate.CacheWriteRequestCount,
-		}
-		rows = append(rows, row)
-		channelMonitorAnalyticsAddSuccessRow(&summaryRow, row)
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		left := channelMonitorAnalyticsSuccessSortValue(rows[i], query.Sort)
-		right := channelMonitorAnalyticsSuccessSortValue(rows[j], query.Sort)
-		if left != right {
-			if query.Direction == "asc" {
-				return left < right
-			}
-			return left > right
-		}
-		return channelMonitorAnalyticsSuccessKey(query.GroupBy, rows[i]) < channelMonitorAnalyticsSuccessKey(query.GroupBy, rows[j])
-	})
-	total := int64(len(rows))
-	start := (query.Page - 1) * query.PageSize
-	if start > len(rows) {
-		start = len(rows)
-	}
-	end := start + query.PageSize
-	if end > len(rows) {
-		end = len(rows)
-	}
-	items := make([]map[string]any, 0, end-start)
-	for _, row := range rows[start:end] {
-		items = append(items, channelMonitorAnalyticsSuccessItem(query.GroupBy, row))
-	}
-	if err := attachChannelMonitorAnalyticsUserNames(ctx, items); err != nil {
-		return channelMonitorAnalyticsResponse{}, err
-	}
-	coverage := channelMonitorCurrentDayCoverage(ctx, query.From, view.DataCutoffAt, view.CoveragePartial)
-	summary := channelMonitorAnalyticsSuccessSummary(summaryRow)
-	return channelMonitorAnalyticsResponse{
-		Source: "redis_daily", GroupBy: query.GroupBy, Coverage: coverage, Summary: summary, ScopeSummary: summary,
-		SnapshotRevision: view.Revision, ProcessedAt: view.ProcessedAt,
-		Items: items, Page: query.Page, PageSize: query.PageSize, Total: total,
-		GeneratedAt: common.GetTimestamp(),
-	}, nil
+	return queryChannelMonitorLegacySuccessAnalytics(ctx, query, view)
 }
 
 // channelMonitorCurrentDayCoverage describes the health of the live snapshot.
@@ -369,48 +329,28 @@ func channelMonitorCurrentDayCoverage(ctx context.Context, requestedFrom, dataCu
 }
 
 func channelMonitorAnalyticsCurrentRowMatches(query channelMonitorAnalyticsQuery, row service.ChannelMonitorRedisDailySuccessAnalyticsRow) bool {
-	if query.Channel > 0 && row.ChannelID != query.Channel {
+	if query.UserSet && query.User == 0 || query.APIKeySet && query.APIKey == 0 {
 		return false
 	}
-	if query.User > 0 && row.UserID != query.User {
+	if !channelMonitorAnalyticsCurrentMatch(query, row.ChannelID, row.UserID, row.APIKeyID, row.APIKeyName, row.APIKeyKey, row.ModelName, row.ModelKey) {
 		return false
-	}
-	if query.APIKey > 0 && row.APIKeyID != query.APIKey {
-		return false
-	}
-	if query.Model != "" && row.ModelName != query.Model && row.ModelKey != query.Model {
-		return false
-	}
-	if query.Search != "" {
-		needle := strings.ToLower(query.Search)
-		values := []string{row.APIKeyName, row.ModelName, row.ModelKey, strconv.Itoa(row.ChannelID), strconv.Itoa(row.UserID), strconv.Itoa(row.APIKeyID)}
-		matched := false
-		for _, value := range values {
-			if strings.Contains(strings.ToLower(value), needle) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return false
-		}
 	}
 	switch query.GroupBy {
 	case "channel":
 		if query.APIKey > 0 {
-			return row.ChannelID > 0 && row.UserID == 0 && row.APIKeyID == query.APIKey && row.ModelName != ""
+			return row.ChannelID > 0 && row.UserID == query.User && row.APIKeyID == query.APIKey && row.ModelName != ""
 		}
-		return row.ChannelID > 0 && row.UserID == 0 && row.APIKeyID == 0 && row.ModelName == ""
+		return row.ChannelID > 0 && row.UserID == query.User && row.APIKeyID == 0 && row.ModelName == ""
 	case "user":
-		if query.Channel > 0 && query.Model != "" {
-			return row.ChannelID == query.Channel && row.UserID > 0 && row.APIKeyID > 0 && row.ModelName != ""
+		if query.Model != "" || query.ModelKey != nil || query.APIKey > 0 {
+			return row.ChannelID > 0 && row.UserID > 0 && row.APIKeyID > 0 && row.ModelName != ""
 		}
 		if query.Channel > 0 {
 			return row.ChannelID == query.Channel && row.UserID > 0 && row.APIKeyID == 0 && row.ModelName == ""
 		}
 		return row.ChannelID == 0 && row.UserID > 0 && row.APIKeyID == 0 && row.ModelName == ""
 	case "api_key":
-		if query.Model != "" {
+		if query.Model != "" || query.ModelKey != nil {
 			return row.ChannelID > 0 && row.UserID > 0 && row.APIKeyID > 0 && row.ModelName != ""
 		}
 		if query.Channel > 0 || query.User > 0 {
@@ -419,7 +359,10 @@ func channelMonitorAnalyticsCurrentRowMatches(query channelMonitorAnalyticsQuery
 		return row.ChannelID == 0 && row.UserID == 0 && row.APIKeyID > 0 && row.ModelName == ""
 	case "model":
 		if query.APIKey > 0 {
-			return row.ChannelID > 0 && row.UserID == 0 && row.APIKeyID == query.APIKey && row.ModelName != ""
+			return row.ChannelID > 0 && row.UserID == query.User && row.APIKeyID == query.APIKey && row.ModelName != ""
+		}
+		if query.User > 0 {
+			return row.ChannelID > 0 && row.UserID == query.User && row.APIKeyID > 0 && row.ModelName != ""
 		}
 		if query.Channel > 0 {
 			return row.ChannelID == query.Channel && row.UserID == 0 && row.APIKeyID == 0 && row.ModelName != ""
@@ -434,37 +377,6 @@ func channelMonitorAnalyticsCurrentRowMatches(query channelMonitorAnalyticsQuery
 		return row.ChannelID > 0 && row.APIKeyID > 0 && row.ModelName != ""
 	default:
 		return false
-	}
-}
-
-func channelMonitorAnalyticsAddSuccessRow(target *channelMonitorAnalyticsSuccessRow, source channelMonitorAnalyticsSuccessRow) {
-	target.ActualSuccess += source.ActualSuccess
-	target.ActualFailure += source.ActualFailure
-	target.FinalSuccess += source.FinalSuccess
-	target.FinalFailure += source.FinalFailure
-	target.CacheHit += source.CacheHit
-	target.CacheSample += source.CacheSample
-	target.CacheReadTokens += source.CacheReadTokens
-	target.InputTokens += source.InputTokens
-	target.CacheWriteCount += source.CacheWriteCount
-}
-
-func channelMonitorAnalyticsSuccessSortValue(row channelMonitorAnalyticsSuccessRow, sortKey string) float64 {
-	switch sortKey {
-	case "success_rate":
-		return channelMonitorAnalyticsRate(row.ActualSuccess, row.ActualSuccess+row.ActualFailure)
-	case "cache_utilization":
-		return channelMonitorAnalyticsRate(row.CacheReadTokens, row.InputTokens)
-	case "cache_write":
-		return float64(row.CacheWriteCount)
-	case "success":
-		return float64(row.ActualSuccess)
-	case "failure":
-		return float64(row.ActualFailure)
-	case "cache_tokens":
-		return float64(row.CacheReadTokens)
-	default:
-		return float64(row.ActualSuccess + row.ActualFailure)
 	}
 }
 
@@ -555,20 +467,12 @@ func queryChannelMonitorHistoricalSuccessAnalytics(ctx context.Context, query ch
 	if err := attachChannelMonitorAnalyticsUserNames(ctx, items); err != nil {
 		return channelMonitorAnalyticsResponse{}, err
 	}
-	var reasons []string
-	if model.DB.Migrator().HasTable(&model.ChannelMonitorDailyCheckpoint{}) {
-		var partialDays int64
-		if err := model.DB.WithContext(ctx).Model(&model.ChannelMonitorDailyCheckpoint{}).
-			Where("day_start >= ? AND day_start < ? AND coverage_partial = ?", query.From, query.To, true).
-			Count(&partialDays).Error; err != nil {
-			return channelMonitorAnalyticsResponse{}, err
-		}
-		if partialDays > 0 {
-			reasons = append(reasons, "daily_replay_incomplete")
-		}
+	coverage, processedAt, err := channelMonitorHistoricalSuccessCoverage(ctx, query)
+	if err != nil {
+		return channelMonitorAnalyticsResponse{}, err
 	}
 	return channelMonitorAnalyticsResponse{
-		Source: "database_daily", GroupBy: query.GroupBy, Coverage: service.DeriveChannelMonitorCoverage(true, query.From, query.To, query.From, query.To, reasons),
+		Source: "database_daily", GroupBy: query.GroupBy, Coverage: coverage, ProcessedAt: processedAt,
 		Summary: summary, ScopeSummary: summary, Items: items, Page: query.Page, PageSize: query.PageSize,
 		Total: total, GeneratedAt: common.GetTimestamp(),
 	}, nil
@@ -580,26 +484,21 @@ func channelMonitorAnalyticsSuccessBaseQuery(ctx context.Context, query channelM
 	if query.Channel > 0 {
 		base = base.Where("channel_id = ?", query.Channel)
 	}
-	if query.User > 0 {
+	if query.hasUserFilter() {
 		base = base.Where("user_id = ?", query.User)
 	}
-	if query.APIKey > 0 {
+	if query.hasAPIKeyFilter() {
 		base = base.Where("api_key_id = ?", query.APIKey)
 	}
-	if query.Model != "" {
+	if query.APIKeyKey != nil {
+		base = base.Where("api_key_key = ?", *query.APIKeyKey)
+	}
+	if query.ModelKey != nil {
+		base = base.Where("model_key = ?", *query.ModelKey)
+	} else if query.Model != "" {
 		base = base.Where("model_name = ? OR model_key = ?", query.Model, query.Model)
 	}
-	if query.Search != "" {
-		search := "%" + query.Search + "%"
-		condition := "api_key_name LIKE ? OR api_key_key LIKE ? OR model_name LIKE ?"
-		args := []any{search, search, search}
-		if exact, parseErr := strconv.Atoi(query.Search); parseErr == nil && exact > 0 {
-			condition += " OR channel_id = ? OR user_id = ? OR api_key_id = ?"
-			args = append(args, exact, exact, exact)
-		}
-		base = base.Where(condition, args...)
-	}
-	return base
+	return query.applySearch(base)
 }
 
 func channelMonitorAnalyticsSuccessGroupColumns(groupBy string) []string {
@@ -648,7 +547,7 @@ func channelMonitorAnalyticsSuccessOrder(sortKey, direction string, groupColumns
 	case "cache_write":
 		order = "SUM(cache_write_count)"
 	}
-	return order + " " + direction + ", " + groupColumns[0] + " ASC"
+	return order + " " + direction + ", " + strings.Join(groupColumns, " ASC, ") + " ASC"
 }
 
 func channelMonitorAnalyticsSuccessSummary(row channelMonitorAnalyticsSuccessRow) map[string]any {
@@ -728,9 +627,12 @@ func channelMonitorAnalyticsCostOrder(sortKey string) string {
 }
 
 func queryChannelMonitorHistoricalCostAnalytics(ctx context.Context, query channelMonitorAnalyticsQuery) (channelMonitorAnalyticsResponse, error) {
-	if model.DB != nil && model.DB.Migrator().HasTable(&model.ChannelMonitorDailyCostDetail{}) &&
-		((query.GroupBy != "day" && query.GroupBy != "channel") || query.User > 0 || query.APIKey > 0 || query.Model != "" || query.Search != "") {
-		return queryChannelMonitorHistoricalCostDetailAnalytics(ctx, query)
+	if (query.GroupBy != "day" && query.GroupBy != "channel") || query.hasCostDetailFilter() {
+		if model.DB != nil && model.DB.Migrator().HasTable(&model.ChannelMonitorDailyCostDetail{}) {
+			return queryChannelMonitorHistoricalCostDetailAnalytics(ctx, query)
+		}
+		coverage := service.DeriveChannelMonitorCoverage(false, query.From, query.To, 0, 0, []string{"cost_detail_unavailable"})
+		return channelMonitorAnalyticsPage(ctx, query, []map[string]any{}, map[string]any{}, "database_daily", coverage)
 	}
 	type row struct {
 		Key             string `gorm:"column:analytics_key"`
@@ -925,7 +827,7 @@ func queryChannelMonitorHistoricalCostDetailAnalytics(ctx context.Context, query
 	groupSQL := strings.Join(groupColumns, ", ")
 	countGrouped := base.Session(&gorm.Session{}).Select(groupSQL).Group(groupSQL)
 	grouped := base.Select(strings.Join(selectColumns, ", ")).Group(groupSQL)
-	grouped = grouped.Order(channelMonitorAnalyticsCostOrder(query.Sort) + " " + query.Direction + ", " + groupColumns[0] + " ASC")
+	grouped = grouped.Order(channelMonitorAnalyticsCostOrder(query.Sort) + " " + query.Direction + ", " + strings.Join(groupColumns, " ASC, ") + " ASC")
 	var total int64
 	countQuery := model.DB.WithContext(ctx).Table("(?) AS grouped_rows", countGrouped)
 	if err := countQuery.Count(&total).Error; err != nil {
@@ -966,8 +868,12 @@ func queryChannelMonitorHistoricalCostDetailAnalytics(ctx context.Context, query
 		"group_probe_cost_nano_cny": summary.GroupProbeCost, "settled_count": summary.SettledCount,
 		"unresolved_count": summary.UnresolvedCount,
 	}
+	coverage, err := channelMonitorHistoricalCostDetailCoverage(ctx, query)
+	if err != nil {
+		return channelMonitorAnalyticsResponse{}, err
+	}
 	return channelMonitorAnalyticsResponse{
-		Source: "database_daily", GroupBy: query.GroupBy, Coverage: service.DeriveChannelMonitorCoverage(true, query.From, query.To, query.From, query.To, nil),
+		Source: "database_daily", GroupBy: query.GroupBy, Coverage: coverage,
 		Summary: summaryMap, ScopeSummary: summaryMap, Items: items, Page: query.Page, PageSize: query.PageSize,
 		Total: total, GeneratedAt: common.GetTimestamp(),
 	}, nil
@@ -979,26 +885,21 @@ func channelMonitorAnalyticsCostDetailBaseQuery(ctx context.Context, query chann
 	if query.Channel > 0 {
 		base = base.Where("channel_id = ?", query.Channel)
 	}
-	if query.User > 0 {
+	if query.hasUserFilter() {
 		base = base.Where("user_id = ?", query.User)
 	}
-	if query.APIKey > 0 {
+	if query.hasAPIKeyFilter() {
 		base = base.Where("api_key_id = ?", query.APIKey)
 	}
-	if query.Model != "" {
+	if query.APIKeyKey != nil {
+		base = base.Where("api_key_key = ?", *query.APIKeyKey)
+	}
+	if query.ModelKey != nil {
+		base = base.Where("model_key = ?", *query.ModelKey)
+	} else if query.Model != "" {
 		base = base.Where("model_name = ? OR model_key = ?", query.Model, query.Model)
 	}
-	if query.Search != "" {
-		search := "%" + query.Search + "%"
-		condition := "api_key_name LIKE ? OR model_name LIKE ? OR api_key_key LIKE ?"
-		args := []any{search, search, search}
-		if exact, parseErr := strconv.Atoi(query.Search); parseErr == nil && exact > 0 {
-			condition += " OR channel_id = ? OR user_id = ? OR api_key_id = ?"
-			args = append(args, exact, exact, exact)
-		}
-		base = base.Where(condition, args...)
-	}
-	return base
+	return query.applySearch(base)
 }
 
 func channelMonitorAnalyticsCostGroupColumns(groupBy string) []string {

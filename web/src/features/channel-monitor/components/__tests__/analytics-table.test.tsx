@@ -48,7 +48,14 @@ test('renders channel model rows with both physical channel and model columns', 
       groupBy='channel_model'
       channels={new Map([[7, { name: '渠道 A', remark: '主渠道' }]])}
       items={[
-        { ...summary, key: '7:gpt-a', channel_id: 7, model_name: 'gpt-a' },
+        {
+          ...summary,
+          key: '7:gpt-a',
+          channel_id: 7,
+          model_name: 'gpt-a',
+          cache_read_tokens: 40_000_000,
+          input_tokens: 100_000_000,
+        },
       ]}
     />
   )
@@ -59,6 +66,8 @@ test('renders channel model rows with both physical channel and model columns', 
   assert.match(markup, /10/)
   assert.match(markup, /90\.0%/)
   assert.match(markup, /40\.0%/)
+  assert.match(markup, /40\.0M \/ 100\.0M Token/)
+  assert.match(markup, /title="40,000,000 \/ 100,000,000 Token"/)
 })
 
 test('renders an expandable action when a row selection handler is provided', () => {
@@ -115,7 +124,7 @@ test('keeps long lists in a horizontally scrollable bounded table', () => {
   assert.match(markup, /shrink-0 overflow-x-auto/)
   assert.match(markup, /min-w-\[42rem\]/)
   assert.match(markup, /生产 Key/)
-  assert.equal(markup.includes('ID 201'), false)
+  assert.match(markup, /Key ID 201/)
 })
 
 test('renders API Key channel and model details together', () => {

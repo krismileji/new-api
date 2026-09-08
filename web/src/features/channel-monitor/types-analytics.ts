@@ -33,7 +33,9 @@ export type ChannelMonitorAnalyticsQuery = {
   channelId?: number
   userId?: number
   apiKeyId?: number
+  apiKeyKey?: string
   model?: string
+  modelKey?: string
   search?: string
   sort?: ChannelMonitorAnalyticsSort
   direction?: 'asc' | 'desc'
@@ -79,6 +81,9 @@ export type ChannelMonitorAnalyticsItem = ChannelMonitorAnalyticsSummary & {
 }
 
 export type ChannelMonitorAnalyticsResponse = {
+  snapshot_revision?: number
+  processed_at?: number
+  generated_at?: number
   source: 'database_daily' | 'redis_daily' | 'redis_and_database_daily'
   group_by: ChannelMonitorAnalyticsGroupBy
   coverage: {

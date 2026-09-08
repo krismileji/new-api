@@ -37,6 +37,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { formatTokens } from '@/features/rankings/lib/format'
 
 import type {
   ChannelMonitorSuccessAPIKeyMetric,
@@ -138,7 +139,7 @@ export function ChannelMonitorTodaySuccessCard(
   const cacheWriteRequestLabel =
     cacheWriteRequestCount == null ? '-' : `${cacheWriteRequestCount} 次`
   const cacheTokenSummary = cacheMetric
-    ? `缓存 ${(cacheMetric.cache_read_tokens ?? 0).toLocaleString()} / ${(cacheMetric.input_tokens ?? 0).toLocaleString()} tokens`
+    ? `缓存 ${formatTokens(cacheMetric.cache_read_tokens ?? 0)} / ${formatTokens(cacheMetric.input_tokens ?? 0)} tokens`
     : '缓存 -'
   const cacheWriteSummary =
     cacheWriteChannelCount == null || cacheWriteRequestCount == null

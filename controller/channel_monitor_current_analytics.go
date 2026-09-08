@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,17 +16,30 @@ import (
 const channelMonitorAnalyticsMergeLimit = 20000
 
 func channelMonitorAnalyticsCurrentMatch(query channelMonitorAnalyticsQuery, channelID, userID, keyID int, keyName, key, modelName, modelKey string) bool {
-	if query.Channel > 0 && channelID != query.Channel || query.User > 0 && userID != query.User || query.APIKey > 0 && keyID != query.APIKey {
+	if query.Channel > 0 && channelID != query.Channel || query.hasUserFilter() && userID != query.User || query.hasAPIKeyFilter() && keyID != query.APIKey {
 		return false
 	}
-	if query.Model != "" && query.Model != modelName && query.Model != modelKey {
+	if query.APIKeyKey != nil && key != *query.APIKeyKey {
+		return false
+	}
+	if query.ModelKey != nil {
+		if modelKey != *query.ModelKey {
+			return false
+		}
+	} else if query.Model != "" && query.Model != modelName && query.Model != modelKey {
 		return false
 	}
 	if query.Search == "" {
 		return true
 	}
 	search := strings.ToLower(query.Search)
-	for _, value := range []string{keyName, key, modelName, strconv.Itoa(channelID), strconv.Itoa(userID), strconv.Itoa(keyID)} {
+	if exact, err := strconv.Atoi(query.Search); err == nil && exact >= 0 && (channelID == exact || userID == exact || keyID == exact) {
+		return true
+	}
+	if slices.Contains(query.SearchUserIDs, userID) || slices.Contains(query.SearchChannelIDs, channelID) {
+		return true
+	}
+	for _, value := range []string{keyName, key, modelName} {
 		if strings.Contains(strings.ToLower(value), search) {
 			return true
 		}
@@ -202,7 +216,7 @@ func queryChannelMonitorCurrentCostAnalytics(ctx context.Context, query channelM
 	channelTotals := false
 	// Unfiltered channel/day totals include legacy amounts without a detailed
 	// attribution. Filtered drill-downs always use the frozen detailed scopes.
-	if (query.GroupBy == "day" || query.GroupBy == "channel") && query.User == 0 && query.APIKey == 0 && query.Model == "" && query.Search == "" {
+	if (query.GroupBy == "day" || query.GroupBy == "channel") && !query.hasCostDetailFilter() {
 		channelTotals = true
 		details = make([]model.ChannelMonitorDailyCostDetail, 0, len(view.Channels))
 		for id, total := range view.Channels {

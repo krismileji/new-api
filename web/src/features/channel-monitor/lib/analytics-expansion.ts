@@ -14,7 +14,9 @@ export type ChannelMonitorAnalyticsExpansionContext = {
   channelId?: number
   userId?: number
   apiKeyId?: number
+  apiKeyKey?: string
   model?: string
+  modelKey?: string
   search?: string
   sort?: ChannelMonitorAnalyticsSort
   direction?: 'asc' | 'desc'
@@ -25,6 +27,7 @@ export function getChannelMonitorAnalyticsChildGroupBy(
   groupBy: ChannelMonitorAnalyticsGroupBy
 ): ChannelMonitorAnalyticsGroupBy | null {
   if (tab === 'api_keys') {
+    if (groupBy === 'user') return 'api_key'
     if (groupBy === 'api_key') return 'model'
     if (groupBy === 'model') return 'channel'
     return null

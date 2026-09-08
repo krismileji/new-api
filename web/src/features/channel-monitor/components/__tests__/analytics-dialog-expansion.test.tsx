@@ -195,7 +195,7 @@ describe('ChannelMonitorAnalyticsDialog expansion', () => {
     expect(screen.queryByText('Alice')).not.toBeInTheDocument()
   })
 
-  test('expands API keys into models and then channels', () => {
+  test('expands users into API keys, models and then channels', () => {
     render(
       <ChannelMonitorAnalyticsDialog
         open
@@ -207,6 +207,8 @@ describe('ChannelMonitorAnalyticsDialog expansion', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'API Key 明细' }))
 
+    fireEvent.click(screen.getByRole('button', { name: '查看alice明细' }))
+
     const apiKeyRowButton = screen.getByRole('button', {
       name: '查看生产 Key明细',
     })
@@ -217,7 +219,7 @@ describe('ChannelMonitorAnalyticsDialog expansion', () => {
     })
     expect(modelRowButton).toBeInTheDocument()
     expect(useChannelMonitorAnalyticsMock).toHaveBeenCalledWith(
-      expect.objectContaining({ groupBy: 'model', apiKeyId: 201 }),
+      expect.objectContaining({ groupBy: 'model', userId: 31, apiKeyId: 201 }),
       true
     )
 
@@ -227,6 +229,7 @@ describe('ChannelMonitorAnalyticsDialog expansion', () => {
     expect(useChannelMonitorAnalyticsMock).toHaveBeenCalledWith(
       expect.objectContaining({
         groupBy: 'channel',
+        userId: 31,
         apiKeyId: 201,
         model: 'model-a',
       }),
@@ -254,7 +257,7 @@ describe('ChannelMonitorAnalyticsDialog expansion', () => {
     )
 
     fireEvent.click(
-      screen.getByRole('button', { name: '按成功率排序（当前未排序）' })
+      screen.getByRole('button', { name: '按上游成功率排序（当前未排序）' })
     )
     expect(useChannelMonitorAnalyticsMock).toHaveBeenCalledWith(
       expect.objectContaining({
