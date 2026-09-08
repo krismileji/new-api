@@ -1,7 +1,6 @@
 package service
 
 import (
-	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -73,19 +72,9 @@ func NotifyChannelMonitorHealthAsync(enabled bool, receiver, status string, reas
 	channelMonitorHealthNotificationState.lastSent[key] = now
 	channelMonitorHealthNotificationState.Unlock()
 
-	reasonsText := strings.Join(reasons, "、")
+	reasons = append([]string(nil), reasons...)
 	go func() {
-		statusText := status
-		switch status {
-		case "degraded":
-			statusText = "已降级"
-		case "unavailable":
-			statusText = "不可用"
-		case "healthy":
-			statusText = "正常"
-		}
-		subject := "渠道监控异常：" + statusText
-		content := fmt.Sprintf("<p>渠道监控状态：%s</p><p>异常原因：%s</p><p>丢弃样本数：%d</p>", statusText, reasonsText, dropped)
+		subject, content := BuildChannelMonitorHealthNotificationEmail(status, reasons, dropped, now)
 		_ = common.SendEmail(subject, receiver, content)
 	}()
 }

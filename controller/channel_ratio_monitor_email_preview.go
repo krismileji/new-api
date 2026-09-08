@@ -3,8 +3,10 @@ package controller
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,6 +28,20 @@ func PreviewChannelMonitorNotificationEmail(c *gin.Context) {
 	}
 	if len(notificationTypes) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "请至少选择一种通知类型后再预览"})
+		return
+	}
+	if len(notificationTypes) == 1 && notificationTypes[0] == channelMonitorEmailTypeMonitoringHealth {
+		subject, content := service.BuildChannelMonitorHealthNotificationEmail(
+			service.ChannelMonitorRedisStatusAvailable,
+			[]string{service.ChannelMonitorRedisDegradedReasonContextDeadline, service.ChannelMonitorRedisDegradedReasonCostOutboxBacklog},
+			0,
+			time.Now(),
+		)
+		common.ApiSuccess(c, gin.H{
+			"subject":            subject,
+			"html":               content,
+			"notification_types": notificationTypes,
+		})
 		return
 	}
 

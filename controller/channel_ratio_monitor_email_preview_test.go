@@ -72,3 +72,30 @@ func TestPreviewChannelMonitorNotificationEmailRejectsEmptyTypes(t *testing.T) {
 	PreviewChannelMonitorNotificationEmail(ctx)
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
+
+func TestPreviewChannelMonitorNotificationEmailShowsMonitoringHealth(t *testing.T) {
+	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, "/api/channel_monitor/settings/email-preview", map[string]any{
+		"notification_types": []string{channelMonitorEmailTypeMonitoringHealth},
+	})
+	PreviewChannelMonitorNotificationEmail(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Subject           string   `json:"subject"`
+			HTML              string   `json:"html"`
+			NotificationTypes []string `json:"notification_types"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	assert.Equal(t, []string{channelMonitorEmailTypeMonitoringHealth}, response.Data.NotificationTypes)
+	assert.Equal(t, "渠道监控异常：Redis 操作超时、成本记录保存延迟", response.Data.Subject)
+	assert.Contains(t, response.Data.HTML, "原因：</strong>Redis 操作超时；成本记录保存延迟。")
+	assert.Contains(t, response.Data.HTML, "建议：</strong>")
+	assert.NotContains(t, response.Data.HTML, "累计丢弃")
+	assert.NotContains(t, response.Data.HTML, "redis_context_deadline")
+	assert.NotContains(t, response.Data.HTML, "available")
+	assert.NotContains(t, response.Data.HTML, "渠道倍率变更")
+}
