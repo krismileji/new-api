@@ -16,53 +16,103 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  sideDrawerContentClassName,
-  sideDrawerFormClassName,
-  sideDrawerHeaderClassName,
-} from '@/components/drawer-layout'
+import { Analytics01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from '@/components/ui/sheet'
-import { formatTimestampToDate } from '@/lib/format'
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 
-import type { ChannelMonitorRealtimeMetadata } from '../types'
+import {
+  formatMonitorRuntimeCount,
+  formatMonitorRuntimeTime,
+  getChannelMonitorRuntimeStatus,
+  type ChannelMonitorRuntimeInput,
+} from '../lib/runtime-status'
+import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
+import { ChannelMonitorRuntimeDetails } from './channel-monitor-runtime-details'
 
-type ChannelMonitorRealtimeStatusProps = {
-  metadata: ChannelMonitorRealtimeMetadata | undefined
+type ChannelMonitorRealtimeStatusProps = ChannelMonitorRuntimeInput & {
   className?: string
 }
 
 export function ChannelMonitorRealtimeStatus(
   props: ChannelMonitorRealtimeStatusProps
 ) {
-  if (!props.metadata) return null
+  if (
+    !props.metadata &&
+    !props.recovery &&
+    !props.recoveryLoading &&
+    !props.recoveryFailed
+  ) {
+    return null
+  }
+
+  const metadata = props.metadata
+  const recovery =
+    props.recoveryFailed || props.recoveryLoading ? undefined : props.recovery
+  const status = getChannelMonitorRuntimeStatus(props)
+  const cutoff =
+    metadata?.data_cutoff_at === 0
+      ? '暂无已处理事件'
+      : formatMonitorRuntimeTime(metadata?.data_cutoff_at)
+  const metrics = [
+    { label: '数据截至', value: cutoff },
+    {
+      label: '处理延迟',
+      value: formatMonitorRuntimeCount(metadata?.consumer_lag_seconds, '秒'),
+      warning: (metadata?.consumer_lag_seconds ?? 0) > 0,
+    },
+    {
+      label: '事件待处理',
+      value: formatMonitorRuntimeCount(status.pendingCount, '条'),
+    },
+    {
+      label: '成本汇总',
+      value: status.costLabel,
+      warning: status.costUnavailable,
+    },
+  ]
 
   return (
-    <span
-      className={cn(
-        'inline-flex min-w-0 max-w-full flex-wrap items-center gap-2',
-        props.className
-      )}
+    <div
+      className={cn('flex w-full min-w-0 flex-col gap-3', props.className)}
       data-channel-monitor-realtime-status
+      role='group'
+      aria-label='运行状态摘要'
     >
-      <span
-        className='flex max-w-full min-w-0 flex-wrap items-center gap-2 lg:hidden'
-        role='group'
-        aria-label='运行状态摘要'
-      >
-        <RealtimePrimaryStatusBadges metadata={props.metadata} />
-        <RealtimeAlertBadges metadata={props.metadata} showIdleQueues={false} />
-        <Sheet>
-          <SheetTrigger
+      <div className='flex min-w-0 flex-wrap items-center justify-between gap-2'>
+        <div
+          className='flex min-w-0 flex-wrap items-center gap-2'
+          role='status'
+          aria-label='监控恢复状态'
+        >
+          <Badge
+            variant={status.variant}
+            className={cn(
+              'h-auto min-h-5 max-w-full break-words whitespace-normal',
+              status.healthy && 'text-success'
+            )}
+          >
+            {status.label}
+          </Badge>
+          {(recovery?.pending_count ?? 0) > 0 ? (
+            <span className='text-muted-foreground text-xs'>
+              恢复待处理{' '}
+              {formatMonitorRuntimeCount(recovery?.pending_count, '条')}
+            </span>
+          ) : null}
+        </div>
+        <Dialog>
+          <DialogTrigger
             render={
               <Button
                 type='button'
@@ -72,248 +122,86 @@ export function ChannelMonitorRealtimeStatus(
               />
             }
           >
+            <HugeiconsIcon icon={Analytics01Icon} data-icon='inline-start' />
             运行详情
-          </SheetTrigger>
-          <SheetContent
-            side='bottom'
-            className={sideDrawerContentClassName(
-              'h-auto max-h-[85dvh] rounded-t-xl'
+          </DialogTrigger>
+          <DialogContent
+            className={channelMonitorDialogContentClassName(
+              'flex w-[calc(100%-2rem)] flex-col gap-4 sm:max-w-5xl'
             )}
           >
-            <SheetHeader className={sideDrawerHeaderClassName('pr-12')}>
-              <SheetTitle>实时运行详情</SheetTitle>
-              <SheetDescription>
-                事件处理、队列与成本链路的完整诊断信息
-              </SheetDescription>
-            </SheetHeader>
+            <DialogHeader className='min-w-0 shrink-0 gap-2 pr-8 text-left'>
+              <DialogTitle>监控运行详情</DialogTitle>
+              <DialogDescription className='flex min-w-0 flex-wrap gap-x-4 gap-y-1 text-xs'>
+                <span>
+                  查询于 {formatMonitorRuntimeTime(metadata?.generated_at)}
+                </span>
+                <span>
+                  检查于 {formatMonitorRuntimeTime(props.recovery?.checked_at)}
+                </span>
+                <span className='min-w-0 break-all'>
+                  节点：{props.recovery?.node_id || '未提供'}
+                </span>
+              </DialogDescription>
+            </DialogHeader>
             <div
-              className={sideDrawerFormClassName('flex-row flex-wrap gap-2')}
+              className='min-h-0 min-w-0 overflow-y-auto overscroll-contain border-t pt-4'
               role='region'
               aria-label='实时运行完整诊断'
             >
-              <RealtimeStatusDetails metadata={props.metadata} />
+              <ChannelMonitorRuntimeDetails
+                metadata={metadata}
+                recovery={props.recovery}
+                recoveryFailed={props.recoveryFailed}
+                recoveryLoading={props.recoveryLoading}
+                status={status}
+              />
             </div>
-          </SheetContent>
-        </Sheet>
-      </span>
-      <span
-        className='hidden max-w-full min-w-0 flex-wrap items-center gap-2 lg:inline-flex'
-        role='group'
-        aria-label='完整运行状态'
-      >
-        <RealtimeStatusDetails metadata={props.metadata} />
-      </span>
-    </span>
-  )
-}
-
-function RealtimePrimaryStatusBadges(props: {
-  metadata: ChannelMonitorRealtimeMetadata
-}) {
-  const redisAvailable =
-    props.metadata.redis_available ??
-    props.metadata.redis_status !== 'unavailable'
-  const consumerRunning = props.metadata.redis_consumer_running ?? true
-
-  return (
-    <>
-      <Badge
-        variant={redisAvailable ? 'outline' : 'destructive'}
-        data-realtime-redis-status={
-          redisAvailable ? 'available' : 'unavailable'
-        }
-      >
-        Redis {redisAvailable ? '正常' : '故障'}
-      </Badge>
-      <Badge
-        variant={consumerRunning ? 'outline' : 'destructive'}
-        data-realtime-consumer-status={consumerRunning ? 'running' : 'stopped'}
-      >
-        事件处理 {consumerRunning ? '运行中' : '已停止'}
-      </Badge>
-    </>
-  )
-}
-
-function RealtimeAlertBadges(props: {
-  metadata: ChannelMonitorRealtimeMetadata
-  showIdleQueues: boolean
-}) {
-  const pendingCount =
-    props.metadata.pending_count ?? props.metadata.queue_depth
-  const costQueuePendingCount = props.metadata.cost_queue_pending_count
-  const costStreamPendingCount = props.metadata.cost_stream_pending_count
-  const costStreamUnreadCount = props.metadata.cost_stream_unread_count
-  const costOutboxPendingCount = props.metadata.cost_outbox_pending_count
-  const writerQueueDepth = props.metadata.writer_queue_depth
-  const writerQueueCapacity = props.metadata.writer_queue_capacity
-  const costOutboxOldestPendingLabel = formatRealtimeTimestamp(
-    props.metadata.cost_outbox_oldest_pending_at
-  )
-
-  return (
-    <>
-      {props.metadata.realtime_degraded ? (
-        <Badge
-          variant='destructive'
-          title='实时统计尚未处理完全部事件，监控页面上的数据可能暂时不完整'
+          </DialogContent>
+        </Dialog>
+      </div>
+      <dl className='grid min-w-0 grid-cols-2 gap-x-4 gap-y-3 md:grid-cols-4'>
+        {metrics.map((metric) => (
+          <div
+            key={metric.label}
+            className='min-w-0'
+            role='group'
+            aria-label={metric.label}
+          >
+            <dt className='text-muted-foreground text-xs'>{metric.label}</dt>
+            <dd
+              className={cn(
+                'mt-1 min-w-0 text-sm font-medium break-words tabular-nums',
+                metric.warning && 'text-warning'
+              )}
+            >
+              {metric.value}
+            </dd>
+            {metric.label === '成本汇总' &&
+            (metadata?.cost_outbox_pending_count ?? 0) > 0 ? (
+              <div className='text-muted-foreground mt-0.5 text-xs tabular-nums'>
+                待记账{' '}
+                {formatMonitorRuntimeCount(
+                  metadata?.cost_outbox_pending_count,
+                  '条'
+                )}
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </dl>
+      {status.alerts.length > 0 ? (
+        <ul
+          className='text-warning flex min-w-0 flex-wrap gap-x-4 gap-y-1 text-xs font-normal'
+          aria-label='监控异常提示'
         >
-          监控数据不完整
-        </Badge>
+          {status.alerts.map((alert) => (
+            <li key={alert} className='min-w-0 break-words'>
+              {alert}
+            </li>
+          ))}
+        </ul>
       ) : null}
-      {props.metadata.degraded_reasons?.includes('daily_replay_incomplete') ? (
-        <Badge variant='warning'>日统计存在恢复缺口</Badge>
-      ) : null}
-      {props.metadata.degraded_reasons?.includes(
-        'cost_projection_unavailable'
-      ) ? (
-        <Badge variant='warning'>成本汇总暂不可用</Badge>
-      ) : null}
-      {!props.metadata.degraded_reasons?.includes(
-        'cost_projection_unavailable'
-      ) && props.metadata.cost_projection?.pending ? (
-        <Badge variant='warning'>成本汇总更新中</Badge>
-      ) : null}
-      {pendingCount > 0 ? (
-        <Badge variant='warning'>实时事件待处理 {pendingCount}</Badge>
-      ) : null}
-      {writerQueueDepth !== undefined &&
-      writerQueueCapacity !== undefined &&
-      (props.showIdleQueues || writerQueueDepth > 0) ? (
-        <Badge variant={writerQueueDepth > 0 ? 'warning' : 'outline'}>
-          监控写入队列 {writerQueueDepth}/{writerQueueCapacity}
-          {props.metadata.writer_queue_age_seconds ? (
-            <>（{props.metadata.writer_queue_age_seconds} 秒）</>
-          ) : null}
-        </Badge>
-      ) : null}
-      {costQueuePendingCount !== undefined &&
-      (props.showIdleQueues || costQueuePendingCount > 0) ? (
-        <Badge
-          variant={costQueuePendingCount > 0 ? 'warning' : 'outline'}
-          title='当前节点已聚合、等待写入成本记录的条目数量'
-        >
-          已聚合成本待写入 {costQueuePendingCount}
-        </Badge>
-      ) : null}
-      {costStreamPendingCount !== undefined &&
-      costStreamUnreadCount !== undefined &&
-      (props.showIdleQueues ||
-        costStreamPendingCount > 0 ||
-        costStreamUnreadCount > 0) ? (
-        <Badge
-          variant={
-            costStreamPendingCount > 0 || costStreamUnreadCount > 0
-              ? 'warning'
-              : 'outline'
-          }
-          title='成本事件处理队列：未读取是尚未开始处理的数量，待确认是已读取但尚未完成处理的数量'
-        >
-          成本事件未读取 {costStreamUnreadCount} / 待确认{' '}
-          {costStreamPendingCount}
-        </Badge>
-      ) : null}
-      {costOutboxPendingCount !== undefined &&
-      (props.showIdleQueues || costOutboxPendingCount > 0) ? (
-        <Badge
-          variant={costOutboxPendingCount > 0 ? 'warning' : 'outline'}
-          title={`已排队等待写入成本账本、尚未完成记账的事件，最早待处理 ${costOutboxOldestPendingLabel}`}
-        >
-          待记入成本账本 {costOutboxPendingCount}
-        </Badge>
-      ) : null}
-      {(props.metadata.cost_publish_failed_count ?? 0) > 0 ? (
-        <Badge
-          variant='destructive'
-          title='成本事件未能进入可靠处理队列，需要检查事件发布链路'
-        >
-          成本事件排队失败
-        </Badge>
-      ) : null}
-      {(props.metadata.cost_ledger_failed_count ?? 0) > 0 ? (
-        <Badge
-          variant='destructive'
-          title='成本事件未能写入成本账本，需要检查数据库写入链路'
-        >
-          成本账本写入失败
-        </Badge>
-      ) : null}
-      {(props.metadata.cost_dead_letter_count ?? 0) > 0 ? (
-        <Badge
-          variant='destructive'
-          title='成本事件多次处理失败，已移入异常队列等待复核'
-        >
-          成本事件进入异常队列
-        </Badge>
-      ) : null}
-      {props.metadata.marker_release_failure_active ? (
-        <Badge variant='destructive'>事件标记清理故障</Badge>
-      ) : null}
-      {props.metadata.stream_trim_failure_active ? (
-        <Badge variant='destructive'>实时事件清理故障</Badge>
-      ) : null}
-    </>
+    </div>
   )
-}
-
-function RealtimeStatusDetails(props: {
-  metadata: ChannelMonitorRealtimeMetadata
-}) {
-  const cutoffLabel = props.metadata.data_cutoff_at
-    ? formatTimestampToDate(props.metadata.data_cutoff_at)
-    : '暂无已处理事件'
-  const generatedLabel = formatRealtimeTimestamp(props.metadata.generated_at)
-  const processedLabel = props.metadata.processed_at
-    ? formatTimestampToDate(props.metadata.processed_at)
-    : '暂无'
-  const oldestPendingLabel = formatRealtimeTimestamp(
-    props.metadata.oldest_pending_at
-  )
-  const publishedLabel = formatRealtimeTimestamp(
-    props.metadata.last_published_at
-  )
-  const lastProcessedLabel = formatRealtimeTimestamp(
-    props.metadata.last_processed_at
-  )
-  const lastQuarantinedLabel = formatRealtimeTimestamp(
-    props.metadata.last_quarantined_at
-  )
-  const costOutboxOldestPendingLabel = formatRealtimeTimestamp(
-    props.metadata.cost_outbox_oldest_pending_at
-  )
-  const quarantineCount = props.metadata.quarantine_count ?? 0
-
-  return (
-    <>
-      <RealtimePrimaryStatusBadges metadata={props.metadata} />
-      <RealtimeAlertBadges metadata={props.metadata} showIdleQueues />
-      <span
-        className='text-muted-foreground max-w-full text-xs font-normal text-wrap'
-        title={`处理于 ${processedLabel}`}
-      >
-        {props.metadata.generated_at ? `查询时间 ${generatedLabel}` : ''}
-        {props.metadata.generated_at ? ' · ' : ''}数据截至 {cutoffLabel} ·
-        已处理事件序号 {props.metadata.event_watermark} · 最早待处理{' '}
-        {oldestPendingLabel} · 处理延迟{' '}
-        {props.metadata.consumer_lag_seconds ?? 0} 秒 · 最近发布{' '}
-        {publishedLabel} · 最近处理 {lastProcessedLabel} · 处理重试{' '}
-        {props.metadata.retry_count ?? 0} 次 · 自动接管{' '}
-        {props.metadata.takeover_count ?? 0} 次 · 异常隔离 {quarantineCount} 条
-        {quarantineCount > 0 ? `（最近 ${lastQuarantinedLabel}）` : ''} ·
-        事件标记清理失败 {props.metadata.marker_release_failure_count ?? 0} 次 ·
-        实时事件清理失败 {props.metadata.stream_trim_failure_count ?? 0} 次 ·
-        监控事件丢弃 {props.metadata.writer_dropped_events ?? 0} 次 ·
-        监控写入重试 {props.metadata.writer_retry_events ?? 0} 次 ·
-        最早待记账成本 {costOutboxOldestPendingLabel} · 成本账本写入重试{' '}
-        {props.metadata.cost_outbox_retry_count ?? 0} 次 · 成本账本写入失败{' '}
-        {props.metadata.cost_ledger_failed_count ?? 0} 次 · 成本事件排队失败{' '}
-        {props.metadata.cost_publish_failed_count ?? 0} 次 · 成本异常事件{' '}
-        {props.metadata.cost_dead_letter_count ?? 0} 条
-      </span>
-    </>
-  )
-}
-
-function formatRealtimeTimestamp(value: number | undefined) {
-  return value ? formatTimestampToDate(value) : '暂无'
 }
