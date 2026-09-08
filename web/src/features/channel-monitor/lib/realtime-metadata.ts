@@ -49,23 +49,31 @@ export function mergeChannelMonitorRealtimeMetadata(
         snapshot.generated_at
       )
     }
-    merged.data_cutoff_at = Math.min(
-      merged.data_cutoff_at,
-      snapshot.data_cutoff_at
-    )
-    merged.processed_at = Math.min(merged.processed_at, snapshot.processed_at)
-    merged.event_watermark = Math.min(
-      merged.event_watermark,
-      snapshot.event_watermark
-    )
-    merged.queue_depth = Math.max(merged.queue_depth, snapshot.queue_depth)
+    for (const field of [
+      'data_cutoff_at',
+      'processed_at',
+      'event_watermark',
+    ] as const) {
+      if (snapshot[field] !== undefined) {
+        merged[field] = Math.min(
+          merged[field] ?? snapshot[field],
+          snapshot[field]
+        )
+      }
+    }
+    if (snapshot.queue_depth !== undefined) {
+      merged.queue_depth = Math.max(
+        merged.queue_depth ?? snapshot.queue_depth,
+        snapshot.queue_depth
+      )
+    }
     if (
       merged.pending_count !== undefined ||
       snapshot.pending_count !== undefined
     ) {
       merged.pending_count = Math.max(
-        merged.pending_count ?? merged.queue_depth,
-        snapshot.pending_count ?? snapshot.queue_depth
+        merged.pending_count ?? merged.queue_depth ?? 0,
+        snapshot.pending_count ?? snapshot.queue_depth ?? 0
       )
     }
     if (
@@ -380,6 +388,16 @@ export function mergeChannelMonitorRealtimeMetadata(
       snapshot.realtime_degraded ||
       (merged.marker_release_failure_active ?? false) ||
       (merged.stream_trim_failure_active ?? false)
+  }
+  if (
+    merged &&
+    sources.some(
+      (snapshot) =>
+        snapshot?.unexplained_realtime_degraded ||
+        (snapshot?.realtime_degraded && !snapshot.degraded_reasons?.length)
+    )
+  ) {
+    merged.unexplained_realtime_degraded = true
   }
   return merged
 }

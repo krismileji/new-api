@@ -276,6 +276,8 @@ export type ChannelMonitorRealtimeMetadata = {
   stream_trim_failure_active?: boolean
   degraded_reasons?: ChannelMonitorRealtimeDegradedReason[]
   realtime_degraded: boolean
+  // Retained by frontend merging when a source omits degradation reasons.
+  unexplained_realtime_degraded?: boolean
 }
 
 export type ChannelMonitorRedisPoolStats = {

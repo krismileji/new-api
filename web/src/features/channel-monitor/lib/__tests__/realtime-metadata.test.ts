@@ -18,11 +18,35 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
-import { describe, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
+import type { ChannelMonitorRealtimeMetadata } from '../../types'
 import { mergeChannelMonitorRealtimeMetadata } from '../realtime-metadata'
 
 describe('channel monitor realtime metadata', () => {
+  test.each([false, true])(
+    '部分接口未返回实时字段时保留其他接口的有效指标，顺序反转：%s',
+    (reverse) => {
+      const summary: ChannelMonitorRealtimeMetadata = JSON.parse(
+        '{"generated_at":205,"realtime_degraded":false}'
+      )
+      const realtime: ChannelMonitorRealtimeMetadata = {
+        generated_at: 200,
+        data_cutoff_at: 190,
+        processed_at: 195,
+        event_watermark: 20,
+        queue_depth: 2,
+        pending_count: 2,
+        realtime_degraded: false,
+      }
+      const sources = [summary, realtime]
+      const merged = mergeChannelMonitorRealtimeMetadata(
+        reverse ? sources.reverse() : sources
+      )
+      expect(merged).toMatchObject(realtime)
+    }
+  )
+
   test('uses the oldest cutoff and most severe queue state across query results', () => {
     const merged = mergeChannelMonitorRealtimeMetadata([
       {

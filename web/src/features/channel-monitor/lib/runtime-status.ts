@@ -62,6 +62,21 @@ export function getChannelMonitorRuntimeStatus(
   const recovery =
     input.recoveryFailed || input.recoveryLoading ? undefined : input.recovery
   const reasons = metadata?.degraded_reasons ?? []
+  const historicalIncomplete =
+    reasons.includes('daily_replay_incomplete') ||
+    (recovery?.data_gap_reasons.length ?? 0) > 0 ||
+    recovery?.recovery_status === 'data_incomplete'
+  const runtimeReasons = reasons.filter(
+    (reason) =>
+      reason !== 'daily_replay_incomplete' &&
+      !(reason === 'cost_projection_pending' && recovery?.status === 'healthy')
+  )
+  // An unexplained degradation must remain visible even after runtime recovery.
+  const realtimeDegraded =
+    metadata?.realtime_degraded === true &&
+    (metadata.unexplained_realtime_degraded === true ||
+      reasons.length === 0 ||
+      runtimeReasons.length > 0)
   const redisAvailable =
     metadata?.redis_available ??
     (metadata?.redis_status === undefined
@@ -90,13 +105,14 @@ export function getChannelMonitorRuntimeStatus(
   } else if (costQueues.every((count) => count === 0)) costLabel = '无待处理'
 
   const alerts = new Set<string>()
-  for (const reason of reasons) {
+  const historyNotices = new Set<string>()
+  for (const reason of runtimeReasons) {
     if (reason === 'cost_projection_pending' && costUnavailable) continue
     alerts.add(degradedReasonLabels[reason] ?? `监控异常：${reason}`)
   }
   if (redisAvailable === false) alerts.add('Redis 故障')
   if (consumerRunning === false) alerts.add('事件处理已停止')
-  if (metadata?.realtime_degraded) alerts.add('监控数据不完整')
+  if (realtimeDegraded) alerts.add('监控数据不完整')
   if (costUnavailable) alerts.add('成本汇总暂不可用')
   if (metadata?.marker_release_failure_active) alerts.add('事件标记清理故障')
   if (metadata?.stream_trim_failure_active) alerts.add('实时事件清理故障')
@@ -105,13 +121,16 @@ export function getChannelMonitorRuntimeStatus(
       `成本异常事件 ${formatMonitorRuntimeCount(metadata?.cost_dead_letter_count, '条')}`
     )
   }
-  if (
-    (recovery?.data_gap_reasons.length ?? 0) > 0 ||
-    recovery?.recovery_status === 'data_incomplete'
-  ) {
-    alerts.add('部分历史统计不完整')
+  if (historicalIncomplete) {
+    historyNotices.add('部分历史统计不完整')
   }
-  if (recovery?.action) alerts.add(recovery.action)
+  if (recovery?.action) {
+    if (recovery.status === 'healthy' && historicalIncomplete) {
+      historyNotices.add(recovery.action)
+    } else {
+      alerts.add(recovery.action)
+    }
+  }
   if (recovery?.notification_error) alerts.add(recovery.notification_error)
   if (input.recoveryFailed) alerts.add('监控恢复状态获取失败')
 
@@ -131,11 +150,7 @@ export function getChannelMonitorRuntimeStatus(
         'cost_dead_letter',
       ].includes(reason)
     )
-  const incomplete =
-    metadata?.realtime_degraded === true ||
-    reasons.length > 0 ||
-    (recovery?.data_gap_reasons.length ?? 0) > 0 ||
-    recovery?.recovery_status === 'data_incomplete'
+  const incomplete = realtimeDegraded || runtimeReasons.length > 0
   let label = '监控状态未确认'
   let variant: 'outline' | 'warning' | 'destructive' = 'outline'
   let healthy = false
@@ -159,12 +174,6 @@ export function getChannelMonitorRuntimeStatus(
     variant = 'warning'
   } else if (incomplete) {
     label = '监控数据不完整'
-    if (
-      recovery?.recovery_status === 'data_incomplete' ||
-      (recovery?.data_gap_reasons.length ?? 0) > 0
-    ) {
-      label = recovery?.message || '部分历史统计不完整'
-    }
     variant = 'warning'
   } else if (input.recoveryLoading) {
     label = '监控状态检查中'
@@ -173,6 +182,7 @@ export function getChannelMonitorRuntimeStatus(
     (redisAvailable === true && consumerRunning === true)
   ) {
     label = recovery?.message || '监控正常'
+    if (historicalIncomplete) label = '监控运行正常'
     healthy = true
   }
 
@@ -186,6 +196,7 @@ export function getChannelMonitorRuntimeStatus(
     costLabel,
     costUnavailable,
     alerts: [...alerts],
+    historyNotices: [...historyNotices],
   }
 }
 

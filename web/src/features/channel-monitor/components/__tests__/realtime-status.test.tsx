@@ -22,7 +22,9 @@ import { describe, expect, test } from 'vitest'
 
 import { formatTimestampToDate } from '@/lib/format'
 
+import { mergeChannelMonitorRealtimeMetadata } from '../../lib/realtime-metadata'
 import type { ChannelMonitorRealtimeMetadata } from '../../types'
+import type { ChannelMonitorRecovery } from '../../types-recovery'
 import { ChannelMonitorRealtimeStatus } from '../channel-monitor-realtime-status'
 
 const alertMetadata = {
@@ -89,7 +91,141 @@ const healthyMetadata: ChannelMonitorRealtimeMetadata = {
   realtime_degraded: false,
 }
 
+const recoveredWithGaps: ChannelMonitorRecovery = {
+  status: 'healthy',
+  recovery_status: 'data_incomplete',
+  node_id: 'node-a',
+  checked_at: alertMetadata.generated_at,
+  recovered_at: 1_752_777_800,
+  pending_count: 1,
+  message: '运行正常，部分历史统计不完整',
+  action: '请复核丢弃或隔离记录；运行恢复不代表历史数据已补齐。',
+  data_gap_reasons: ['daily_replay_incomplete', 'events_quarantined'],
+}
+
 describe('channel monitor realtime status', () => {
+  test('运行恢复后历史缺口与正常成本批次不再触发运行警告，诊断记录仍可查看', async () => {
+    const user = userEvent.setup()
+    render(
+      <ChannelMonitorRealtimeStatus
+        metadata={{
+          ...healthyMetadata,
+          cost_outbox_pending_count: 1,
+          cost_projection: {
+            checked_at: recoveredWithGaps.checked_at,
+            pending: true,
+            failed: false,
+          },
+          degraded_reasons: [
+            'daily_replay_incomplete',
+            'cost_projection_pending',
+          ],
+          realtime_degraded: true,
+          retry_count: 12532,
+          takeover_count: 130,
+          quarantine_count: 252,
+          marker_release_failure_count: 161,
+          marker_release_failure_active: false,
+        }}
+        recovery={recoveredWithGaps}
+      />
+    )
+    const status = screen.getByRole('status', { name: '监控恢复状态' })
+    expect(within(status).getByText('监控运行正常')).toHaveAttribute(
+      'data-variant',
+      'outline'
+    )
+    expect(
+      screen.queryByRole('list', { name: '监控异常提示' })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByRole('list', { name: '监控历史提示' })
+    ).toHaveTextContent('部分历史统计不完整')
+    expect(screen.queryByText('恢复待处理 1 条')).not.toBeInTheDocument()
+    expect(screen.getByRole('group', { name: '成本汇总' })).toHaveTextContent(
+      '更新中'
+    )
+    expect(screen.getByText('待记账 1 条')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '运行详情' }))
+    const dialog = await screen.findByRole('dialog', { name: '监控运行详情' })
+    expect(
+      within(dialog).getByRole('group', { name: '历史数据缺口' })
+    ).toHaveTextContent('日统计恢复不完整、存在隔离事件')
+    expect(
+      within(dialog).getByRole('group', { name: '异常隔离' })
+    ).toHaveTextContent('252 条')
+    expect(
+      within(dialog).getByRole('group', { name: '标记清理失败（累计）' })
+    ).toHaveTextContent('161 次')
+    expect(
+      within(dialog).getByRole('group', { name: '处理建议' })
+    ).toHaveTextContent(recoveredWithGaps.action)
+  })
+
+  test('后台确认成本处理持续积压时继续显示运行警告', () => {
+    render(
+      <ChannelMonitorRealtimeStatus
+        metadata={{
+          ...healthyMetadata,
+          degraded_reasons: ['cost_projection_pending'],
+          realtime_degraded: true,
+        }}
+        recovery={{
+          ...recoveredWithGaps,
+          status: 'degraded',
+          recovery_status: 'recovering',
+          message: '正在自动恢复',
+          action: '后台正在处理积压事件。',
+        }}
+      />
+    )
+    expect(screen.getByText('正在自动恢复')).toHaveAttribute(
+      'data-variant',
+      'warning'
+    )
+    expect(
+      screen.getByRole('list', { name: '监控异常提示' })
+    ).toHaveTextContent('成本汇总更新中')
+    expect(screen.getByText('恢复待处理 1 条')).toBeVisible()
+  })
+
+  test('未说明原因的数据降级不能被已恢复状态覆盖', () => {
+    render(
+      <ChannelMonitorRealtimeStatus
+        metadata={{ ...healthyMetadata, realtime_degraded: true }}
+        recovery={recoveredWithGaps}
+      />
+    )
+    expect(
+      screen.getByRole('status', { name: '监控恢复状态' })
+    ).toHaveTextContent('监控数据不完整')
+    expect(screen.getByRole('list', { name: '监控异常提示' })).toBeVisible()
+  })
+
+  test('多接口合并后历史缺口不能掩盖另一个接口未说明原因的数据降级', () => {
+    render(
+      <ChannelMonitorRealtimeStatus
+        metadata={mergeChannelMonitorRealtimeMetadata([
+          { ...healthyMetadata, realtime_degraded: true },
+          {
+            ...healthyMetadata,
+            realtime_degraded: true,
+            degraded_reasons: ['daily_replay_incomplete'],
+          },
+        ])}
+        recovery={recoveredWithGaps}
+      />
+    )
+    const status = screen.getByRole('status', { name: '监控恢复状态' })
+    expect(within(status).getByText('监控数据不完整')).toHaveAttribute(
+      'data-variant',
+      'warning'
+    )
+    expect(
+      screen.getByRole('list', { name: '监控历史提示' })
+    ).toHaveTextContent('部分历史统计不完整')
+  })
+
   test('顶部保留关键指标和当前故障，详细队列与历史次数不占用摘要', () => {
     render(<ChannelMonitorRealtimeStatus metadata={alertMetadata} />)
     const summary = screen.getByRole('group', { name: '运行状态摘要' })

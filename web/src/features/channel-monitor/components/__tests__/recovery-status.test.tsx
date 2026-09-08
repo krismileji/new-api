@@ -95,8 +95,15 @@ describe('channel monitor recovery status', () => {
         }}
       />
     )
-    expect(screen.getByText('运行正常，部分历史统计不完整')).toBeVisible()
-    expect(screen.getByText('请复核丢弃或隔离记录。')).toBeVisible()
+    expect(
+      screen.getByRole('status', { name: '监控恢复状态' })
+    ).toHaveTextContent('监控运行正常')
+    const history = screen.getByRole('list', { name: '监控历史提示' })
+    expect(history).toHaveTextContent('部分历史统计不完整')
+    expect(history).toHaveTextContent('请复核丢弃或隔离记录。')
+    expect(
+      screen.queryByRole('list', { name: '监控异常提示' })
+    ).not.toBeInTheDocument()
     expect(screen.queryByText('数据已全部补齐')).not.toBeInTheDocument()
   })
 

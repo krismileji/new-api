@@ -38,6 +38,7 @@ import {
   type ChannelMonitorRuntimeInput,
 } from '../lib/runtime-status'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
+import { ChannelMonitorHistoryNotice } from './channel-monitor-history-notice'
 import { ChannelMonitorRuntimeDetails } from './channel-monitor-runtime-details'
 
 type ChannelMonitorRealtimeStatusProps = ChannelMonitorRuntimeInput & {
@@ -104,7 +105,8 @@ export function ChannelMonitorRealtimeStatus(
           >
             {status.label}
           </Badge>
-          {(recovery?.pending_count ?? 0) > 0 ? (
+          {recovery?.status !== 'healthy' &&
+          (recovery?.pending_count ?? 0) > 0 ? (
             <span className='text-muted-foreground text-xs'>
               恢复待处理{' '}
               {formatMonitorRuntimeCount(recovery?.pending_count, '条')}
@@ -202,6 +204,14 @@ export function ChannelMonitorRealtimeStatus(
           ))}
         </ul>
       ) : null}
+      <ChannelMonitorHistoryNotice
+        metadata={metadata}
+        recovery={props.recovery}
+        recoveryFailed={props.recoveryFailed}
+        recoveryLoading={props.recoveryLoading}
+        notices={status.historyNotices}
+        healthy={status.healthy}
+      />
     </div>
   )
 }
