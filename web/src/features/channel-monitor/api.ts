@@ -67,6 +67,7 @@ import type {
   ChannelModelDetectionApiResponse,
   ChannelModelDetectionOverview,
 } from './types-model-detection'
+import type { ChannelMonitorRecovery } from './types-recovery'
 
 const channelMonitorRequestConfig = (
   config: ApiRequestConfig = {}
@@ -130,6 +131,16 @@ export async function getChannelMonitorOverview() {
   const response = await api.get<
     ChannelMonitorApiResponse<ChannelMonitorOverview>
   >('/api/channel_monitor/', channelMonitorRequestConfig())
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function getChannelMonitorRecovery() {
+  const response = await api.get<
+    ChannelMonitorApiResponse<ChannelMonitorRecovery>
+  >(
+    '/api/channel_monitor/health',
+    channelMonitorRequestConfig({ timeout: 10_000 })
+  )
   return ensureChannelMonitorSuccess(response.data)
 }
 

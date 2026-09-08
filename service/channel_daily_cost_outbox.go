@@ -79,13 +79,15 @@ type channelDailyCostOutboxPayload struct {
 }
 
 type ChannelDailyCostOutboxRuntime struct {
-	cancel        context.CancelFunc
-	done          chan struct{}
-	stopOnce      sync.Once
-	consumerName  string
-	redisClient   *redis.Client
-	redisEnabled  bool
-	operationWait sync.WaitGroup
+	cancel              context.CancelFunc
+	done                chan struct{}
+	stopOnce            sync.Once
+	consumerName        string
+	redisClient         *redis.Client
+	redisEnabled        bool
+	operationWait       sync.WaitGroup
+	lastDBRecoveryAt    atomic.Int64
+	lastRedisConsumerAt atomic.Int64
 }
 
 type ChannelDailyCostReliableStats struct {
@@ -209,6 +211,13 @@ func StartChannelDailyCostOutboxRuntime() (*ChannelDailyCostOutboxRuntime, error
 
 func (runtime *ChannelDailyCostOutboxRuntime) run(ctx context.Context) {
 	defer close(runtime.done)
+	runtime.lastDBRecoveryAt.Store(time.Now().Unix())
+	runtime.lastRedisConsumerAt.Store(time.Now().Unix())
+	runtime.operationWait.Add(1)
+	go func() {
+		defer runtime.operationWait.Done()
+		runtime.runHealthMonitor(ctx, channelMonitorHealthPollInterval)
+	}()
 	runtime.operationWait.Add(1)
 	go func() {
 		defer runtime.operationWait.Done()
@@ -254,6 +263,7 @@ func (runtime *ChannelDailyCostOutboxRuntime) runRedisConsumer(ctx context.Conte
 			logger.LogWarn(ctx, fmt.Sprintf("渠道成本 Stream 消费失败，将自动重试: %v", err))
 		} else {
 			retryDelay = time.Second
+			runtime.lastRedisConsumerAt.Store(time.Now().Unix())
 			continue
 		}
 		timer := time.NewTimer(retryDelay)
@@ -451,6 +461,7 @@ func (runtime *ChannelDailyCostOutboxRuntime) runDBRecovery(ctx context.Context)
 	nextStatsRefresh := time.Time{}
 	nextCleanup := time.Time{}
 	for {
+		runtime.lastDBRecoveryAt.Store(time.Now().Unix())
 		batchCutoff := time.Now()
 		for ctx.Err() == nil {
 			count, err := applyChannelDailyCostOutboxBatch(ctx, runtime.consumerName, time.Now().Unix(), batchCutoff.Unix(), batchCutoff.Unix())

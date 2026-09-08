@@ -4,8 +4,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/QuantumNous/new-api/common"
 )
 
 const channelMonitorHealthNotificationCooldown = 15 * time.Minute
@@ -16,11 +14,6 @@ type ChannelMonitorHealthNotificationConfig struct {
 	Enabled           bool
 	Receiver          string
 	NotificationTypes []string
-}
-
-var channelMonitorHealthNotificationState struct {
-	sync.Mutex
-	lastSent map[string]time.Time
 }
 
 var channelMonitorHealthNotificationConfigProvider struct {
@@ -49,8 +42,8 @@ func NotifyChannelMonitorHealthFromCurrentConfig(status string, reasons []string
 	NotifyChannelMonitorHealthAsync(config.Enabled, config.Receiver, status, reasons, dropped, config.NotificationTypes...)
 }
 
-// NotifyChannelMonitorHealthAsync sends a deduplicated health email without
-// blocking a page request, Stream consumer, or monitoring worker.
+// NotifyChannelMonitorHealthAsync wakes the shared health sampler. Partial
+// request observations cannot independently declare failure or recovery.
 func NotifyChannelMonitorHealthAsync(enabled bool, receiver, status string, reasons []string, dropped int64, notificationTypes ...string) {
 	if !enabled || strings.TrimSpace(receiver) == "" || len(reasons) == 0 {
 		return
@@ -58,25 +51,10 @@ func NotifyChannelMonitorHealthAsync(enabled bool, receiver, status string, reas
 	if len(notificationTypes) > 0 && !channelMonitorHealthNotificationTypeEnabled(notificationTypes, ChannelMonitorHealthNotificationType) {
 		return
 	}
-	receiver = strings.TrimSpace(receiver)
-	key := receiver + "\x00" + strings.Join(reasons, ",")
-	now := time.Now()
-	channelMonitorHealthNotificationState.Lock()
-	if channelMonitorHealthNotificationState.lastSent == nil {
-		channelMonitorHealthNotificationState.lastSent = make(map[string]time.Time)
+	select {
+	case channelMonitorHealthWake <- struct{}{}:
+	default:
 	}
-	if last := channelMonitorHealthNotificationState.lastSent[key]; !last.IsZero() && now.Sub(last) < channelMonitorHealthNotificationCooldown {
-		channelMonitorHealthNotificationState.Unlock()
-		return
-	}
-	channelMonitorHealthNotificationState.lastSent[key] = now
-	channelMonitorHealthNotificationState.Unlock()
-
-	reasons = append([]string(nil), reasons...)
-	go func() {
-		subject, content := BuildChannelMonitorHealthNotificationEmail(status, reasons, dropped, now)
-		_ = common.SendEmail(subject, receiver, content)
-	}()
 }
 
 func channelMonitorHealthNotificationTypeEnabled(notificationTypes []string, target string) bool {

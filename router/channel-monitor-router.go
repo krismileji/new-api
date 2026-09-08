@@ -17,6 +17,7 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 	{
 		registerChannelModelDetectionRoutes(monitorRoute)
 		monitorRoute.GET("/", controller.GetChannelMonitorOverview)
+		monitorRoute.GET("/health", controller.GetChannelMonitorRecovery)
 		monitorRoute.GET("/concurrency", controller.GetChannelMonitorConcurrency)
 		monitorRoute.GET("/cost", controller.GetChannelMonitorCostOverview)
 		monitorRoute.GET("/analytics/summary", controller.GetChannelMonitorAnalyticsSummary)

@@ -98,12 +98,12 @@ import { ChannelGroupMonitorSettingsSheet } from './components/channel-group-mon
 import { ChannelMonitorAnalyticsDialog } from './components/channel-monitor-analytics-dialog'
 import { ChannelMonitorChannelView } from './components/channel-monitor-channel-view'
 import { ChannelMonitorGroupView } from './components/channel-monitor-group-view'
+import { ChannelMonitorHealthStatus } from './components/channel-monitor-health-status'
 import { ChannelMonitorModelPerformanceView } from './components/channel-monitor-model-performance-view'
 import { ChannelMonitorOrderDialog } from './components/channel-monitor-order-dialog'
 import { ChannelMonitorPageLayout } from './components/channel-monitor-page-layout'
 import { ChannelMonitorPerformanceCoverageAlert } from './components/channel-monitor-performance-coverage-alert'
 import { ChannelMonitorPerformanceRangeControl } from './components/channel-monitor-performance-range-control'
-import { ChannelMonitorRealtimeStatus } from './components/channel-monitor-realtime-status'
 import {
   ChannelMonitorSettingsDialog,
   ChannelMonitorSmartScheduleSettingsSheet,
@@ -1700,7 +1700,7 @@ export function ChannelMonitor() {
           </>
         }
         realtimeStatus={
-          <ChannelMonitorRealtimeStatus metadata={pageRealtimeMetadata} />
+          <ChannelMonitorHealthStatus metadata={pageRealtimeMetadata} />
         }
       >
         {pageContent}

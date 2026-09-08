@@ -11,6 +11,10 @@ import (
 // BuildChannelMonitorHealthNotificationEmail is shared by delivery and preview.
 // Redis availability alone does not establish that monitoring is healthy.
 func BuildChannelMonitorHealthNotificationEmail(status string, reasons []string, dropped int64, observedAt time.Time) (string, string) {
+	return buildChannelMonitorHealthEmail(status, reasons, dropped, observedAt, "", "")
+}
+
+func buildChannelMonitorHealthEmail(status string, reasons []string, dropped int64, observedAt time.Time, action, nodeID string) (string, string) {
 	labels := make([]string, 0, len(reasons))
 	checkTargets := make([]string, 0, len(reasons))
 	unknownCodes := make([]string, 0)
@@ -52,14 +56,22 @@ func BuildChannelMonitorHealthNotificationEmail(status string, reasons []string,
 	content.WriteString(`<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light"></head><body style="margin:0;background:#ffffff;color:#111827;font-family:Arial,'Microsoft YaHei',sans-serif;font-size:14px;line-height:1.7"><div style="max-width:680px;margin:0 auto;padding:16px;overflow-wrap:anywhere;word-break:break-word">`)
 	fmt.Fprintf(&content, "<p><strong>原因：</strong>%s。</p>", html.EscapeString(strings.Join(labels, "；")))
 	content.WriteString("<p><strong>影响：</strong>监控统计可能延迟或不完整，不代表接口调用失败。</p>")
-	fmt.Fprintf(&content, "<p><strong>建议：</strong>若持续出现，请检查%s。</p>", html.EscapeString(strings.Join(checkTargets, "、")))
+	if action != "" {
+		fmt.Fprintf(&content, "<p><strong>处理：</strong>%s</p>", html.EscapeString(action))
+	} else {
+		fmt.Fprintf(&content, "<p><strong>建议：</strong>若持续出现，请检查%s。</p>", html.EscapeString(strings.Join(checkTargets, "、")))
+	}
 	if dropped > 0 {
 		fmt.Fprintf(&content, "<p>累计丢弃的监控记录：<strong>%d 条</strong>（当前节点累计，非失败请求数）。</p>", dropped)
 	}
 	if len(unknownCodes) > 0 {
 		fmt.Fprintf(&content, `<p>未分类异常代码：<code style="word-break:break-all">%s</code></p>`, html.EscapeString(strings.Join(unknownCodes, "、")))
 	}
-	fmt.Fprintf(&content, `<p style="color:#4b5563">时间：%s</p>`, html.EscapeString(observedAt.Format("2006-01-02 15:04:05 UTC-07:00")))
+	fmt.Fprintf(&content, `<p style="color:#4b5563">时间：%s`, html.EscapeString(observedAt.Format("2006-01-02 15:04:05 UTC-07:00")))
+	if nodeID != "" {
+		fmt.Fprintf(&content, "<br>节点：%s", html.EscapeString(nodeID))
+	}
+	content.WriteString("</p>")
 	content.WriteString("</div></body></html>")
 	return subject, content.String()
 }
@@ -109,6 +121,12 @@ func channelMonitorHealthReasonSummary(reason string) (label, checkTarget string
 		return "成本统计正在追平", "成本后台任务"
 	case "cost_projection_unavailable":
 		return "成本统计暂不可用", "成本后台任务和 Redis 连接"
+	case "health_observation_failed":
+		return "监控状态检查失败", "Redis、数据库连接和健康检查日志"
+	case "cost_worker_stopped":
+		return "成本后台任务未运行", "成本后台任务和应用日志"
+	case "events_quarantined":
+		return "部分监控记录需要人工复核", "被隔离的监控记录及错误日志"
 	default:
 		return "", "监控服务日志"
 	}

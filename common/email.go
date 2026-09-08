@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/smtp"
 	"slices"
 	"strings"
@@ -42,22 +43,34 @@ func smtpTLSConfig() *tls.Config {
 }
 
 func newSMTPClient(addr string) (*smtp.Client, error) {
+	return newSMTPClientWithTimeout(addr, 0)
+}
+
+func newSMTPClientWithTimeout(addr string, timeout time.Duration) (*smtp.Client, error) {
+	deadline := time.Now().Add(timeout)
+	var conn net.Conn
+	var err error
 	if SMTPSSLEnabled || (SMTPPort == 465 && !SMTPStartTLSEnabled) {
-		conn, err := tls.Dial("tcp", addr, smtpTLSConfig())
-		if err != nil {
-			return nil, err
-		}
-		client, err := smtp.NewClient(conn, SMTPServer)
-		if err != nil {
+		conn, err = tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", addr, smtpTLSConfig())
+	} else {
+		conn, err = net.DialTimeout("tcp", addr, timeout)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if timeout > 0 {
+		if err := conn.SetDeadline(deadline); err != nil {
 			_ = conn.Close()
 			return nil, err
 		}
-		return client, nil
 	}
-
-	client, err := smtp.Dial(addr)
+	client, err := smtp.NewClient(conn, SMTPServer)
 	if err != nil {
+		_ = conn.Close()
 		return nil, err
+	}
+	if SMTPSSLEnabled || (SMTPPort == 465 && !SMTPStartTLSEnabled) {
+		return client, nil
 	}
 
 	if SMTPStartTLSEnabled {
@@ -76,6 +89,12 @@ func newSMTPClient(addr string) (*smtp.Client, error) {
 }
 
 func SendEmail(subject string, receiver string, content string) error {
+	return SendEmailWithTimeout(subject, receiver, content, 0)
+}
+
+// SendEmailWithTimeout bounds connection setup and the complete SMTP exchange.
+// A zero timeout preserves the existing SendEmail behavior.
+func SendEmailWithTimeout(subject string, receiver string, content string, timeout time.Duration) error {
 	if SMTPFrom == "" { // for compatibility
 		SMTPFrom = SMTPAccount
 	}
@@ -98,7 +117,7 @@ func SendEmail(subject string, receiver string, content string) error {
 	addr := fmt.Sprintf("%s:%d", SMTPServer, SMTPPort)
 	to := strings.Split(receiver, ";")
 	var err error
-	client, err := newSMTPClient(addr)
+	client, err := newSMTPClientWithTimeout(addr, timeout)
 	if err != nil {
 		return err
 	}

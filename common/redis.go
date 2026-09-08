@@ -94,6 +94,7 @@ var redisClientPoolSizes struct {
 }
 
 type redisClientCommandMetrics struct {
+	health                    redisCommandHealth
 	commandCount              atomic.Uint64
 	commandErrorCount         atomic.Uint64
 	contextDeadlineCount      atomic.Uint64
@@ -199,7 +200,11 @@ func (metrics *redisClientCommandMetrics) record(ctx context.Context, err error)
 }
 
 func (metrics *redisClientCommandMetrics) recordError(err error) {
-	if metrics == nil || err == nil {
+	if metrics == nil {
+		return
+	}
+	metrics.health.observe(err, time.Now())
+	if err == nil {
 		return
 	}
 	metrics.commandErrorCount.Add(1)
@@ -528,10 +533,8 @@ func redisClientPoolStats(role RedisClientRole, client *redis.Client, poolSize i
 	}
 	if stats.PoolCongested {
 		stats.DegradedReason = RedisClientPoolDegradedReasonPoolCongested
-	} else if stats.PoolTimeoutCount > 0 {
-		stats.DegradedReason = RedisClientPoolDegradedReasonPoolTimeout
-	} else if stats.ContextDeadlineCount > 0 {
-		stats.DegradedReason = RedisClientPoolDegradedReasonContextDeadline
+	} else if metrics != nil {
+		stats.DegradedReason = metrics.health.degradedReason()
 	}
 	return stats
 }
