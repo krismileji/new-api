@@ -227,14 +227,17 @@ type ChannelModelDetectionSettingsSummary struct {
 }
 
 type ChannelModelDetectionOverviewResponse struct {
-	ServerNow     int64                                  `json:"server_now"`
-	Settings      ChannelModelDetectionSettingsSummary   `json:"settings"`
-	Detector      ChannelModelDetectionDetectorResponse  `json:"detector"`
-	Summary       map[string]int                         `json:"summary"`
-	Groups        []string                               `json:"groups"`
-	Models        []string                               `json:"models"`
-	ModelsByGroup map[string][]string                    `json:"models_by_group"`
-	Channels      []ChannelModelDetectionChannelResponse `json:"channels"`
+	CostSource      string                                 `json:"cost_source"`
+	CostRevision    int64                                  `json:"cost_revision"`
+	CostProcessedAt int64                                  `json:"cost_processed_at"`
+	ServerNow       int64                                  `json:"server_now"`
+	Settings        ChannelModelDetectionSettingsSummary   `json:"settings"`
+	Detector        ChannelModelDetectionDetectorResponse  `json:"detector"`
+	Summary         map[string]int                         `json:"summary"`
+	Groups          []string                               `json:"groups"`
+	Models          []string                               `json:"models"`
+	ModelsByGroup   map[string][]string                    `json:"models_by_group"`
+	Channels        []ChannelModelDetectionChannelResponse `json:"channels"`
 }
 
 type ChannelModelDetectionRunHistoryQuery struct {
@@ -429,24 +432,42 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 	}
 	todayStart := model.ChannelDailyCostDayStart(now)
 	todayCostClause := "((created_at >= ? AND created_at <= ?) OR (settled_at >= ? AND settled_at <= ?))"
+	useRedisToday := common.RedisEnabled && todayStart == model.ChannelDailyCostDayStart(common.GetTimestamp())
 	var costEvents []model.ChannelModelDetectionCostEvent
 	costQuery := db.Model(&model.ChannelModelDetectionCostEvent{})
-	switch {
-	case len(runIDs) > 0 && len(executionIDs) > 0:
-		costQuery = costQuery.Where("(run_id IN ? OR execution_id IN ?) OR "+todayCostClause, runIDs, executionIDs, todayStart, now, todayStart, now)
-	case len(runIDs) > 0:
-		costQuery = costQuery.Where("run_id IN ? OR "+todayCostClause, runIDs, todayStart, now, todayStart, now)
-	case len(executionIDs) > 0:
-		costQuery = costQuery.Where("execution_id IN ? OR "+todayCostClause, executionIDs, todayStart, now, todayStart, now)
-	default:
-		costQuery = costQuery.Where(todayCostClause, todayStart, now, todayStart, now)
+	if useRedisToday {
+		// Run/execution details retain their historical audit rows. Today's
+		// cumulative cost no longer scans the day's entire cost-event table.
+		costQuery = costQuery.Where("run_id IN ? OR execution_id IN ?", runIDs, executionIDs)
+	} else {
+		switch {
+		case len(runIDs) > 0 && len(executionIDs) > 0:
+			costQuery = costQuery.Where("(run_id IN ? OR execution_id IN ?) OR "+todayCostClause, runIDs, executionIDs, todayStart, now, todayStart, now)
+		case len(runIDs) > 0:
+			costQuery = costQuery.Where("run_id IN ? OR "+todayCostClause, runIDs, todayStart, now, todayStart, now)
+		case len(executionIDs) > 0:
+			costQuery = costQuery.Where("execution_id IN ? OR "+todayCostClause, executionIDs, todayStart, now, todayStart, now)
+		default:
+			costQuery = costQuery.Where(todayCostClause, todayStart, now, todayStart, now)
+		}
 	}
 	if err := costQuery.Order("id ASC").Find(&costEvents).Error; err != nil {
 		return ChannelModelDetectionOverviewResponse{}, err
 	}
 	var todayCosts []model.ChannelDailyCost
-	if err := db.Where("day_start = ?", todayStart).Order("channel_id ASC").Find(&todayCosts).Error; err != nil {
-		return ChannelModelDetectionOverviewResponse{}, err
+	var currentCosts ChannelMonitorRedisSharedDailyCostView
+	if useRedisToday {
+		currentCosts, err = QueryChannelMonitorRedisDailyCosts(ctx, todayStart)
+		if err != nil {
+			return ChannelModelDetectionOverviewResponse{}, err
+		}
+		for id, cost := range currentCosts.Channels {
+			todayCosts = append(todayCosts, model.ChannelDailyCost{ChannelId: id, ModelDetectionCostNanoCNY: cost.ModelDetectionSettledCostNanoCNY})
+		}
+	} else {
+		if err := db.Where("day_start = ?", todayStart).Order("channel_id ASC").Find(&todayCosts).Error; err != nil {
+			return ChannelModelDetectionOverviewResponse{}, err
+		}
 	}
 	var ratioMonitors []model.ChannelRatioMonitor
 	if err := db.Select("channel_id", "ratio", "cost_conversion", "updated_time").Order("channel_id ASC").Find(&ratioMonitors).Error; err != nil {
@@ -456,6 +477,14 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 	response, err := buildChannelModelDetectionOverview(now, global, channels, configs, targets, runs, executionRows, costEvents, todayCosts, ratioMonitors, logicalData)
 	if err != nil {
 		return ChannelModelDetectionOverviewResponse{}, err
+	}
+	response.CostSource = "database_daily"
+	if useRedisToday {
+		response.CostSource = "redis_daily"
+		response.CostRevision, response.CostProcessedAt = currentCosts.Revision, currentCosts.ProcessedAt
+		if err := applyChannelModelDetectionDailyCosts(&response, currentCosts); err != nil {
+			return ChannelModelDetectionOverviewResponse{}, err
+		}
 	}
 	return response, nil
 }

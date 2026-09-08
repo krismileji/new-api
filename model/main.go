@@ -459,6 +459,7 @@ func migrateDB() error {
 		&ChannelMonitorMinuteAPIKeyMetric{},
 		&ChannelMonitorMinuteDurationBucket{},
 		&ChannelMonitorDailySuccessLedger{},
+		&ChannelMonitorDailyCheckpoint{},
 		&ChannelMonitorDailySuccessMinute{},
 		&ChannelMonitorDailyCostDetail{},
 		&ChannelMonitorCostBackfillCheckpoint{},

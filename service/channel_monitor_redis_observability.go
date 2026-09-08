@@ -326,7 +326,9 @@ func applyChannelDailyCostReliableStatus(status *ChannelMonitorRedisRealtimeStat
 	status.CostLedgerFailedCount = stats.LedgerFailed
 	status.CostPublishFailedCount = stats.PublishFailed
 	status.CostDeadLetterCount = stats.DeadLettered
-	if stats.OutboxPending > 0 {
+	// A normal minute batch intentionally leaves unsettled projection rows in
+	// the daily ledger queue. Only overdue/retrying persistence is degraded.
+	if stats.OutboxPending > 0 && (!channelDailyCostReliableOutboxEnabled() || stats.OutboxRetryCount > 0 || stats.OutboxOldestAt > 0 && time.Now().Unix()-stats.OutboxOldestAt > 120) {
 		status.DegradedReasons = appendUniqueChannelMonitorRedisDegradedReason(status.DegradedReasons, ChannelMonitorRedisDegradedReasonCostOutboxBacklog)
 	}
 	if stats.PublishFailed > 0 {

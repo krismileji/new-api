@@ -33,6 +33,14 @@ export function mergeChannelMonitorRealtimeMetadata(
       continue
     }
     if (
+      snapshot.cost_projection &&
+      (!merged.cost_projection ||
+        snapshot.cost_projection.checked_at >=
+          merged.cost_projection.checked_at)
+    ) {
+      merged.cost_projection = snapshot.cost_projection
+    }
+    if (
       merged.generated_at !== undefined ||
       snapshot.generated_at !== undefined
     ) {

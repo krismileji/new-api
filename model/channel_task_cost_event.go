@@ -33,6 +33,7 @@ type ChannelTaskCostEvent struct {
 	InitialQuota       int64  `gorm:"not null"`
 	InitialCostNanoCNY int64  `gorm:"not null"`
 	CostNanoCNY        int64  `gorm:"not null"`
+	ProjectionVersion  int64  `gorm:"not null;default:0"`
 	CreatedAt          int64  `gorm:"not null"`
 	UpdatedAt          int64  `gorm:"not null"`
 }
@@ -118,6 +119,13 @@ func RegisterChannelTaskCostEvent(ctx context.Context, input ChannelTaskCostEven
 				}
 			}
 			currentCost = input.CostNanoCNY
+			version, err := appendChannelDailyCostProjectionTx(tx, channelTaskCostProjectionDelta(record, currentCost), 0, record.CostEventId)
+			if err != nil {
+				return err
+			}
+			if version > 0 {
+				return tx.Model(&ChannelTaskCostEvent{}).Where("id = ?", existing.Id).UpdateColumn("projection_version", version).Error
+			}
 			return nil
 		}
 
@@ -225,9 +233,13 @@ func updateChannelTaskCostEventTx(tx *gorm.DB, costEventId string, updatedAt int
 	if err := replaceChannelDailyCostValue(tx, event, targetCost, updatedAt); err != nil {
 		return 0, err
 	}
+	version, err := appendChannelDailyCostProjectionTx(tx, channelTaskCostProjectionDelta(event, targetCost), 0, event.CostEventId)
+	if err != nil {
+		return 0, err
+	}
 	result := tx.Model(&ChannelTaskCostEvent{}).
 		Where("id = ? AND cost_nano_cny = ? AND updated_at <= ?", event.Id, event.CostNanoCNY, updatedAt).
-		Updates(map[string]any{"cost_nano_cny": targetCost, "updated_at": updatedAt})
+		Updates(map[string]any{"cost_nano_cny": targetCost, "updated_at": updatedAt, "projection_version": version})
 	if result.Error != nil {
 		return 0, result.Error
 	}

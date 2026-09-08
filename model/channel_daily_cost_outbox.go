@@ -42,14 +42,19 @@ type ChannelDailyCostOutbox struct {
 	UserAttribution       string `gorm:"size:16;not null;default:''"`
 	ModelName             string `gorm:"size:255;not null;default:''"`
 	SourceKind            string `gorm:"size:32;not null;default:''"`
-	AttemptCount          int64  `gorm:"not null"`
-	NextAttemptAt         int64  `gorm:"not null;index:idx_channel_daily_cost_outbox_pending,priority:3"`
-	LeaseOwner            string `gorm:"size:128;not null;index"`
-	LeaseUntil            int64  `gorm:"not null;index:idx_channel_daily_cost_outbox_pending,priority:4"`
-	ProcessedAt           int64  `gorm:"not null;index:idx_channel_daily_cost_outbox_pending,priority:1"`
-	LastError             string `gorm:"size:512;not null"`
-	CreatedAt             int64  `gorm:"not null"`
-	UpdatedAt             int64  `gorm:"not null"`
+	// Redis delivery is independent from the minute ledger batch. Task
+	// replacements share ProjectionEventId and use Id as their ordered version.
+	ProjectionEventId         string `gorm:"size:128;not null;default:''"`
+	ModelDetectionCostNanoCNY int64  `gorm:"not null;default:0"`
+	RedisProjectedAt          int64  `gorm:"not null;default:0;index:idx_channel_daily_cost_outbox_projection"`
+	AttemptCount              int64  `gorm:"not null"`
+	NextAttemptAt             int64  `gorm:"not null;index:idx_channel_daily_cost_outbox_pending,priority:3"`
+	LeaseOwner                string `gorm:"size:128;not null;index"`
+	LeaseUntil                int64  `gorm:"not null;index:idx_channel_daily_cost_outbox_pending,priority:4"`
+	ProcessedAt               int64  `gorm:"not null;index:idx_channel_daily_cost_outbox_pending,priority:1"`
+	LastError                 string `gorm:"size:512;not null"`
+	CreatedAt                 int64  `gorm:"not null"`
+	UpdatedAt                 int64  `gorm:"not null"`
 }
 
 type ChannelDailyCostOutboxStats struct {
@@ -124,7 +129,7 @@ func StoreChannelDailyCostOutboxEventsWithResult(ctx context.Context, deltas []C
 	return inserted, nil
 }
 
-func ClaimChannelDailyCostOutboxEvents(ctx context.Context, owner string, now int64, readyBefore int64, leaseDuration time.Duration, limit int) ([]ChannelDailyCostOutbox, error) {
+func ClaimChannelDailyCostOutboxEvents(ctx context.Context, owner string, now int64, readyBefore int64, leaseDuration time.Duration, limit int, createdBefore ...int64) ([]ChannelDailyCostOutbox, error) {
 	if DB == nil {
 		return nil, errors.New("channel daily cost outbox database is unavailable")
 	}
@@ -152,12 +157,15 @@ func ClaimChannelDailyCostOutboxEvents(ctx context.Context, owner string, now in
 	claimed := make([]ChannelDailyCostOutbox, 0, limit)
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ids []int64
-		if err := lockForUpdate(tx.Model(&ChannelDailyCostOutbox{})).
+		query := lockForUpdate(tx.Model(&ChannelDailyCostOutbox{})).
 			Select("id").
 			Where("processed_at = ? AND next_attempt_at <= ? AND lease_until <= ?", 0, readyBefore, now).
 			Order("id ASC").
-			Limit(limit).
-			Find(&ids).Error; err != nil {
+			Limit(limit)
+		if len(createdBefore) > 0 && createdBefore[0] > 0 {
+			query = query.Where("created_at <= ?", createdBefore[0])
+		}
+		if err := query.Find(&ids).Error; err != nil {
 			return err
 		}
 		if len(ids) == 0 {
@@ -344,6 +352,7 @@ func DeleteProcessedChannelDailyCostOutboxEvents(ctx context.Context, processedB
 		if err := tx.Model(&ChannelDailyCostOutbox{}).
 			Select("id").
 			Where("processed_at > ? AND processed_at < ?", 0, processedBefore).
+			Where("redis_projected_at > ? OR occurred_at < ?", 0, ChannelDailyCostDayStart(time.Now().Unix())-86400).
 			Order("id ASC").
 			Limit(limit).
 			Find(&ids).Error; err != nil {

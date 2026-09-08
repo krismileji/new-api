@@ -27,17 +27,19 @@ type ChannelMonitorDailySuccessLedger struct {
 	GroupKey        string `gorm:"size:32;not null;uniqueIndex:idx_cm_daily_success_dim"`
 	GroupName       string `gorm:"size:255;not null;default:''"`
 
-	ActualSuccessCount int64 `gorm:"not null"`
-	ActualFailureCount int64 `gorm:"not null"`
-	FinalSuccessCount  int64 `gorm:"not null"`
-	FinalFailureCount  int64 `gorm:"not null"`
-	CacheHitCount      int64 `gorm:"not null"`
-	CacheSampleCount   int64 `gorm:"not null"`
-	CacheReadTokens    int64 `gorm:"not null;default:0"`
-	InputTokens        int64 `gorm:"not null;default:0"`
-	CacheWriteCount    int64 `gorm:"not null"`
-	CreatedAt          int64 `gorm:"not null"`
-	UpdatedAt          int64 `gorm:"not null"`
+	ActualSuccessCount int64  `gorm:"not null"`
+	ActualFailureCount int64  `gorm:"not null"`
+	FinalSuccessCount  int64  `gorm:"not null"`
+	FinalFailureCount  int64  `gorm:"not null"`
+	CacheHitCount      int64  `gorm:"not null"`
+	CacheSampleCount   int64  `gorm:"not null"`
+	CacheReadTokens    int64  `gorm:"not null;default:0"`
+	InputTokens        int64  `gorm:"not null;default:0"`
+	CacheWriteCount    int64  `gorm:"not null"`
+	AggregateJSON      string `gorm:"type:text"`
+	ProjectionRevision int64  `gorm:"not null;default:0"`
+	CreatedAt          int64  `gorm:"not null"`
+	UpdatedAt          int64  `gorm:"not null"`
 }
 
 // ChannelMonitorDailySuccessMinute is the per-minute contribution ledger.

@@ -106,6 +106,9 @@ type channelStatusProbeChannelResponse struct {
 }
 
 type channelStatusProbeOverviewResponse struct {
+	CostSource         string                              `json:"cost_source"`
+	CostRevision       int64                               `json:"cost_revision"`
+	CostProcessedAt    int64                               `json:"cost_processed_at"`
 	ServerNow          int64                               `json:"server_now"`
 	ScanIntervalSecond int                                 `json:"scan_interval_seconds"`
 	Summary            map[string]int                      `json:"summary"`
@@ -624,11 +627,23 @@ func buildChannelStatusProbeOverview(
 		return channelStatusProbeOverviewResponse{}, err
 	}
 	todayStart := model.ChannelDailyCostDayStart(now)
-	todayCosts, err := model.GetChannelDailyCostsForStatusProbeOverview(
-		ctx, db, todayStart, todayStart+channelMonitorCostDaySeconds, queryChannelIDs,
-	)
+	costSource, err := loadChannelMonitorCostReadSource(ctx, now, true)
 	if err != nil {
 		return channelStatusProbeOverviewResponse{}, err
+	}
+	todayProbeCostByChannel := make(map[int]int64)
+	if costSource.current != nil {
+		for id, cost := range costSource.current.Channels {
+			todayProbeCostByChannel[id] = cost.ProbeSettledCostNanoCNY
+		}
+	} else {
+		todayCosts, err := model.GetChannelDailyCostsForStatusProbeOverview(ctx, db, todayStart, todayStart+channelMonitorCostDaySeconds, queryChannelIDs)
+		if err != nil {
+			return channelStatusProbeOverviewResponse{}, err
+		}
+		for _, cost := range todayCosts {
+			todayProbeCostByChannel[cost.ChannelId] = cost.ProbeCostNanoCNY
+		}
 	}
 
 	statesByChannel := make(map[int][]model.ChannelStatusProbeState)
@@ -647,10 +662,6 @@ func buildChannelStatusProbeOverview(
 	monitorByChannel := make(map[int]model.ChannelRatioMonitor, len(monitors))
 	for _, monitor := range monitors {
 		monitorByChannel[monitor.ChannelId] = monitor
-	}
-	todayProbeCostByChannel := make(map[int]int64, len(todayCosts))
-	for _, cost := range todayCosts {
-		todayProbeCostByChannel[cost.ChannelId] = cost.ProbeCostNanoCNY
 	}
 	items := make([]channelStatusProbeChannelResponse, 0, len(channels))
 	summary := map[string]int{
@@ -853,11 +864,17 @@ func buildChannelStatusProbeOverview(
 		sort.Strings(groupModels)
 		modelsByGroup[groupName] = groupModels
 	}
-	return channelStatusProbeOverviewResponse{
-		ServerNow: now, ScanIntervalSecond: channelStatusProbeScanIntervalSeconds(),
+	response := channelStatusProbeOverviewResponse{
+		CostSource: "database_daily",
+		ServerNow:  now, ScanIntervalSecond: channelStatusProbeScanIntervalSeconds(),
 		Summary: summary, Groups: groups, Models: models,
 		ModelsByGroup: modelsByGroup, Channels: items,
-	}, nil
+	}
+	if costSource.current != nil {
+		response.CostSource = "redis_daily"
+		response.CostRevision, response.CostProcessedAt = costSource.current.Revision, costSource.current.ProcessedAt
+	}
+	return response, nil
 }
 
 func UpdateChannelStatusProbeConfig(c *gin.Context) {

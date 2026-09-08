@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,11 +16,13 @@ type ChannelMonitorRedisDailySuccessEntry struct {
 }
 
 type ChannelMonitorRedisDailySuccessView struct {
-	DayStart       int64
-	DataCutoffAt   int64
-	ProcessedAt    int64
-	EventWatermark uint64
-	Entries        []ChannelMonitorRedisDailySuccessEntry
+	DayStart        int64
+	Revision        int64
+	CoveragePartial bool
+	DataCutoffAt    int64
+	ProcessedAt     int64
+	EventWatermark  uint64
+	Entries         []ChannelMonitorRedisDailySuccessEntry
 }
 
 // QueryChannelMonitorRedisDailySuccess reads one dedicated daily hash. It
@@ -50,38 +51,12 @@ func queryChannelMonitorRedisDailySuccessWithClient(
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if len(patterns) == 0 {
-		patterns = []string{"*"}
-	}
 	limits := defaultChannelMonitorRedisSharedProjectionLimits()
-	fieldCount := int64(0)
-	values := make(map[string]string)
-	for _, pattern := range patterns {
-		cursor := uint64(0)
-		for {
-			opCtx, cancel := context.WithTimeout(ctx, channelMonitorRedisSharedOperationTimeout)
-			items, next, err := client.HScan(opCtx, ChannelMonitorRedisSuccessDayKey(dayStart), cursor, pattern, channelMonitorRedisSharedScanCount).Result()
-			cancel()
-			if err != nil {
-				return ChannelMonitorRedisDailySuccessView{}, err
-			}
-			if len(items)%2 != 0 {
-				return ChannelMonitorRedisDailySuccessView{}, errors.New("渠道监控 Redis 日汇总哈希扫描结果无效")
-			}
-			fieldCount += int64(len(items) / 2)
-			if fieldCount > int64(limits.MaxHashFields) {
-				return ChannelMonitorRedisDailySuccessView{}, &ChannelMonitorRedisSharedProjectionLimitError{
-					Resource: "hash_fields", Limit: int64(limits.MaxHashFields), Actual: fieldCount,
-				}
-			}
-			for index := 0; index < len(items); index += 2 {
-				values[items[index]] = items[index+1]
-			}
-			cursor = next
-			if cursor == 0 {
-				break
-			}
-		}
+	opCtx, cancel := context.WithTimeout(ctx, channelMonitorRedisSharedOperationTimeout)
+	defer cancel()
+	values, err := readChannelMonitorRedisDailyHash(opCtx, client, ChannelMonitorRedisSuccessDayKey(dayStart), patterns, limits.MaxHashFields)
+	if err != nil {
+		return ChannelMonitorRedisDailySuccessView{}, err
 	}
 
 	entries := make(map[string]*ChannelMonitorRedisDailySuccessEntry)
@@ -97,6 +72,10 @@ func queryChannelMonitorRedisDailySuccessWithClient(
 		}
 		if scope == channelMonitorRedisSharedScopeMetadata {
 			switch metric {
+			case "revision":
+				view.Revision = parseDailySuccessInt64(raw)
+			case "coverage_partial":
+				view.CoveragePartial = raw == "1"
 			case channelMonitorRedisSharedMetricDataCutoffAt:
 				view.DataCutoffAt = max(view.DataCutoffAt, parseDailySuccessInt64(raw))
 			case channelMonitorRedisSharedMetricProcessedAt:

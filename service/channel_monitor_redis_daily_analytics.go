@@ -25,12 +25,15 @@ type ChannelMonitorRedisDailySuccessAnalyticsRow struct {
 }
 
 type ChannelMonitorRedisDailySuccessAnalyticsView struct {
-	DayStart       int64
-	Summary        ChannelMonitorRedisSharedAggregate
-	Rows           []ChannelMonitorRedisDailySuccessAnalyticsRow
-	DataCutoffAt   int64
-	ProcessedAt    int64
-	EventWatermark uint64
+	Revision        int64
+	CoveragePartial bool
+	Facts           []ChannelMonitorRedisDailySuccessAnalyticsRow
+	DayStart        int64
+	Summary         ChannelMonitorRedisSharedAggregate
+	Rows            []ChannelMonitorRedisDailySuccessAnalyticsRow
+	DataCutoffAt    int64
+	ProcessedAt     int64
+	EventWatermark  uint64
 }
 
 // QueryChannelMonitorRedisDailySuccessAnalytics reads one current-day hash.
@@ -62,17 +65,31 @@ func channelMonitorRedisDailySuccessAnalyticsFromView(
 	daily ChannelMonitorRedisDailySuccessView,
 ) (ChannelMonitorRedisDailySuccessAnalyticsView, error) {
 	view := ChannelMonitorRedisDailySuccessAnalyticsView{
-		DayStart:       daily.DayStart,
-		Rows:           make([]ChannelMonitorRedisDailySuccessAnalyticsRow, 0),
-		DataCutoffAt:   daily.DataCutoffAt,
-		ProcessedAt:    daily.ProcessedAt,
-		EventWatermark: daily.EventWatermark,
+		DayStart:        daily.DayStart,
+		Revision:        daily.Revision,
+		CoveragePartial: daily.CoveragePartial,
+		Rows:            make([]ChannelMonitorRedisDailySuccessAnalyticsRow, 0),
+		DataCutoffAt:    daily.DataCutoffAt,
+		ProcessedAt:     daily.ProcessedAt,
+		EventWatermark:  daily.EventWatermark,
 	}
 	rows := make(map[string]*ChannelMonitorRedisDailySuccessAnalyticsRow)
 
 	for _, entry := range daily.Entries {
 		row := ChannelMonitorRedisDailySuccessAnalyticsRow{Aggregate: entry.Aggregate}
 		switch entry.Scope {
+		case "fact":
+			identity, err := channelMonitorDailyMetricIdentity(entry.Identity)
+			if err != nil {
+				return ChannelMonitorRedisDailySuccessAnalyticsView{}, err
+			}
+			ledger := identity.LedgerRow(daily.DayStart)
+			row.ChannelID, row.UserID, row.APIKeyID = identity.ChannelID, identity.UserID, identity.APIKeyID
+			row.UserAttribution = ledger.UserAttribution
+			row.APIKeyKey, row.APIKeyName = identity.APIKeyKey, entry.Aggregate.APIKeyName
+			row.ModelName, row.ModelKey = identity.Model, ledger.ModelKey
+			view.Facts = append(view.Facts, row)
+			continue
 		case channelMonitorRedisSharedScopeGlobal:
 			view.Summary = entry.Aggregate
 			continue

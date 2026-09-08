@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/go-redis/redis/v8"
+	"gorm.io/gorm"
 )
 
 const channelMonitorRedisDailyRebuildLeaseTTL = 10 * time.Minute
@@ -20,6 +21,9 @@ const channelMonitorRedisDailyRebuildLeaseTTL = 10 * time.Minute
 // projection from the durable database read model. It is intended for startup
 // recovery after the daily Redis key was introduced, expired, or lost.
 func RebuildChannelMonitorRedisDailySuccess(ctx context.Context, now int64) error {
+	if model.DB != nil && model.DB.Migrator().HasTable(&model.ChannelMonitorDailyCheckpoint{}) {
+		return ensureChannelMonitorDailyMetrics(ctx, common.RedisMonitorConsumerClient(), model.ChannelDailyCostDayStart(now))
+	}
 	return rebuildChannelMonitorRedisDailySuccess(ctx, common.RedisMonitorConsumerClient(), now)
 }
 
@@ -44,6 +48,9 @@ func rebuildChannelMonitorRedisDailySuccess(
 		ctx = context.Background()
 	}
 	dayStart := model.ChannelDailyCostDayStart(now)
+	if model.DB != nil && model.DB.Migrator().HasTable(&model.ChannelMonitorDailyCheckpoint{}) {
+		return rebuildChannelMonitorDailyMetrics(ctx, client, dayStart)
+	}
 	dayEnd := now - now%60
 	if dayEnd < dayStart {
 		dayEnd = dayStart
@@ -451,15 +458,25 @@ func encodeChannelMonitorRedisDailySuccessAggregates(
 	fields := make(map[string]string, len(aggregates)*9)
 	for scope, aggregate := range aggregates {
 		for metric, value := range map[string]int64{
-			channelMonitorRedisSharedMetricActualSuccess:      aggregate.ActualSuccessCount,
-			channelMonitorRedisSharedMetricActualFailure:      aggregate.ActualFailureCount,
-			channelMonitorRedisSharedMetricFinalSuccess:       aggregate.FinalSuccessCount,
-			channelMonitorRedisSharedMetricFinalFailure:       aggregate.FinalFailureCount,
-			channelMonitorRedisSharedMetricCacheHits:          aggregate.CacheHitCount,
-			channelMonitorRedisSharedMetricCacheSamples:       aggregate.CacheSampleCount,
-			channelMonitorRedisSharedMetricCacheReadTokens:    aggregate.CacheReadTokens,
-			channelMonitorRedisSharedMetricInputTokens:        aggregate.InputTokens,
-			channelMonitorRedisSharedMetricCacheWriteRequests: aggregate.CacheWriteRequestCount,
+			channelMonitorRedisSharedMetricEventCount:             aggregate.EventCount,
+			channelMonitorRedisSharedMetricBusinessRequests:       aggregate.BusinessRequestCount,
+			channelMonitorRedisSharedMetricFirstTokenSamples:      aggregate.FirstTokenSampleCount,
+			channelMonitorRedisSharedMetricAttemptDurationSamples: aggregate.AttemptDurationSampleCount,
+			channelMonitorRedisSharedMetricAttemptDurationTotalMs: aggregate.AttemptDurationTotalMs,
+			channelMonitorRedisSharedMetricTPSSamples:             aggregate.TPSSampleCount,
+			channelMonitorRedisSharedMetricTPSOutputTokens:        aggregate.TPSOutputTokens,
+			channelMonitorRedisSharedMetricTPSGenerationMs:        aggregate.TPSGenerationDurationMs,
+			channelMonitorRedisSharedMetricCacheWriteTokens:       aggregate.CacheWriteTokens,
+			channelMonitorRedisSharedMetricLastUsedTime:           aggregate.LastUsedTime,
+			channelMonitorRedisSharedMetricActualSuccess:          aggregate.ActualSuccessCount,
+			channelMonitorRedisSharedMetricActualFailure:          aggregate.ActualFailureCount,
+			channelMonitorRedisSharedMetricFinalSuccess:           aggregate.FinalSuccessCount,
+			channelMonitorRedisSharedMetricFinalFailure:           aggregate.FinalFailureCount,
+			channelMonitorRedisSharedMetricCacheHits:              aggregate.CacheHitCount,
+			channelMonitorRedisSharedMetricCacheSamples:           aggregate.CacheSampleCount,
+			channelMonitorRedisSharedMetricCacheReadTokens:        aggregate.CacheReadTokens,
+			channelMonitorRedisSharedMetricInputTokens:            aggregate.InputTokens,
+			channelMonitorRedisSharedMetricCacheWriteRequests:     aggregate.CacheWriteRequestCount,
 		} {
 			if value != 0 {
 				fields[scope+":"+metric] = strconv.FormatInt(value, 10)
@@ -467,6 +484,9 @@ func encodeChannelMonitorRedisDailySuccessAggregates(
 		}
 		if aggregate.APIKeyName != "" && isChannelMonitorRedisDailyAPIKeyScope(scope) {
 			fields[scope+":"+channelMonitorRedisSharedMetricAPIKeyName] = aggregate.APIKeyName
+		}
+		if aggregate.FirstTokenSampleCount > 0 {
+			fields[scope+":"+channelMonitorRedisSharedMetricFirstTokenTotalMs] = strconv.FormatFloat(aggregate.FirstTokenTotalMs, 'f', -1, 64)
 		}
 	}
 	return fields
@@ -504,7 +524,10 @@ func validateChannelMonitorDailyRebuildMetric(row model.ChannelMonitorMinuteAPIK
 }
 
 func isChannelMonitorRedisDailyAPIKeyScope(scope string) bool {
-	return strings.HasPrefix(scope, channelMonitorRedisSharedScopeAPIKey+":") ||
+	if strings.HasPrefix(scope, "fact:") || strings.HasPrefix(scope, "cost_detail:") || strings.HasPrefix(scope, "cost_key:") {
+		return true
+	}
+	return strings.HasPrefix(scope, "fact:") || strings.HasPrefix(scope, "cost_detail:") || strings.HasPrefix(scope, channelMonitorRedisSharedScopeAPIKey+":") ||
 		strings.HasPrefix(scope, channelMonitorRedisSharedScopeAPIKeyRoute+":") ||
 		strings.HasPrefix(scope, "user_api_key:") ||
 		strings.HasPrefix(scope, "channel_user_api_key:") ||
@@ -548,56 +571,31 @@ func replaceChannelMonitorRedisDailySuccessKey(
 	return nil
 }
 
-func rebuildChannelMonitorRedisDailyCosts(
-	ctx context.Context,
-	client *redis.Client,
-	now int64,
-) error {
-	if client == nil {
-		return ErrChannelMonitorRedisSharedProjectionUnavailable
-	}
-	if model.DB == nil {
-		return errors.New("渠道监控日成本数据库不可用")
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	dayStart := model.ChannelDailyCostDayStart(now)
-	leaseToken := "channel-monitor-daily-cost-rebuild:" + common.GetUUID()
-	leaseCtx, acquired, err := acquireChannelMonitorRedisDailyRebuildLease(ctx, client, leaseToken)
-	if err != nil || !acquired {
-		return err
-	}
-	defer releaseChannelMonitorRedisDailyRebuildLease(leaseCtx, client, leaseToken)
-
-	fields, hasData, err := loadChannelMonitorRedisDailyCostFields(ctx, dayStart)
-	if err != nil {
-		return err
-	}
-	if !hasData {
-		return nil
-	}
-	fields[channelMonitorRedisSharedScopeMetadata+":"+channelMonitorRedisSharedMetricDatabaseSnapshotAt] = strconv.FormatInt(now, 10)
-	return replaceChannelMonitorRedisDailyHashKey(
-		ctx, client, ChannelMonitorRedisCostDayKey(dayStart), channelMonitorRedisSharedMinuteTTL, fields,
-	)
+func rebuildChannelMonitorRedisDailyCosts(ctx context.Context, client *redis.Client, now int64) error {
+	return rebuildChannelMonitorReliableDailyCosts(ctx, client, model.ChannelDailyCostDayStart(now))
 }
 
 func loadChannelMonitorRedisDailyCostFields(
 	ctx context.Context,
 	dayStart int64,
+	databases ...*gorm.DB,
 ) (map[string]string, bool, error) {
-	if !model.DB.Migrator().HasTable(&model.ChannelDailyCost{}) {
+	db := model.DB
+	if len(databases) > 0 {
+		db = databases[0]
+	}
+	if !db.Migrator().HasTable(&model.ChannelDailyCost{}) {
 		return nil, false, nil
 	}
 	var channelRows []model.ChannelDailyCost
-	if err := model.DB.WithContext(ctx).Where("day_start = ?", dayStart).
+	if err := db.WithContext(ctx).Where("day_start = ?", dayStart).
 		Order("channel_id ASC").Find(&channelRows).Error; err != nil {
 		return nil, false, err
 	}
 	if len(channelRows) == 0 {
 		return nil, false, nil
 	}
+	keyDisplays := make(map[string]string)
 	aggregates := make(map[string]ChannelMonitorRedisSharedAggregate)
 	detailAPIKeys := make(map[string]struct{})
 	for _, row := range channelRows {
@@ -620,9 +618,9 @@ func loadChannelMonitorRedisDailyCostFields(
 		}
 	}
 
-	if model.DB.Migrator().HasTable(&model.ChannelMonitorDailyCostDetail{}) {
+	if db.Migrator().HasTable(&model.ChannelMonitorDailyCostDetail{}) {
 		var detailRows []model.ChannelMonitorDailyCostDetail
-		if err := model.DB.WithContext(ctx).Where("day_start = ?", dayStart).
+		if err := db.WithContext(ctx).Where("day_start = ?", dayStart).
 			Order("channel_id ASC, api_key_id ASC, model_key ASC, source_kind ASC").Find(&detailRows).Error; err != nil {
 			return nil, false, err
 		}
@@ -631,35 +629,50 @@ func loadChannelMonitorRedisDailyCostFields(
 				return nil, false, err
 			}
 			source := channelMonitorRedisDailyCostDetailAggregate(row)
-			modelName := ratio_setting.FormatMatchingModelName(strings.TrimSpace(row.ModelName))
-			if modelName != "" {
-				if err := addChannelMonitorRedisDailyCostAggregate(aggregates, channelMonitorRedisSharedScopeModel+":"+channelMonitorRedisSharedDimension(modelName), source); err != nil {
+			state := channelMonitorReliableCostState{Identity: channelMonitorReliableCostIdentity{
+				ChannelID: row.ChannelId, UserID: row.UserId, APIKeyID: row.APIKeyId,
+				Model:       ratio_setting.FormatMatchingModelName(strings.TrimSpace(row.ModelName)),
+				Fingerprint: row.APIKeyKey, Source: row.SourceKind,
+			}, APIKeyName: row.APIKeyName}
+			for _, scope := range channelMonitorReliableCostScopes(state) {
+				if scope == channelMonitorRedisSharedScopeGlobal || scope == channelMonitorRedisSharedScopeChannel+":"+strconv.Itoa(row.ChannelId) {
+					continue
+				}
+				if err := addChannelMonitorRedisDailyCostAggregate(aggregates, scope, source); err != nil {
 					return nil, false, err
 				}
 			}
 			if row.APIKeyId > 0 {
 				detailAPIKeys[strconv.Itoa(row.ChannelId)+":"+strconv.Itoa(row.APIKeyId)] = struct{}{}
-				if err := addChannelMonitorRedisDailyCostAggregate(aggregates, channelMonitorRedisSharedScopeAPIKey+":"+strconv.Itoa(row.APIKeyId), source); err != nil {
-					return nil, false, err
-				}
 			}
 		}
 	}
 
-	if model.DB.Migrator().HasTable(&model.ChannelDailyAPIKeyCost{}) {
+	if db.Migrator().HasTable(&model.ChannelDailyAPIKeyCost{}) {
 		var apiKeyRows []model.ChannelDailyAPIKeyCost
-		if err := model.DB.WithContext(ctx).Where("day_start = ?", dayStart).
+		if err := db.WithContext(ctx).Where("day_start = ?", dayStart).
 			Order("channel_id ASC, api_key_id ASC, key_fingerprint ASC").Find(&apiKeyRows).Error; err != nil {
 			return nil, false, err
 		}
 		for _, row := range apiKeyRows {
-			if row.APIKeyId <= 0 {
-				continue
-			}
 			if err := validateChannelMonitorRedisDailyAPIKeyCost(row); err != nil {
 				return nil, false, err
 			}
+			keyState := channelMonitorReliableCostState{Identity: channelMonitorReliableCostIdentity{
+				ChannelID: row.ChannelId, APIKeyID: row.APIKeyId, Fingerprint: row.KeyFingerprint,
+			}}
+			for _, scope := range channelMonitorReliableCostScopes(keyState) {
+				if !strings.HasPrefix(scope, "cost_key:") {
+					continue
+				}
+				keyDisplays[scope+":key_display"] = row.KeyDisplay
+				aggregates[scope] = ChannelMonitorRedisSharedAggregate{SettledCostNanoCNY: row.CostNanoCNY,
+					SettledRequestCount: row.SettledCount, UnresolvedRequestCount: row.UnresolvedCount, APIKeyName: row.APIKeyName}
+			}
 			key := channelMonitorRedisSharedScopeAPIKey + ":" + strconv.Itoa(row.APIKeyId)
+			if row.APIKeyId <= 0 {
+				continue
+			}
 			if _, exists := detailAPIKeys[strconv.Itoa(row.ChannelId)+":"+strconv.Itoa(row.APIKeyId)]; !exists {
 				if err := addChannelMonitorRedisDailyCostAggregate(aggregates, key, ChannelMonitorRedisSharedAggregate{
 					SettledCostNanoCNY:     row.CostNanoCNY,
@@ -676,7 +689,11 @@ func loadChannelMonitorRedisDailyCostFields(
 			aggregates[key] = aggregate
 		}
 	}
-	return encodeChannelMonitorRedisDailyCostAggregates(aggregates), true, nil
+	fields := encodeChannelMonitorRedisDailyCostAggregates(aggregates)
+	for field, display := range keyDisplays {
+		fields[field] = display
+	}
+	return fields, true, nil
 }
 
 func addChannelMonitorRedisDailyCostAggregate(

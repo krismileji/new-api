@@ -509,13 +509,31 @@ func GetChannelMonitorOverview(c *gin.Context) {
 	for _, monitor := range monitors {
 		monitorByChannel[monitor.ChannelId] = monitor
 	}
-	todayCostByChannel, err := channelMonitorRealtimeTodayCosts(ctx, 0, todayStart)
+	todayCostByChannel, todayCostSnapshot, err := channelMonitorRealtimeTodayCosts(ctx, 0, todayStart)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 
 	groupRatios := settings.GroupRatios
+	var todayCostTotal model.ChannelDailyCostDayTotal
+	for _, cost := range todayCostByChannel {
+		for _, value := range []struct {
+			target *int64
+			amount int64
+		}{
+			{&todayCostTotal.CostNanoCNY, cost.CostNanoCNY},
+			{&todayCostTotal.ProbeCostNanoCNY, cost.ProbeCostNanoCNY},
+			{&todayCostTotal.GroupProbeCostNanoCNY, cost.GroupProbeCostNanoCNY},
+			{&todayCostTotal.ModelDetectionCostNanoCNY, cost.ModelDetectionCostNanoCNY},
+			{&todayCostTotal.SettledCount, cost.SettledCount}, {&todayCostTotal.UnresolvedCount, cost.UnresolvedCount},
+		} {
+			if err := channelMonitorAddNonNegativeInt64(value.target, value.amount); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+		}
+	}
 	channelOrder := normalizeChannelMonitorChannelOrder(channels, settings.ChannelOrder)
 	channelIDs := make([]int, 0, len(channels))
 	for _, channel := range channels {
@@ -639,7 +657,16 @@ func GetChannelMonitorOverview(c *gin.Context) {
 		"success": true,
 		"message": "",
 		"data": gin.H{
-			"channels":                      items,
+			"channels": items,
+			"today_cost_summary": gin.H{
+				"today_cost_cny":                 channelMonitorCostCNY(todayCostTotal.CostNanoCNY),
+				"today_probe_cost_cny":           channelMonitorCostCNY(todayCostTotal.ProbeCostNanoCNY),
+				"today_group_probe_cost_cny":     channelMonitorCostCNY(todayCostTotal.GroupProbeCostNanoCNY),
+				"today_model_detection_cost_cny": channelMonitorCostCNY(todayCostTotal.ModelDetectionCostNanoCNY),
+				"settled_count":                  todayCostTotal.SettledCount, "unresolved_count": todayCostTotal.UnresolvedCount,
+				"revision": todayCostSnapshot.Revision, "processed_at": todayCostSnapshot.ProcessedAt,
+				"projection": todayCostSnapshot.Projection,
+			},
 			"generated_at":                  generatedAt,
 			"data_cutoff_at":                realtimeMetadata.DataCutoffAt,
 			"processed_at":                  realtimeMetadata.ProcessedAt,

@@ -130,6 +130,8 @@ import { isChannelModelDetectionRunActive } from './lib/model-detection'
 import { aggregateChannelMonitorPerformanceByChannel } from './lib/performance'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+  CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
+  CHANNEL_MONITOR_LIVE_REFRESH_INTERVAL_MS,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
   getChannelMonitorActiveRefetchInterval,
   getChannelMonitorManualRefreshScopeKey,
@@ -407,8 +409,9 @@ export function ChannelMonitor() {
   const [smartScheduleHistoryOpen, setSmartScheduleHistoryOpen] =
     useState(false)
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
-  const [analyticsMetric, setAnalyticsMetric] =
-    useState<'cost' | 'success'>('cost')
+  const [analyticsMetric, setAnalyticsMetric] = useState<'cost' | 'success'>(
+    'cost'
+  )
   const [analyticsChannelId, setAnalyticsChannelId] = useState<number>()
   const [smartScheduleDisplaySelection, setSmartScheduleDisplaySelection] =
     useState<SmartScheduleDisplaySelection>(() => {
@@ -523,7 +526,7 @@ export function ChannelMonitor() {
             channel.active_run != null &&
             isChannelModelDetectionRunActive(channel.active_run.status)
         ) ?? false
-      ),
+      ) || CHANNEL_MONITOR_LIVE_REFRESH_INTERVAL_MS,
   })
   const groupMonitorSettingsQuery = useQuery({
     queryKey: ['channel-monitor', 'group-monitor', 'settings'],
@@ -537,14 +540,14 @@ export function ChannelMonitor() {
     queryKey: ['channel-monitor', 'cost', 'summary', 2],
     queryFn: () => getChannelMonitorCostOverview(2, undefined, 1, true),
     staleTime: 0,
-    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    ...CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
   const todaySuccessQuery = useQuery({
     queryKey: ['channel-monitor', 'success', 'today'],
     queryFn: () => getChannelMonitorTodaySuccess(),
     staleTime: 0,
-    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    ...CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
 
@@ -554,9 +557,7 @@ export function ChannelMonitor() {
   useEffect(() => {
     const previousView = previousViewRef.current
     previousViewRef.current = view
-    if (
-      !shouldRefreshChannelMonitorViewOnEnter(previousView, view)
-    ) {
+    if (!shouldRefreshChannelMonitorViewOnEnter(previousView, view)) {
       return
     }
     void refetchChannelMonitorQueries(queryClient, { view }).catch(
@@ -988,6 +989,14 @@ export function ChannelMonitor() {
     : (performanceModelOptions[0]?.value ?? '')
 
   const costOverview = costQuery.data?.data
+  const todayCostSummary = overview?.today_cost_summary
+  const todayCostOverview = todayCostSummary ?? costOverview
+  const todaySettledCount =
+    todayCostSummary?.settled_count ?? costOverview?.coverage.settled_count ?? 0
+  const todayUnresolvedCount =
+    todayCostSummary?.unresolved_count ??
+    costOverview?.coverage.unresolved_count ??
+    0
   const pageRealtimeMetadata = mergeChannelMonitorRealtimeMetadata([
     overview,
     costOverview,
@@ -996,37 +1005,37 @@ export function ChannelMonitor() {
     smartScheduleSummaryResult,
     view === 'smart-schedule' ? smartScheduleResult : undefined,
   ])
-  const todayProbeCost = costOverview?.today_probe_cost_cny ?? 0
-  const todayGroupProbeCost = costOverview?.today_group_probe_cost_cny ?? 0
+  const todayProbeCost = todayCostOverview?.today_probe_cost_cny ?? 0
+  const todayGroupProbeCost = todayCostOverview?.today_group_probe_cost_cny ?? 0
   const todayModelDetectionCost =
-    costOverview?.today_model_detection_cost_cny ?? 0
-  const todayBusinessCost = costOverview
+    todayCostOverview?.today_model_detection_cost_cny ?? 0
+  const todayBusinessCost = todayCostOverview
     ? Math.max(
         0,
-        costOverview.today_cost_cny - todayProbeCost - todayModelDetectionCost
+        todayCostOverview.today_cost_cny -
+          todayProbeCost -
+          todayModelDetectionCost
       )
     : 0
   let costDescription = '按北京时间记录已结算成本'
   let costSecondaryDescription = '详情中可查看成本趋势与解析情况'
-  if (costQuery.isError) {
+  if (costQuery.isError && !todayCostSummary) {
     costDescription = '成本统计加载失败'
     costSecondaryDescription = '请稍后重试或手动刷新'
   } else if (
-    costOverview &&
-    costOverview.coverage.settled_count +
-      costOverview.coverage.unresolved_count ===
-      0
+    todayCostOverview &&
+    todaySettledCount + todayUnresolvedCount === 0
   ) {
     costDescription = '暂无已记录的上游请求尝试'
     costSecondaryDescription = '按北京时间统计已结算成本'
-  } else if (costOverview) {
+  } else if (todayCostOverview) {
     costDescription = `业务 ${formatChannelMonitorCost(todayBusinessCost)} · 探测 ${formatChannelMonitorCost(todayProbeCost)}（分组 ${formatChannelMonitorCost(todayGroupProbeCost)}） · 模型检测 ${formatChannelMonitorCost(todayModelDetectionCost)}`
-    costSecondaryDescription = `昨日 ${formatChannelMonitorCost(costOverview.yesterday_cost_cny)} · 解析率 ${formatChannelMonitorResolutionRate(
-      costOverview.coverage.settled_count,
-      costOverview.coverage.unresolved_count
+    costSecondaryDescription = `昨日 ${formatChannelMonitorCost(costOverview?.yesterday_cost_cny)} · 今日解析率 ${formatChannelMonitorResolutionRate(
+      todaySettledCount,
+      todayUnresolvedCount
     )}`
-    if (costOverview.coverage.unresolved_count > 0) {
-      costSecondaryDescription += ` · 未解析 ${costOverview.coverage.unresolved_count}`
+    if (todayUnresolvedCount > 0) {
+      costSecondaryDescription += ` · 未解析 ${todayUnresolvedCount}`
     }
   }
   const enabledChannelCount = channels.filter(
@@ -1086,10 +1095,10 @@ export function ChannelMonitor() {
           <MonitorStatCard
             label='今日已结算成本'
             value={
-              costQuery.isLoading ? (
+              costQuery.isLoading && !todayCostSummary ? (
                 <Skeleton className='h-7 w-24' />
               ) : (
-                formatChannelMonitorCost(costOverview?.today_cost_cny)
+                formatChannelMonitorCost(todayCostOverview?.today_cost_cny)
               )
             }
             description={costDescription}

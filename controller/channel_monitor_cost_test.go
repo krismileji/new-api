@@ -16,7 +16,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestGetChannelMonitorOverviewUsesPersistedTodayCostState(t *testing.T) {
+func TestGetChannelMonitorOverviewUsesSameRedisCostForRowsAndSummary(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{})
 	require.NoError(t, db.Create(&[]model.Channel{
@@ -47,6 +47,11 @@ func TestGetChannelMonitorOverviewUsesPersistedTodayCostState(t *testing.T) {
 	unresolved.RequestDispatched = true
 	unresolved.CostStatus = model.ChannelMonitorEventCostUnresolved
 	emitChannelMonitorControllerRealtimeEvents(t, settled, unresolved)
+	require.NoError(t, common.RDB.HSet(context.Background(), service.ChannelMonitorRedisCostDayKey(channelMonitorCostDayStart(now)), map[string]any{
+		"channel:10:settled_cost_nano_cny": int64(9_000_000_000), "channel:10:settled_request_count": 1,
+		"channel:11:unresolved_request_count": 1, "global:settled_cost_nano_cny": int64(9_000_000_000),
+		"global:settled_request_count": 1, "global:unresolved_request_count": 1,
+	}).Err())
 
 	ctx, recorder := newChannelMonitorControllerContext(t, "GET", "/api/channel_monitor", nil)
 	GetChannelMonitorOverview(ctx)
@@ -61,6 +66,9 @@ func TestGetChannelMonitorOverviewUsesPersistedTodayCostState(t *testing.T) {
 	var response struct {
 		Data struct {
 			Channels []channelCostState `json:"channels"`
+			Summary  struct {
+				Cost float64 `json:"today_cost_cny"`
+			} `json:"today_cost_summary"`
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
@@ -70,6 +78,7 @@ func TestGetChannelMonitorOverviewUsesPersistedTodayCostState(t *testing.T) {
 		byId[channel.Id] = channel
 	}
 	assert.InDelta(t, 9, byId[10].TodayCostCNY, 1e-9)
+	assert.Equal(t, byId[10].TodayCostCNY, response.Data.Summary.Cost)
 	assert.True(t, byId[10].TodayCostConfigured)
 	assert.True(t, byId[10].TodayCostComplete)
 	assert.Zero(t, byId[10].TodayCostUnresolvedCount)
@@ -189,6 +198,7 @@ func TestGetChannelMonitorCostOverviewDateQueryScopesDetailsAndKeepsRangeTrend(t
 	ctx, recorder := newChannelMonitorControllerContext(
 		t, "GET", "/api/channel_monitor/cost?days=3&date="+detailDate, nil,
 	)
+	require.NoError(t, service.RebuildChannelMonitorRedisDailyCosts(context.Background(), now))
 	GetChannelMonitorCostOverview(ctx)
 	require.Equal(t, 200, recorder.Code)
 	var response struct {
@@ -269,6 +279,7 @@ func TestGetChannelMonitorCostOverviewSummarySkipsDetailQueries(t *testing.T) {
 	event.CostStatus = model.ChannelMonitorEventCostSettled
 	event.SettledCostNanoCNY = 1_300_000_000
 	emitChannelMonitorControllerRealtimeEvents(t, event)
+	require.NoError(t, service.RebuildChannelMonitorRedisDailyCosts(context.Background(), now))
 
 	var detailQueries atomic.Int64
 	require.NoError(t, db.Callback().Query().Before("gorm:query").Register("test:count_channel_monitor_cost_details", func(tx *gorm.DB) {
@@ -405,6 +416,7 @@ func TestGetChannelMonitorCostOverviewChannelFilterUsesPersistedAPIKeyCosts(t *t
 	ctx, recorder := newChannelMonitorControllerContext(
 		t, "GET", "/api/channel_monitor/cost?days=1&channel_id=61&date="+date, nil,
 	)
+	require.NoError(t, service.RebuildChannelMonitorRedisDailyCosts(context.Background(), now))
 	GetChannelMonitorCostOverview(ctx)
 	require.Equal(t, 200, recorder.Code)
 	var response struct {
@@ -451,6 +463,7 @@ func TestGetChannelMonitorCostOverviewAccumulatesAPIKeyCostsAcrossDays(t *testin
 	emitChannelMonitorControllerRealtimeEvents(t, realtime)
 
 	ctx, recorder := newChannelMonitorControllerContext(t, "GET", "/api/channel_monitor/cost?days=2", nil)
+	require.NoError(t, service.RebuildChannelMonitorRedisDailyCosts(context.Background(), now))
 	GetChannelMonitorCostOverview(ctx)
 	require.Equal(t, 200, recorder.Code)
 	var response struct {

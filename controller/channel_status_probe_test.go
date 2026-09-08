@@ -525,12 +525,15 @@ func TestChannelStatusProbeOverviewReadsCurrentExecutionResult(t *testing.T) {
 	)
 	require.NoError(t, err)
 
+	require.NoError(t, service.RebuildChannelMonitorRedisDailyCosts(context.Background(), now))
+	require.NoError(t, common.RDB.HSet(context.Background(), service.ChannelMonitorRedisCostDayKey(model.ChannelDailyCostDayStart(now)), "channel:8801:probe_settled_cost_nano_cny", 500_000_000).Err())
 	updated := getChannelStatusProbeOverviewResponse(t, "/api/channel_monitor/status")
 	require.NotNil(t, updated.Channels[0].Latest)
 	assert.Equal(t, "model-a", updated.Channels[0].Latest.ModelName)
 	require.NotNil(t, updated.Channels[0].Latest.SettledCostNanoCNY)
 	assert.Equal(t, settledCostNanoCNY, *updated.Channels[0].Latest.SettledCostNanoCNY)
-	assert.InDelta(t, 0.25, updated.Channels[0].TodayProbeCostCNY, 1e-9)
+	assert.InDelta(t, 0.5, updated.Channels[0].TodayProbeCostCNY, 1e-9)
+	assert.Equal(t, "redis_daily", updated.CostSource)
 }
 
 func TestUpdateChannelStatusProbeConfigValidatesAndUsesOptimisticRevision(t *testing.T) {

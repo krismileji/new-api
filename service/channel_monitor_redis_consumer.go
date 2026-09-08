@@ -1187,6 +1187,16 @@ func (consumer *ChannelMonitorRedisEventConsumer) trimAcknowledged(ctx context.C
 	if minimumID == "" {
 		return nil
 	}
+	// Keep an acknowledged tail for restoring a day hash after its last
+	// minute checkpoint. Pending entries remain protected by the lower bound.
+	retention := common.GetEnvOrDefault("CHANNEL_MONITOR_REPLAY_RETENTION_SECONDS", 600)
+	retention = max(120, min(retention, 86400))
+	replayFloor := strconv.FormatInt(time.Now().Add(-time.Duration(retention)*time.Second).UnixMilli(), 10) + "-0"
+	if earlier, err := channelMonitorRedisStreamIDLess(replayFloor, minimumID); err != nil {
+		return err
+	} else if earlier {
+		minimumID = replayFloor
+	}
 	return consumer.client.XTrimMinID(opCtx, ChannelMonitorRedisEventStream, minimumID).Err()
 }
 

@@ -450,6 +450,9 @@ func GetChannelSmartScheduleRoutes() ([]ChannelSmartScheduleRoute, error) {
 }
 
 func GetChannelSmartScheduleRoutesWithContext(ctx context.Context) ([]ChannelSmartScheduleRoute, error) {
+	if channelSmartScheduleUseSharedReadModel() {
+		return channelSmartScheduleSharedRoutes("", "")
+	}
 	return getChannelSmartScheduleRoutes(ctx, true)
 }
 
@@ -458,6 +461,9 @@ func GetChannelSmartScheduleRouteSummaries() ([]ChannelSmartScheduleRoute, error
 }
 
 func GetChannelSmartScheduleRouteSummariesWithContext(ctx context.Context) ([]ChannelSmartScheduleRoute, error) {
+	if channelSmartScheduleUseSharedReadModel() {
+		return channelSmartScheduleSharedRoutes("", "")
+	}
 	return getChannelSmartScheduleRoutes(ctx, false)
 }
 
@@ -469,6 +475,9 @@ func GetChannelSmartScheduleRoutePool(group string, modelName string) ([]Channel
 	modelName = strings.TrimSpace(modelName)
 	if group == "" || modelName == "" {
 		return []ChannelSmartScheduleRoute{}, nil
+	}
+	if channelSmartScheduleUseSharedReadModel() {
+		return channelSmartScheduleSharedRoutes(group, modelName)
 	}
 	var abilities []Ability
 	if err := DB.Where(&Ability{Group: group, Model: modelName}).

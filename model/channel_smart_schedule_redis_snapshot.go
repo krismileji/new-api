@@ -41,6 +41,7 @@ var (
 )
 
 type channelSmartScheduleRouteSnapshot struct {
+	Monitor         *channelSmartScheduleMonitorReadModel                           `json:"-"`
 	SchemaVersion   int                                                             `json:"schema_version"`
 	Revision        int64                                                           `json:"revision"`
 	GeneratedAt     int64                                                           `json:"generated_at"`
@@ -122,20 +123,21 @@ var channelSmartScheduleRouteSnapshotHealth struct {
 // ChannelSmartScheduleRouteSnapshotStatus exposes routing snapshot freshness
 // without exposing channel credentials or the payload itself.
 type ChannelSmartScheduleRouteSnapshotStatus struct {
-	Available          bool   `json:"available"`
-	Revision           int64  `json:"revision"`
-	GeneratedAt        int64  `json:"generated_at"`
-	SourceWatermark    int64  `json:"source_watermark"`
-	SnapshotAgeSeconds int64  `json:"snapshot_age_seconds"`
-	MaxAgeSeconds      int64  `json:"max_age_seconds"`
-	RedisBacked        bool   `json:"redis_backed"`
-	Dirty              bool   `json:"dirty"`
-	Stale              bool   `json:"stale"`
-	Degraded           bool   `json:"degraded"`
-	ProtectionMode     bool   `json:"protection_mode"`
-	LastRedisSuccessAt int64  `json:"last_redis_success_at"`
-	LastRedisFailureAt int64  `json:"last_redis_failure_at"`
-	LastRedisError     string `json:"last_redis_error,omitempty"`
+	MonitorEconomics   *ChannelSmartScheduleEconomicSnapshot `json:"-"`
+	Available          bool                                  `json:"available"`
+	Revision           int64                                 `json:"revision"`
+	GeneratedAt        int64                                 `json:"generated_at"`
+	SourceWatermark    int64                                 `json:"source_watermark"`
+	SnapshotAgeSeconds int64                                 `json:"snapshot_age_seconds"`
+	MaxAgeSeconds      int64                                 `json:"max_age_seconds"`
+	RedisBacked        bool                                  `json:"redis_backed"`
+	Dirty              bool                                  `json:"dirty"`
+	Stale              bool                                  `json:"stale"`
+	Degraded           bool                                  `json:"degraded"`
+	ProtectionMode     bool                                  `json:"protection_mode"`
+	LastRedisSuccessAt int64                                 `json:"last_redis_success_at"`
+	LastRedisFailureAt int64                                 `json:"last_redis_failure_at"`
+	LastRedisError     string                                `json:"last_redis_error,omitempty"`
 }
 
 func channelSmartScheduleRouteSnapshotVersionKey(revision int64) string {
@@ -249,6 +251,7 @@ func buildChannelSmartScheduleRouteSnapshot(ctx context.Context) (*channelSmartS
 		return nil, err
 	}
 	snapshot := newChannelSmartScheduleRouteSnapshot(routes, logicalRuntime, logicalRouting)
+	snapshot.Monitor = databaseSnapshot.monitorReadModel
 	snapshot.localDirtyGeneration = dirtyGeneration
 	snapshot.localDirtyGenerationCaptured = true
 	return snapshot, nil
@@ -351,6 +354,9 @@ func publishLocalChannelSmartScheduleRouteSnapshot(ctx context.Context) error {
 	snapshot.SourceWatermark = watermark
 	snapshot.GeneratedAt = generatedAt
 	snapshot.fromRedis = false
+	if snapshot.Monitor != nil {
+		snapshot.Monitor.Revision, snapshot.Monitor.SourceWatermark, snapshot.Monitor.GeneratedAt = snapshot.Revision, snapshot.SourceWatermark, snapshot.GeneratedAt
+	}
 	if !applyChannelSmartScheduleRouteSnapshot(snapshot) {
 		return ErrChannelSmartScheduleRouteSnapshotInvalid
 	}
@@ -534,6 +540,15 @@ func commitChannelSmartScheduleRouteSnapshot(
 	versionKey string,
 	snapshot *channelSmartScheduleRouteSnapshot,
 ) error {
+	var monitorPayload []byte
+	if snapshot.Monitor != nil {
+		snapshot.Monitor.Revision, snapshot.Monitor.SourceWatermark, snapshot.Monitor.GeneratedAt = snapshot.Revision, snapshot.SourceWatermark, snapshot.GeneratedAt
+		var err error
+		monitorPayload, err = common.Marshal(snapshot.Monitor)
+		if err != nil {
+			return err
+		}
+	}
 	return client.Watch(ctx, func(tx *redis.Tx) error {
 		leaseToken, err := tx.Get(ctx, channelSmartScheduleRouteSnapshotLeaseKey).Result()
 		if err != nil || leaseToken != token {
@@ -568,9 +583,13 @@ func commitChannelSmartScheduleRouteSnapshot(
 			return ErrChannelSmartScheduleRouteSnapshotUnavailable
 		}
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+			if len(monitorPayload) > 0 {
+				pipe.Set(ctx, versionKey+":monitor", monitorPayload, channelSmartScheduleRouteSnapshotTTL)
+			}
 			pipe.Rename(ctx, temporaryKey, versionKey)
 			pipe.Expire(ctx, versionKey, channelSmartScheduleRouteSnapshotTTL)
 			if pointer > 0 {
+				pipe.Expire(ctx, channelSmartScheduleRouteSnapshotVersionKey(pointer)+":monitor", channelSmartScheduleRouteSnapshotPreviousTTL)
 				pipe.Expire(ctx, channelSmartScheduleRouteSnapshotVersionKey(pointer), channelSmartScheduleRouteSnapshotPreviousTTL)
 			}
 			pipe.Set(ctx, channelSmartScheduleRouteSnapshotPointerKey,
@@ -624,6 +643,7 @@ func loadChannelSmartScheduleRouteSnapshot(ctx context.Context) (err error) {
 	}
 	channelSyncLock.RLock()
 	metadata := channelSmartScheduleLocalSnapshotMetadataCache
+	monitorReady := channelSmartScheduleMonitorReadCache != nil && metadata != nil && channelSmartScheduleMonitorReadCache.Revision == metadata.Revision
 	channelSyncLock.RUnlock()
 	if metadata != nil && metadata.Revision > 0 {
 		if revision < metadata.Revision ||
@@ -636,7 +656,9 @@ func loadChannelSmartScheduleRouteSnapshot(ctx context.Context) (err error) {
 				markChannelSmartScheduleRouteSnapshotDirtyFromRemote(sourceWatermark)
 				return ErrChannelSmartScheduleRouteSnapshotUnavailable
 			}
-			return nil
+			if monitorReady {
+				return nil
+			}
 		}
 	}
 	payload, err := client.Get(ctx, channelSmartScheduleRouteSnapshotVersionKey(revision)).Bytes()
@@ -656,6 +678,12 @@ func loadChannelSmartScheduleRouteSnapshot(ctx context.Context) (err error) {
 	if sourceWatermark != snapshot.SourceWatermark {
 		markChannelSmartScheduleRouteSnapshotDirtyFromRemote(sourceWatermark)
 		return ErrChannelSmartScheduleRouteSnapshotInvalid
+	}
+	loadChannelSmartScheduleMonitorReadModel(ctx, client, snapshot)
+	if snapshot.Monitor == nil {
+		// Older publishers do not have a companion payload. Ask the background
+		// publisher for a new generation instead of issuing page-time SQL.
+		markAllChannelSmartScheduleRoutePoolsDirty()
 	}
 	snapshot.fromRedis = true
 	if !applyChannelSmartScheduleRouteSnapshot(snapshot) {
@@ -764,6 +792,9 @@ func applyChannelSmartScheduleRouteSnapshot(snapshot *channelSmartScheduleRouteS
 			return false
 		}
 		if snapshot.Revision == current.Revision {
+			if snapshot.Monitor != nil && snapshot.GeneratedAt == current.GeneratedAt && snapshot.SourceWatermark == current.SourceWatermark {
+				channelSmartScheduleMonitorReadCache = snapshot.Monitor
+			}
 			channelSyncLock.Unlock()
 			return true
 		}
@@ -773,6 +804,7 @@ func applyChannelSmartScheduleRouteSnapshot(snapshot *channelSmartScheduleRouteS
 	hasDirty := logicalChannelRuntimeDirty || len(channelSmartScheduleRouteCacheDirty) > 0 ||
 		channelSmartScheduleRouteSnapshotDirtySince > 0
 	channelSmartScheduleRouteCache = routes
+	channelSmartScheduleMonitorReadCache = snapshot.Monitor
 	channelLogicalSmartScheduleRoutingCache = logicalRouting
 	logicalChannelRuntimeCache = logicalRuntime
 	clearsDirty := !hasDirty
@@ -797,7 +829,7 @@ func applyChannelSmartScheduleRouteSnapshot(snapshot *channelSmartScheduleRouteS
 	return true
 }
 
-func markLocalChannelSmartScheduleRouteSnapshot(generatedAt int64) {
+func markLocalChannelSmartScheduleRouteSnapshot(generatedAt int64, monitor ...*channelSmartScheduleMonitorReadModel) {
 	if generatedAt <= 0 {
 		generatedAt = time.Now().UnixMilli()
 	}
@@ -826,6 +858,11 @@ func markLocalChannelSmartScheduleRouteSnapshot(generatedAt int64) {
 	channelSmartScheduleLocalSnapshotMetadataCache = &channelSmartScheduleLocalSnapshotMetadata{
 		Revision: revision, GeneratedAt: generatedAt,
 		SourceWatermark: sourceWatermark,
+	}
+	channelSmartScheduleMonitorReadCache = nil
+	if len(monitor) > 0 && monitor[0] != nil {
+		monitor[0].Revision, monitor[0].SourceWatermark, monitor[0].GeneratedAt = revision, sourceWatermark, generatedAt
+		channelSmartScheduleMonitorReadCache = monitor[0]
 	}
 }
 

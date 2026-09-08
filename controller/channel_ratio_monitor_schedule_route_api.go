@@ -92,7 +92,12 @@ func getChannelMonitorSmartScheduleRoutes(
 		common.ApiError(c, err)
 		return
 	}
-	economicSnapshot, err := model.GetChannelSmartScheduleEconomicSnapshotWithContext(c.Request.Context())
+	var economicSnapshot model.ChannelSmartScheduleEconomicSnapshot
+	if routeSnapshotStatus.MonitorEconomics != nil {
+		economicSnapshot = *routeSnapshotStatus.MonitorEconomics
+	} else {
+		economicSnapshot, err = model.GetChannelSmartScheduleEconomicSnapshotWithContext(c.Request.Context())
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return

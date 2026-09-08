@@ -359,11 +359,19 @@ type ChannelMonitorRedisSharedFailureCategory struct {
 }
 
 type ChannelMonitorRedisSharedDailyCostView struct {
-	Global   ChannelMonitorRedisSharedAggregate            `json:"global"`
-	Channels map[int]ChannelMonitorRedisSharedAggregate    `json:"channels"`
-	Models   map[string]ChannelMonitorRedisSharedAggregate `json:"models"`
-	Groups   map[string]ChannelMonitorRedisSharedAggregate `json:"groups"`
-	APIKeys  map[int]ChannelMonitorRedisSharedAggregate    `json:"api_keys"`
+	AttributionPartial bool                                          `json:"attribution_partial"`
+	Projection         ChannelMonitorReliableCostStatus              `json:"projection"`
+	DayStart           int64                                         `json:"day_start"`
+	Revision           int64                                         `json:"revision"`
+	ProcessedAt        int64                                         `json:"processed_at"`
+	DataCutoffAt       int64                                         `json:"data_cutoff_at"`
+	Details            []model.ChannelMonitorDailyCostDetail         `json:"-"`
+	KeyCosts           []model.ChannelDailyAPIKeyCost                `json:"-"`
+	Global             ChannelMonitorRedisSharedAggregate            `json:"global"`
+	Channels           map[int]ChannelMonitorRedisSharedAggregate    `json:"channels"`
+	Models             map[string]ChannelMonitorRedisSharedAggregate `json:"models"`
+	Groups             map[string]ChannelMonitorRedisSharedAggregate `json:"groups"`
+	APIKeys            map[int]ChannelMonitorRedisSharedAggregate    `json:"api_keys"`
 }
 
 // ChannelMonitorRedisSharedProjectionView is the read model returned by the
@@ -542,6 +550,19 @@ func (projection *ChannelMonitorRedisSharedProjection) WriteChannelMonitorEvents
 		ctx = context.Background()
 	}
 	processedAt := projection.now().Unix()
+	if common.RedisEnabled && model.DB != nil {
+		days := make(map[int64]struct{})
+		for _, event := range events {
+			if event.Source == model.ChannelMonitorEventSourceBusiness {
+				days[model.ChannelDailyCostDayStart(event.OccurredAt)] = struct{}{}
+			}
+		}
+		for day := range days {
+			if err := ensureChannelMonitorDailyMetrics(ctx, projection.client, day); err != nil {
+				return err
+			}
+		}
+	}
 	opCtx, cancel := context.WithTimeout(ctx, channelMonitorRedisSharedOperationTimeout)
 	defer cancel()
 
@@ -587,6 +608,17 @@ func (projection *ChannelMonitorRedisSharedProjection) WriteChannelMonitorEvents
 			if err != nil {
 				return err
 			}
+			dailyWatermarks := make(map[string]uint64)
+			for _, key := range writeHashKeys {
+				if !strings.HasPrefix(key, ChannelMonitorRedisSuccessProjectionPrefix+"day:") {
+					continue
+				}
+				watermark, err := tx.HGet(opCtx, key, "meta:database_event_watermark").Uint64()
+				if err != nil && !errors.Is(err, redis.Nil) {
+					return err
+				}
+				dailyWatermarks[key] = watermark
+			}
 			seenEventIDs := make(map[string]struct{}, len(events))
 			_, err = tx.TxPipelined(opCtx, func(pipe redis.Pipeliner) error {
 				mutated := false
@@ -628,12 +660,14 @@ func (projection *ChannelMonitorRedisSharedProjection) WriteChannelMonitorEvents
 					if event.Source == model.ChannelMonitorEventSourceBusiness && (event.FinalRetrySummary || costEventIsCurrent) {
 						projection.appendDashboardEventDelta(opCtx, pipe, event)
 						successDayKey := ChannelMonitorRedisSuccessDayKey(model.ChannelDailyCostDayStart(event.OccurredAt))
-						if cutoff := dailySuccessDatabaseThrough[successDayKey]; cutoff == 0 || event.OccurredAt >= cutoff {
+						watermark := dailyWatermarks[successDayKey]
+						covered := watermark > 0 && event.EventSequence > 0 && event.EventSequence <= watermark
+						if cutoff := dailySuccessDatabaseThrough[successDayKey]; !covered && (watermark > 0 || cutoff == 0 || event.OccurredAt >= cutoff) {
 							projection.appendSuccessDayEventDelta(opCtx, pipe, event)
 						}
 					}
 					projection.appendMetadata(opCtx, pipe, event, processedAt)
-					pipe.Set(opCtx, eventKeys[index], "1", channelMonitorRedisSharedEventTTL)
+					pipe.Set(opCtx, eventKeys[index], strconv.FormatUint(event.EventSequence, 10), channelMonitorRedisSharedEventTTL)
 				}
 				if mutated {
 					pipe.Incr(opCtx, ChannelMonitorRedisSharedRevisionKey)
@@ -1154,6 +1188,9 @@ func (projection *ChannelMonitorRedisSharedProjection) appendSuccessDayEventDelt
 		projection.setAPIKeyName(ctx, pipe, key, scope, event.APIKeyId, event.APIKeyName)
 	}
 	projection.appendMetadataToKey(ctx, pipe, key, event)
+	pipe.HSetNX(ctx, key, channelMonitorDailyVersionField, "1")
+	pipe.HIncrBy(ctx, key, "meta:revision", 1)
+	pipe.SAdd(ctx, channelMonitorDailyDirtyDaysKey, strconv.FormatInt(model.ChannelDailyCostDayStart(event.OccurredAt), 10))
 }
 
 func (projection *ChannelMonitorRedisSharedProjection) appendMetadataToKey(
@@ -1176,6 +1213,8 @@ func (projection *ChannelMonitorRedisSharedProjection) appendMetadataToKey(
 
 func channelMonitorRedisSuccessDayScopes(event model.ChannelMonitorEvent) []string {
 	modelName := ratio_setting.FormatMatchingModelName(strings.TrimSpace(event.ModelName))
+	event.ModelName = modelName
+	event.GroupName = strings.TrimSpace(event.GroupName)
 	scopes := []string{
 		channelMonitorRedisSharedScopeGlobal,
 		channelMonitorRedisSharedScopeChannel + ":" + strconv.Itoa(event.ChannelId),
@@ -1203,6 +1242,11 @@ func channelMonitorRedisSuccessDayScopes(event model.ChannelMonitorEvent) []stri
 			)
 		}
 	}
+	if event.GroupName != "" {
+		scopes = append(scopes, channelMonitorRedisSharedScopeGroup+":"+channelMonitorRedisSharedDimension(event.GroupName),
+			channelMonitorRedisSharedScopeGroupRoute+":"+channelMonitorRedisSharedGroupChannelIdentity(event.GroupName, event.ChannelId))
+	}
+	scopes = append(scopes, channelMonitorDailyMetricScope(model.ChannelMonitorDailyMetricIdentityFromEvent(event)))
 	return scopes
 }
 
@@ -1359,6 +1403,7 @@ func (projection *ChannelMonitorRedisSharedProjection) loadDailyDatabaseMarkers(
 
 func (projection *ChannelMonitorRedisSharedProjection) setAPIKeyName(ctx context.Context, pipe redis.Pipeliner, key, scope string, apiKeyID int, apiKeyName string) {
 	isAPIKeyScope := strings.HasPrefix(scope, channelMonitorRedisSharedScopeAPIKey+":") ||
+		strings.HasPrefix(scope, "fact:") ||
 		strings.HasPrefix(scope, channelMonitorRedisSharedScopeAPIKeyRoute+":") ||
 		strings.HasPrefix(scope, "user_api_key:") ||
 		strings.HasPrefix(scope, "channel_user_api_key:") ||

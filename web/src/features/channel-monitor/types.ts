@@ -232,6 +232,7 @@ export type ChannelMonitorApplyGroupResult = ChannelMonitorFetchResult & {
 }
 
 export type ChannelMonitorRealtimeMetadata = {
+  cost_projection?: { checked_at: number; pending: boolean; failed: boolean }
   generated_at?: number
   data_cutoff_at: number
   processed_at: number
@@ -311,11 +312,25 @@ export type ChannelMonitorRealtimeDegradedReason =
   | 'cost_outbox_backlog'
   | 'cost_publish_failure'
   | 'cost_dead_letter'
+  | 'cost_projection_unavailable'
+  | 'cost_projection_pending'
+  | 'daily_replay_incomplete'
   | 'redis_pool_congested'
   | 'redis_pool_timeout'
   | 'redis_context_deadline'
 
 export type ChannelMonitorOverview = ChannelMonitorRealtimeMetadata & {
+  today_cost_summary?: {
+    today_cost_cny: number
+    today_probe_cost_cny: number
+    today_group_probe_cost_cny: number
+    today_model_detection_cost_cny: number
+    settled_count: number
+    unresolved_count: number
+    revision: number
+    processed_at: number
+    projection?: { checked_at: number; pending: boolean; failed: boolean }
+  }
   generated_at: number
   channels: ChannelMonitorItem[]
   channel_order: number[]
@@ -382,6 +397,8 @@ export type ChannelMonitorCostCoverage = {
 }
 
 export type ChannelMonitorCostOverview = ChannelMonitorRealtimeMetadata & {
+  cost_source?: 'redis_daily' | 'database_daily'
+  cost_revision?: number
   days: number
   generated_at: number
   detail_date: string

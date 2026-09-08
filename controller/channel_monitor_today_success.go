@@ -42,6 +42,8 @@ type channelMonitorDailySuccessChartItem struct {
 }
 
 type channelMonitorTodaySuccessOverview struct {
+	SnapshotRevision           int64                                                  `json:"snapshot_revision"`
+	CoveragePartial            bool                                                   `json:"coverage_partial"`
 	Days                       int                                                    `json:"days"`
 	GeneratedAt                int64                                                  `json:"generated_at"`
 	DataCutoffAt               int64                                                  `json:"data_cutoff_at"`
@@ -140,7 +142,13 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	overview.SnapshotRevision = todayView.SnapshotRevision
+	overview.CoveragePartial = todayView.CoveragePartial
 	metadata := channelMonitorRealtimePageMetadataWithContext(c.Request.Context(), todayView)
+	if todayView.CoveragePartial {
+		metadata.RealtimeDegraded = true
+		metadata.DegradedReasons = append(metadata.DegradedReasons, "daily_replay_incomplete")
+	}
 	overview.DataCutoffAt = metadata.DataCutoffAt
 	overview.ProcessedAt = metadata.ProcessedAt
 	overview.ProjectionStartedAt = metadata.ProjectionStartedAt

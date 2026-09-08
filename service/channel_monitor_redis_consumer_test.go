@@ -397,7 +397,7 @@ func TestChannelMonitorRedisConsumerDedupTTLExpiresAfterMessagesAreConfirmed(t *
 	assert.Zero(t, pending.Count)
 	messagesBeforeExpiry, rangeErr := client.XRange(context.Background(), ChannelMonitorRedisEventStream, "-", "+").Result()
 	require.NoError(t, rangeErr)
-	require.Len(t, messagesBeforeExpiry, 1, "safe MINID trim keeps the current delivered watermark")
+	require.Len(t, messagesBeforeExpiry, 2, "acknowledged events remain available for replay after a lost daily hash")
 
 	server.FastForward(config.DedupTTL - time.Second)
 	for _, eventID := range []string{first.EventId, second.EventId} {

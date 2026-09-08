@@ -34,6 +34,8 @@ func setupChannelSmartScheduleRedisSnapshotTest(t *testing.T) (*gorm.DB, *minire
 	originalLogicalRoutingCache := channelLogicalSmartScheduleRoutingCache
 	originalLogicalRuntime := logicalChannelRuntimeCache
 	originalLogicalDirty := logicalChannelRuntimeDirty
+	originalMonitorReadCache := channelSmartScheduleMonitorReadCache
+	channelSmartScheduleMonitorReadCache = nil
 	originalSnapshotMetadata := channelSmartScheduleLocalSnapshotMetadataCache
 	originalSnapshotDirtySince := channelSmartScheduleRouteSnapshotDirtySince
 	originalSnapshotDirtyGeneration := channelSmartScheduleRouteSnapshotDirtyGeneration
@@ -71,6 +73,7 @@ func setupChannelSmartScheduleRedisSnapshotTest(t *testing.T) (*gorm.DB, *minire
 		channelLogicalSmartScheduleRoutingCache = originalLogicalRoutingCache
 		logicalChannelRuntimeCache = originalLogicalRuntime
 		logicalChannelRuntimeDirty = originalLogicalDirty
+		channelSmartScheduleMonitorReadCache = originalMonitorReadCache
 		channelSmartScheduleLocalSnapshotMetadataCache = originalSnapshotMetadata
 		channelSmartScheduleRouteSnapshotDirtySince = originalSnapshotDirtySince
 		channelSmartScheduleRouteSnapshotDirtyGeneration = originalSnapshotDirtyGeneration

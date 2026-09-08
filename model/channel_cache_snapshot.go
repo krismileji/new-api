@@ -11,6 +11,7 @@ import (
 )
 
 type channelCacheSnapshot struct {
+	monitorReadModel         *channelSmartScheduleMonitorReadModel
 	channels                 []*Channel
 	abilities                []*Ability
 	smartScheduleStates      []ChannelSmartScheduleRouteState
@@ -22,6 +23,9 @@ func loadChannelCacheSnapshot() (snapshot channelCacheSnapshot, err error) {
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		var loadErr error
 		snapshot, loadErr = loadChannelCacheSnapshotFromDB(tx)
+		if loadErr == nil {
+			snapshot.monitorReadModel, loadErr = buildChannelSmartScheduleMonitorReadModel(tx, snapshot)
+		}
 		return loadErr
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	return snapshot, err
@@ -75,6 +79,10 @@ func loadChannelSmartScheduleRouteSnapshotSource(ctx context.Context) (
 			return loadErr
 		}
 		logicalRuntime, loadErr = buildLogicalChannelRuntimeSnapshot(tx)
+		if loadErr != nil {
+			return loadErr
+		}
+		snapshot.monitorReadModel, loadErr = buildChannelSmartScheduleMonitorReadModel(tx, snapshot)
 		return loadErr
 	}, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	return snapshot, logicalRuntime, err

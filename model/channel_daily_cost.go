@@ -150,7 +150,14 @@ func AddChannelDailyCost(ctx context.Context, channelId int, occurredAt int64, c
 
 func AddChannelDailyCostWithProbe(ctx context.Context, channelId int, occurredAt int64, costNanoCNY int64, probeCostNanoCNY int64, settledDelta int64, unresolvedDelta int64) error {
 	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return addChannelDailyCostWithCategories(tx, channelId, occurredAt, costNanoCNY, probeCostNanoCNY, 0, 0, settledDelta, unresolvedDelta)
+		if err := addChannelDailyCostWithCategories(tx, channelId, occurredAt, costNanoCNY, probeCostNanoCNY, 0, 0, settledDelta, unresolvedDelta); err != nil {
+			return err
+		}
+		_, err := appendChannelDailyCostProjectionTx(tx, ChannelDailyCostDelta{
+			ChannelId: channelId, OccurredAt: occurredAt, CostNanoCNY: costNanoCNY,
+			ProbeCostNanoCNY: probeCostNanoCNY, SettledDelta: settledDelta, UnresolvedDelta: unresolvedDelta,
+		}, 0, "")
+		return err
 	})
 }
 
@@ -178,6 +185,13 @@ func AddChannelDailyCostWithModelDetectionAndModel(ctx context.Context, tx *gorm
 	}
 	return tx.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := addChannelDailyCostWithCategories(tx, channelId, occurredAt, costNanoCNY, 0, 0, modelDetectionCostNanoCNY, settledDelta, unresolvedDelta); err != nil {
+			return err
+		}
+		if _, err := appendChannelDailyCostProjectionTx(tx, ChannelDailyCostDelta{
+			ChannelId: channelId, OccurredAt: occurredAt, CostNanoCNY: costNanoCNY,
+			SettledDelta: settledDelta, UnresolvedDelta: unresolvedDelta,
+			ModelName: modelName, SourceKind: string(ChannelMonitorEventSourceModelDetection),
+		}, modelDetectionCostNanoCNY, ""); err != nil {
 			return err
 		}
 		if !tx.Migrator().HasTable(&ChannelMonitorDailyCostDetail{}) {
@@ -234,6 +248,13 @@ func SettleUnresolvedChannelDailyModelDetectionCostWithModel(ctx context.Context
 			return updated.Error
 		}
 		if updated.RowsAffected == 1 {
+			if _, err := appendChannelDailyCostProjectionTx(tx, ChannelDailyCostDelta{
+				ChannelId: channelId, OccurredAt: occurredAt, CostNanoCNY: costNanoCNY,
+				SettledDelta: 1, UnresolvedDelta: -1, ModelName: modelName,
+				SourceKind: string(ChannelMonitorEventSourceModelDetection),
+			}, costNanoCNY, ""); err != nil {
+				return err
+			}
 			return settleChannelMonitorModelDetectionDetail(tx, channelId, dayStart, costNanoCNY, modelName, occurredAt)
 		}
 

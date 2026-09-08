@@ -232,6 +232,16 @@ func GetChannelSmartScheduleMonitorRuntimeSnapshot(ctx context.Context, routes [
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 	rows := append([]ChannelSmartScheduleRoute(nil), routes...)
+	status := channelSmartScheduleRouteSnapshotStatusLocked()
+	if channelSmartScheduleUseSharedReadModel() && channelSmartScheduleMonitorReadCache != nil && channelSmartScheduleMonitorReadCache.Revision == status.Revision {
+		var err error
+		rows, err = cloneChannelSmartScheduleMonitorRoutes(channelSmartScheduleMonitorReadCache.Routes)
+		if err != nil {
+			return nil, nil, status, err
+		}
+		economics := cloneChannelSmartScheduleMonitorEconomics(channelSmartScheduleMonitorReadCache.Economics)
+		status.MonitorEconomics = &economics
+	}
 	views := make(map[ChannelSmartScheduleRouteKey]ChannelSmartScheduleRouteRuntimeView, len(rows))
 	seen := make(map[ChannelSmartScheduleRouteKey]bool, len(rows))
 	for _, row := range rows {
@@ -270,7 +280,7 @@ func GetChannelSmartScheduleMonitorRuntimeSnapshot(ctx context.Context, routes [
 	}
 	applyChannelSmartScheduleCachedRuntimeViews(views, rows, channelSmartScheduleRouteCache,
 		channelsIDM, logicalChannelRuntimeCache, channelLogicalSmartScheduleRoutingCache, policy, cooldownOptions...)
-	return rows, views, channelSmartScheduleRouteSnapshotStatusLocked(), nil
+	return rows, views, status, nil
 }
 
 // loadLogicalSmartScheduleRouteOverlaysWithDB is the context-aware read path

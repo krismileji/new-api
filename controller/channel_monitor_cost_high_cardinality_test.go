@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,6 +37,7 @@ func TestGetChannelMonitorCostOverviewBoundsHighCardinalityAPIKeysAndPreservesTo
 	require.NoError(t, db.Create(&rows).Error)
 
 	ctx, recorder := newChannelMonitorControllerContext(t, "GET", "/api/channel_monitor/cost?days=2&channel_id=99001", nil)
+	require.NoError(t, service.RebuildChannelMonitorRedisDailyCosts(context.Background(), now))
 	GetChannelMonitorCostOverview(ctx)
 	require.Equal(t, 200, recorder.Code)
 	var response struct {

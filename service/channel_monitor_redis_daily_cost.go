@@ -2,6 +2,11 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
+	"errors"
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/go-redis/redis/v8"
 )
 
 // QueryChannelMonitorRedisDailyCosts reads only the current day's cost hash.
@@ -10,6 +15,16 @@ func QueryChannelMonitorRedisDailyCosts(
 	ctx context.Context,
 	dayStart int64,
 ) (ChannelMonitorRedisSharedDailyCostView, error) {
+	return queryChannelMonitorRedisDailyCosts(ctx, dayStart, false)
+}
+
+// QueryChannelMonitorRedisDailyCostTotals keeps frequent page refreshes from
+// transferring every user/key/model detail when only channel totals are used.
+func QueryChannelMonitorRedisDailyCostTotals(ctx context.Context, dayStart int64) (ChannelMonitorRedisSharedDailyCostView, error) {
+	return queryChannelMonitorRedisDailyCosts(ctx, dayStart, true)
+}
+
+func queryChannelMonitorRedisDailyCosts(ctx context.Context, dayStart int64, summaryOnly bool) (ChannelMonitorRedisSharedDailyCostView, error) {
 	projection, err := NewChannelMonitorRedisSharedProjection()
 	if err != nil {
 		return ChannelMonitorRedisSharedDailyCostView{}, err
@@ -20,36 +35,38 @@ func QueryChannelMonitorRedisDailyCosts(
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	key := ChannelMonitorRedisCostDayKey(dayStart)
+	limits := normalizeChannelMonitorRedisSharedProjectionLimits(projection.limits)
 	opCtx, cancel := context.WithTimeout(ctx, channelMonitorRedisSharedOperationTimeout)
-	values, err := projection.client.HGetAll(opCtx, key).Result()
-	cancel()
+	defer cancel()
+	patterns := []string{"*"}
+	if summaryOnly {
+		patterns = []string{"meta:*", "global:*", "channel:*"}
+	}
+	values, err := readChannelMonitorRedisDailyHash(opCtx, projection.client, ChannelMonitorRedisCostDayKey(dayStart), patterns, limits.MaxHashFields)
 	if err != nil {
 		return ChannelMonitorRedisSharedDailyCostView{}, err
 	}
-	if len(values) == 0 {
-		existsCtx, existsCancel := context.WithTimeout(ctx, channelMonitorRedisSharedOperationTimeout)
-		exists, existsErr := projection.client.Exists(existsCtx, key).Result()
-		existsCancel()
-		if existsErr != nil {
-			return ChannelMonitorRedisSharedDailyCostView{}, existsErr
-		}
-		if exists == 0 {
-			return ChannelMonitorRedisSharedDailyCostView{}, ErrChannelMonitorRedisSharedProjectionUnavailable
-		}
-		return ChannelMonitorRedisSharedDailyCostView{Channels: make(map[int]ChannelMonitorRedisSharedAggregate)}, nil
-	}
-	limits := normalizeChannelMonitorRedisSharedProjectionLimits(projection.limits)
-	if len(values) > limits.MaxHashFields*2 {
-		return ChannelMonitorRedisSharedDailyCostView{}, &ChannelMonitorRedisSharedProjectionLimitError{
-			Resource: "hash_fields", Limit: int64(limits.MaxHashFields), Actual: int64(len(values) / 2),
-		}
+	if values[channelMonitorReliableCostVersionField] != "1" {
+		return ChannelMonitorRedisSharedDailyCostView{}, ErrChannelMonitorRedisSharedProjectionUnavailable
 	}
 	view := ChannelMonitorRedisSharedDailyCostView{
-		Channels: make(map[int]ChannelMonitorRedisSharedAggregate),
-		Models:   make(map[string]ChannelMonitorRedisSharedAggregate),
-		Groups:   make(map[string]ChannelMonitorRedisSharedAggregate),
-		APIKeys:  make(map[int]ChannelMonitorRedisSharedAggregate),
+		DayStart:     dayStart,
+		Revision:     parseDailySuccessInt64(values["meta:revision"]),
+		ProcessedAt:  parseDailySuccessInt64(values["meta:processed_at"]),
+		DataCutoffAt: parseDailySuccessInt64(values["meta:data_cutoff_at"]),
+		Channels:     make(map[int]ChannelMonitorRedisSharedAggregate),
+		Models:       make(map[string]ChannelMonitorRedisSharedAggregate),
+		Groups:       make(map[string]ChannelMonitorRedisSharedAggregate),
+		APIKeys:      make(map[int]ChannelMonitorRedisSharedAggregate),
+	}
+	status, err := projection.client.Get(opCtx, channelMonitorReliableCostStatusKey).Bytes()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return ChannelMonitorRedisSharedDailyCostView{}, err
+	}
+	if len(status) > 0 {
+		if err := common.Unmarshal(status, &view.Projection); err != nil {
+			return ChannelMonitorRedisSharedDailyCostView{}, err
+		}
 	}
 	entries := make(map[string]map[string]string)
 	for field, raw := range values {
@@ -80,6 +97,36 @@ func QueryChannelMonitorRedisDailyCosts(
 			}
 		}
 		switch parts[0] {
+		case "cost_detail", "cost_key":
+			encoded, err := base64.RawURLEncoding.DecodeString(parts[1])
+			if err != nil {
+				return ChannelMonitorRedisSharedDailyCostView{}, err
+			}
+			var id channelMonitorReliableCostIdentity
+			if err := common.Unmarshal(encoded, &id); err != nil {
+				return ChannelMonitorRedisSharedDailyCostView{}, err
+			}
+			if parts[0] == "cost_key" {
+				view.KeyCosts = append(view.KeyCosts, model.ChannelDailyAPIKeyCost{
+					DayStart: dayStart, ChannelId: id.ChannelID, APIKeyId: id.APIKeyID, APIKeyName: aggregate.APIKeyName,
+					KeyFingerprint: id.Fingerprint, CostNanoCNY: aggregate.SettledCostNanoCNY,
+					KeyDisplay:   fields["key_display"],
+					SettledCount: aggregate.SettledRequestCount, UnresolvedCount: aggregate.UnresolvedRequestCount,
+				})
+				continue
+			}
+			attribution := "unknown"
+			if id.UserID > 0 {
+				attribution = "request"
+			}
+			view.Details = append(view.Details, model.ChannelMonitorDailyCostDetail{
+				DayStart: dayStart, ChannelId: id.ChannelID, UserId: id.UserID, UserAttribution: attribution,
+				APIKeyId: id.APIKeyID, APIKeyKey: id.Fingerprint, APIKeyName: aggregate.APIKeyName,
+				ModelKey: model.ChannelMonitorDailyCostModelKey(id.Model), ModelName: id.Model, SourceKind: id.Source,
+				CostNanoCNY: aggregate.SettledCostNanoCNY, ProbeCostNanoCNY: aggregate.ProbeSettledCostNanoCNY,
+				GroupProbeCostNanoCNY: aggregate.GroupProbeSettledCostNanoCNY,
+				SettledCount:          aggregate.SettledRequestCount, UnresolvedCount: aggregate.UnresolvedRequestCount,
+			})
 		case channelMonitorRedisSharedScopeChannel:
 			channelID := parseDailySuccessPositiveInt(parts[1])
 			if channelID > 0 {
@@ -100,6 +147,37 @@ func QueryChannelMonitorRedisDailyCosts(
 			}
 		case channelMonitorRedisSharedScopeGlobal:
 			view.Global = aggregate
+		}
+	}
+	if summaryOnly {
+		return view, nil
+	}
+	// Older daily ledgers may contain costs without frozen user/model detail.
+	// Preserve those amounts as an explicit unknown bucket in drill-downs.
+	attributed := make(map[int]ChannelMonitorRedisSharedAggregate)
+	for _, row := range view.Details {
+		total := attributed[row.ChannelId]
+		if err := mergeChannelMonitorRedisSharedAggregate(&total, channelMonitorRedisDailyCostDetailAggregate(row)); err != nil {
+			return ChannelMonitorRedisSharedDailyCostView{}, err
+		}
+		attributed[row.ChannelId] = total
+	}
+	for id, total := range view.Channels {
+		known := attributed[id]
+		if total.SettledCostNanoCNY < known.SettledCostNanoCNY || total.SettledRequestCount < known.SettledRequestCount || total.UnresolvedRequestCount < known.UnresolvedRequestCount || total.ProbeSettledCostNanoCNY < known.ProbeSettledCostNanoCNY || total.GroupProbeSettledCostNanoCNY < known.GroupProbeSettledCostNanoCNY {
+			return ChannelMonitorRedisSharedDailyCostView{}, errors.New("渠道日成本明细超过渠道汇总，等待重建")
+		}
+		remaining := model.ChannelMonitorDailyCostDetail{
+			DayStart: dayStart, ChannelId: id, UserAttribution: "unknown", SourceKind: "unknown",
+			CostNanoCNY:           total.SettledCostNanoCNY - known.SettledCostNanoCNY,
+			ProbeCostNanoCNY:      total.ProbeSettledCostNanoCNY - known.ProbeSettledCostNanoCNY,
+			GroupProbeCostNanoCNY: total.GroupProbeSettledCostNanoCNY - known.GroupProbeSettledCostNanoCNY,
+			SettledCount:          total.SettledRequestCount - known.SettledRequestCount,
+			UnresolvedCount:       total.UnresolvedRequestCount - known.UnresolvedRequestCount,
+		}
+		if remaining.CostNanoCNY != 0 || remaining.SettledCount != 0 || remaining.UnresolvedCount != 0 {
+			view.AttributionPartial = true
+			view.Details = append(view.Details, remaining)
 		}
 	}
 	return view, nil

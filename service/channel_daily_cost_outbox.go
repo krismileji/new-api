@@ -31,7 +31,7 @@ const (
 	channelDailyCostOutboxReadBlock          = time.Second
 	channelDailyCostOutboxClaimMinIdle       = 30 * time.Second
 	channelDailyCostOutboxLeaseDuration      = 30 * time.Second
-	channelDailyCostOutboxRecoveryInterval   = 500 * time.Millisecond
+	channelDailyCostOutboxRecoveryInterval   = time.Minute
 	channelDailyCostOutboxMaximumRetryDelay  = 5 * time.Minute
 	channelDailyCostOutboxStatsInterval      = 5 * time.Second
 	channelDailyCostOutboxCleanupInterval    = time.Hour
@@ -215,6 +215,11 @@ func (runtime *ChannelDailyCostOutboxRuntime) run(ctx context.Context) {
 		runtime.runDBRecovery(ctx)
 	}()
 	if runtime.redisEnabled {
+		runtime.operationWait.Add(1)
+		go func() {
+			defer runtime.operationWait.Done()
+			runtime.runRedisProjection(ctx)
+		}()
 		runtime.operationWait.Add(1)
 		go func() {
 			defer runtime.operationWait.Done()
@@ -446,8 +451,18 @@ func (runtime *ChannelDailyCostOutboxRuntime) runDBRecovery(ctx context.Context)
 	nextStatsRefresh := time.Time{}
 	nextCleanup := time.Time{}
 	for {
-		if err := recoverChannelDailyCostOutboxBatch(ctx, runtime.consumerName); err != nil && ctx.Err() == nil {
-			logger.LogWarn(ctx, fmt.Sprintf("渠道成本 outbox 恢复失败，将自动重试: %v", err))
+		batchCutoff := time.Now()
+		for ctx.Err() == nil {
+			count, err := applyChannelDailyCostOutboxBatch(ctx, runtime.consumerName, time.Now().Unix(), batchCutoff.Unix(), batchCutoff.Unix())
+			if err != nil {
+				if ctx.Err() == nil {
+					logger.LogWarn(ctx, fmt.Sprintf("渠道成本 outbox 恢复失败，将自动重试: %v", err))
+				}
+				break
+			}
+			if count == 0 || time.Since(batchCutoff) >= 45*time.Second {
+				break
+			}
 		}
 		now := time.Now()
 		if !now.Before(nextStatsRefresh) {
@@ -485,11 +500,16 @@ func recoverChannelDailyCostOutboxBatch(ctx context.Context, owner string) error
 }
 
 func recoverChannelDailyCostOutboxBatchReadyBefore(ctx context.Context, owner string, now int64, readyBefore int64) error {
+	_, err := applyChannelDailyCostOutboxBatch(ctx, owner, now, readyBefore)
+	return err
+}
+
+func applyChannelDailyCostOutboxBatch(ctx context.Context, owner string, now int64, readyBefore int64, createdBefore ...int64) (int, error) {
 	opCtx, cancel := context.WithTimeout(ctx, channelDailyCostOutboxDBOperationTimeout)
-	claimed, err := model.ClaimChannelDailyCostOutboxEvents(opCtx, owner, now, readyBefore, channelDailyCostOutboxLeaseDuration, channelDailyCostOutboxBatchSize)
+	claimed, err := model.ClaimChannelDailyCostOutboxEvents(opCtx, owner, now, readyBefore, channelDailyCostOutboxLeaseDuration, channelDailyCostOutboxBatchSize, createdBefore...)
 	cancel()
 	if err != nil || len(claimed) == 0 {
-		return err
+		return 0, err
 	}
 	ids := make([]int64, 0, len(claimed))
 	maxAttempt := int64(1)
@@ -503,7 +523,7 @@ func recoverChannelDailyCostOutboxBatchReadyBefore(ctx context.Context, owner st
 	if err == nil {
 		channelDailyCostReliableStatsState.ledgerApplied.Add(appliedCount)
 		decrementChannelDailyCostOutboxPending(appliedCount)
-		return nil
+		return len(claimed), nil
 	}
 	failedIDs := ids
 	if errors.Is(err, model.ErrChannelDailyCostLedgerOverflow) && len(claimed) > 1 {
@@ -532,7 +552,7 @@ func recoverChannelDailyCostOutboxBatchReadyBefore(ctx context.Context, owner st
 			decrementChannelDailyCostOutboxPending(appliedCount)
 		}
 		if len(failedIDs) == 0 {
-			return nil
+			return len(claimed), nil
 		}
 		maxAttempt = 1
 		failed := make(map[int64]struct{}, len(failedIDs))
@@ -552,15 +572,15 @@ func recoverChannelDailyCostOutboxBatchReadyBefore(ctx context.Context, owner st
 	failCancel()
 	if failErr != nil {
 		channelDailyCostReliableStatsState.ledgerFailed.Add(int64(len(failedIDs)))
-		return fmt.Errorf("应用 outbox 失败: %v；释放租约失败: %w", err, failErr)
+		return 0, fmt.Errorf("应用 outbox 失败: %v；释放租约失败: %w", err, failErr)
 	}
 	if released == 0 {
 		// Another worker finalized or took over every failed row while this
 		// worker was applying. Do not report a false failure or retry it.
-		return nil
+		return len(claimed), nil
 	}
 	channelDailyCostReliableStatsState.ledgerFailed.Add(released)
-	return err
+	return 0, err
 }
 
 func FlushChannelDailyCostOutbox(ctx context.Context) error {

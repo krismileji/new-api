@@ -160,7 +160,15 @@ func AddChannelDailyCostBatch(ctx context.Context, deltas []ChannelDailyCostDelt
 		return errors.New("channel daily cost database is unavailable")
 	}
 	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return addChannelDailyCostBatch(tx, deltas)
+		if err := addChannelDailyCostBatch(tx, deltas); err != nil {
+			return err
+		}
+		for _, delta := range deltas {
+			if _, err := appendChannelDailyCostProjectionTx(tx, delta, 0, ""); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 

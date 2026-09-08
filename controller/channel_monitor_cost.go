@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -96,6 +97,9 @@ type channelMonitorCostCoverage struct {
 }
 
 type channelMonitorCostOverview struct {
+	CostSource                     string                                                 `json:"cost_source"`
+	CostRevision                   int64                                                  `json:"cost_revision"`
+	CostProjection                 service.ChannelMonitorReliableCostStatus               `json:"cost_projection"`
 	Days                           int                                                    `json:"days"`
 	GeneratedAt                    int64                                                  `json:"generated_at"`
 	DataCutoffAt                   int64                                                  `json:"data_cutoff_at"`
@@ -238,18 +242,22 @@ func GetChannelMonitorCostOverview(c *gin.Context) {
 }
 
 func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, channelId int) (channelMonitorCostOverview, error) {
+	source, err := loadChannelMonitorCostReadSource(ctx, now, true)
+	if err != nil {
+		return channelMonitorCostOverview{}, err
+	}
 	todayStart := channelMonitorCostDayStart(now)
 	startTimestamp := todayStart - int64(days-1)*channelMonitorCostDaySeconds
 	endTimestamp := todayStart + channelMonitorCostDaySeconds
 	var totals []model.ChannelDailyCostDayTotal
 	var channelTotals []model.ChannelDailyCostChannelTotal
-	err := model.RunChannelMonitorCostRead(ctx, func(db *gorm.DB) error {
+	err = model.RunChannelMonitorCostRead(ctx, func(db *gorm.DB) error {
 		var queryErr error
-		totals, queryErr = model.GetChannelDailyCostDayTotalsWithDB(ctx, db, startTimestamp, endTimestamp, channelId)
+		totals, queryErr = source.dayTotals(ctx, db, startTimestamp, endTimestamp, channelId)
 		if queryErr != nil {
 			return queryErr
 		}
-		channelTotals, queryErr = model.GetChannelDailyCostChannelTotalsWithDB(ctx, db, startTimestamp, endTimestamp, channelId)
+		channelTotals, queryErr = source.channelTotals(ctx, db, startTimestamp, endTimestamp, channelId, 0)
 		return queryErr
 	})
 	if err != nil {
@@ -323,6 +331,7 @@ func getChannelMonitorCostSummary(ctx context.Context, days int, now int64, chan
 		overview.YesterdayGroupProbeCostCNY = items[len(items)-2].GroupProbeCostCNY
 		overview.YesterdayModelDetectionCostCNY = items[len(items)-2].ModelDetectionCostCNY
 	}
+	source.attach(&overview)
 	return overview, nil
 }
 
@@ -343,6 +352,10 @@ func getChannelMonitorCostOverviewForChannelPage(ctx context.Context, days int, 
 }
 
 func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days int, now int64, channelId int, page int, pageSize int, detailDayStart int64) (channelMonitorCostOverview, error) {
+	source, err := loadChannelMonitorCostReadSource(ctx, now, false)
+	if err != nil {
+		return channelMonitorCostOverview{}, err
+	}
 	// Normalize pagination before any arithmetic.  The HTTP handler validates
 	// days, but this helper is also exercised directly by internal callers and
 	// tests; using (page-1)*pageSize or days+pageSize-1 before clamping lets a
@@ -383,15 +396,15 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 	var channels []model.ChannelMonitorCostChannelMetadata
 	var monitors []model.ChannelRatioMonitor
 	var chartRows []model.ChannelDailyCostDayTotal
-	err := model.RunChannelMonitorCostRead(ctx, func(db *gorm.DB) error {
+	err = model.RunChannelMonitorCostRead(ctx, func(db *gorm.DB) error {
 		var queryErr error
-		allChannelTotals, queryErr = model.GetChannelDailyCostChannelTotalsWithDetailAndDB(
+		allChannelTotals, queryErr = source.channelTotals(
 			ctx, db, startTimestamp, endTimestamp, channelId, detailDayStart,
 		)
 		if queryErr != nil {
 			return queryErr
 		}
-		apiKeyRows, apiKeysTruncated, queryErr = model.GetChannelDailyAPIKeyCostTotalsForMonitor(
+		apiKeyRows, apiKeysTruncated, queryErr = source.apiKeyTotals(
 			ctx, db, detailStartTimestamp, detailEndTimestamp, channelId, apiKeyLimit,
 		)
 		if queryErr != nil {
@@ -409,7 +422,7 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		if queryErr != nil {
 			return queryErr
 		}
-		chartRows, queryErr = model.GetChannelDailyCostDayTotalsWithDB(ctx, db, startTimestamp, endTimestamp, channelId)
+		chartRows, queryErr = source.dayTotals(ctx, db, startTimestamp, endTimestamp, channelId)
 		return queryErr
 	})
 	if err != nil {
@@ -838,6 +851,7 @@ func getChannelMonitorCostOverviewForChannelPageAtDay(ctx context.Context, days 
 		overview.YesterdayGroupProbeCostCNY = chartItems[len(chartItems)-2].GroupProbeCostCNY
 		overview.YesterdayModelDetectionCostCNY = chartItems[len(chartItems)-2].ModelDetectionCostCNY
 	}
+	source.attach(&overview)
 	return overview, nil
 }
 

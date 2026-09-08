@@ -233,7 +233,7 @@ func TestGetChannelMonitorTodaySuccessRejectsDateOutsideRange(t *testing.T) {
 	assert.Contains(t, recorder.Body.String(), "统计日期必须在所选时间范围内")
 }
 
-func TestGetChannelMonitorTodaySuccessReportsUnavailableWithoutLogSources(t *testing.T) {
+func TestGetChannelMonitorTodaySuccessReportsUnavailableBeforeRedisSnapshotReady(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
 	originalLogConsumeEnabled := common.LogConsumeEnabled
 	originalErrorLogEnabled := constant.ErrorLogEnabled
@@ -257,9 +257,9 @@ func TestGetChannelMonitorTodaySuccessReportsUnavailableWithoutLogSources(t *tes
 		} `json:"data"`
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
-	assert.True(t, response.Success)
-	assert.True(t, response.Data.SuccessMetricsAvailable)
-	assert.True(t, response.Data.CacheWriteMetricsAvailable)
+	assert.False(t, response.Success)
+	assert.False(t, response.Data.SuccessMetricsAvailable)
+	assert.False(t, response.Data.CacheWriteMetricsAvailable)
 }
 
 func TestGetChannelMonitorTodaySuccessReturnsCacheWritesWithoutErrorLogs(t *testing.T) {

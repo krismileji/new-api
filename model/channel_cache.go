@@ -110,7 +110,7 @@ func InitChannelCache() {
 	logicalChannelRuntimeCache = newLogicalChannelRuntimeCache
 	logicalChannelRuntimeDirty = false
 	channelSmartScheduleRouteCacheDirty = make(map[channelSmartScheduleRoutePool]struct{})
-	markLocalChannelSmartScheduleRouteSnapshot(time.Now().UnixMilli())
+	markLocalChannelSmartScheduleRouteSnapshot(time.Now().UnixMilli(), snapshot.monitorReadModel)
 	channelSmartScheduleRouteSnapshotDirtySince = 0
 	channelSmartScheduleRouteSnapshotDirtyWatermark = 0
 	publishChannelSmartScheduleRuntimeRouteIndex(newChannelSmartScheduleRuntimeRouteIndex)

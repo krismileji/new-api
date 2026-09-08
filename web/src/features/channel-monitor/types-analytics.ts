@@ -79,7 +79,7 @@ export type ChannelMonitorAnalyticsItem = ChannelMonitorAnalyticsSummary & {
 }
 
 export type ChannelMonitorAnalyticsResponse = {
-  source: 'database_daily' | 'redis_daily'
+  source: 'database_daily' | 'redis_daily' | 'redis_and_database_daily'
   group_by: ChannelMonitorAnalyticsGroupBy
   coverage: {
     status: 'complete' | 'partial' | 'unavailable'

@@ -93,8 +93,9 @@ var (
 	channelMonitorAggregationLocalCompletedThrough = make(map[channelMonitorAggregationDatabaseKey]int64)
 )
 
-// StartChannelMonitorAggregationWorker refreshes the persisted minute
-// aggregates in the background. Only the master node starts the worker.
+// StartChannelMonitorAggregationWorker persists daily Redis statistics every
+// minute. The legacy log aggregator is retained for installations without Redis.
+// Only the master node starts the worker.
 func StartChannelMonitorAggregationWorker() {
 	channelMonitorAggregationOnce.Do(func() {
 		if !common.IsMasterNode {
@@ -104,6 +105,19 @@ func StartChannelMonitorAggregationWorker() {
 			run := func(startup bool) int64 {
 				targetEnd := channelMonitorAggregationReadyEnd(time.Now())
 				ctx := context.Background()
+				if common.RedisEnabled {
+					if err := runChannelMonitorDailyPersistence(ctx, common.GetTimestamp()); err != nil {
+						logger.LogWarn(ctx, fmt.Sprintf("渠道监控日汇总持久化失败，将在下一轮重试: %v", err))
+					}
+					changed, err := model.ClearExpiredChannelSmartScheduleRoutePrimaries(common.GetTimestamp())
+					if err != nil {
+						logger.LogWarn(ctx, fmt.Sprintf("清理到期固定主渠道失败: %v", err))
+					}
+					if changed && common.MemoryCacheEnabled {
+						model.InitChannelCache()
+					}
+					return targetEnd
+				}
 				if err := runChannelMonitorAggregationAt(ctx, targetEnd, startup); err != nil {
 					logger.LogWarn(context.Background(), fmt.Sprintf("渠道监控分钟聚合失败: %v", err))
 				} else if err := runChannelMonitorAggregationBackfill(ctx, targetEnd); err != nil {

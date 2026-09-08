@@ -224,6 +224,7 @@ func InvalidateChannelDailyCostSnapshot(channelId int) {
 	channelDailyCostSnapshotVersion(channelId).Add(1)
 	channelDailyCostSnapshotCache.Delete(channelId)
 	channelDailyCostSnapshotLoads.Forget(strconv.Itoa(channelId))
+	model.InvalidateChannelSmartScheduleReadModel()
 }
 
 func ResetChannelDailyCostSnapshotCache() {

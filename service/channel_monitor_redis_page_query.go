@@ -38,17 +38,19 @@ type ChannelMonitorRealtimePageAggregate struct {
 }
 
 type ChannelMonitorRealtimePageView struct {
-	Summary        ChannelMonitorRealtimePageAggregate   `json:"summary"`
-	Routes         []ChannelMonitorRealtimePageAggregate `json:"routes"`
-	Channels       []ChannelMonitorRealtimePageAggregate `json:"channels"`
-	Groups         []ChannelMonitorRealtimePageAggregate `json:"groups"`
-	APIKeys        []ChannelMonitorRealtimePageAggregate `json:"api_keys"`
-	Failures       []model.ChannelMonitorFailureCategory `json:"failures"`
-	WindowStart    int64                                 `json:"window_start"`
-	WindowEnd      int64                                 `json:"window_end"`
-	DataCutoffAt   int64                                 `json:"data_cutoff_at"`
-	ProcessedAt    int64                                 `json:"processed_at"`
-	EventWatermark uint64                                `json:"event_watermark"`
+	SnapshotRevision int64                                 `json:"snapshot_revision,omitempty"`
+	CoveragePartial  bool                                  `json:"coverage_partial"`
+	Summary          ChannelMonitorRealtimePageAggregate   `json:"summary"`
+	Routes           []ChannelMonitorRealtimePageAggregate `json:"routes"`
+	Channels         []ChannelMonitorRealtimePageAggregate `json:"channels"`
+	Groups           []ChannelMonitorRealtimePageAggregate `json:"groups"`
+	APIKeys          []ChannelMonitorRealtimePageAggregate `json:"api_keys"`
+	Failures         []model.ChannelMonitorFailureCategory `json:"failures"`
+	WindowStart      int64                                 `json:"window_start"`
+	WindowEnd        int64                                 `json:"window_end"`
+	DataCutoffAt     int64                                 `json:"data_cutoff_at"`
+	ProcessedAt      int64                                 `json:"processed_at"`
+	EventWatermark   uint64                                `json:"event_watermark"`
 }
 
 type ChannelMonitorRealtimeSuccessDetailView struct {
@@ -101,16 +103,18 @@ func QueryChannelMonitorRealtimeTodaySuccessFromRedis(
 		return ChannelMonitorRealtimePageView{}, err
 	}
 	view := ChannelMonitorRealtimePageView{
-		Routes:         make([]ChannelMonitorRealtimePageAggregate, 0),
-		Channels:       make([]ChannelMonitorRealtimePageAggregate, 0),
-		Groups:         make([]ChannelMonitorRealtimePageAggregate, 0),
-		APIKeys:        make([]ChannelMonitorRealtimePageAggregate, 0),
-		Failures:       make([]model.ChannelMonitorFailureCategory, 0),
-		WindowStart:    dayStart,
-		WindowEnd:      endAt,
-		DataCutoffAt:   daily.DataCutoffAt,
-		ProcessedAt:    daily.ProcessedAt,
-		EventWatermark: daily.EventWatermark,
+		Routes:           make([]ChannelMonitorRealtimePageAggregate, 0),
+		Channels:         make([]ChannelMonitorRealtimePageAggregate, 0),
+		Groups:           make([]ChannelMonitorRealtimePageAggregate, 0),
+		APIKeys:          make([]ChannelMonitorRealtimePageAggregate, 0),
+		Failures:         make([]model.ChannelMonitorFailureCategory, 0),
+		SnapshotRevision: daily.Revision,
+		CoveragePartial:  daily.CoveragePartial,
+		WindowStart:      dayStart,
+		WindowEnd:        endAt,
+		DataCutoffAt:     daily.DataCutoffAt,
+		ProcessedAt:      daily.ProcessedAt,
+		EventWatermark:   daily.EventWatermark,
 	}
 	for _, entry := range daily.Entries {
 		aggregate, aggregateErr := channelMonitorRedisSharedPageAggregate(entry.Aggregate)

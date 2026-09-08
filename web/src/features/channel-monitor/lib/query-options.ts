@@ -38,6 +38,15 @@ export const CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS = {
   gcTime: 0,
 } as const
 
+export const CHANNEL_MONITOR_LIVE_REFRESH_INTERVAL_MS = 5_000
+
+export const CHANNEL_MONITOR_LIVE_QUERY_OPTIONS = {
+  ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+  refetchInterval: CHANNEL_MONITOR_LIVE_REFRESH_INTERVAL_MS,
+  refetchOnWindowFocus: true,
+  refetchOnReconnect: true,
+} as const
+
 // Keep the active-task interval shared so the status-probe and model-detection
 // views cannot drift apart.
 export const CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS = 1000
@@ -108,52 +117,20 @@ type ChannelMonitorRefreshTarget = {
 function getChannelMonitorManualRefreshTargets(
   scope: ChannelMonitorManualRefreshScope
 ): ChannelMonitorRefreshTarget[] {
-  let targets: ChannelMonitorRefreshTarget[]
-
-  switch (scope.view) {
-    case 'channels':
-      targets = [
-        { queryKey: ['channel-monitor'], exact: true },
-        { queryKey: ['channel-monitor-performance'] },
-        { queryKey: ['channel-monitor', 'cost', 'summary', 2], exact: true },
-        { queryKey: ['channel-monitor', 'success', 'today'], exact: true },
-        {
-          queryKey: [...CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY, 'summary'],
-          exact: true,
-        },
-      ]
-      break
-    case 'groups':
-    case 'models':
-      targets = [
-        { queryKey: ['channel-monitor'], exact: true },
-        { queryKey: ['channel-monitor-performance'] },
-        { queryKey: ['channel-monitor', 'cost', 'summary', 2], exact: true },
-        { queryKey: ['channel-monitor', 'success', 'today'], exact: true },
-      ]
-      break
-    case 'status-probe':
-      targets = [{ queryKey: ['channel-monitor', 'status-probe'] }]
-      break
-    case 'model-detection':
-      // The active overview, history sheet, and run detail queries all share
-      // this prefix. Inactive sheets are excluded by the active query filter.
-      targets = [
-        {
-          queryKey: ['channel-monitor', 'model-detection'],
-        },
-      ]
-      break
-    case 'smart-schedule':
-      targets = [
-        { queryKey: ['channel-monitor'], exact: true },
-        { queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY },
-        { queryKey: ['channel-monitor', 'cost', 'summary', 2], exact: true },
-        { queryKey: ['channel-monitor', 'success', 'today'], exact: true },
-      ]
-      break
+  const targets: ChannelMonitorRefreshTarget[] = [
+    { queryKey: ['channel-monitor'], exact: true },
+    { queryKey: ['channel-monitor-performance'] },
+    { queryKey: ['channel-monitor', 'cost', 'summary', 2], exact: true },
+    { queryKey: ['channel-monitor', 'success', 'today'], exact: true },
+    { queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY },
+    { queryKey: ['channel-monitor', 'analytics'] },
+  ]
+  if (scope.view === 'status-probe') {
+    targets.push({ queryKey: ['channel-monitor', 'status-probe'] })
   }
-
+  if (scope.view === 'model-detection') {
+    targets.push({ queryKey: ['channel-monitor', 'model-detection'] })
+  }
   if (scope.taskHistoryOpen) {
     targets.push({ queryKey: CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY })
   }
@@ -162,7 +139,6 @@ function getChannelMonitorManualRefreshTargets(
       queryKey: CHANNEL_MONITOR_SMART_SCHEDULE_EXECUTIONS_QUERY_KEY,
     })
   }
-
   return targets
 }
 
@@ -185,7 +161,7 @@ export function getChannelMonitorOverviewQueryOptions() {
     queryKey: ['channel-monitor'],
     queryFn: getChannelMonitorOverview,
     staleTime: 0,
-    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    ...CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
 }
@@ -196,7 +172,7 @@ export function getChannelMonitorConcurrencyQueryOptions(enabled = true) {
     queryFn: getChannelMonitorConcurrency,
     enabled,
     staleTime: 0,
-    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    ...CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
 }
@@ -211,7 +187,7 @@ export function getChannelMonitorPerformanceQueryOptions(
     queryFn: () => getChannelMonitorPerformance(minutes),
     enabled: active,
     staleTime: 0,
-    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+    ...CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
 }
@@ -237,8 +213,7 @@ export function getChannelMonitorSmartScheduleQueryOptions(
     ],
     queryFn: () => getChannelMonitorSmartScheduleRoutes(metrics),
     staleTime: 0,
-    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchInterval: metrics ? 30_000 : false,
+    ...CHANNEL_MONITOR_LIVE_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
 }

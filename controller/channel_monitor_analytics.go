@@ -32,16 +32,18 @@ type channelMonitorAnalyticsQuery struct {
 }
 
 type channelMonitorAnalyticsResponse struct {
-	Source       string                         `json:"source"`
-	GroupBy      string                         `json:"group_by"`
-	Coverage     service.ChannelMonitorCoverage `json:"coverage"`
-	Summary      map[string]any                 `json:"summary"`
-	ScopeSummary map[string]any                 `json:"scope_summary"`
-	Items        []map[string]any               `json:"items"`
-	Page         int                            `json:"page"`
-	PageSize     int                            `json:"page_size"`
-	Total        int64                          `json:"total"`
-	GeneratedAt  int64                          `json:"generated_at"`
+	SnapshotRevision int64                          `json:"snapshot_revision,omitempty"`
+	ProcessedAt      int64                          `json:"processed_at,omitempty"`
+	Source           string                         `json:"source"`
+	GroupBy          string                         `json:"group_by"`
+	Coverage         service.ChannelMonitorCoverage `json:"coverage"`
+	Summary          map[string]any                 `json:"summary"`
+	ScopeSummary     map[string]any                 `json:"scope_summary"`
+	Items            []map[string]any               `json:"items"`
+	Page             int                            `json:"page"`
+	PageSize         int                            `json:"page_size"`
+	Total            int64                          `json:"total"`
+	GeneratedAt      int64                          `json:"generated_at"`
 }
 
 func GetChannelMonitorAnalyticsSummary(c *gin.Context) {
@@ -252,7 +254,14 @@ func queryChannelMonitorHistoricalAnalytics(ctx context.Context, query channelMo
 	if query.To-query.From > 90*24*60*60 {
 		return channelMonitorAnalyticsResponse{}, &channelMonitorAnalyticsQueryError{"时间范围不能超过 90 天"}
 	}
-	if query.Metric == "success" && query.From == model.ChannelDailyCostDayStart(common.GetTimestamp()) {
+	today := model.ChannelDailyCostDayStart(common.GetTimestamp())
+	if query.From < today && query.To > today && common.RedisEnabled {
+		return queryChannelMonitorMixedAnalytics(ctx, query, today)
+	}
+	if query.From == today && common.RedisEnabled {
+		if query.Metric == "cost" {
+			return queryChannelMonitorCurrentCostAnalytics(ctx, query)
+		}
 		return queryChannelMonitorCurrentSuccessAnalytics(ctx, query)
 	}
 	if query.Metric == "cost" {
@@ -265,6 +274,9 @@ func queryChannelMonitorCurrentSuccessAnalytics(ctx context.Context, query chann
 	view, err := service.QueryChannelMonitorRedisDailySuccessAnalytics(ctx, query.From)
 	if err != nil {
 		return channelMonitorAnalyticsResponse{}, err
+	}
+	if view.Revision > 0 || len(view.Facts) > 0 {
+		return queryChannelMonitorCurrentSuccessFacts(ctx, query, view)
 	}
 	rows := make([]channelMonitorAnalyticsSuccessRow, 0, len(view.Rows))
 	var summaryRow channelMonitorAnalyticsSuccessRow
@@ -322,10 +334,11 @@ func queryChannelMonitorCurrentSuccessAnalytics(ctx context.Context, query chann
 	if err := attachChannelMonitorAnalyticsUserNames(ctx, items); err != nil {
 		return channelMonitorAnalyticsResponse{}, err
 	}
-	coverage := channelMonitorCurrentDayCoverage(ctx, query.From, view.DataCutoffAt)
+	coverage := channelMonitorCurrentDayCoverage(ctx, query.From, view.DataCutoffAt, view.CoveragePartial)
 	summary := channelMonitorAnalyticsSuccessSummary(summaryRow)
 	return channelMonitorAnalyticsResponse{
 		Source: "redis_daily", GroupBy: query.GroupBy, Coverage: coverage, Summary: summary, ScopeSummary: summary,
+		SnapshotRevision: view.Revision, ProcessedAt: view.ProcessedAt,
 		Items: items, Page: query.Page, PageSize: query.PageSize, Total: total,
 		GeneratedAt: common.GetTimestamp(),
 	}, nil
@@ -335,13 +348,16 @@ func queryChannelMonitorCurrentSuccessAnalytics(ctx context.Context, query chann
 // data_cutoff_at is the timestamp of the latest business sample, so it must
 // not be compared with wall-clock time: an idle channel is not a lagging
 // channel. Consumer health and backlog are the completeness signals here.
-func channelMonitorCurrentDayCoverage(ctx context.Context, requestedFrom, dataCutoffAt int64) service.ChannelMonitorCoverage {
+func channelMonitorCurrentDayCoverage(ctx context.Context, requestedFrom, dataCutoffAt int64, partial ...bool) service.ChannelMonitorCoverage {
 	status := service.GetChannelMonitorRedisRealtimeStatus(ctx)
 	coveredThrough := dataCutoffAt
 	if coveredThrough < requestedFrom {
 		coveredThrough = requestedFrom
 	}
 	reasons := append([]string(nil), status.DegradedReasons...)
+	if len(partial) > 0 && partial[0] {
+		reasons = append(reasons, "daily_replay_incomplete")
+	}
 	return service.DeriveChannelMonitorCoverage(
 		status.RedisAvailable,
 		requestedFrom,
@@ -539,8 +555,20 @@ func queryChannelMonitorHistoricalSuccessAnalytics(ctx context.Context, query ch
 	if err := attachChannelMonitorAnalyticsUserNames(ctx, items); err != nil {
 		return channelMonitorAnalyticsResponse{}, err
 	}
+	var reasons []string
+	if model.DB.Migrator().HasTable(&model.ChannelMonitorDailyCheckpoint{}) {
+		var partialDays int64
+		if err := model.DB.WithContext(ctx).Model(&model.ChannelMonitorDailyCheckpoint{}).
+			Where("day_start >= ? AND day_start < ? AND coverage_partial = ?", query.From, query.To, true).
+			Count(&partialDays).Error; err != nil {
+			return channelMonitorAnalyticsResponse{}, err
+		}
+		if partialDays > 0 {
+			reasons = append(reasons, "daily_replay_incomplete")
+		}
+	}
 	return channelMonitorAnalyticsResponse{
-		Source: "database_daily", GroupBy: query.GroupBy, Coverage: service.DeriveChannelMonitorCoverage(true, query.From, query.To, query.From, query.To, nil),
+		Source: "database_daily", GroupBy: query.GroupBy, Coverage: service.DeriveChannelMonitorCoverage(true, query.From, query.To, query.From, query.To, reasons),
 		Summary: summary, ScopeSummary: summary, Items: items, Page: query.Page, PageSize: query.PageSize,
 		Total: total, GeneratedAt: common.GetTimestamp(),
 	}, nil
@@ -701,7 +729,7 @@ func channelMonitorAnalyticsCostOrder(sortKey string) string {
 
 func queryChannelMonitorHistoricalCostAnalytics(ctx context.Context, query channelMonitorAnalyticsQuery) (channelMonitorAnalyticsResponse, error) {
 	if model.DB != nil && model.DB.Migrator().HasTable(&model.ChannelMonitorDailyCostDetail{}) &&
-		(query.GroupBy != "day" && (query.GroupBy != "channel" || query.APIKey > 0 || query.Model != "")) {
+		((query.GroupBy != "day" && query.GroupBy != "channel") || query.User > 0 || query.APIKey > 0 || query.Model != "" || query.Search != "") {
 		return queryChannelMonitorHistoricalCostDetailAnalytics(ctx, query)
 	}
 	type row struct {
@@ -769,7 +797,7 @@ func queryChannelMonitorHistoricalCostAnalytics(ctx context.Context, query chann
 		orderKey = "COALESCE(tokens.user_id, 0)"
 	}
 	countGrouped := base.Session(&gorm.Session{}).Select(groupSQL).Group(groupSQL)
-	grouped := base.Select(selectSQL).Group(groupSQL)
+	grouped := base.Session(&gorm.Session{}).Select(selectSQL).Group(groupSQL)
 	grouped = grouped.Order(channelMonitorAnalyticsCostOrder(query.Sort) + " " + query.Direction + ", " + orderKey + " ASC")
 	var total int64
 	countQuery := model.DB.WithContext(ctx).Table("(?) AS grouped_rows", countGrouped)
@@ -975,6 +1003,8 @@ func channelMonitorAnalyticsCostDetailBaseQuery(ctx context.Context, query chann
 
 func channelMonitorAnalyticsCostGroupColumns(groupBy string) []string {
 	switch groupBy {
+	case "day":
+		return []string{"day_start"}
 	case "user":
 		return []string{"user_id"}
 	case "api_key":
@@ -992,6 +1022,8 @@ func channelMonitorAnalyticsCostGroupColumns(groupBy string) []string {
 
 func channelMonitorAnalyticsCostDetailKey(groupBy string, row channelMonitorAnalyticsCostDetailRow) string {
 	switch groupBy {
+	case "day":
+		return strconv.FormatInt(row.DayStart, 10)
 	case "user":
 		return strconv.Itoa(row.UserID)
 	case "api_key":

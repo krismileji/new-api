@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"github.com/QuantumNous/new-api/common"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -17,12 +18,12 @@ type channelMonitorRealtimeChannelCost struct {
 }
 
 // channelMonitorRealtimeTodayCosts keeps its existing caller-facing name. The
-// current Beijing day is served from the asynchronous Redis cost projection;
-// the committed daily ledger remains the safe fallback and historical source.
-func channelMonitorRealtimeTodayCosts(ctx context.Context, channelId int, dayStart int64) (map[int]channelMonitorRealtimeChannelCost, error) {
-	if redisCosts, err := service.QueryChannelMonitorRedisSharedProjectionForCosts(
-		ctx, dayStart, dayStart+channelMonitorCostDaySeconds,
-	); err == nil {
+// current Beijing day is served from the reliable Redis cost projection.
+// A Redis outage must not silently switch the page to a different ledger view.
+func channelMonitorRealtimeTodayCosts(ctx context.Context, channelId int, dayStart int64) (map[int]channelMonitorRealtimeChannelCost, service.ChannelMonitorRedisSharedDailyCostView, error) {
+	view, redisErr := service.QueryChannelMonitorRedisDailyCostTotals(ctx, dayStart)
+	redisCosts := view.Channels
+	if redisErr == nil {
 		costs := make(map[int]channelMonitorRealtimeChannelCost, len(redisCosts))
 		for id, aggregate := range redisCosts {
 			if channelId > 0 && id != channelId {
@@ -37,12 +38,15 @@ func channelMonitorRealtimeTodayCosts(ctx context.Context, channelId int, daySta
 				UnresolvedCount:           aggregate.UnresolvedRequestCount,
 			}
 		}
-		return costs, nil
+		return costs, view, nil
+	}
+	if common.RedisEnabled {
+		return nil, view, redisErr
 	}
 
 	rows, err := model.GetChannelDailyCostsForChannel(ctx, dayStart, dayStart+channelMonitorCostDaySeconds, channelId)
 	if err != nil {
-		return nil, err
+		return nil, view, err
 	}
 	costs := make(map[int]channelMonitorRealtimeChannelCost, len(rows))
 	for _, row := range rows {
@@ -55,14 +59,12 @@ func channelMonitorRealtimeTodayCosts(ctx context.Context, channelId int, daySta
 			UnresolvedCount:           row.UnresolvedCount,
 		}
 	}
-	return costs, nil
+	return costs, view, nil
 }
 
-// applyChannelMonitorRealtimeCost only attaches Redis projection health
-// metadata. Cost amounts and counts come exclusively from the persisted daily
-// cost tables so every filter and historical query reads the same ledger. The
-// daily writer's roughly one-second flush delay is preferable to showing an
-// uncommitted Redis amount that can disagree with later historical results.
+// Cost readers have already combined historical daily rows with one Redis
+// snapshot. Attach runtime health without replacing that cost snapshot's own
+// processing timestamp with the ordinary monitoring consumer's timestamp.
 func applyChannelMonitorRealtimeCost(
 	ctx context.Context,
 	overview *channelMonitorCostOverview,
@@ -76,11 +78,11 @@ func applyChannelMonitorRealtimeCost(
 	_ = detailDayStart
 	_ = summaryOnly
 	todayStart := channelMonitorCostDayStart(now)
-	// The database ledger is authoritative for monetary totals. Redis is a
-	// rebuildable read model and may briefly lag the latest durable settlement.
 	metadata := channelMonitorRealtimeMetadataWithContext(ctx, todayStart)
-	overview.DataCutoffAt = metadata.DataCutoffAt
-	overview.ProcessedAt = metadata.ProcessedAt
+	if overview.CostSource != "redis_daily" {
+		overview.DataCutoffAt = metadata.DataCutoffAt
+		overview.ProcessedAt = metadata.ProcessedAt
+	}
 	overview.ProjectionStartedAt = metadata.ProjectionStartedAt
 	overview.EventWatermark = metadata.EventWatermark
 	overview.QueueDepth = metadata.QueueDepth
@@ -121,6 +123,13 @@ func applyChannelMonitorRealtimeCost(
 	overview.RedisPoolStats = metadata.RedisPoolStats
 	overview.RealtimeDegraded = metadata.RealtimeDegraded
 	overview.DegradedReasons = metadata.DegradedReasons
+	if overview.CostSource == "redis_daily" && (overview.CostProjection.Failed || overview.CostProjection.CheckedAt == 0 || now-overview.CostProjection.CheckedAt > 10) {
+		overview.RealtimeDegraded = true
+		overview.DegradedReasons = append(overview.DegradedReasons, "cost_projection_unavailable")
+	} else if overview.CostProjection.Pending {
+		overview.RealtimeDegraded = true
+		overview.DegradedReasons = append(overview.DegradedReasons, "cost_projection_pending")
+	}
 	settings := getChannelMonitorSettings()
 	service.NotifyChannelMonitorHealthAsync(settings.EmailNotificationEnabled, settings.NotificationEmail, metadata.RedisStatus, metadata.DegradedReasons, metadata.WriterDroppedEvents, settings.EmailNotificationTypes...)
 	return nil

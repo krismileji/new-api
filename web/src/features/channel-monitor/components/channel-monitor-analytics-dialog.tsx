@@ -482,6 +482,9 @@ export function ChannelMonitorAnalyticsDialog(
                 {response?.source === 'redis_daily'
                   ? '实时 Redis 日汇总'
                   : '数据库日汇总'}
+                {response?.source === 'redis_and_database_daily'
+                  ? ' · 今日来自 Redis'
+                  : null}
               </span>
               {coverageIncomplete ? (
                 <span className='text-warning'>覆盖不完整</span>

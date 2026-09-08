@@ -161,6 +161,19 @@ function RealtimeAlertBadges(props: {
           监控数据不完整
         </Badge>
       ) : null}
+      {props.metadata.degraded_reasons?.includes('daily_replay_incomplete') ? (
+        <Badge variant='warning'>日统计存在恢复缺口</Badge>
+      ) : null}
+      {props.metadata.degraded_reasons?.includes(
+        'cost_projection_unavailable'
+      ) ? (
+        <Badge variant='warning'>成本汇总暂不可用</Badge>
+      ) : null}
+      {!props.metadata.degraded_reasons?.includes(
+        'cost_projection_unavailable'
+      ) && props.metadata.cost_projection?.pending ? (
+        <Badge variant='warning'>成本汇总更新中</Badge>
+      ) : null}
       {pendingCount > 0 ? (
         <Badge variant='warning'>实时事件待处理 {pendingCount}</Badge>
       ) : null}

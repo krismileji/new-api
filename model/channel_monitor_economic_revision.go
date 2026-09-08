@@ -105,7 +105,11 @@ func UpdateChannelMonitorGroupRatioOption(value string) error {
 	if err != nil {
 		return err
 	}
-	return refreshChannelMonitorOptions(committedValues)
+	if err := refreshChannelMonitorOptions(committedValues); err != nil {
+		return err
+	}
+	InvalidateChannelSmartScheduleReadModel()
+	return nil
 }
 
 func GetChannelSmartScheduleEconomicSnapshot() (snapshot ChannelSmartScheduleEconomicSnapshot, err error) {
@@ -115,6 +119,9 @@ func GetChannelSmartScheduleEconomicSnapshot() (snapshot ChannelSmartScheduleEco
 func GetChannelSmartScheduleEconomicSnapshotWithContext(
 	ctx context.Context,
 ) (snapshot ChannelSmartScheduleEconomicSnapshot, err error) {
+	if channelSmartScheduleUseSharedReadModel() {
+		return channelSmartScheduleSharedEconomics()
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
