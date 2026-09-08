@@ -85,9 +85,7 @@ import type {
   ChannelMonitorSmartScheduleRoutePerformance,
   ChannelMonitorSmartScheduleRouteStability,
   ChannelMonitorSmartScheduleSampleItem,
-  ChannelMonitorSmartScheduleTraffic,
 } from '../types'
-import { ChannelMonitorSmartScheduleTrafficTable } from './channel-monitor-smart-schedule-traffic'
 import {
   ChannelMonitorSmartScheduleRouteDetails,
   ChannelMonitorSmartScheduleRouteStatus,
@@ -117,7 +115,6 @@ type ChannelMonitorSmartSchedulePoolProps = {
   >
   samplesByModel?: ReadonlyMap<string, ChannelMonitorSmartScheduleSampleItem>
   realtimeDegraded: boolean
-  actualTraffic?: readonly ChannelMonitorSmartScheduleTraffic[]
   routingAvailable?: boolean
   updateRouteKey: string | null
   groupPauseKey: string | null
@@ -905,21 +902,21 @@ export function ChannelMonitorSmartSchedulePool(
       <div className='bg-muted/15 grid gap-3 border-b px-4 py-3 lg:grid-cols-[8rem_minmax(0,1fr)]'>
         <div>
           <div className='text-sm font-medium'>预计流量分布</div>
-          <div className='text-muted-foreground mt-0.5 text-xs'>当前候选层 · 优先级与权重</div>
+          <div className='text-muted-foreground mt-0.5 text-xs'>
+            当前候选层 · 优先级与权重
+          </div>
         </div>
-        {props.routingAvailable === false ? <p className='text-muted-foreground text-xs' role='status'>当前路由不可用，预计占比未知</p> : <TrafficDistribution
-          routes={props.pool.routes}
-          placements={props.placements}
-        />}
+        {props.routingAvailable === false ? (
+          <p className='text-muted-foreground text-xs' role='status'>
+            当前路由不可用，预计占比未知
+          </p>
+        ) : (
+          <TrafficDistribution
+            routes={props.pool.routes}
+            placements={props.placements}
+          />
+        )}
       </div>
-
-      <ChannelMonitorSmartScheduleTrafficTable
-        items={props.actualTraffic}
-        routes={props.pool.routes}
-        group={props.pool.summary.group}
-        model={props.pool.summary.model}
-        degraded={props.realtimeDegraded}
-      />
 
       <div className='flex flex-col gap-2 border-b px-3 py-2.5 lg:flex-row lg:items-center'>
         <InputGroup className='lg:max-w-sm'>

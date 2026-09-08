@@ -19,8 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { within } from '@testing-library/react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { formatTimestampToDate } from '@/lib/format'
@@ -392,7 +393,7 @@ test('页面刚刷新但近期没有请求时，不把路由标记为过期', ()
   result.generated_at = Date.now() / 1000
   result.data_cutoff_at = result.generated_at - 7200
   const markup = renderBoard({ result })
-  assert.equal(markup.includes('页面数据可能已过期'), false)
+  assert.equal(markup.includes('调度数据可能已过期'), false)
   assert.equal(markup.includes('手动快照可能已过期'), false)
 })
 
@@ -517,30 +518,42 @@ function renderBoard(
 }
 
 describe('channel monitor smart schedule board', () => {
-  test('shows the compact operating overview with a dense route table', () => {
+  test('shows schedule metrics and actions without repeating global monitoring', () => {
     const markup = renderBoard()
+    const container = document.createElement('div')
+    container.innerHTML = markup
+    const view = within(container)
 
-    assert.ok(markup.includes('智能调度运行状态'))
-    assert.ok(markup.includes('已启用'))
-    assert.ok(markup.includes('监控数据不完整'))
-    assert.ok(markup.includes('实时事件待处理 6'))
-    assert.ok(
-      markup.includes(`数据截至 ${formatTimestampToDate(1_752_777_840)}`)
+    const overview = within(view.getByRole('region', { name: '智能调度概览' }))
+    expect(overview.getByRole('heading', { name: '调度概览' })).toBeDefined()
+    expect(overview.getByText('已启用')).toBeDefined()
+    expect(overview.getByRole('group', { name: '调度池' })).toHaveTextContent(
+      '2 个分组'
     )
-    assert.ok(markup.includes('请求事件投影后异步更新'))
-    assert.equal(markup.includes('分钟调度'), false)
-    assert.ok(markup.includes('调度池'))
-    assert.ok(markup.includes('参与路由'))
-    assert.ok(markup.includes('当前可调度'))
-    assert.ok(markup.includes('当前调度状态'))
-    assert.ok(markup.includes('稳定性降级 1'))
-    assert.equal(markup.includes('最近调度失败 0'), false)
-    assert.ok(markup.includes('智能调度记录'))
-    assert.ok(markup.includes('调度设置'))
-    assert.ok(markup.includes('立即调度'))
-    assert.ok(markup.includes('<table'))
-    assert.ok(markup.includes('data-schedule-route-list="desktop-table"'))
-    assert.equal(markup.includes('全部路由'), false)
+    expect(overview.getByRole('group', { name: '参与路由' })).toHaveTextContent(
+      '4/5'
+    )
+    expect(
+      within(overview.getByRole('group', { name: '当前可调度' })).getByText('3')
+    ).toBeDefined()
+    expect(
+      within(overview.getByRole('group', { name: '最近执行' })).getByText(
+        formatTimestampToDate(1_752_777_845)
+      )
+    ).toBeDefined()
+    expect(overview.getByText('路由已生效')).toBeDefined()
+    expect(view.queryByRole('group', { name: '运行状态摘要' })).toBeNull()
+    expect(view.queryByRole('button', { name: '运行详情' })).toBeNull()
+    for (const name of ['数据截至', '处理延迟', '事件待处理', '成本汇总']) {
+      expect(overview.queryByRole('group', { name })).toBeNull()
+    }
+    expect(view.getByRole('region', { name: '当前调度状态' })).toBeDefined()
+    expect(view.getByRole('button', { name: '稳定性降级 1' })).toBeDefined()
+    expect(view.queryByText('最近调度失败 0')).toBeNull()
+    expect(overview.getByRole('button', { name: '智能调度记录' })).toBeDefined()
+    expect(overview.getByRole('button', { name: '调度设置' })).toBeDefined()
+    expect(overview.getByRole('button', { name: '立即调度' })).toBeEnabled()
+    expect(view.getByRole('table')).toBeDefined()
   })
 
   test('orders group navigation by ratio and shows only the selected model pool', () => {
@@ -569,7 +582,9 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('成本倍率'))
     assert.ok(markup.includes('探索流量 3%'))
     assert.ok(markup.includes('≤ 50K Token'))
-    assert.ok(markup.includes('预计流量'))
+    assert.ok(markup.includes('预计流量分布'))
+    assert.equal(markup.includes('实际请求分布'), false)
+    assert.equal(markup.includes('实际请求统计暂不可用'), false)
     assert.ok(markup.includes('title="当前 75.0 · 最近 90.0"'))
     assert.ok(markup.includes('100.0%'))
     assert.equal(markup.includes('25.0%'), false)

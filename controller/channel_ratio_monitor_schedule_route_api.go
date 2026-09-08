@@ -169,7 +169,6 @@ func getChannelMonitorSmartScheduleRoutes(
 	sampleItems := make([]channelSmartScheduleSampleItem, 0, len(selectedRoutes))
 	snapshots := make([]service.ChannelMonitorRedisRouteHealthSnapshot, 0, len(selectedRoutes))
 	combinedSnapshot := service.ChannelMonitorRedisRouteHealthSnapshot{}
-	trafficItems := make([]channelSmartScheduleTraffic, 0, len(selectedRoutes))
 	metricsError := ""
 	metricViewsByRoute := make(map[channelSmartScheduleRouteKey]channelSmartScheduleRealtimeRouteMetrics, len(selectedRoutes))
 	if len(selectedRoutes) > 0 {
@@ -183,9 +182,6 @@ func getChannelMonitorSmartScheduleRoutes(
 		for _, route := range selectedRoutes {
 			key := channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}
 			view := metricViewsByRoute[key]
-			if view.traffic != nil {
-				trafficItems = append(trafficItems, *view.traffic)
-			}
 			if view.performance != nil {
 				performanceByRoute = append(performanceByRoute, *view.performance)
 			}
@@ -302,8 +298,6 @@ func getChannelMonitorSmartScheduleRoutes(
 		"route_snapshot":                routeSnapshotStatus,
 		"realtime_degraded":             metricsError != "" || windowIncomplete || redisStatus.RealtimeDegraded,
 		"metrics_error":                 metricsError,
-		"actual_traffic":                trafficItems,
-		"actual_traffic_scope":          "listed_routes",
 		"performance_window_minutes":    settings.SmartSchedulePerformanceWindowMinutes,
 		"stability_window_minutes":      stabilityWindowMinutes,
 		"sample_scope":                  model.ChannelSmartScheduleSampleScopeChannelModel,

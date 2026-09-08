@@ -19,10 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import {
   Alert02Icon,
   Cancel01Icon,
-  HistoryIcon,
   PinIcon,
-  Refresh01Icon,
-  Route01Icon,
   Settings02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
@@ -90,9 +87,8 @@ import type {
   ChannelMonitorSmartScheduleRouteStability,
   ChannelMonitorSmartScheduleSampleItem,
 } from '../types'
-import { ChannelMonitorRealtimeStatus } from './channel-monitor-realtime-status'
-import { ChannelMonitorSmartScheduleSnapshotStatus } from './channel-monitor-smart-schedule-traffic'
 import { ChannelMonitorSmartScheduleClearDialog } from './channel-monitor-smart-schedule-clear-dialog'
+import { ChannelMonitorSmartScheduleOverview } from './channel-monitor-smart-schedule-overview'
 import {
   ChannelMonitorSmartSchedulePool,
   type ChannelMonitorSmartSchedulePoolView,
@@ -514,101 +510,18 @@ export function ChannelMonitorSmartScheduleBoard(
 
   return (
     <div className='flex flex-col gap-4'>
-      <section
-        className='border-border bg-muted/25 flex flex-col gap-3 border-y px-4 py-3 xl:flex-row xl:items-center xl:justify-between'
-        aria-label='智能调度运行状态'
-      >
-        <div className='flex min-w-0 flex-1 flex-wrap items-center gap-x-5 gap-y-2'>
-          <div className='flex min-w-0 items-center gap-2'>
-            <span className='bg-background text-muted-foreground flex size-8 shrink-0 items-center justify-center rounded-md border'>
-              <HugeiconsIcon icon={Route01Icon} aria-hidden='true' />
-            </span>
-            <div>
-              <div className='flex flex-wrap items-center gap-2 font-medium'>
-                运行状态
-                <Badge
-                  variant={props.result?.enabled ? 'secondary' : 'outline'}
-                >
-                  {props.result?.enabled ? '已启用' : '已禁用'}
-                </Badge>
-                {props.isError && props.result ? (
-                  <Badge variant='destructive'>刷新失败，显示上次结果</Badge>
-                ) : null}
-                <ChannelMonitorRealtimeStatus metadata={props.result} />
-                <ChannelMonitorSmartScheduleSnapshotStatus snapshot={props.result?.route_snapshot} />
-                {stale ? (
-                  <Badge variant='warning'>页面数据可能已过期</Badge>
-                ) : null}
-              </div>
-              <div className='text-muted-foreground mt-0.5 text-xs'>
-                {props.result?.generated_at
-                  ? `快照生成于 ${formatTimestampToDate(props.result.generated_at)} · 请求事件投影后异步更新`
-                  : '请求事件投影后异步更新'}
-              </div>
-            </div>
-          </div>
-
-          <div className='flex flex-wrap items-center gap-x-5 gap-y-2 text-sm'>
-            <span>
-              <span className='text-muted-foreground'>调度池 </span>
-              <strong className='font-mono tabular-nums'>
-                {summary.poolCount}
-              </strong>
-            </span>
-            <span>
-              <span className='text-muted-foreground'>参与路由 </span>
-              <strong className='font-mono tabular-nums'>
-                {summary.participatingCount}/{summary.routeCount}
-              </strong>
-            </span>
-            <span>
-              <span className='text-muted-foreground'>当前可调度 </span>
-              <strong className='font-mono tabular-nums'>
-                {summary.activeCount}
-              </strong>
-            </span>
-          </div>
-        </div>
-
-        <div className='flex shrink-0 flex-wrap gap-2'>
-          <Button
-            type='button'
-            variant='outline'
-            size='sm'
-            onClick={props.onOpenHistory}
-          >
-            <HugeiconsIcon icon={HistoryIcon} data-icon='inline-start' />
-            智能调度记录
-          </Button>
-          <Button
-            type='button'
-            variant='outline'
-            size='sm'
-            onClick={props.onOpenSettings}
-          >
-            <HugeiconsIcon icon={Settings02Icon} data-icon='inline-start' />
-            调度设置
-          </Button>
-          <Button
-            type='button'
-            size='sm'
-            disabled={
-              !props.active ||
-              !props.result?.enabled ||
-              props.isError ||
-              runMutation.isPending
-            }
-            onClick={() => runMutation.mutate()}
-          >
-            {runMutation.isPending ? (
-              <Spinner data-icon='inline-start' />
-            ) : (
-              <HugeiconsIcon icon={Refresh01Icon} data-icon='inline-start' />
-            )}
-            立即调度
-          </Button>
-        </div>
-      </section>
+      <ChannelMonitorSmartScheduleOverview
+        enabled={props.result?.enabled === true}
+        summary={summary}
+        snapshot={props.result?.route_snapshot}
+        refreshFailed={props.isError && !!props.result}
+        stale={stale}
+        runDisabled={!props.active || props.isError}
+        running={runMutation.isPending}
+        onOpenHistory={props.onOpenHistory}
+        onOpenSettings={props.onOpenSettings}
+        onRun={() => runMutation.mutate()}
+      />
 
       {metricCoverage?.aggregation_enabled &&
       incompleteMetricWindows.length > 0 ? (
@@ -886,7 +799,6 @@ export function ChannelMonitorSmartScheduleBoard(
                 businessPerformanceByRoute={businessPerformanceByRoute}
                 stabilityByRoute={stabilityByRoute}
                 samplesByModel={samplesByModel}
-                actualTraffic={props.result?.actual_traffic}
                 routingAvailable={routingAvailable}
                 realtimeDegraded={props.result?.realtime_degraded === true}
                 updateRouteKey={updateRouteKey}

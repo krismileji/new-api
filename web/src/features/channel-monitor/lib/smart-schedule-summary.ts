@@ -113,6 +113,7 @@ export type ChannelMonitorSmartScheduleOverviewSummary = {
   groupCount: number
   poolCount: number
   healthyPoolCount: number
+  lastScheduleTime: number
   degradedCount: number
   probingCount: number
   insufficientSampleCount: number
@@ -1132,10 +1133,15 @@ export function summarizeChannelMonitorSmartScheduleOverview(
   let probingCount = 0
   let insufficientSampleCount = 0
   let failedCount = 0
+  let lastScheduleTime = 0
   for (const route of routes) {
     channels.add(route.channel_id)
     groups.add(route.group)
     const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(route)
+    lastScheduleTime = Math.max(
+      lastScheduleTime,
+      runtimeState.last_schedule_time
+    )
     const participates = channelMonitorSmartScheduleRouteRuntimeParticipates(route)
     if (participates) {
       participatingCount += 1
@@ -1178,6 +1184,7 @@ export function summarizeChannelMonitorSmartScheduleOverview(
     channelCount: channels.size,
     groupCount: groups.size,
     poolCount: pools.length,
+    lastScheduleTime,
     healthyPoolCount: pools.filter(
       (pool) =>
         pool.activeCount > 0 &&

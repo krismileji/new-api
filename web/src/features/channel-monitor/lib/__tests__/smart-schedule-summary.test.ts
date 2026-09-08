@@ -85,6 +85,24 @@ const normalPool = {
   insufficientSampleCount: 0,
 }
 
+test('the overview uses the latest published route execution time', () => {
+  const first = createRoute(1, 'vip', 'model-a', 100, 100)
+  first.state.last_schedule_time = 300
+  first.effective_state = { ...first.state, last_schedule_time: 100 }
+  const second = createRoute(2, 'vip', 'model-a', 100, 100)
+  second.state.last_schedule_time = 200
+
+  const summary = summarizeChannelMonitorSmartScheduleOverview([first, second])
+
+  expect(summary.lastScheduleTime).toBe(200)
+})
+
+test('the overview has no execution time when the route list is empty', () => {
+  expect(
+    summarizeChannelMonitorSmartScheduleOverview([]).lastScheduleTime
+  ).toBe(0)
+})
+
 function createRoute(
   channelId: number,
   group: string,

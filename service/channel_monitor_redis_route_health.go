@@ -20,7 +20,6 @@ const (
 	channelMonitorRedisRouteHealthMetaSuffix    = ":health:v2:meta"
 	channelMonitorRedisRouteHealthIndexKey      = ChannelMonitorRedisRouteProjectionPrefix + "health:index:v2"
 	channelMonitorRedisRouteHealthStartedAtKey  = ChannelMonitorRedisRouteProjectionPrefix + "health:started_at:v2"
-	channelMonitorRedisTrafficStartedAtKey      = ChannelMonitorRedisRouteProjectionPrefix + "traffic:started_at:v1"
 
 	channelMonitorRedisRouteHealthMaxBatchRoutes       = 2048
 	channelMonitorRedisRouteHealthMaxBatchSamples      = 200000
@@ -44,7 +43,6 @@ local retention_minutes = tonumber(ARGV[8])
 local index_member = ARGV[9]
 
 redis.call('SETNX', started_at_key, tostring(now))
-redis.call('SETNX', KEYS[5], tostring(now))
 local projection_started_at = tonumber(redis.call('GET', started_at_key) or tostring(now))
 local previous_retention = tonumber(redis.call('HGET', meta_key, 'retention_minutes') or '0')
 local coverage_floor = tonumber(redis.call('HGET', meta_key, 'coverage_floor') or '0')
@@ -178,10 +176,9 @@ type ChannelMonitorRedisRouteHealthRouteKey struct {
 }
 
 type ChannelMonitorRedisRouteHealthWindowBatch struct {
-	Windows              map[ChannelMonitorRedisRouteHealthRouteKey]ChannelMonitorRedisRouteHealthWindow
-	CoverageStart        int64
-	ProjectionStartedAt  int64
-	TrafficCoverageStart int64
+	Windows             map[ChannelMonitorRedisRouteHealthRouteKey]ChannelMonitorRedisRouteHealthWindow
+	CoverageStart       int64
+	ProjectionStartedAt int64
 }
 
 type channelMonitorRedisRouteHealthRouteKey struct {
@@ -422,7 +419,7 @@ func (projection *ChannelMonitorRedisRouteHealthProjection) updateRoute(
 	_, err := channelMonitorRedisRouteHealthWriteScript.Run(
 		ctx,
 		projection.client,
-		[]string{windowKey, metaKey, channelMonitorRedisRouteHealthIndexKey, channelMonitorRedisRouteHealthStartedAtKey, channelMonitorRedisTrafficStartedAtKey},
+		[]string{windowKey, metaKey, channelMonitorRedisRouteHealthIndexKey, channelMonitorRedisRouteHealthStartedAtKey},
 		args...,
 	).Result()
 	return err
@@ -498,10 +495,8 @@ func (projection *ChannelMonitorRedisRouteHealthProjection) GetRouteHealthWindow
 	}
 	commands := make([]routeReadCommands, len(normalizedRoutes))
 	var startedAtCommand *redis.StringCmd
-	var trafficStartedAtCommand *redis.StringCmd
 	_, err = projection.client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		startedAtCommand = pipe.Get(ctx, channelMonitorRedisRouteHealthStartedAtKey)
-		trafficStartedAtCommand = pipe.Get(ctx, channelMonitorRedisTrafficStartedAtKey)
 		for index, key := range normalizedRoutes {
 			windowKey := ChannelMonitorRedisRouteHealthWindowKey(key.ChannelID, key.ModelName)
 			commands[index] = routeReadCommands{
@@ -521,12 +516,10 @@ func (projection *ChannelMonitorRedisRouteHealthProjection) GetRouteHealthWindow
 		return ChannelMonitorRedisRouteHealthWindowBatch{}, err
 	}
 	projectionStartedAt, _ := startedAtCommand.Int64()
-	trafficStartedAt, _ := trafficStartedAtCommand.Int64()
 	result := ChannelMonitorRedisRouteHealthWindowBatch{
-		Windows:              make(map[ChannelMonitorRedisRouteHealthRouteKey]ChannelMonitorRedisRouteHealthWindow, len(commands)),
-		CoverageStart:        max(cutoff, projectionStartedAt),
-		ProjectionStartedAt:  projectionStartedAt,
-		TrafficCoverageStart: trafficStartedAt,
+		Windows:             make(map[ChannelMonitorRedisRouteHealthRouteKey]ChannelMonitorRedisRouteHealthWindow, len(commands)),
+		CoverageStart:       max(cutoff, projectionStartedAt),
+		ProjectionStartedAt: projectionStartedAt,
 	}
 	totalSamples := 0
 	totalPayloadBytes := 0

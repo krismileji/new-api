@@ -63,7 +63,6 @@ func TestChannelMonitorTrafficRetainsUnscoredBusinessWithoutChangingHealth(t *te
 	assert.NotEqual(t, "request-1", window.Samples[0].RequestFingerprint)
 	assert.Equal(t, "retry", window.Samples[0].Routing.Source)
 	assert.Zero(t, window.Snapshot.BusinessRequestCount)
-	assert.Positive(t, batch.TrafficCoverageStart)
 }
 
 func TestChannelMonitorTrafficRedisCompatibility(t *testing.T) {
@@ -84,7 +83,6 @@ func TestChannelMonitorTrafficRedisCompatibility(t *testing.T) {
 	require.NoError(t, err)
 	window := batch.Windows[ChannelMonitorRedisRouteHealthRouteKey{ChannelID: 9481, ModelName: event.ModelName}]
 	require.Len(t, window.Samples, 1)
-	assert.Positive(t, batch.TrafficCoverageStart)
 	assert.Len(t, window.Samples[0].RequestFingerprint, 64)
 	require.NotNil(t, window.Samples[0].Routing)
 	assert.EqualValues(t, 12, window.Samples[0].Routing.SnapshotRevision)

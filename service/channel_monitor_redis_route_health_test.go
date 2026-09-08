@@ -149,7 +149,7 @@ func TestChannelMonitorRedisRouteHealthWindowsReadsNormalizedRoutesInOnePipeline
 	assert.Equal(t, now.Unix(), batch.ProjectionStartedAt)
 	hook.mu.Lock()
 	assert.Equal(t, 1, hook.pipelineCalls)
-	assert.Equal(t, 8, hook.commandCount)
+	assert.Equal(t, 7, hook.commandCount)
 	hook.mu.Unlock()
 }
 
