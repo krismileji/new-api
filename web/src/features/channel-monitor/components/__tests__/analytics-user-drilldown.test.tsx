@@ -126,6 +126,45 @@ test('unknown ownership keeps explicit zero IDs and the empty key identity when 
   )
 })
 
+test('system probe totals show their source and retain it through model drill-down', async () => {
+  const { requests } = renderAnalyticsQuery('cost', (params) => {
+    if (params.group_by === 'user') {
+      return analyticsResponse(params, [
+        analyticsItem('31', { user_id: 31, user_name: 'alice' }),
+      ])
+    }
+    if (params.group_by === 'api_key') {
+      return analyticsResponse(params, [
+        analyticsItem('0:smart_probe:31', {
+          user_id: 31,
+          api_key_id: 0,
+          api_key_key: 'smart_probe',
+          api_key_name: '',
+        }),
+      ])
+    }
+    return analyticsResponse(params, [])
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'API Key 明细' }))
+  fireEvent.click(await screen.findByRole('button', { name: '查看alice明细' }))
+  fireEvent.click(
+    await screen.findByRole('button', { name: '查看智能调度探测明细' })
+  )
+  expect(screen.getByText('系统探测 · 未使用 API Key')).toBeVisible()
+  expect(screen.queryByText('Key ID 未知')).not.toBeInTheDocument()
+  expect(await screen.findByText('暂无可展开的明细')).toBeVisible()
+  expect(requests).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        group_by: 'model',
+        user_id: 31,
+        api_key_id: 0,
+        api_key_key: 'smart_probe',
+      }),
+    ])
+  )
+})
+
 test('a failed child page can return to the previous loaded page', async () => {
   renderAnalyticsQuery('cost', (params) => {
     if (params.group_by === 'user') {

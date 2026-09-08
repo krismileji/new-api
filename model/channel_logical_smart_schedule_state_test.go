@@ -67,9 +67,17 @@ func TestSaveLogicalChannelSmartScheduleModelSampleSharesMembersAndFreezesRevisi
 
 func TestLogicalSmartScheduleRouteStateEncodingRoundTrip(t *testing.T) {
 	score := 0.75
+	details := &ChannelSmartScheduleScoreDetails{
+		Version: ChannelSmartScheduleScoreDetailsVersion, FinalScore: &score,
+		EventWatermark: 9007199254740993,
+		Decision:       ChannelSmartScheduleScoreDecision{SelectedPrimaryChannelId: 9501},
+	}
+	encodedDetails, err := EncodeChannelSmartScheduleScoreDetails(details)
+	require.NoError(t, err)
 	state := ChannelSmartScheduleRouteState{
 		LastScheduleStatus: "succeeded", LastScheduleScore: &score,
-		LastSchedulePriority: 90, LastScheduleWeight: 70,
+		LastScheduleScoreDetails: encodedDetails,
+		LastSchedulePriority:     90, LastScheduleWeight: 70,
 		ManualPrimarySaved: true, ManualPrimarySavedPriority: 80, ManualPrimarySavedWeight: 60,
 	}
 	raw, err := encodeLogicalSmartScheduleRouteState(state)
@@ -83,6 +91,9 @@ func TestLogicalSmartScheduleRouteStateEncodingRoundTrip(t *testing.T) {
 	assert.Equal(t, state.ManualPrimarySaved, decoded.ManualPrimarySaved)
 	assert.Equal(t, state.ManualPrimarySavedPriority, decoded.ManualPrimarySavedPriority)
 	assert.Equal(t, state.ManualPrimarySavedWeight, decoded.ManualPrimarySavedWeight)
+	decodedDetails, err := decoded.LastScheduleScoreDetails.Decode()
+	require.NoError(t, err)
+	assert.Equal(t, details, decodedDetails)
 }
 
 func TestCoalesceChannelSmartScheduleSchedulingRoutesCreatesOneDecisionState(t *testing.T) {
@@ -114,18 +125,22 @@ func TestCoalesceChannelSmartScheduleSchedulingRoutesCreatesOneDecisionState(t *
 	assert.Equal(t, []int{9501, 9502}, route.LogicalMemberIds)
 
 	score := 0.75
+	details := &ChannelSmartScheduleScoreDetails{
+		Version: ChannelSmartScheduleScoreDetailsVersion, FinalScore: &score,
+		Decision: ChannelSmartScheduleScoreDecision{SelectedPrimaryChannelId: 9501},
+	}
 	updates := []ChannelSmartScheduleRouteResultUpdate{
 		{
 			ChannelId: 9501, LogicalChannelId: group.Id, LogicalRevision: group.Revision,
 			ExpectedLogicalStateRevision: route.State.Revision, Group: "vip", Model: "model-a",
-			Status: ChannelSmartScheduleStatusSucceeded, Score: &score, Priority: 90, Weight: 70,
+			Status: ChannelSmartScheduleStatusSucceeded, Score: &score, ScoreDetails: details, Priority: 90, Weight: 70,
 			ApplyPriorityWeight: true,
 		},
 		{
 			ChannelId: 9502, LogicalChannelId: group.Id, LogicalRevision: group.Revision,
 			ExpectedLogicalStateRevision: route.State.Revision, LogicalProjectionOnly: true,
 			Group: "vip", Model: "model-a", Status: ChannelSmartScheduleStatusSucceeded,
-			Score: &score, Priority: 90, Weight: 70, ApplyPriorityWeight: true,
+			Score: &score, ScoreDetails: details, Priority: 90, Weight: 70, ApplyPriorityWeight: true,
 		},
 	}
 	outcomes, err := ApplyChannelSmartScheduleRouteResults(updates)
@@ -144,6 +159,15 @@ func TestCoalesceChannelSmartScheduleSchedulingRoutesCreatesOneDecisionState(t *
 	require.NoError(t, err)
 	require.NotNil(t, state.LastScheduleScore)
 	assert.InDelta(t, score, *state.LastScheduleScore, 1e-9)
+	decodedDetails, err := state.LastScheduleScoreDetails.Decode()
+	require.NoError(t, err)
+	assert.Equal(t, details, decodedDetails)
+	logicalRoutes, err = CoalesceChannelSmartScheduleSchedulingRoutes(routes)
+	require.NoError(t, err)
+	require.Len(t, logicalRoutes, 1)
+	decodedDetails, err = logicalRoutes[0].State.LastScheduleScoreDetails.Decode()
+	require.NoError(t, err)
+	assert.Equal(t, details, decodedDetails)
 	var abilitiesAfter []Ability
 	require.NoError(t, DB.Where(&Ability{Group: "vip", Model: "model-a"}).
 		Order("channel_id ASC").Find(&abilitiesAfter).Error)

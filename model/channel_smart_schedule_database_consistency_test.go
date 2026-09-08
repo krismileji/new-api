@@ -73,20 +73,36 @@ func TestSmartScheduleRoutingDatabaseMatrix(t *testing.T) {
 				{LogicalGroupID: logical.Id, ChannelID: channels[0].Id, Weight: 100, AddressFingerprint: strings.Repeat("a", 64)},
 				{LogicalGroupID: logical.Id, ChannelID: channels[1].Id, Weight: 0, AddressFingerprint: strings.Repeat("a", 64)},
 			}).Error)
+			score := 0.84
+			details := &ChannelSmartScheduleScoreDetails{
+				Version: ChannelSmartScheduleScoreDetailsVersion, FinalScore: &score,
+				Decision: ChannelSmartScheduleScoreDecision{SelectedPrimaryChannelId: channels[0].Id},
+			}
+			encodedDetails, err := EncodeChannelSmartScheduleScoreDetails(details)
+			require.NoError(t, err)
 			rows := make([]ChannelSmartScheduleRoute, 0, 3)
 			for index, channel := range channels {
 				priority := int64(100)
 				if index == 2 {
 					priority = 50
 				}
-				state := ChannelSmartScheduleRouteState{ChannelId: channel.Id, GroupName: "vip", ModelName: "model-a", ParticipationSet: true}
+				state := ChannelSmartScheduleRouteState{
+					ChannelId: channel.Id, GroupName: "vip", ModelName: "model-a", ParticipationSet: true,
+					LastScheduleScoreDetails: encodedDetails,
+				}
 				require.NoError(t, db.Create(&Ability{ChannelId: channel.Id, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: 100}).Error)
 				require.NoError(t, db.Create(&state).Error)
 				rows = append(rows, ChannelSmartScheduleRoute{ChannelId: channel.Id, Group: "vip", Model: "model-a", Enabled: true,
 					ChannelStatus: common.ChannelStatusEnabled, Priority: priority, Weight: 100, State: state})
 			}
+			var storedState ChannelSmartScheduleRouteState
+			require.NoError(t, db.Where("channel_id = ?", channels[0].Id).First(&storedState).Error)
+			storedDetails, err := storedState.LastScheduleScoreDetails.Decode()
+			require.NoError(t, err)
+			assert.Equal(t, details, storedDetails)
 			payload, err := common.Marshal(channelLogicalSmartScheduleRoutePayload{
-				State: ChannelSmartScheduleRouteState{ParticipationSet: true}, EffectiveRoutingSet: true, EffectivePriority: 10, EffectiveWeight: 100,
+				State:               ChannelSmartScheduleRouteState{ParticipationSet: true, LastScheduleScoreDetails: encodedDetails},
+				EffectiveRoutingSet: true, EffectivePriority: 10, EffectiveWeight: 100,
 			})
 			require.NoError(t, err)
 			require.NoError(t, db.Create(&ChannelLogicalSmartScheduleRouteState{LogicalGroupID: logical.Id, LogicalRevision: 1,
@@ -100,6 +116,11 @@ func TestSmartScheduleRoutingDatabaseMatrix(t *testing.T) {
 			views, err := GetChannelSmartScheduleRouteRuntimeViewsWithContext(context.Background(), rows)
 			require.NoError(t, err)
 			assert.Equal(t, int64(10), views[channelSmartScheduleRouteKey(channels[0].Id, "vip", "model-a")].Priority)
+			viewState := views[channelSmartScheduleRouteKey(channels[0].Id, "vip", "model-a")].State
+			require.NotNil(t, viewState)
+			viewDetails, err := viewState.LastScheduleScoreDetails.Decode()
+			require.NoError(t, err)
+			assert.Equal(t, details, viewDetails)
 			selected, err = SelectChannelSmartScheduleAffinityMemberExcluding("vip", "model-a", channels[0].Id, "",
 				map[int]struct{}{channels[2].Id: {}})
 			require.NoError(t, err)

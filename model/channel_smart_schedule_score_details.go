@@ -177,3 +177,27 @@ func (raw ChannelSmartScheduleScoreDetailsJSON) MarshalJSON() ([]byte, error) {
 	}
 	return common.Marshal(details)
 }
+
+func (raw *ChannelSmartScheduleScoreDetailsJSON) UnmarshalJSON(data []byte) error {
+	value := string(data)
+	// Stored route snapshots contain either a structured object or a legacy JSON string.
+	if common.GetJsonType(data) == "string" {
+		if err := common.Unmarshal(data, &value); err != nil {
+			return err
+		}
+	}
+	if strings.TrimSpace(value) == "" {
+		*raw = ""
+		return nil
+	}
+	var details *ChannelSmartScheduleScoreDetails
+	if err := common.UnmarshalJsonStr(value, &details); err != nil {
+		return err
+	}
+	if details == nil {
+		*raw = ""
+		return nil
+	}
+	*raw = ChannelSmartScheduleScoreDetailsJSON(value)
+	return nil
+}

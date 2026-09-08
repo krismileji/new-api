@@ -60,6 +60,14 @@ type ChannelMonitorAnalyticsTableProps = {
   expandedKey?: string
 }
 
+const systemAPIKeySources = new Map([
+  ['status_probe', '状态探测'],
+  ['group_probe', '分组监控探测'],
+  ['smart_probe', '智能调度探测'],
+  ['manual_test', '手动测试'],
+  ['model_detection', '模型检测'],
+])
+
 function formatRate(value: number, denominator: number) {
   if (denominator <= 0 || !Number.isFinite(value)) return '-'
   return `${(value * 100).toFixed(1)}%`
@@ -86,6 +94,8 @@ function getPrimaryLabel(
     )
   }
   if (groupBy === 'api_key' || groupBy === 'api_key_channel_model') {
+    const source = systemAPIKeySources.get(item.api_key_key ?? '')
+    if (!item.api_key_id && source) return source
     if (item.api_key_name) return item.api_key_name
     return item.api_key_id && item.api_key_id > 0
       ? `API Key #${item.api_key_id}`
@@ -311,6 +321,9 @@ function getSecondaryLabel(
       : `${channelLabel} · ${keyLabel}`
   }
   if (groupBy === 'api_key') {
+    if (!item.api_key_id && systemAPIKeySources.has(item.api_key_key ?? '')) {
+      return '系统探测 · 未使用 API Key'
+    }
     return item.api_key_id && item.api_key_id > 0
       ? `Key ID ${item.api_key_id}`
       : 'Key ID 未知'

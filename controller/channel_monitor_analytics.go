@@ -524,6 +524,9 @@ func channelMonitorAnalyticsSuccessGroupColumns(groupBy string) []string {
 
 func channelMonitorAnalyticsSelectDimension(column string, groupColumns []string) string {
 	for _, groupColumn := range groupColumns {
+		if column == "api_key_key" && groupColumn == channelMonitorAnalyticsCostAPIKeyGroupSQL {
+			return groupColumn + " AS api_key_key"
+		}
 		if column == groupColumn {
 			return column
 		}
@@ -849,7 +852,7 @@ func queryChannelMonitorHistoricalCostDetailAnalytics(ctx context.Context, query
 	}
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		items = append(items, map[string]any{
+		item := map[string]any{
 			"key":       channelMonitorAnalyticsCostDetailKey(query.GroupBy, row),
 			"day_start": row.DayStart, "channel_id": row.ChannelID, "user_id": row.UserID,
 			"user_attribution": row.UserAttribution, "api_key_id": row.APIKeyID,
@@ -858,7 +861,11 @@ func queryChannelMonitorHistoricalCostDetailAnalytics(ctx context.Context, query
 			"cost_nano_cny": row.Cost, "probe_cost_nano_cny": row.ProbeCost,
 			"group_probe_cost_nano_cny": row.GroupProbeCost, "settled_count": row.SettledCount,
 			"unresolved_count": row.UnresolvedCount,
-		})
+		}
+		if query.GroupBy == "api_key" || query.GroupBy == "api_key_channel_model" {
+			channelMonitorAnalyticsGroupItem("cost", query.GroupBy, item)
+		}
+		items = append(items, item)
 	}
 	if err := attachChannelMonitorAnalyticsUserNames(ctx, items); err != nil {
 		return channelMonitorAnalyticsResponse{}, err
@@ -892,7 +899,11 @@ func channelMonitorAnalyticsCostDetailBaseQuery(ctx context.Context, query chann
 		base = base.Where("api_key_id = ?", query.APIKey)
 	}
 	if query.APIKeyKey != nil {
-		base = base.Where("api_key_key = ?", *query.APIKeyKey)
+		if channelMonitorAnalyticsSystemAPIKey(*query.APIKeyKey) {
+			base = base.Where("api_key_id = 0 AND source_kind = ?", *query.APIKeyKey)
+		} else {
+			base = base.Where("api_key_key = ?", *query.APIKeyKey)
+		}
 	}
 	if query.ModelKey != nil {
 		base = base.Where("model_key = ?", *query.ModelKey)
@@ -909,13 +920,13 @@ func channelMonitorAnalyticsCostGroupColumns(groupBy string) []string {
 	case "user":
 		return []string{"user_id"}
 	case "api_key":
-		return []string{"api_key_id", "api_key_key", "user_id"}
+		return []string{"api_key_id", channelMonitorAnalyticsCostAPIKeyGroupSQL, "user_id"}
 	case "model":
 		return []string{"model_key"}
 	case "channel_model":
 		return []string{"channel_id", "model_key"}
 	case "api_key_channel_model":
-		return []string{"api_key_id", "api_key_key", "user_id", "channel_id", "model_key"}
+		return []string{"api_key_id", channelMonitorAnalyticsCostAPIKeyGroupSQL, "user_id", "channel_id", "model_key"}
 	default:
 		return []string{"channel_id"}
 	}

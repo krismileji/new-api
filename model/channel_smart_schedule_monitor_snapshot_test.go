@@ -16,6 +16,15 @@ func TestChannelSmartScheduleMonitorUsesPublishedEconomicsAndRoutesWithoutSQL(t 
 	common.RedisEnabled = true
 	t.Cleanup(func() { common.RedisEnabled = originalRedisEnabled })
 	seedChannelSmartScheduleRedisSnapshotTest(t, db)
+	score := 0.84
+	details := &ChannelSmartScheduleScoreDetails{
+		Version: ChannelSmartScheduleScoreDetailsVersion, FinalScore: &score,
+		Decision: ChannelSmartScheduleScoreDecision{SelectedPrimaryChannelId: 9701},
+	}
+	encodedDetails, err := EncodeChannelSmartScheduleScoreDetails(details)
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&ChannelSmartScheduleRouteState{}).
+		Where("channel_id = ?", 9701).Update("last_schedule_score_details", encodedDetails).Error)
 	require.NoError(t, db.AutoMigrate(&ChannelRatioMonitor{}, &Option{}))
 	require.NoError(t, db.Create(&ChannelRatioMonitor{ChannelId: 9701, Ratio: 0.5, CostConversion: "1"}).Error)
 	require.NoError(t, db.Save(&Option{Key: "GroupRatio", Value: `{"vip":2}`}).Error)
@@ -41,6 +50,9 @@ func TestChannelSmartScheduleMonitorUsesPublishedEconomicsAndRoutesWithoutSQL(t 
 	require.NoError(t, err)
 	require.Len(t, routes, 1)
 	assert.EqualValues(t, 61, routes[0].Weight)
+	decodedDetails, err := routes[0].State.LastScheduleScoreDetails.Decode()
+	require.NoError(t, err)
+	assert.Equal(t, details, decodedDetails)
 	economics, err := GetChannelSmartScheduleEconomicSnapshotWithContext(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, 2.0, economics.GroupRatios["vip"])

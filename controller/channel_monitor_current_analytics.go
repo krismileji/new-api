@@ -47,7 +47,12 @@ func channelMonitorAnalyticsCurrentMatch(query channelMonitorAnalyticsQuery, cha
 	return false
 }
 
-func channelMonitorAnalyticsGroupItem(group string, item map[string]any) string {
+func channelMonitorAnalyticsGroupItem(metric, group string, item map[string]any) string {
+	apiKeyID, _ := item["api_key_id"].(int)
+	inboundCostKey := metric == "cost" && (group == "api_key" || group == "api_key_channel_model") && apiKeyID > 0
+	if inboundCostKey {
+		item["api_key_key"] = ""
+	}
 	var columns []string
 	switch group {
 	case "day":
@@ -98,6 +103,9 @@ func channelMonitorAnalyticsGroupItem(group string, item map[string]any) string 
 	key := strings.Join(parts, ":")
 	item["key"] = key
 	item["group_by"] = group
+	if inboundCostKey {
+		delete(item, "api_key_key")
+	}
 	return key
 }
 
@@ -229,8 +237,17 @@ func queryChannelMonitorCurrentCostAnalytics(ctx context.Context, query channelM
 	}
 	groups := make(map[string]map[string]any)
 	summary := make(map[string]any)
+	matchQuery := query
+	probeSource := ""
+	if query.APIKeyKey != nil && channelMonitorAnalyticsSystemAPIKey(*query.APIKeyKey) {
+		probeSource = *query.APIKeyKey
+		matchQuery.APIKeyKey = nil
+	}
 	for _, row := range details {
-		if !channelMonitorAnalyticsCurrentMatch(query, row.ChannelId, row.UserId, row.APIKeyId, row.APIKeyName, row.APIKeyKey, row.ModelName, row.ModelKey) {
+		if probeSource != "" && (row.APIKeyId != 0 || row.SourceKind != probeSource) {
+			continue
+		}
+		if !channelMonitorAnalyticsCurrentMatch(matchQuery, row.ChannelId, row.UserId, row.APIKeyId, row.APIKeyName, row.APIKeyKey, row.ModelName, row.ModelKey) {
 			continue
 		}
 		detectionCost := int64(0)
@@ -241,14 +258,15 @@ func queryChannelMonitorCurrentCostAnalytics(ctx context.Context, query channelM
 		}
 		item := map[string]any{
 			"day_start": row.DayStart, "channel_id": row.ChannelId, "user_id": row.UserId,
-			"user_attribution": row.UserAttribution, "api_key_id": row.APIKeyId, "api_key_key": row.APIKeyKey,
+			"user_attribution": row.UserAttribution, "api_key_id": row.APIKeyId,
+			"api_key_key":  channelMonitorAnalyticsCostAPIKeyIdentity(row.APIKeyId, row.APIKeyKey, row.SourceKind),
 			"api_key_name": row.APIKeyName, "model_key": row.ModelKey, "model_name": row.ModelName,
 			"cost_nano_cny": row.CostNanoCNY, "probe_cost_nano_cny": row.ProbeCostNanoCNY,
 			"group_probe_cost_nano_cny":     row.GroupProbeCostNanoCNY,
 			"model_detection_cost_nano_cny": detectionCost,
 			"settled_count":                 row.SettledCount, "unresolved_count": row.UnresolvedCount,
 		}
-		key := channelMonitorAnalyticsGroupItem(query.GroupBy, item)
+		key := channelMonitorAnalyticsGroupItem("cost", query.GroupBy, item)
 		if previous := groups[key]; previous != nil {
 			if err := channelMonitorAnalyticsMergeValues("cost", previous, item); err != nil {
 				return channelMonitorAnalyticsResponse{}, err
@@ -296,7 +314,7 @@ func queryChannelMonitorCurrentSuccessFacts(ctx context.Context, query channelMo
 			CacheHit: value.CacheHitCount, CacheSample: value.CacheSampleCount, CacheReadTokens: value.CacheReadTokens,
 			InputTokens: value.InputTokens, CacheWriteCount: value.CacheWriteRequestCount,
 		})
-		key := channelMonitorAnalyticsGroupItem(query.GroupBy, item)
+		key := channelMonitorAnalyticsGroupItem("success", query.GroupBy, item)
 		if previous := groups[key]; previous != nil {
 			if err := channelMonitorAnalyticsMergeValues("success", previous, item); err != nil {
 				return channelMonitorAnalyticsResponse{}, err
@@ -354,7 +372,7 @@ func queryChannelMonitorMixedAnalytics(ctx context.Context, query channelMonitor
 			}
 			row["day_start"] = day
 		}
-		key := channelMonitorAnalyticsGroupItem(query.GroupBy, row)
+		key := channelMonitorAnalyticsGroupItem(query.Metric, query.GroupBy, row)
 		if previous := groups[key]; previous != nil {
 			if err := channelMonitorAnalyticsMergeValues(query.Metric, previous, row); err != nil {
 				return channelMonitorAnalyticsResponse{}, err

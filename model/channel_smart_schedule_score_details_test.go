@@ -116,3 +116,37 @@ func TestChannelSmartScheduleScoreDetailsDoesNotBackfillOlderSnapshots(t *testin
 	require.NoError(t, err)
 	assert.JSONEq(t, "null", string(serialized))
 }
+
+func TestChannelSmartScheduleScoreDetailsJSONReadsStoredFormats(t *testing.T) {
+	snapshot := `{"version":9,"event_watermark":9007199254740993,"final_score":0,"decision":{"selected_primary":false},"future_field":{"value":1}}`
+	legacy, err := common.Marshal(snapshot)
+	require.NoError(t, err)
+	for _, tt := range []struct {
+		name     string
+		payload  string
+		expected string
+	}{
+		{name: "structured snapshot", payload: snapshot, expected: snapshot},
+		{name: "legacy JSON string", payload: string(legacy), expected: snapshot},
+		{name: "null clears previous snapshot", payload: "null"},
+		{name: "empty legacy string", payload: `""`},
+		{name: "older version stays unchanged", payload: `{"version":5,"strategy":"smart"}`, expected: `{"version":5,"strategy":"smart"}`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := ChannelSmartScheduleScoreDetailsJSON(`{"version":9,"strategy":"previous"}`)
+			require.NoError(t, common.UnmarshalJsonStr(tt.payload, &raw))
+			assert.Equal(t, tt.expected, string(raw))
+		})
+	}
+}
+
+func TestChannelSmartScheduleScoreDetailsJSONRejectsInvalidSnapshotsWithoutOverwriting(t *testing.T) {
+	for _, payload := range []string{`[]`, `true`, `42`, `"invalid"`, `{"version":"invalid"}`, `{"version":9`} {
+		t.Run(payload, func(t *testing.T) {
+			previous := ChannelSmartScheduleScoreDetailsJSON(`{"version":9,"strategy":"previous"}`)
+			raw := previous
+			require.Error(t, common.UnmarshalJsonStr(payload, &raw))
+			assert.Equal(t, previous, raw)
+		})
+	}
+}

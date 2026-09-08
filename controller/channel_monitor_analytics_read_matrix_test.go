@@ -84,4 +84,5 @@ func TestChannelMonitorAnalyticsReadDatabaseMatrix(t *testing.T) {
 	runChannelMonitorAnalyticsFilterCases(t, day)
 	runChannelMonitorAnalyticsCostCoverageCases(t, db, day)
 	runChannelMonitorAnalyticsSuccessCoverageCases(t, db, day)
+	runChannelMonitorCostAPIKeyGroupingCases(t, db, day)
 }
