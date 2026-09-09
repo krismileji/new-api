@@ -19,8 +19,67 @@ type channelSmartScheduleMonitorReadModel struct {
 	Revision        int64
 	SourceWatermark int64
 	GeneratedAt     int64
-	Routes          []ChannelSmartScheduleRoute
+	Routes          channelSmartScheduleMonitorRoutes
 	Economics       ChannelSmartScheduleEconomicSnapshot
+}
+
+// Internal snapshots must retain fields hidden from the public route JSON.
+// In particular, a lost state revision makes every guarded scheduler write fail.
+type channelSmartScheduleMonitorRoutes []ChannelSmartScheduleRoute
+
+type channelSmartScheduleMonitorRouteJSON struct {
+	ChannelSmartScheduleRoute
+	StateRevision              int64                           `json:"state_revision"`
+	ManualPrimarySaved         bool                            `json:"manual_primary_saved"`
+	ManualPrimarySavedPriority int64                           `json:"manual_primary_saved_priority"`
+	ManualPrimarySavedWeight   uint                            `json:"manual_primary_saved_weight"`
+	LogicalChannelId           int64                           `json:"logical_channel_id,omitempty"`
+	LogicalRevision            int64                           `json:"logical_revision,omitempty"`
+	LogicalMemberIds           []int                           `json:"logical_member_ids,omitempty"`
+	SharedSamplesJSON          ChannelSmartScheduleSamplesJSON `json:"shared_samples_json,omitempty"`
+}
+
+func (routes channelSmartScheduleMonitorRoutes) MarshalJSON() ([]byte, error) {
+	var payload []channelSmartScheduleMonitorRouteJSON
+	if routes != nil {
+		payload = make([]channelSmartScheduleMonitorRouteJSON, len(routes))
+	}
+	for index, route := range routes {
+		payload[index] = channelSmartScheduleMonitorRouteJSON{
+			ChannelSmartScheduleRoute: route,
+			StateRevision:             route.State.Revision, ManualPrimarySaved: route.State.ManualPrimarySaved,
+			ManualPrimarySavedPriority: route.State.ManualPrimarySavedPriority,
+			ManualPrimarySavedWeight:   route.State.ManualPrimarySavedWeight,
+			LogicalChannelId:           route.LogicalChannelId, LogicalRevision: route.LogicalRevision,
+			LogicalMemberIds: route.LogicalMemberIds, SharedSamplesJSON: route.SharedSamples.SamplesJSON,
+		}
+	}
+	return common.Marshal(payload)
+}
+
+func (routes *channelSmartScheduleMonitorRoutes) UnmarshalJSON(data []byte) error {
+	var payload []channelSmartScheduleMonitorRouteJSON
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	var result channelSmartScheduleMonitorRoutes
+	if payload != nil {
+		result = make(channelSmartScheduleMonitorRoutes, len(payload))
+	}
+	for index, stored := range payload {
+		route := stored.ChannelSmartScheduleRoute
+		route.State.Revision = stored.StateRevision
+		route.State.ManualPrimarySaved = stored.ManualPrimarySaved
+		route.State.ManualPrimarySavedPriority = stored.ManualPrimarySavedPriority
+		route.State.ManualPrimarySavedWeight = stored.ManualPrimarySavedWeight
+		route.LogicalChannelId = stored.LogicalChannelId
+		route.LogicalRevision = stored.LogicalRevision
+		route.LogicalMemberIds = stored.LogicalMemberIds
+		route.SharedSamples.SamplesJSON = stored.SharedSamplesJSON
+		result[index] = route
+	}
+	*routes = result
+	return nil
 }
 
 var channelSmartScheduleMonitorReadCache *channelSmartScheduleMonitorReadModel
@@ -120,11 +179,11 @@ func channelSmartScheduleSharedRoutes(group, modelName string) ([]ChannelSmartSc
 func cloneChannelSmartScheduleMonitorRoutes(rows []ChannelSmartScheduleRoute) ([]ChannelSmartScheduleRoute, error) {
 	// Callers annotate economics and score details. Give them detached state,
 	// including pointer fields, while keeping the published snapshot immutable.
-	payload, err := common.Marshal(rows)
+	payload, err := common.Marshal(channelSmartScheduleMonitorRoutes(rows))
 	if err != nil {
 		return nil, err
 	}
-	var result []ChannelSmartScheduleRoute
+	var result channelSmartScheduleMonitorRoutes
 	if err := common.Unmarshal(payload, &result); err != nil {
 		return nil, err
 	}
