@@ -1217,7 +1217,7 @@ func channelRatioMonitorNotificationFailureDetails(summary channelRatioMonitorTa
 	return summary.Failures, summary.FailureDetailsTruncated
 }
 
-func buildChannelRatioMonitorNotificationEmail(notificationTypes []string, changes []channelRatioMonitorEmailChange, balanceWarnings []channelRatioMonitorBalanceWarning, disabledChannels []channelRatioMonitorDisabledChannel, removedGroupMemberships []channelRatioMonitorRemovedGroupMembership, summary channelRatioMonitorTaskResult, taskErr error) (string, string) {
+func buildChannelRatioMonitorNotificationEmail(notificationTypes []string, changes []channelRatioMonitorEmailChange, balanceWarnings []channelRatioMonitorBalanceWarning, disabledChannels []channelRatioMonitorDisabledChannel, removedGroupMemberships []channelRatioMonitorRemovedGroupMembership, summary channelRatioMonitorTaskResult, taskErr error, sections ...channelMonitorNotificationEmailSection) (string, string) {
 	failureDetails, failureDetailsTruncated := channelRatioMonitorNotificationFailureDetails(summary)
 	includeChanges := channelMonitorEmailNotificationTypeEnabled(notificationTypes, channelMonitorEmailTypeRatioChange) && len(changes) > 0
 	includeBalanceWarnings := channelMonitorEmailNotificationTypeEnabled(notificationTypes, channelMonitorEmailTypeBalanceWarning) && len(balanceWarnings) > 0
@@ -1228,7 +1228,7 @@ func buildChannelRatioMonitorNotificationEmail(notificationTypes []string, chang
 
 	var content strings.Builder
 	content.WriteString(`<!doctype html><html><head><meta charset="UTF-8"><meta name="color-scheme" content="light only"><meta name="supported-color-schemes" content="light"></head><body style="margin:0;background:#ffffff;color:#111827;font-family:Arial,'Microsoft YaHei',sans-serif;font-size:14px;line-height:1.5"><div style="padding:16px">`)
-	content.WriteString("<p>渠道监控定时更新检测到以下变化或异常：</p>")
+	content.WriteString("<p>渠道监控检测到以下变化或异常：</p>")
 	if includeChanges {
 		content.WriteString("<h3>渠道倍率变更</h3>")
 		content.WriteString("<table style=\"border-collapse:collapse\"><thead><tr>")
@@ -1412,6 +1412,17 @@ func buildChannelRatioMonitorNotificationEmail(notificationTypes []string, chang
 		subject = fmt.Sprintf("渠道监控：%d 个倍率变更，%d 项更新失败", changeCount, failureCount)
 	} else if failureCount > 0 {
 		subject = fmt.Sprintf("渠道监控：%d 项更新失败", failureCount)
+	}
+	if len(sections) > 0 {
+		parts := make([]string, 0, len(sections)+1)
+		if includeChanges || includeBalanceWarnings || includeDisabledChannels || includeRemovedGroupMemberships || includeUpstreamSyncFailures || includeTaskFailure {
+			parts = append(parts, strings.TrimPrefix(subject, "渠道监控："))
+		}
+		for _, section := range sections {
+			content.WriteString(section.HTML)
+			parts = append(parts, section.Summary)
+		}
+		subject = "渠道监控：" + strings.Join(parts, "，")
 	}
 	content.WriteString("</div></body></html>")
 	return subject, content.String()

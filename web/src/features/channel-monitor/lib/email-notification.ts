@@ -25,6 +25,7 @@ export const CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES = [
   'group_membership_removed',
   'upstream_sync_failed',
   'task_failed',
+  'smart_schedule_failed',
   'monitoring_health',
 ] as const satisfies readonly ChannelMonitorEmailNotificationType[]
 
@@ -61,6 +62,11 @@ export const CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPE_OPTIONS = [
     value: 'task_failed',
     label: '定时任务失败',
     description: '任务执行或分组倍率写入失败',
+  },
+  {
+    value: 'smart_schedule_failed',
+    label: '智能调度失败',
+    description: '调度计算、配置冲突或结果写入失败；同一邮箱 15 分钟内最多通知一次',
   },
   {
     value: 'monitoring_health',

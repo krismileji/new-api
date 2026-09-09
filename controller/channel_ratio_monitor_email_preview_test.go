@@ -73,6 +73,33 @@ func TestPreviewChannelMonitorNotificationEmailRejectsEmptyTypes(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, recorder.Code)
 }
 
+func TestPreviewChannelMonitorNotificationEmailIncludesSelectedScheduleFailure(t *testing.T) {
+	for _, types := range [][]string{{"smart_schedule_failed"}, {"balance_warning", "smart_schedule_failed"}} {
+		t.Run(types[0], func(t *testing.T) {
+			ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, "/api/channel_monitor/settings/email-preview", map[string]any{
+				"notification_types": types,
+			})
+			PreviewChannelMonitorNotificationEmail(ctx)
+			require.Equal(t, http.StatusOK, recorder.Code)
+			var response struct {
+				Data struct {
+					Subject string `json:"subject"`
+					HTML    string `json:"html"`
+				} `json:"data"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			assert.Contains(t, response.Data.Subject, "智能调度失败")
+			assert.Contains(t, response.Data.HTML, "配置冲突")
+			assert.Contains(t, response.Data.HTML, "路由状态版本已变化")
+			assert.Contains(t, response.Data.HTML, "model-a")
+			assert.NotContains(t, response.Data.HTML, "上游同步失败")
+			if len(types) > 1 {
+				assert.Contains(t, response.Data.HTML, "上游余额预警")
+			}
+		})
+	}
+}
+
 func TestPreviewChannelMonitorNotificationEmailShowsMonitoringHealth(t *testing.T) {
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, "/api/channel_monitor/settings/email-preview", map[string]any{
 		"notification_types": []string{channelMonitorEmailTypeMonitoringHealth},

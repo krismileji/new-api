@@ -757,6 +757,7 @@ export type ChannelMonitorEmailNotificationType =
   | 'group_membership_removed'
   | 'upstream_sync_failed'
   | 'task_failed'
+  | 'smart_schedule_failed'
   | 'monitoring_health'
 
 export type ChannelMonitorEmailPreview = {

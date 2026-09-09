@@ -237,6 +237,7 @@ type ChannelSmartScheduleRouteApplyOutcome struct {
 	RoutingChanged   bool
 	ObservationOnly  bool
 	ObservationSince int64
+	ConflictReason   string
 }
 
 type ChannelSmartScheduleStabilityClearResult struct {
@@ -1829,6 +1830,11 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			if _, err := lockLogicalSmartScheduleIdentityTx(tx, LogicalChannelIdentity{
 				ChannelID: result.ChannelId, LogicalChannelID: result.LogicalChannelId, Revision: result.LogicalRevision,
 			}); err != nil {
+				if errors.Is(err, ErrChannelLogicalGroupRevisionConflict) ||
+					errors.Is(err, ErrLogicalChannelSelectionGroupDisabled) || errors.Is(err, gorm.ErrRecordNotFound) {
+					return &channelSmartScheduleRouteConflict{channelID: result.ChannelId, cause: err,
+						reason: fmt.Sprintf("逻辑渠道组 %d 的关系或启用状态已变化（快照版本 %d）：%v", result.LogicalChannelId, result.LogicalRevision, err)}
+				}
 				return err
 			}
 		}
@@ -1853,10 +1859,14 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				LogicalGroupID: key.logicalID, LogicalRevision: key.revision,
 				GroupName: key.group, ModelName: key.model,
 			}).First(&stored).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return &channelSmartScheduleRouteConflict{channelID: result.ChannelId, reason: "逻辑调度路由状态已移除", cause: err}
+				}
 				return err
 			}
 			if stored.StateRevision != result.ExpectedLogicalStateRevision {
-				return ErrChannelLogicalGroupRevisionConflict
+				return &channelSmartScheduleRouteConflict{channelID: result.ChannelId, cause: ErrChannelLogicalGroupRevisionConflict,
+					reason: fmt.Sprintf("逻辑路由状态版本已变化（快照 %d，当前 %d）", result.ExpectedLogicalStateRevision, stored.StateRevision)}
 			}
 			payload, err := decodeLogicalSmartScheduleRoutePayload(stored.StateJSON)
 			if err != nil {
@@ -1902,10 +1912,8 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 		if err != nil {
 			return err
 		}
-		channelStatusById := make(map[int]int, len(channels))
 		channelById := make(map[int]Channel, len(channels))
 		for _, channel := range channels {
-			channelStatusById[channel.Id] = channel.Status
 			channelById[channel.Id] = channel
 		}
 
@@ -1934,11 +1942,12 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 		}
 		if poolGuarded {
 			if len(poolAbilities) != len(results) {
-				return nil
+				return &channelSmartScheduleRouteConflict{reason: fmt.Sprintf(
+					"调度池成员数量已变化（快照 %d，当前 %d）", len(results), len(poolAbilities))}
 			}
-			for channelId := range abilityByChannel {
-				if _, exists := seenChannels[channelId]; !exists {
-					return nil
+			for _, ability := range poolAbilities {
+				if _, exists := seenChannels[ability.ChannelId]; !exists {
+					return &channelSmartScheduleRouteConflict{channelID: ability.ChannelId, reason: "路由已加入调度池，但不在本轮快照中"}
 				}
 			}
 		}
@@ -1949,7 +1958,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			state, stateExists := stateByChannel[result.ChannelId]
 			if !stateExists {
 				if result.PoolGuard {
-					return nil
+					return &channelSmartScheduleRouteConflict{channelID: result.ChannelId, reason: "调度路由状态已移除或尚未初始化"}
 				}
 				state = ChannelSmartScheduleRouteState{
 					ChannelId: result.ChannelId, GroupName: result.Group, ModelName: result.Model,
@@ -1959,32 +1968,17 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			ability, abilityExists := abilityByChannel[result.ChannelId]
 			if !abilityExists {
 				if result.PoolGuard {
-					return nil
+					return &channelSmartScheduleRouteConflict{channelID: result.ChannelId, reason: "分组和模型路由已移除"}
 				}
 				return gorm.ErrRecordNotFound
 			}
 			channel, channelExists := channelById[result.ChannelId]
-			currentPriority, currentWeight := channelSmartScheduleAbilityRouting(ability)
-			if result.PoolGuard {
-				if !channelExists || controlRevision != result.ExpectedControlRevision ||
-					economicRevision != result.ExpectedEconomicRevision ||
-					state.Revision != result.ExpectedRevision ||
-					state.ParticipationSet != result.ExpectedParticipationSet ||
-					state.Excluded != result.ExpectedExcluded ||
-					ability.Enabled != result.ExpectedAbilityEnabled ||
-					currentPriority != result.ExpectedPriority ||
-					currentWeight != result.ExpectedWeight ||
-					channel.Status != result.ExpectedChannelStatus {
-					return nil
+			if result.PoolGuard || result.GuardCurrent {
+				if !channelExists {
+					return &channelSmartScheduleRouteConflict{channelID: result.ChannelId, reason: "渠道已移除"}
 				}
-			} else if result.GuardCurrent {
-				if controlRevision != result.ExpectedControlRevision ||
-					economicRevision != result.ExpectedEconomicRevision ||
-					state.Revision != result.ExpectedRevision ||
-					!state.Participates() || !ability.Enabled || currentPriority != result.ExpectedPriority ||
-					currentWeight != result.ExpectedWeight ||
-					channelStatusById[result.ChannelId] != common.ChannelStatusEnabled {
-					return nil
+				if reason := channelSmartScheduleRouteGuardConflict(result, state, ability, channel, controlRevision, economicRevision); reason != "" {
+					return &channelSmartScheduleRouteConflict{channelID: result.ChannelId, reason: reason}
 				}
 			}
 			states[index] = state
@@ -2017,7 +2011,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				state = logicalRoute.payload.State
 			}
 			if result.RuntimeStabilityRecovery && state.StabilityState != ChannelSmartScheduleStabilityProbing {
-				return nil
+				return &channelSmartScheduleRouteConflict{channelID: result.ChannelId, reason: "路由已不处于稳定性试放阶段，不能应用本轮恢复结果"}
 			}
 			previousStabilityState := state.StabilityState
 			applyPriorityWeight := result.ApplyPriorityWeight && state.Participates()
@@ -2149,7 +2143,7 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 					return updated.Error
 				}
 				if updated.RowsAffected != 1 {
-					return ErrChannelLogicalGroupRevisionConflict
+					return &channelSmartScheduleRouteConflict{channelID: result.ChannelId, reason: "逻辑路由状态版本在写入时已变化", cause: ErrChannelLogicalGroupRevisionConflict}
 				}
 				logicalRoute.stored.StateRevision = state.Revision
 				logicalRoute.payload.State = state
@@ -2198,9 +2192,18 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 		)
 	})
 	if err != nil {
+		var conflict *channelSmartScheduleRouteConflict
+		isConflict := errors.As(err, &conflict)
 		for index := range outcomes {
 			outcomes[index].Applied = false
 			outcomes[index].RoutingChanged = false
+			outcomes[index].ObservationSince = 0
+			if isConflict {
+				outcomes[index].ConflictReason = conflict.Error()
+			}
+		}
+		if isConflict && conflict.cause == nil {
+			err = nil
 		}
 	}
 	return outcomes, err

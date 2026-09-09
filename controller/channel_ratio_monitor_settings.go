@@ -165,6 +165,7 @@ const (
 	channelMonitorEmailTypeGroupMembershipRemoved              = "group_membership_removed"
 	channelMonitorEmailTypeUpstreamSyncFailed                  = "upstream_sync_failed"
 	channelMonitorEmailTypeTaskFailed                          = "task_failed"
+	channelMonitorEmailTypeSmartScheduleFailed                 = "smart_schedule_failed"
 	channelMonitorEmailTypeMonitoringHealth                    = "monitoring_health"
 )
 
@@ -175,6 +176,7 @@ var channelMonitorEmailNotificationTypes = []string{
 	channelMonitorEmailTypeGroupMembershipRemoved,
 	channelMonitorEmailTypeUpstreamSyncFailed,
 	channelMonitorEmailTypeTaskFailed,
+	channelMonitorEmailTypeSmartScheduleFailed,
 	channelMonitorEmailTypeMonitoringHealth,
 }
 

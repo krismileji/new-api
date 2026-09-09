@@ -233,7 +233,7 @@ const generalDialog = document.body.querySelector(
 )
 assert.ok(generalDialog)
 const generalTitle = generalDialog.textContent ?? ''
-const generalHasSchedule = generalTitle.includes('智能调度')
+const generalHasSchedule = generalTitle.includes('智能调度设置')
 const generalUsesContentSizedViewport =
   generalDialog.classList.contains('max-h-[calc(100dvh-2rem)]') &&
   generalDialog.classList.contains('sm:max-w-4xl') &&
@@ -253,7 +253,7 @@ const notificationTypeFields = [
 const notificationTypeCheckboxes = notificationTypeFields.map((field) =>
   field.querySelector<HTMLButtonElement>('[role="checkbox"]')
 )
-assert.equal(notificationTypeCheckboxes.length, 7)
+assert.equal(notificationTypeCheckboxes.length, 8)
 assert.ok(notificationTypeCheckboxes.every(Boolean))
 const allNotificationTypesSelected = notificationTypeCheckboxes.every(
   (checkbox) => checkbox?.getAttribute('aria-checked') === 'true'

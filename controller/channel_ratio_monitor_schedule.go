@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -34,7 +35,9 @@ const (
 	maxChannelSmartScheduleTaskFailureDetails              = 100
 )
 
-type channelSmartScheduleTaskHandler struct{}
+type channelSmartScheduleTaskHandler struct {
+	sendEmail func(subject, receiver, content string) error
+}
 
 type channelSmartScheduleTaskPayload struct {
 	ForceReset       bool     `json:"force_reset,omitempty"`
@@ -273,13 +276,27 @@ func (channelSmartScheduleTaskHandler) Type() string {
 	return channelMonitorSmartScheduleTaskType
 }
 
-func (channelSmartScheduleTaskHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+func (handler channelSmartScheduleTaskHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	var summary channelSmartScheduleTaskResult
+	var runErr error
+	notifyFailure := true
+	defer func() {
+		if !notifyFailure || ctx.Err() != nil || (runErr == nil && summary.Failed == 0) {
+			return
+		}
+		if err := channelSmartScheduleFailureNotifications.notify(
+			ctx, getChannelMonitorSettings(), task.TaskID, summary, runErr, time.Now(), handler.sendEmail,
+		); err != nil {
+			common.SysError(err.Error())
+		}
+	}()
 	payload := channelSmartScheduleTaskPayload{}
 	if err := task.DecodePayload(&payload); err != nil {
+		runErr = fmt.Errorf("读取智能调度任务参数失败: %w", err)
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, channelSmartScheduleTaskResult{}, err)
 		return
 	}
-	summary, runErr := runChannelSmartScheduleOnce(
+	summary, runErr = runChannelSmartScheduleOnce(
 		ctx,
 		service.NewSystemTaskProgressReporter(task, runnerID),
 		payload.ForceReset,
@@ -314,6 +331,7 @@ func (channelSmartScheduleTaskHandler) Run(ctx context.Context, task *model.Syst
 		}
 		return
 	} else if errors.Is(err, model.ErrSystemTaskLockLost) {
+		notifyFailure = false
 		common.SysLog(fmt.Sprintf("system task %s failed to persist result: %v", task.TaskID, err))
 		return
 	} else if runErr == nil {

@@ -55,6 +55,16 @@ func PreviewChannelMonitorNotificationEmail(c *gin.Context) {
 			Error:         "请求上游接口超时",
 		}},
 	}
+	var sections []channelMonitorNotificationEmailSection
+	if channelMonitorEmailNotificationTypeEnabled(notificationTypes, channelMonitorEmailTypeSmartScheduleFailed) {
+		sections = append(sections, channelSmartScheduleFailureEmailSection("示例智能调度任务", channelSmartScheduleTaskResult{
+			Total: 2, Failed: 1, Updated: 1,
+			Failures: []channelSmartScheduleTaskFailure{{
+				ChannelId: 1007, ChannelName: "示例渠道 G", Group: "vip", Model: "model-a",
+				Stage: "configuration_conflict", Error: "渠道 1007：路由状态版本已变化（快照 7，当前 8）；整池保留上一轮结果",
+			}},
+		}, errors.New("1 条智能调度路由未能应用，失败池已保留上一轮结果")))
+	}
 	subject, content := buildChannelRatioMonitorNotificationEmail(
 		notificationTypes,
 		[]channelRatioMonitorEmailChange{{
@@ -77,6 +87,7 @@ func PreviewChannelMonitorNotificationEmail(c *gin.Context) {
 		}},
 		summary,
 		errors.New("自动写入分组倍率失败：数据库暂时不可用"),
+		sections...,
 	)
 	common.ApiSuccess(c, gin.H{
 		"subject":            subject,

@@ -840,10 +840,27 @@ func runChannelSmartScheduleByRouteOnce(
 		sort.Slice(updates, func(i int, j int) bool { return updates[i].ChannelId < updates[j].ChannelId })
 		outcomes, applyErr := model.ApplyChannelSmartScheduleRouteResults(updates)
 		poolConflict := false
+		poolConflictReason := ""
+		for _, outcome := range outcomes {
+			if outcome.ConflictReason != "" {
+				poolConflict = true
+				poolConflictReason = outcome.ConflictReason
+				break
+			}
+		}
 		if applyErr == nil {
-			poolConflict = len(outcomes) != len(updates)
+			if len(outcomes) != len(updates) {
+				poolConflict = true
+				poolConflictReason = fmt.Sprintf("整池应用结果不完整（提交 %d 条，返回 %d 条），请检查服务日志", len(updates), len(outcomes))
+			}
 			for _, outcome := range outcomes {
 				poolConflict = poolConflict || !outcome.Applied
+				if !outcome.Applied && poolConflictReason == "" {
+					poolConflictReason = outcome.ConflictReason
+				}
+			}
+			if poolConflict && poolConflictReason == "" {
+				poolConflictReason = "路由快照与当前配置不一致，整池保留上一轮结果；请刷新后重试并检查服务日志"
 			}
 		}
 		rescheduleRequired = rescheduleRequired || poolConflict
@@ -869,7 +886,7 @@ func runChannelSmartScheduleByRouteOnce(
 				PreviousEffectivePriority:          route.State.LastSchedulePriority,
 				PreviousEffectiveWeight:            route.State.LastScheduleWeight,
 			}
-			if applyErr != nil {
+			if applyErr != nil && !poolConflict {
 				adjustment.Action = channelSmartScheduleAdjustmentFailed
 				adjustment.FailureStage = "write"
 				adjustment.Reason = result.recordFailure(
@@ -880,7 +897,7 @@ func runChannelSmartScheduleByRouteOnce(
 				adjustment.FailureStage = "configuration_conflict"
 				adjustment.Reason = result.recordFailure(
 					update.ChannelId, route.ChannelName, update.Group, update.Model, adjustment.FailureStage,
-					fmt.Errorf("调度执行期间渠道或配置已变化，整池保留上一轮结果"),
+					fmt.Errorf("%s", poolConflictReason),
 				)
 			} else {
 				if outcomes[index].RoutingChanged ||
@@ -916,6 +933,9 @@ func runChannelSmartScheduleByRouteOnce(
 		_ = requestChannelSmartScheduleRun(ctx)
 	}
 	if result.Failed > 0 {
+		if len(result.Failures) > 0 {
+			return result, fmt.Errorf("%d 条智能调度路由未能应用，失败池已保留上一轮结果；首个失败原因：%s", result.Failed, result.Failures[0].Error)
+		}
 		return result, fmt.Errorf("%d 条智能调度路由未能应用，失败池已保留上一轮结果", result.Failed)
 	}
 	return result, nil
