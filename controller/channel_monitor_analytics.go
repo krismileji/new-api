@@ -17,6 +17,9 @@ import (
 
 type channelMonitorAnalyticsQuery struct {
 	Metric           string
+	Minutes          int
+	Group            string
+	SuccessMode      string
 	GroupBy          string
 	From             int64
 	To               int64
@@ -38,24 +41,38 @@ type channelMonitorAnalyticsQuery struct {
 }
 
 type channelMonitorAnalyticsResponse struct {
-	SnapshotRevision int64                          `json:"snapshot_revision,omitempty"`
-	ProcessedAt      int64                          `json:"processed_at,omitempty"`
-	Source           string                         `json:"source"`
-	GroupBy          string                         `json:"group_by"`
-	Coverage         service.ChannelMonitorCoverage `json:"coverage"`
-	Summary          map[string]any                 `json:"summary"`
-	ScopeSummary     map[string]any                 `json:"scope_summary"`
-	Items            []map[string]any               `json:"items"`
-	Page             int                            `json:"page"`
-	PageSize         int                            `json:"page_size"`
-	Total            int64                          `json:"total"`
-	GeneratedAt      int64                          `json:"generated_at"`
+	RangeMinutes               int                                   `json:"range_minutes,omitempty"`
+	WindowStart                int64                                 `json:"window_start,omitempty"`
+	WindowEnd                  int64                                 `json:"window_end,omitempty"`
+	FailureCategories          []model.ChannelMonitorFailureCategory `json:"failure_categories,omitempty"`
+	FailureCategoriesTruncated bool                                  `json:"failure_categories_truncated,omitempty"`
+	SnapshotRevision           int64                                 `json:"snapshot_revision,omitempty"`
+	ProcessedAt                int64                                 `json:"processed_at,omitempty"`
+	Source                     string                                `json:"source"`
+	GroupBy                    string                                `json:"group_by"`
+	Coverage                   service.ChannelMonitorCoverage        `json:"coverage"`
+	Summary                    map[string]any                        `json:"summary"`
+	ScopeSummary               map[string]any                        `json:"scope_summary"`
+	Items                      []map[string]any                      `json:"items"`
+	Page                       int                                   `json:"page"`
+	PageSize                   int                                   `json:"page_size"`
+	Total                      int64                                 `json:"total"`
+	GeneratedAt                int64                                 `json:"generated_at"`
 }
 
 func GetChannelMonitorAnalyticsSummary(c *gin.Context) {
 	query, err := parseChannelMonitorAnalyticsQuery(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	if query.Minutes > 0 {
+		response, queryErr := queryChannelMonitorMinuteAnalytics(c.Request.Context(), query)
+		if queryErr != nil {
+			common.ApiError(c, queryErr)
+			return
+		}
+		common.ApiSuccess(c, response)
 		return
 	}
 	if query.From == 0 {
@@ -76,6 +93,10 @@ func GetChannelMonitorAnalyticsTrend(c *gin.Context) {
 	query, err := parseChannelMonitorAnalyticsQuery(c)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	if query.Minutes > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "分钟统计不支持按日趋势"})
 		return
 	}
 	query.GroupBy = "day"
@@ -186,6 +207,23 @@ func parseChannelMonitorAnalyticsQuery(c *gin.Context) (channelMonitorAnalyticsQ
 		return query, err
 	}
 	query.Model = strings.TrimSpace(c.Query("model"))
+	query.Group = strings.TrimSpace(c.Query("group"))
+	query.SuccessMode = strings.TrimSpace(c.DefaultQuery("success_mode", "actual"))
+	if _, exists := c.Request.URL.Query()["minutes"]; exists {
+		query.Minutes, err = strconv.Atoi(c.Query("minutes"))
+		if err != nil || query.Minutes < minChannelMonitorPerformanceMinutes || query.Minutes > maxChannelMonitorPerformanceMinutes {
+			return query, &channelMonitorAnalyticsQueryError{"性能与成功率统计范围必须在 1 到 1440 分钟之间"}
+		}
+		if query.Metric != "success" || query.GroupBy == "day" || query.From != 0 || query.To != 0 {
+			return query, &channelMonitorAnalyticsQueryError{"分钟统计仅支持成功率明细，不能同时指定日期范围或按日分组"}
+		}
+	}
+	if query.SuccessMode != "actual" && query.SuccessMode != "final" {
+		return query, &channelMonitorAnalyticsQueryError{"成功率口径必须为 actual 或 final"}
+	}
+	if query.Minutes == 0 && (query.Group != "" || query.SuccessMode == "final") {
+		return query, &channelMonitorAnalyticsQueryError{"分组筛选和最终结果口径需要指定分钟统计范围"}
+	}
 	for _, identity := range []struct {
 		name   string
 		target **string

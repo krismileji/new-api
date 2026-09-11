@@ -37,6 +37,7 @@ import {
   formatChannelMonitorCost,
   formatChannelMonitorResolutionRate,
 } from '../lib/format'
+import type { ChannelMonitorSuccessMode } from '../types'
 import type {
   ChannelMonitorAnalyticsChannel,
   ChannelMonitorAnalyticsGroupBy,
@@ -127,9 +128,11 @@ type AnalyticsTableHeaderProps = {
   sort?: ChannelMonitorAnalyticsSort
   direction?: ChannelMonitorSortDirection
   onSort?: (sort: ChannelMonitorAnalyticsSort) => void
+  depth?: number
+  successMode?: ChannelMonitorSuccessMode
 }
 
-function AnalyticsTableHeader(props: AnalyticsTableHeaderProps) {
+function AnalyticsTableHeaderRow(props: AnalyticsTableHeaderProps) {
   let primaryLabel = '维度'
   if (props.groupBy === 'user') primaryLabel = '用户'
   if (props.groupBy === 'api_key') primaryLabel = 'API Key'
@@ -139,7 +142,11 @@ function AnalyticsTableHeader(props: AnalyticsTableHeaderProps) {
   if (props.groupBy === 'api_key_channel_model') primaryLabel = 'API Key'
   const metricHead = (label: string, sort: ChannelMonitorAnalyticsSort) => {
     if (!props.onSort) {
-      return <TableHead className='text-right'>{label}</TableHead>
+      return (
+        <TableHead scope='col' className='text-right'>
+          {label}
+        </TableHead>
+      )
     }
     return (
       <ChannelMonitorSortableTableHead
@@ -152,29 +159,49 @@ function AnalyticsTableHeader(props: AnalyticsTableHeaderProps) {
     )
   }
   return (
-    <TableHeader className='bg-muted/30'>
-      <TableRow>
-        <TableHead className='min-w-48'>{primaryLabel}</TableHead>
-        {props.groupBy === 'channel_model' ||
-        props.groupBy === 'api_key_channel_model' ? (
-          <TableHead className='min-w-40'>模型</TableHead>
-        ) : null}
-        {props.metric === 'success' ? (
-          <>
-            {metricHead('上游尝试数', 'samples')}
-            {metricHead('上游成功率', 'success_rate')}
-            {metricHead('流式缓存利用率', 'cache_utilization')}
-            {metricHead('缓存写入次数', 'cache_write')}
-          </>
-        ) : (
-          <>
-            {metricHead('成本', 'cost')}
-            {metricHead('已结算', 'settled')}
-            {metricHead('未解析', 'unresolved')}
-            {metricHead('解析率', 'resolution_rate')}
-          </>
-        )}
-      </TableRow>
+    <TableRow data-analytics-header className='bg-muted/30'>
+      <TableHead
+        scope='col'
+        className='min-w-48'
+        style={{ paddingInlineStart: `${0.5 + (props.depth ?? 0) * 1.25}rem` }}
+      >
+        {primaryLabel}
+      </TableHead>
+      {props.groupBy === 'channel_model' ||
+      props.groupBy === 'api_key_channel_model' ? (
+        <TableHead scope='col' className='min-w-40'>
+          模型
+        </TableHead>
+      ) : null}
+      {props.metric === 'success' ? (
+        <>
+          {metricHead(
+            props.successMode === 'final' ? '最终请求数' : '上游尝试数',
+            'samples'
+          )}
+          {metricHead(
+            props.successMode === 'final' ? '最终成功率' : '上游成功率',
+            'success_rate'
+          )}
+          {metricHead('流式缓存利用率', 'cache_utilization')}
+          {metricHead('缓存写入次数', 'cache_write')}
+        </>
+      ) : (
+        <>
+          {metricHead('成本', 'cost')}
+          {metricHead('已结算', 'settled')}
+          {metricHead('未解析', 'unresolved')}
+          {metricHead('解析率', 'resolution_rate')}
+        </>
+      )}
+    </TableRow>
+  )
+}
+
+function AnalyticsTableHeader(props: AnalyticsTableHeaderProps) {
+  return (
+    <TableHeader>
+      <AnalyticsTableHeaderRow {...props} />
     </TableHeader>
   )
 }
@@ -242,21 +269,28 @@ function AnalyticsTableRow(props: {
 function AnalyticsTableMetricCells(props: {
   metric: ChannelMonitorAnalyticsMetric
   item: ChannelMonitorAnalyticsItem
+  successMode?: ChannelMonitorSuccessMode
 }) {
   if (props.metric === 'success') {
+    const final = props.successMode === 'final'
+    const sampleCount = final
+      ? props.item.final_sample_count
+      : props.item.actual_sample_count
+    const successCount = final
+      ? props.item.final_success_count
+      : props.item.actual_success_count
+    const successRate = final
+      ? props.item.final_success_rate
+      : props.item.actual_success_rate
     return (
       <>
         <TableCell className='text-right font-mono tabular-nums'>
-          {props.item.actual_sample_count}
+          {sampleCount}
         </TableCell>
         <TableCell className='text-right font-mono tabular-nums'>
-          {formatRate(
-            props.item.actual_success_rate,
-            props.item.actual_sample_count
-          )}
+          {formatRate(successRate, sampleCount)}
           <span className='text-muted-foreground block text-xs'>
-            {props.item.actual_success_count} / {props.item.actual_sample_count}{' '}
-            次
+            {successCount} / {sampleCount} 次
           </span>
         </TableCell>
         <TableCell className='text-right font-mono tabular-nums'>
@@ -359,6 +393,9 @@ function queryFromExpansionContext(
     groupBy,
     from: context.from,
     to: context.to,
+    minutes: context.minutes,
+    group: context.group,
+    successMode: context.successMode,
     channelId:
       context.channelId ??
       (parentGroupBy === 'channel' ? item?.channel_id : undefined),
@@ -581,8 +618,20 @@ function AnalyticsExpandableTableRow(props: {
             </span>
           ) : null}
         </TableCell>
-        <AnalyticsTableMetricCells metric={props.metric} item={props.item} />
+        <AnalyticsTableMetricCells
+          metric={props.metric}
+          item={props.item}
+          successMode={props.context.successMode}
+        />
       </TableRow>
+      {expanded && childGroupBy ? (
+        <AnalyticsTableHeaderRow
+          metric={props.metric}
+          groupBy={childGroupBy}
+          depth={props.depth + 1}
+          successMode={props.context.successMode}
+        />
+      ) : null}
       {expanded &&
       isChannelMonitorAnalyticsCoverageIncomplete(childResponse?.coverage) ? (
         <TableRow>
@@ -698,8 +747,9 @@ export function ChannelMonitorAnalyticsExpandableTable(
           sort={props.context.sort}
           direction={props.context.direction}
           onSort={props.onSort}
+          successMode={props.context.successMode}
         />
-        <TableBody>
+        <TableBody className='[&>tr[data-analytics-header]]:h-10'>
           {props.items.map((item) => (
             <AnalyticsExpandableTableRow
               key={getAnalyticsRowKey(props.groupBy, item)}

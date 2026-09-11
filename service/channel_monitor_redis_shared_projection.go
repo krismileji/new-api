@@ -2142,8 +2142,6 @@ func (accumulator *channelMonitorRedisSharedQueryAccumulator) addFailure(identit
 		category.lastEventSequence = previous.lastEventSequence
 		category.SampleContent = previous.SampleContent
 	}
-	category.ActualCount += previous.ActualCount
-	category.FinalCount += previous.FinalCount
 	accumulator.failures[key] = category
 	return nil
 }

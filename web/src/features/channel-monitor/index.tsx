@@ -109,7 +109,6 @@ import {
   ChannelMonitorSmartScheduleSettingsSheet,
 } from './components/channel-monitor-settings-dialog'
 import { ChannelMonitorSmartScheduleBoard } from './components/channel-monitor-smart-schedule-board'
-import { ChannelMonitorSuccessDetailDialog } from './components/channel-monitor-success-detail-dialog'
 import { ChannelMonitorTodaySuccessCard } from './components/channel-monitor-today-success-card'
 import { ChannelMonitorViewTabs } from './components/channel-monitor-view-tabs'
 import { ChannelRatioHistoryDialog } from './components/channel-ratio-history-dialog'
@@ -811,7 +810,6 @@ export function ChannelMonitor() {
   const performanceRangeSource =
     performanceQuery.data?.data.range_source ?? requestedPerformanceRangeSource
   const performanceRangeLabel = `近${performanceRangeMinutes}分钟`
-  const manualPerformanceRangeLabel = `近${manualPerformanceRangeMinutes}分钟`
   const parsedPerformanceRangeMinutes = Number(performanceRangeInput)
   const isPerformanceRangeInputValid =
     Number.isInteger(parsedPerformanceRangeMinutes) &&
@@ -1051,14 +1049,18 @@ export function ChannelMonitor() {
   ).length
 
   const openCostHistory = (channel?: ChannelMonitorItem) => {
+    setSuccessDetailTarget(null)
     setAnalyticsMetric('cost')
     setAnalyticsChannelId(channel?.id)
     setAnalyticsOpen(true)
   }
 
-  const openSuccessAnalytics = () => {
+  const openSuccessAnalytics = (target?: ChannelMonitorSuccessDetailTarget) => {
+    setSuccessDetailTarget(target ?? null)
     setAnalyticsMetric('success')
-    setAnalyticsChannelId(undefined)
+    setAnalyticsChannelId(
+      target?.scope === 'channel' ? target.channelId : undefined
+    )
     setAnalyticsOpen(true)
   }
 
@@ -1109,7 +1111,7 @@ export function ChannelMonitor() {
             result={todaySuccessQuery.data?.data}
             isLoading={todaySuccessQuery.isLoading}
             isError={todaySuccessQuery.isError}
-            onOpen={openSuccessAnalytics}
+            onOpen={() => openSuccessAnalytics()}
           />
         </div>
         <Tabs
@@ -1410,7 +1412,7 @@ export function ChannelMonitor() {
                 }
                 onOpenCostHistory={openCostHistory}
                 onOpenSuccessDetail={(channel) =>
-                  setSuccessDetailTarget({
+                  openSuccessAnalytics({
                     scope: 'channel',
                     mode: 'actual',
                     channelId: channel.id,
@@ -1446,7 +1448,7 @@ export function ChannelMonitor() {
               }
               successRangeLabel={performanceRangeLabel}
               onOpenSuccessDetail={(group, mode) =>
-                setSuccessDetailTarget({
+                openSuccessAnalytics({
                   scope: 'group',
                   mode,
                   groupName: group.name,
@@ -1472,7 +1474,7 @@ export function ChannelMonitor() {
                 performanceQuery.isError && performanceQuery.data == null
               }
               onOpenSuccessDetail={(channel, modelName) =>
-                setSuccessDetailTarget({
+                openSuccessAnalytics({
                   scope: 'channel',
                   mode: 'actual',
                   channelId: channel.id,
@@ -1840,9 +1842,26 @@ export function ChannelMonitor() {
           metric={analyticsMetric}
           channels={channels}
           initialChannelId={analyticsChannelId}
+          initialModel={
+            successDetailTarget?.scope === 'channel'
+              ? successDetailTarget.modelName
+              : undefined
+          }
+          initialGroup={
+            successDetailTarget?.scope === 'group'
+              ? successDetailTarget.groupName
+              : undefined
+          }
+          rangeMinutes={
+            successDetailTarget ? performanceRangeMinutes : undefined
+          }
+          successMode={successDetailTarget?.mode}
           onOpenChange={(open) => {
             setAnalyticsOpen(open)
-            if (!open) setAnalyticsChannelId(undefined)
+            if (!open) {
+              setAnalyticsChannelId(undefined)
+              setSuccessDetailTarget(null)
+            }
           }}
         />
       )}
@@ -1866,18 +1885,6 @@ export function ChannelMonitor() {
           channelOrder={channelOrder}
           open
           onOpenChange={setOrderDialogOpen}
-        />
-      )}
-      {successDetailTarget && (
-        <ChannelMonitorSuccessDetailDialog
-          target={successDetailTarget}
-          channels={channels}
-          rangeMinutes={manualPerformanceRangeMinutes}
-          rangeLabel={manualPerformanceRangeLabel}
-          open
-          onOpenChange={(open) => {
-            if (!open) setSuccessDetailTarget(null)
-          }}
         />
       )}
     </>

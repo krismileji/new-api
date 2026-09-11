@@ -1,3 +1,4 @@
+import type { ChannelMonitorSuccessMode } from '../types'
 import type {
   ChannelMonitorAnalyticsGroupBy,
   ChannelMonitorAnalyticsMetric,
@@ -11,6 +12,9 @@ export type ChannelMonitorAnalyticsExpansionContext = {
   metric: ChannelMonitorAnalyticsMetric
   from?: string
   to?: string
+  minutes?: number
+  group?: string
+  successMode?: ChannelMonitorSuccessMode
   channelId?: number
   userId?: number
   apiKeyId?: number

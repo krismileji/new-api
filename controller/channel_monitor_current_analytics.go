@@ -165,6 +165,9 @@ func channelMonitorAnalyticsPage(ctx context.Context, query channelMonitorAnalyt
 	if field, exists := aliases[sortKey]; exists {
 		sortKey = field
 	}
+	if query.Metric == "success" && query.SuccessMode == "final" && strings.HasPrefix(sortKey, "actual_") {
+		sortKey = "final_" + strings.TrimPrefix(sortKey, "actual_")
+	}
 	if sortKey == "" {
 		sortKey = "cost_nano_cny"
 		if query.Metric == "success" {

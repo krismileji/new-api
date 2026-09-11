@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { cleanup, render } from '@testing-library/react'
+import type { ComponentProps } from 'react'
 import { afterEach } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -75,7 +76,11 @@ export function renderAnalyticsQuery(
   ) =>
     | ChannelMonitorAnalyticsResponse
     | Promise<ChannelMonitorAnalyticsResponse>,
-  initialChannelId?: number
+  initialChannelId?: number,
+  scope: Pick<
+    ComponentProps<typeof ChannelMonitorAnalyticsDialog>,
+    'rangeMinutes' | 'initialModel' | 'initialGroup' | 'successMode'
+  > = {}
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
@@ -100,6 +105,7 @@ export function renderAnalyticsQuery(
         metric={metric}
         channels={[{ id: 7, name: '渠道 A' }]}
         initialChannelId={initialChannelId}
+        {...scope}
         onOpenChange={() => undefined}
       />
     </QueryClientProvider>

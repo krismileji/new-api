@@ -1,3 +1,8 @@
+import type {
+  ChannelMonitorFailureCategory,
+  ChannelMonitorSuccessMode,
+} from './types'
+
 export type ChannelMonitorAnalyticsMetric = 'success' | 'cost'
 export type ChannelMonitorAnalyticsSort =
   | 'samples'
@@ -30,6 +35,9 @@ export type ChannelMonitorAnalyticsQuery = {
   groupBy: ChannelMonitorAnalyticsGroupBy
   from?: string
   to?: string
+  minutes?: number
+  group?: string
+  successMode?: ChannelMonitorSuccessMode
   channelId?: number
   userId?: number
   apiKeyId?: number
@@ -84,7 +92,16 @@ export type ChannelMonitorAnalyticsResponse = {
   snapshot_revision?: number
   processed_at?: number
   generated_at?: number
-  source: 'database_daily' | 'redis_daily' | 'redis_and_database_daily'
+  source:
+    | 'database_daily'
+    | 'redis_daily'
+    | 'redis_and_database_daily'
+    | 'redis_minutes'
+  range_minutes?: number
+  window_start?: number
+  window_end?: number
+  failure_categories?: ChannelMonitorFailureCategory[]
+  failure_categories_truncated?: boolean
   group_by: ChannelMonitorAnalyticsGroupBy
   coverage: {
     status: 'complete' | 'partial' | 'unavailable'

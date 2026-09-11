@@ -29,6 +29,7 @@ import type { ChannelMonitorAnalyticsExpansionContext } from '../lib/analytics-e
 import { formatChannelMonitorBeijingDate } from '../lib/cost-date'
 import { isChannelMonitorAnalyticsCoverageIncomplete } from '../lib/coverage'
 import { formatChannelMonitorCost } from '../lib/format'
+import type { ChannelMonitorSuccessMode } from '../types'
 import type {
   ChannelMonitorAnalyticsChannel,
   ChannelMonitorAnalyticsGroupBy,
@@ -38,6 +39,7 @@ import type {
   ChannelMonitorAnalyticsSummary,
 } from '../types-analytics'
 import { ChannelMonitorAnalyticsCoverage } from './channel-monitor-analytics-coverage'
+import { ChannelMonitorAnalyticsFailures } from './channel-monitor-analytics-failures'
 import { ChannelMonitorAnalyticsExpandableTable } from './channel-monitor-analytics-table'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 
@@ -52,6 +54,10 @@ type ChannelMonitorAnalyticsDialogProps = {
     channel_remark?: string | null
   }[]
   initialChannelId?: number
+  initialModel?: string
+  initialGroup?: string
+  rangeMinutes?: number
+  successMode?: ChannelMonitorSuccessMode
 }
 
 type AnalyticsTab = 'channels' | 'api_keys'
@@ -205,16 +211,24 @@ function ChannelMonitorAnalyticsDateRangeControl(props: {
 function AnalyticsSummary(props: {
   metric: ChannelMonitorAnalyticsMetric
   summary: ChannelMonitorAnalyticsSummary | undefined
+  successMode?: ChannelMonitorSuccessMode
 }) {
   const summary = props.summary
   if (!summary) return null
   const values: Array<[string, string | number]> = []
   if (props.metric === 'success') {
+    const final = props.successMode === 'final'
+    const sampleCount = final
+      ? summary.final_sample_count
+      : summary.actual_sample_count
     values.push(
-      ['上游尝试数', summary.actual_sample_count],
+      [final ? '最终请求数' : '上游尝试数', sampleCount],
       [
-        '上游成功率',
-        formatRate(summary.actual_success_rate, summary.actual_sample_count),
+        final ? '最终成功率' : '上游成功率',
+        formatRate(
+          final ? summary.final_success_rate : summary.actual_success_rate,
+          sampleCount
+        ),
       ],
       [
         '流式缓存利用率',
@@ -298,9 +312,13 @@ export function ChannelMonitorAnalyticsDialog(
   const rootRequest: ChannelMonitorAnalyticsQuery = {
     metric: props.metric,
     groupBy: rootGroupBy,
-    from: dateRange.from,
-    to: dateRange.to,
+    from: props.rangeMinutes == null ? dateRange.from : undefined,
+    to: props.rangeMinutes == null ? dateRange.to : undefined,
+    minutes: props.rangeMinutes,
+    group: props.initialGroup,
+    successMode: props.successMode,
     channelId: props.initialChannelId,
+    model: props.initialModel,
     search: search || undefined,
     sort,
     direction,
@@ -320,9 +338,13 @@ export function ChannelMonitorAnalyticsDialog(
   const expansionContext: ChannelMonitorAnalyticsExpansionContext = {
     tab,
     metric: props.metric,
-    from: dateRange.from,
-    to: dateRange.to,
+    from: rootRequest.from,
+    to: rootRequest.to,
+    minutes: props.rangeMinutes,
+    group: props.initialGroup,
+    successMode: props.successMode,
     channelId: props.initialChannelId,
+    model: props.initialModel,
     search: search || undefined,
     sort,
     direction,
@@ -373,6 +395,27 @@ export function ChannelMonitorAnalyticsDialog(
     setDirection('desc')
   }
 
+  const scopeLabels: string[] = []
+  if (props.rangeMinutes != null) {
+    scopeLabels.push(`近${props.rangeMinutes}分钟`)
+  }
+  if (props.initialGroup) scopeLabels.push(`分组 ${props.initialGroup}`)
+  if (props.initialChannelId != null) {
+    scopeLabels.push(
+      channels.get(props.initialChannelId)?.name ??
+        `渠道 #${props.initialChannelId}`
+    )
+  }
+  if (props.initialModel) scopeLabels.push(`模型 ${props.initialModel}`)
+  if (props.rangeMinutes != null) {
+    scopeLabels.push(
+      props.successMode === 'final' ? '最终结果口径' : '上游尝试口径'
+    )
+  }
+  let sourceLabel = '历史日汇总'
+  if (response?.source === 'redis_daily') sourceLabel = '今日实时汇总'
+  if (response?.source === 'redis_minutes') sourceLabel = '分钟实时汇总'
+
   let table: ReactNode
   if (rootQuery.isLoading || (rootQuery.isFetching && !response)) {
     table = <Skeleton className='h-72 w-full' />
@@ -421,9 +464,9 @@ export function ChannelMonitorAnalyticsDialog(
           <DialogTitle>
             {props.metric === 'success' ? '成功率与缓存分析' : '渠道成本分析'}
           </DialogTitle>
-          <DialogDescription>
-            {props.initialChannelId != null
-              ? '按北京时间查看当前渠道内全部用户及 API Key 的汇总'
+          <DialogDescription className='[overflow-wrap:anywhere] break-words'>
+            {scopeLabels.length > 0
+              ? scopeLabels.join(' · ')
               : '按北京时间查看全部用户及 API Key 的汇总'}
           </DialogDescription>
         </DialogHeader>
@@ -452,19 +495,29 @@ export function ChannelMonitorAnalyticsDialog(
                 </span>
               ) : null}
             </div>
-            <ChannelMonitorAnalyticsDateRangeControl
-              from={dateFrom}
-              through={dateThrough}
-              today={dateRange.today}
-              onChange={(range) => {
-                setDateFrom(range.from)
-                setDateThrough(range.through)
-                setPage(1)
-              }}
-            />
+            {props.rangeMinutes != null ? (
+              <span
+                aria-label='统计时间范围'
+                className='text-muted-foreground shrink-0 text-sm tabular-nums'
+              >
+                近{props.rangeMinutes}分钟
+              </span>
+            ) : (
+              <ChannelMonitorAnalyticsDateRangeControl
+                from={dateFrom}
+                through={dateThrough}
+                today={dateRange.today}
+                onChange={(range) => {
+                  setDateFrom(range.from)
+                  setDateThrough(range.through)
+                  setPage(1)
+                }}
+              />
+            )}
           </div>
           <AnalyticsSummary
             metric={props.metric}
+            successMode={props.successMode}
             summary={
               coverage?.status === 'unavailable'
                 ? undefined
@@ -472,13 +525,8 @@ export function ChannelMonitorAnalyticsDialog(
             }
           />
           <p className='text-muted-foreground text-xs'>
-            {tab === 'api_keys'
-              ? '按用户 → API Key → 模型 → 渠道逐级展开'
-              : '按渠道 → 模型 → 用户 → API Key 逐级展开'}
-          </p>
-          <p className='text-muted-foreground text-xs'>
             {props.metric === 'success'
-              ? '成功率按实际派发的上游尝试统计，包含重试。缓存利用率按流式请求的输入 Token 加权；缓存写入次数包含流式和非流式请求。'
+              ? `${props.successMode === 'final' ? '成功率按请求最终结果统计。' : '成功率按实际派发的上游尝试统计，包含重试。'}缓存利用率按流式请求的输入 Token 加权；缓存写入次数包含流式和非流式请求。`
               : '成本为已结算的渠道成本，包含业务、探测和模型检测。未解析记录的金额尚不能确定；未归属用户可能包含系统探测和历史记录。'}
           </p>
           {rootQuery.isError && response ? (
@@ -506,9 +554,7 @@ export function ChannelMonitorAnalyticsDialog(
             />
             <div className='text-muted-foreground flex items-center gap-2 text-xs'>
               <span>
-                {response?.source === 'redis_daily'
-                  ? '今日实时汇总'
-                  : '历史日汇总'}
+                {sourceLabel}
                 {response?.source === 'redis_and_database_daily'
                   ? ' · 含今日实时数据'
                   : null}
@@ -572,6 +618,22 @@ export function ChannelMonitorAnalyticsDialog(
               </Button>
             </div>
           </div>
+          {props.rangeMinutes != null &&
+          props.initialChannelId != null &&
+          !search &&
+          response &&
+          coverage?.status !== 'unavailable' ? (
+            <ChannelMonitorAnalyticsFailures
+              categories={response.failure_categories ?? []}
+              mode={props.successMode ?? 'actual'}
+              failureCount={
+                props.successMode === 'final'
+                  ? response.scope_summary.final_failure_count
+                  : response.scope_summary.actual_failure_count
+              }
+              truncated={response.failure_categories_truncated}
+            />
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>
