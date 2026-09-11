@@ -406,9 +406,9 @@ export function ChannelMonitor() {
   const [smartScheduleHistoryOpen, setSmartScheduleHistoryOpen] =
     useState(false)
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
-  const [analyticsMetric, setAnalyticsMetric] = useState<'cost' | 'success'>(
-    'cost'
-  )
+  const [analyticsMetric, setAnalyticsMetric] = useState<
+    'cost' | 'success' | 'performance'
+  >('cost')
   const [analyticsChannelId, setAnalyticsChannelId] = useState<number>()
   const [smartScheduleDisplaySelection, setSmartScheduleDisplaySelection] =
     useState<SmartScheduleDisplaySelection>(() => {
@@ -434,7 +434,7 @@ export function ChannelMonitor() {
     })
   const [batchTestOpen, setBatchTestOpen] = useState(false)
   const [orderDialogOpen, setOrderDialogOpen] = useState(false)
-  const [successDetailTarget, setSuccessDetailTarget] =
+  const [analyticsDetailTarget, setAnalyticsDetailTarget] =
     useState<ChannelMonitorSuccessDetailTarget | null>(null)
   const [channelSortMode, setChannelSortMode] =
     useState<ChannelMonitorSortMode>(() => {
@@ -1049,18 +1049,34 @@ export function ChannelMonitor() {
   ).length
 
   const openCostHistory = (channel?: ChannelMonitorItem) => {
-    setSuccessDetailTarget(null)
+    setAnalyticsDetailTarget(null)
     setAnalyticsMetric('cost')
     setAnalyticsChannelId(channel?.id)
     setAnalyticsOpen(true)
   }
 
   const openSuccessAnalytics = (target?: ChannelMonitorSuccessDetailTarget) => {
-    setSuccessDetailTarget(target ?? null)
+    setAnalyticsDetailTarget(target ?? null)
     setAnalyticsMetric('success')
     setAnalyticsChannelId(
       target?.scope === 'channel' ? target.channelId : undefined
     )
+    setAnalyticsOpen(true)
+  }
+
+  const openPerformanceAnalytics = (
+    channel: ChannelMonitorItem,
+    modelName?: string
+  ) => {
+    setAnalyticsDetailTarget({
+      scope: 'channel',
+      mode: 'actual',
+      channelId: channel.id,
+      channelName: channel.name,
+      modelName,
+    })
+    setAnalyticsMetric('performance')
+    setAnalyticsChannelId(channel.id)
     setAnalyticsOpen(true)
   }
 
@@ -1411,6 +1427,7 @@ export function ChannelMonitor() {
                   setChannelDialog({ channelId: channel.id, type: 'history' })
                 }
                 onOpenCostHistory={openCostHistory}
+                onOpenPerformanceDetail={openPerformanceAnalytics}
                 onOpenSuccessDetail={(channel) =>
                   openSuccessAnalytics({
                     scope: 'channel',
@@ -1482,6 +1499,7 @@ export function ChannelMonitor() {
                   modelName,
                 })
               }
+              onOpenPerformanceDetail={openPerformanceAnalytics}
             />
           </TabsContent>
           <TabsContent value='status-probe'>
@@ -1843,24 +1861,24 @@ export function ChannelMonitor() {
           channels={channels}
           initialChannelId={analyticsChannelId}
           initialModel={
-            successDetailTarget?.scope === 'channel'
-              ? successDetailTarget.modelName
+            analyticsDetailTarget?.scope === 'channel'
+              ? analyticsDetailTarget.modelName
               : undefined
           }
           initialGroup={
-            successDetailTarget?.scope === 'group'
-              ? successDetailTarget.groupName
+            analyticsDetailTarget?.scope === 'group'
+              ? analyticsDetailTarget.groupName
               : undefined
           }
           rangeMinutes={
-            successDetailTarget ? performanceRangeMinutes : undefined
+            analyticsDetailTarget ? performanceRangeMinutes : undefined
           }
-          successMode={successDetailTarget?.mode}
+          successMode={analyticsDetailTarget?.mode}
           onOpenChange={(open) => {
             setAnalyticsOpen(open)
             if (!open) {
               setAnalyticsChannelId(undefined)
-              setSuccessDetailTarget(null)
+              setAnalyticsDetailTarget(null)
             }
           }}
         />

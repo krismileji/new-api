@@ -48,6 +48,10 @@ import type {
 } from '../types-analytics'
 import { ChannelMonitorAnalyticsCoverage } from './channel-monitor-analytics-coverage'
 import {
+  ChannelMonitorAnalyticsPerformanceMeasurement,
+  ChannelMonitorAnalyticsPerformanceOutput,
+} from './channel-monitor-analytics-performance'
+import {
   ChannelMonitorSortableTableHead,
   type ChannelMonitorSortDirection,
 } from './channel-monitor-sortable-table-head'
@@ -173,6 +177,14 @@ function AnalyticsTableHeaderRow(props: AnalyticsTableHeaderProps) {
           模型
         </TableHead>
       ) : null}
+      {props.metric === 'performance' ? (
+        <>
+          {metricHead('上游尝试数', 'samples')}
+          {metricHead('平均首字', 'first_token')}
+          {metricHead('平均 TPS', 'tps')}
+          {metricHead('测速输出', 'output_tokens')}
+        </>
+      ) : null}
       {props.metric === 'success' ? (
         <>
           {metricHead(
@@ -186,14 +198,15 @@ function AnalyticsTableHeaderRow(props: AnalyticsTableHeaderProps) {
           {metricHead('流式缓存利用率', 'cache_utilization')}
           {metricHead('缓存写入次数', 'cache_write')}
         </>
-      ) : (
+      ) : null}
+      {props.metric === 'cost' ? (
         <>
           {metricHead('成本', 'cost')}
           {metricHead('已结算', 'settled')}
           {metricHead('未解析', 'unresolved')}
           {metricHead('解析率', 'resolution_rate')}
         </>
-      )}
+      ) : null}
     </TableRow>
   )
 }
@@ -271,6 +284,30 @@ function AnalyticsTableMetricCells(props: {
   item: ChannelMonitorAnalyticsItem
   successMode?: ChannelMonitorSuccessMode
 }) {
+  if (props.metric === 'performance') {
+    return (
+      <>
+        <TableCell className='text-right font-mono tabular-nums'>
+          {props.item.actual_sample_count}
+        </TableCell>
+        <TableCell className='text-right font-mono tabular-nums'>
+          <ChannelMonitorAnalyticsPerformanceMeasurement
+            metric='first_token'
+            summary={props.item}
+          />
+        </TableCell>
+        <TableCell className='text-right font-mono tabular-nums'>
+          <ChannelMonitorAnalyticsPerformanceMeasurement
+            metric='tps'
+            summary={props.item}
+          />
+        </TableCell>
+        <TableCell className='text-right font-mono tabular-nums'>
+          <ChannelMonitorAnalyticsPerformanceOutput summary={props.item} />
+        </TableCell>
+      </>
+    )
+  }
   if (props.metric === 'success') {
     const final = props.successMode === 'final'
     const sampleCount = final

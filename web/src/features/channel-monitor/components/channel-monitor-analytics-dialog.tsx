@@ -40,6 +40,10 @@ import type {
 } from '../types-analytics'
 import { ChannelMonitorAnalyticsCoverage } from './channel-monitor-analytics-coverage'
 import { ChannelMonitorAnalyticsFailures } from './channel-monitor-analytics-failures'
+import {
+  ChannelMonitorAnalyticsPerformanceMeasurement,
+  ChannelMonitorAnalyticsPerformanceOutput,
+} from './channel-monitor-analytics-performance'
 import { ChannelMonitorAnalyticsExpandableTable } from './channel-monitor-analytics-table'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 
@@ -215,8 +219,35 @@ function AnalyticsSummary(props: {
 }) {
   const summary = props.summary
   if (!summary) return null
-  const values: Array<[string, string | number]> = []
-  if (props.metric === 'success') {
+  const values: Array<[string, ReactNode]> = []
+  if (props.metric === 'performance') {
+    values.push(
+      ['上游尝试数', summary.actual_sample_count],
+      [
+        '平均首字',
+        <ChannelMonitorAnalyticsPerformanceMeasurement
+          key='first-token'
+          metric='first_token'
+          summary={summary}
+        />,
+      ],
+      [
+        '平均 TPS',
+        <ChannelMonitorAnalyticsPerformanceMeasurement
+          key='tps'
+          metric='tps'
+          summary={summary}
+        />,
+      ],
+      [
+        '测速输出',
+        <ChannelMonitorAnalyticsPerformanceOutput
+          key='output'
+          summary={summary}
+        />,
+      ]
+    )
+  } else if (props.metric === 'success') {
     const final = props.successMode === 'final'
     const sampleCount = final
       ? summary.final_sample_count
@@ -407,7 +438,7 @@ export function ChannelMonitorAnalyticsDialog(
     )
   }
   if (props.initialModel) scopeLabels.push(`模型 ${props.initialModel}`)
-  if (props.rangeMinutes != null) {
+  if (props.rangeMinutes != null && props.metric === 'success') {
     scopeLabels.push(
       props.successMode === 'final' ? '最终结果口径' : '上游尝试口径'
     )
@@ -415,6 +446,17 @@ export function ChannelMonitorAnalyticsDialog(
   let sourceLabel = '历史日汇总'
   if (response?.source === 'redis_daily') sourceLabel = '今日实时汇总'
   if (response?.source === 'redis_minutes') sourceLabel = '分钟实时汇总'
+  let title = '渠道成本分析'
+  let description =
+    '成本为已结算的渠道成本，包含业务、探测和模型检测。未解析记录的金额尚不能确定；未归属用户可能包含系统探测和历史记录。'
+  if (props.metric === 'performance') {
+    title = '性能分析'
+    description =
+      '首字延迟越低越快，TPS 越高越快。首字按有效样本平均；TPS = 总输出 Token ÷ 总生成时间。仅统计业务上游调用，重试分别计数；缺失指标的请求不计入对应平均值。'
+  } else if (props.metric === 'success') {
+    title = '成功率与缓存分析'
+    description = `${props.successMode === 'final' ? '成功率按请求最终结果统计。' : '成功率按实际派发的上游尝试统计，包含重试。'}缓存利用率按流式请求的输入 Token 加权；缓存写入次数包含流式和非流式请求。`
+  }
 
   let table: ReactNode
   if (rootQuery.isLoading || (rootQuery.isFetching && !response)) {
@@ -461,9 +503,7 @@ export function ChannelMonitorAnalyticsDialog(
         )}
       >
         <DialogHeader className='shrink-0 pr-10'>
-          <DialogTitle>
-            {props.metric === 'success' ? '成功率与缓存分析' : '渠道成本分析'}
-          </DialogTitle>
+          <DialogTitle>{title}</DialogTitle>
           <DialogDescription className='[overflow-wrap:anywhere] break-words'>
             {scopeLabels.length > 0
               ? scopeLabels.join(' · ')
@@ -524,11 +564,7 @@ export function ChannelMonitorAnalyticsDialog(
                 : (response?.scope_summary ?? response?.summary)
             }
           />
-          <p className='text-muted-foreground text-xs'>
-            {props.metric === 'success'
-              ? `${props.successMode === 'final' ? '成功率按请求最终结果统计。' : '成功率按实际派发的上游尝试统计，包含重试。'}缓存利用率按流式请求的输入 Token 加权；缓存写入次数包含流式和非流式请求。`
-              : '成本为已结算的渠道成本，包含业务、探测和模型检测。未解析记录的金额尚不能确定；未归属用户可能包含系统探测和历史记录。'}
-          </p>
+          <p className='text-muted-foreground text-xs'>{description}</p>
           {rootQuery.isError && response ? (
             <Alert variant='destructive'>
               <AlertTitle>统计更新失败，保留上次结果</AlertTitle>
@@ -618,7 +654,8 @@ export function ChannelMonitorAnalyticsDialog(
               </Button>
             </div>
           </div>
-          {props.rangeMinutes != null &&
+          {props.metric === 'success' &&
+          props.rangeMinutes != null &&
           props.initialChannelId != null &&
           !search &&
           response &&

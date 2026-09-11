@@ -62,6 +62,7 @@ import type {
   ChannelMonitorSuccessSummary,
   ChannelMonitorSmartScheduleRoute,
 } from '../types'
+import { ChannelMonitorPerformanceDetailButton } from './channel-monitor-performance-detail-button'
 import {
   ChannelMonitorFirstTokenValue,
   ChannelMonitorTPSValue,
@@ -99,6 +100,7 @@ type ChannelMonitorChannelViewProps = {
   onViewHistory: (channel: ChannelMonitorItem) => void
   onOpenCostHistory: (channel: ChannelMonitorItem) => void
   onOpenSuccessDetail: (channel: ChannelMonitorItem) => void
+  onOpenPerformanceDetail: (channel: ChannelMonitorItem) => void
   fetchingBalanceChannelId: number | null
   fetchingRatioChannelId: number | null
   updatingStatusChannelId: number | null
@@ -118,6 +120,8 @@ type ChannelPerformanceCellProps = {
   performance: ChannelMonitorChannelPerformance | undefined
   loading: boolean
   error: boolean
+  onClick: () => void
+  label: string
 }
 
 type ChannelUpstreamBalanceCellProps = {
@@ -186,21 +190,26 @@ function ChannelPerformanceCell(props: ChannelPerformanceCellProps) {
     return <span className='text-muted-foreground text-xs'>暂无样本</span>
   }
   return (
-    <div className='flex w-full flex-col items-start gap-0.5 text-xs'>
-      <div className='flex items-baseline gap-1.5'>
-        <span className='text-muted-foreground'>首字</span>
-        <ChannelMonitorFirstTokenValue
-          value={props.performance.average_first_token_ms}
-        />
-      </div>
-      <div className='flex items-baseline gap-1.5'>
-        <span className='text-muted-foreground'>TPS</span>
-        <ChannelMonitorTPSValue value={props.performance.average_tps} />
-      </div>
-      <span className='text-muted-foreground'>
-        {props.performance.sample_count} 次请求
+    <ChannelMonitorPerformanceDetailButton
+      onClick={props.onClick}
+      label={props.label}
+    >
+      <span className='flex w-full flex-col items-start gap-0.5 text-xs'>
+        <span className='flex items-baseline gap-1.5'>
+          <span className='text-muted-foreground'>首字</span>
+          <ChannelMonitorFirstTokenValue
+            value={props.performance.average_first_token_ms}
+          />
+        </span>
+        <span className='flex items-baseline gap-1.5'>
+          <span className='text-muted-foreground'>TPS</span>
+          <ChannelMonitorTPSValue value={props.performance.average_tps} />
+        </span>
+        <span className='text-muted-foreground'>
+          {props.performance.sample_count} 次请求
+        </span>
       </span>
-    </div>
+    </ChannelMonitorPerformanceDetailButton>
   )
 }
 
@@ -526,6 +535,8 @@ export function ChannelMonitorChannelView(
                     performance={props.performanceByChannel.get(channel.id)}
                     loading={props.performanceLoading}
                     error={props.performanceError}
+                    onClick={() => props.onOpenPerformanceDetail(channel)}
+                    label={`查看 ${channel.name} 的性能明细`}
                   />
                 </TableCell>
                 <TableCell className='whitespace-normal'>

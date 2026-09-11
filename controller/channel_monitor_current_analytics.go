@@ -111,8 +111,11 @@ func channelMonitorAnalyticsGroupItem(metric, group string, item map[string]any)
 
 func channelMonitorAnalyticsMergeValues(metric string, target, source map[string]any) error {
 	fields := []string{"cost_nano_cny", "probe_cost_nano_cny", "group_probe_cost_nano_cny", "model_detection_cost_nano_cny", "settled_count", "unresolved_count"}
-	if metric == "success" {
+	if metric == "success" || metric == "performance" {
 		fields = []string{"actual_success_count", "actual_failure_count", "final_success_count", "final_failure_count", "cache_hit_count", "cache_sample_count", "cache_read_tokens", "input_tokens", "cache_write_request_count"}
+	}
+	if metric == "performance" {
+		fields = append(fields, "first_token_sample_count", "tps_sample_count", "tps_output_tokens", "tps_generation_duration_ms")
 	}
 	for _, field := range fields {
 		if target[field] == nil {
@@ -131,7 +134,7 @@ func channelMonitorAnalyticsMergeValues(metric string, target, source map[string
 		}
 		target[field] = total
 	}
-	if metric == "success" {
+	if metric == "success" || metric == "performance" {
 		actual, _ := target["actual_success_count"].(int64)
 		actualFailure, _ := target["actual_failure_count"].(int64)
 		final, _ := target["final_success_count"].(int64)
@@ -153,6 +156,9 @@ func channelMonitorAnalyticsMergeValues(metric string, target, source map[string
 		target["cache_hit_rate"] = channelMonitorAnalyticsRate(hits, samples)
 		target["cache_utilization_rate"] = channelMonitorAnalyticsRate(read, input)
 	}
+	if metric == "performance" {
+		return mergeChannelMonitorPerformanceMeasurements(target, source)
+	}
 	return nil
 }
 
@@ -165,12 +171,22 @@ func channelMonitorAnalyticsPage(ctx context.Context, query channelMonitorAnalyt
 	if field, exists := aliases[sortKey]; exists {
 		sortKey = field
 	}
+	if query.Metric == "performance" {
+		switch sortKey {
+		case "first_token":
+			sortKey = "average_first_token_ms"
+		case "tps":
+			sortKey = "average_tps"
+		case "output_tokens":
+			sortKey = "tps_output_tokens"
+		}
+	}
 	if query.Metric == "success" && query.SuccessMode == "final" && strings.HasPrefix(sortKey, "actual_") {
 		sortKey = "final_" + strings.TrimPrefix(sortKey, "actual_")
 	}
 	if sortKey == "" {
 		sortKey = "cost_nano_cny"
-		if query.Metric == "success" {
+		if query.Metric == "success" || query.Metric == "performance" {
 			sortKey = "actual_sample_count"
 		}
 	}
@@ -186,6 +202,9 @@ func channelMonitorAnalyticsPage(ctx context.Context, query channelMonitorAnalyt
 		}
 	}
 	sort.Slice(rows, func(i, j int) bool {
+		if query.Metric == "performance" && (rows[i][sortKey] == nil) != (rows[j][sortKey] == nil) {
+			return rows[i][sortKey] != nil
+		}
 		left, li := rows[i][sortKey].(int64)
 		right, ri := rows[j][sortKey].(int64)
 		if li && ri && left != right {
@@ -317,15 +336,23 @@ func queryChannelMonitorCurrentSuccessFacts(ctx context.Context, query channelMo
 			CacheHit: value.CacheHitCount, CacheSample: value.CacheSampleCount, CacheReadTokens: value.CacheReadTokens,
 			InputTokens: value.InputTokens, CacheWriteCount: value.CacheWriteRequestCount,
 		})
-		key := channelMonitorAnalyticsGroupItem("success", query.GroupBy, item)
+		if query.Metric == "performance" {
+			item["first_token_sample_count"], item["first_token_total_ms"] = value.FirstTokenSampleCount, value.FirstTokenTotalMs
+			item["tps_sample_count"], item["tps_output_tokens"] = value.TPSSampleCount, value.TPSOutputTokens
+			item["tps_generation_duration_ms"] = value.TPSGenerationDurationMs
+			if err := mergeChannelMonitorPerformanceMeasurements(item, nil); err != nil {
+				return channelMonitorAnalyticsResponse{}, err
+			}
+		}
+		key := channelMonitorAnalyticsGroupItem(query.Metric, query.GroupBy, item)
 		if previous := groups[key]; previous != nil {
-			if err := channelMonitorAnalyticsMergeValues("success", previous, item); err != nil {
+			if err := channelMonitorAnalyticsMergeValues(query.Metric, previous, item); err != nil {
 				return channelMonitorAnalyticsResponse{}, err
 			}
 		} else {
 			groups[key] = item
 		}
-		if err := channelMonitorAnalyticsMergeValues("success", summary, item); err != nil {
+		if err := channelMonitorAnalyticsMergeValues(query.Metric, summary, item); err != nil {
 			return channelMonitorAnalyticsResponse{}, err
 		}
 	}

@@ -165,8 +165,8 @@ func parseChannelMonitorAnalyticsQuery(c *gin.Context) (channelMonitorAnalyticsQ
 		Page:      1,
 		PageSize:  50,
 	}
-	if query.Metric != "success" && query.Metric != "cost" {
-		return query, &channelMonitorAnalyticsQueryError{"metric 必须为 success 或 cost"}
+	if query.Metric != "success" && query.Metric != "cost" && query.Metric != "performance" {
+		return query, &channelMonitorAnalyticsQueryError{"metric 必须为 success、cost 或 performance"}
 	}
 	defaultSort := "samples"
 	if query.Metric == "cost" {
@@ -214,9 +214,12 @@ func parseChannelMonitorAnalyticsQuery(c *gin.Context) (channelMonitorAnalyticsQ
 		if err != nil || query.Minutes < minChannelMonitorPerformanceMinutes || query.Minutes > maxChannelMonitorPerformanceMinutes {
 			return query, &channelMonitorAnalyticsQueryError{"性能与成功率统计范围必须在 1 到 1440 分钟之间"}
 		}
-		if query.Metric != "success" || query.GroupBy == "day" || query.From != 0 || query.To != 0 {
-			return query, &channelMonitorAnalyticsQueryError{"分钟统计仅支持成功率明细，不能同时指定日期范围或按日分组"}
+		if query.Metric == "cost" || query.GroupBy == "day" || query.From != 0 || query.To != 0 {
+			return query, &channelMonitorAnalyticsQueryError{"分钟统计仅支持成功率和性能明细，不能同时指定日期范围或按日分组"}
 		}
+	}
+	if query.Metric == "performance" && (query.Minutes == 0 || query.SuccessMode != "actual") {
+		return query, &channelMonitorAnalyticsQueryError{"性能明细需要指定分钟范围，并按上游尝试统计"}
 	}
 	if query.SuccessMode != "actual" && query.SuccessMode != "final" {
 		return query, &channelMonitorAnalyticsQueryError{"成功率口径必须为 actual 或 final"}
@@ -261,6 +264,14 @@ func channelMonitorAnalyticsGroupByAllowed(groupBy string) bool {
 }
 
 func channelMonitorAnalyticsSortAllowed(metric, sortKey string) bool {
+	if metric == "performance" {
+		switch sortKey {
+		case "samples", "first_token", "tps", "output_tokens":
+			return true
+		default:
+			return false
+		}
+	}
 	if metric == "cost" {
 		switch sortKey {
 		case "cost", "settled", "unresolved", "resolution_rate":

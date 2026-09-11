@@ -47,6 +47,7 @@ import type {
   ChannelMonitorPerformanceMetric,
   ChannelMonitorSuccessMetric,
 } from '../types'
+import { ChannelMonitorPerformanceDetailButton } from './channel-monitor-performance-detail-button'
 import {
   ChannelMonitorFirstTokenValue,
   ChannelMonitorTPSValue,
@@ -66,6 +67,10 @@ type ChannelMonitorModelPerformanceViewProps = {
   isLoading: boolean
   isError: boolean
   onOpenSuccessDetail: (channel: ChannelMonitorItem, modelName: string) => void
+  onOpenPerformanceDetail: (
+    channel: ChannelMonitorItem,
+    modelName: string
+  ) => void
 }
 
 export function ChannelMonitorModelPerformanceView(
@@ -242,14 +247,36 @@ export function ChannelMonitorModelPerformanceView(
                     </span>
                   </TableCell>
                   <TableCell>
-                    <ChannelMonitorFirstTokenValue
-                      value={row.metric?.average_first_token_ms ?? null}
-                    />
+                    <ChannelMonitorPerformanceDetailButton
+                      label={`查看 ${row.channel.name} 的 ${props.selectedModel} 首字性能明细`}
+                      onClick={() =>
+                        props.onOpenPerformanceDetail(
+                          row.channel,
+                          props.selectedModel
+                        )
+                      }
+                      disabled={!row.metric}
+                    >
+                      <ChannelMonitorFirstTokenValue
+                        value={row.metric?.average_first_token_ms ?? null}
+                      />
+                    </ChannelMonitorPerformanceDetailButton>
                   </TableCell>
                   <TableCell>
-                    <ChannelMonitorTPSValue
-                      value={row.metric?.average_tps ?? null}
-                    />
+                    <ChannelMonitorPerformanceDetailButton
+                      label={`查看 ${row.channel.name} 的 ${props.selectedModel} TPS 性能明细`}
+                      onClick={() =>
+                        props.onOpenPerformanceDetail(
+                          row.channel,
+                          props.selectedModel
+                        )
+                      }
+                      disabled={!row.metric}
+                    >
+                      <ChannelMonitorTPSValue
+                        value={row.metric?.average_tps ?? null}
+                      />
+                    </ChannelMonitorPerformanceDetailButton>
                   </TableCell>
                   <TableCell>
                     <ChannelMonitorSuccessRateValue

@@ -10,7 +10,7 @@ import (
 
 // Read disjoint API-key contributions together with their enclosing totals,
 // so keyless attempts remain visible as unattributed rows in drill-downs.
-func QueryChannelMonitorRedisMinuteAnalytics(ctx context.Context, startAt, endAt int64, filter model.ChannelMonitorSuccessFilter) (ChannelMonitorRedisSharedProjectionView, error) {
+func QueryChannelMonitorRedisMinuteAnalytics(ctx context.Context, startAt, endAt int64, filter model.ChannelMonitorSuccessFilter, includeFailures bool) (ChannelMonitorRedisSharedProjectionView, error) {
 	projection, err := NewChannelMonitorRedisSharedProjection()
 	if err != nil {
 		return ChannelMonitorRedisSharedProjectionView{}, err
@@ -26,7 +26,9 @@ func QueryChannelMonitorRedisMinuteAnalytics(ctx context.Context, startAt, endAt
 	patterns := []string{
 		channelMonitorRedisSharedScopeMetadata + ":*",
 		fmt.Sprintf("%s:*.%s.*.%s:*", channelMonitorRedisSharedScopeAPIKeyRoute, channelIdentity, groupIdentity),
-		fmt.Sprintf("%s:%s.*.%s.*.*.*:*", channelMonitorRedisSharedScopeFailure, channelIdentity, groupIdentity),
+	}
+	if includeFailures {
+		patterns = append(patterns, fmt.Sprintf("%s:%s.*.%s.*.*.*:*", channelMonitorRedisSharedScopeFailure, channelIdentity, groupIdentity))
 	}
 	if filter.Group == "" {
 		patterns = append(patterns, fmt.Sprintf("%s:%s.*:*", channelMonitorRedisSharedScopeRoute, channelIdentity))

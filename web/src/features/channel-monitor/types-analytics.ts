@@ -3,7 +3,7 @@ import type {
   ChannelMonitorSuccessMode,
 } from './types'
 
-export type ChannelMonitorAnalyticsMetric = 'success' | 'cost'
+export type ChannelMonitorAnalyticsMetric = 'success' | 'cost' | 'performance'
 export type ChannelMonitorAnalyticsSort =
   | 'samples'
   | 'success'
@@ -16,6 +16,9 @@ export type ChannelMonitorAnalyticsSort =
   | 'settled'
   | 'unresolved'
   | 'resolution_rate'
+  | 'first_token'
+  | 'tps'
+  | 'output_tokens'
 export type ChannelMonitorAnalyticsChannel = {
   name: string
   remark?: string | null
@@ -67,6 +70,12 @@ export type ChannelMonitorAnalyticsSummary = {
   input_tokens: number
   cache_utilization_rate: number
   cache_write_request_count: number
+  first_token_sample_count?: number
+  average_first_token_ms?: number | null
+  tps_sample_count?: number
+  average_tps?: number | null
+  tps_output_tokens?: number
+  tps_generation_duration_ms?: number
   cost_nano_cny?: number
   settled_count?: number
   unresolved_count?: number

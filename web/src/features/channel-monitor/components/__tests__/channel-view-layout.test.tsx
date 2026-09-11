@@ -217,6 +217,7 @@ function renderView(
         onViewHistory={noop}
         onOpenCostHistory={noop}
         onOpenSuccessDetail={noop}
+        onOpenPerformanceDetail={noop}
         fetchingBalanceChannelId={null}
         fetchingRatioChannelId={null}
         updatingStatusChannelId={null}
@@ -615,6 +616,7 @@ describe('channel monitor channel view timestamps', () => {
           onViewHistory={noop}
           onOpenCostHistory={noop}
           onOpenSuccessDetail={noop}
+          onOpenPerformanceDetail={noop}
           fetchingBalanceChannelId={null}
           fetchingRatioChannelId={null}
           updatingStatusChannelId={null}

@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"math"
 	"sort"
 
 	"github.com/QuantumNous/new-api/common"
@@ -21,7 +22,7 @@ func queryChannelMonitorMinuteAnalytics(ctx context.Context, query channelMonito
 	if err != nil {
 		return channelMonitorAnalyticsResponse{}, err
 	}
-	shared, err := service.QueryChannelMonitorRedisMinuteAnalytics(ctx, query.From, now+1, model.ChannelMonitorSuccessFilter{ChannelId: query.Channel, Group: query.Group})
+	shared, err := service.QueryChannelMonitorRedisMinuteAnalytics(ctx, query.From, now+1, model.ChannelMonitorSuccessFilter{ChannelId: query.Channel, Group: query.Group}, query.Metric == "success")
 	if err != nil {
 		return channelMonitorAnalyticsResponse{}, err
 	}
@@ -37,7 +38,7 @@ func queryChannelMonitorMinuteAnalytics(ctx context.Context, query channelMonito
 	if err != nil {
 		return channelMonitorAnalyticsResponse{}, err
 	}
-	facts, err := channelMonitorMinuteAnalyticsFacts(shared, query.Group, owners)
+	facts, err := channelMonitorMinuteAnalyticsFacts(shared, query.Group, owners, query.Metric == "performance")
 	if err != nil {
 		return channelMonitorAnalyticsResponse{}, err
 	}
@@ -51,7 +52,7 @@ func queryChannelMonitorMinuteAnalytics(ctx context.Context, query channelMonito
 	response.RangeMinutes, response.WindowStart, response.WindowEnd = query.Minutes, shared.WindowStart, shared.WindowEnd
 	// Failure categories are channel/model totals; they have no user or key
 	// attribution and must not be shown as a filtered user's error counts.
-	if query.Channel > 0 && !query.hasUserFilter() && !query.hasAPIKeyFilter() && query.APIKeyKey == nil && query.Search == "" {
+	if query.Metric == "success" && query.Channel > 0 && !query.hasUserFilter() && !query.hasAPIKeyFilter() && query.APIKeyKey == nil && query.Search == "" {
 		type failureIdentity struct {
 			channel, status int
 			errorType, code string
@@ -100,7 +101,7 @@ func queryChannelMonitorMinuteAnalytics(ctx context.Context, query channelMonito
 	return response, nil
 }
 
-func channelMonitorMinuteAnalyticsFacts(shared service.ChannelMonitorRedisSharedProjectionView, group string, owners map[int]channelMonitorCostAPIKeyOwner) ([]service.ChannelMonitorRedisDailySuccessAnalyticsRow, error) {
+func channelMonitorMinuteAnalyticsFacts(shared service.ChannelMonitorRedisSharedProjectionView, group string, owners map[int]channelMonitorCostAPIKeyOwner, performance bool) ([]service.ChannelMonitorRedisDailySuccessAnalyticsRow, error) {
 	type route struct {
 		channel int
 		model   string
@@ -122,7 +123,7 @@ func channelMonitorMinuteAnalyticsFacts(shared service.ChannelMonitorRedisShared
 			key.model = ""
 		}
 		total := remaining[key]
-		if err := subtractChannelMonitorMinuteAnalyticsCounts(&total, scope.ChannelMonitorRedisSharedAggregate); err != nil {
+		if err := subtractChannelMonitorMinuteAnalyticsCounts(&total, scope.ChannelMonitorRedisSharedAggregate, performance); err != nil {
 			return nil, err
 		}
 		remaining[key] = total
@@ -152,17 +153,35 @@ func channelMonitorMinuteAnalyticsFacts(shared service.ChannelMonitorRedisShared
 	return facts, nil
 }
 
-func subtractChannelMonitorMinuteAnalyticsCounts(total *service.ChannelMonitorRedisSharedAggregate, part service.ChannelMonitorRedisSharedAggregate) error {
-	for _, counter := range []struct {
+func subtractChannelMonitorMinuteAnalyticsCounts(total *service.ChannelMonitorRedisSharedAggregate, part service.ChannelMonitorRedisSharedAggregate, performance bool) error {
+	type counterDelta struct {
 		total *int64
 		part  int64
-	}{
+	}
+	counters := []counterDelta{
 		{&total.ActualSuccessCount, part.ActualSuccessCount}, {&total.ActualFailureCount, part.ActualFailureCount},
 		{&total.FinalSuccessCount, part.FinalSuccessCount}, {&total.FinalFailureCount, part.FinalFailureCount},
 		{&total.CacheHitCount, part.CacheHitCount}, {&total.CacheSampleCount, part.CacheSampleCount},
 		{&total.CacheReadTokens, part.CacheReadTokens}, {&total.InputTokens, part.InputTokens},
 		{&total.CacheWriteRequestCount, part.CacheWriteRequestCount},
-	} {
+	}
+	if performance {
+		counters = append(counters,
+			counterDelta{&total.FirstTokenSampleCount, part.FirstTokenSampleCount},
+			counterDelta{&total.TPSSampleCount, part.TPSSampleCount},
+			counterDelta{&total.TPSOutputTokens, part.TPSOutputTokens},
+			counterDelta{&total.TPSGenerationDurationMs, part.TPSGenerationDurationMs},
+		)
+		remaining := total.FirstTokenTotalMs - part.FirstTokenTotalMs
+		// Independent Redis sums can differ slightly due to floating-point
+		// rounding. Only clamp that rounding noise in the unattributed residue.
+		tolerance := 1e-9 * math.Max(total.FirstTokenTotalMs, part.FirstTokenTotalMs)
+		if remaining < -tolerance || math.IsNaN(remaining) || math.IsInf(remaining, 0) {
+			return errors.New("分钟统计首字延迟明细与渠道总数不一致，请刷新后重试")
+		}
+		total.FirstTokenTotalMs = math.Max(0, remaining)
+	}
+	for _, counter := range counters {
 		if counter.part < 0 || *counter.total < counter.part {
 			return errors.New("分钟统计明细与渠道总数不一致，请刷新后重试")
 		}
