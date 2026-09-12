@@ -37,6 +37,7 @@ func channelSmartScheduleTestGroupPolicy(
 	explorationMaxPromptTokens := model.DefaultChannelSmartScheduleExplorationMaxPromptTokens
 	stabilityReleaseMaxPromptTokens := model.DefaultChannelSmartScheduleStabilityReleaseMaxPromptTokens
 	probeIntervalMinutes := 10
+	degradedProbeEnabled := false
 	adaptiveSamplingEnabled := applyMode == channelMonitorSmartScheduleApplyPriorityWeight
 	adaptiveSamplingBasePercent := 3.0
 	adaptiveSamplingMaxPercent := 30.0
@@ -94,6 +95,7 @@ func channelSmartScheduleTestGroupPolicy(
 		ExplorationMaxPromptTokens:                      &explorationMaxPromptTokens,
 		StabilityReleaseMaxPromptTokens:                 &stabilityReleaseMaxPromptTokens,
 		ProbeIntervalMinutes:                            &probeIntervalMinutes,
+		DegradedProbeEnabled:                            &degradedProbeEnabled,
 		AdaptiveSamplingEnabled:                         &adaptiveSamplingEnabled,
 		AdaptiveSamplingBasePercent:                     &adaptiveSamplingBasePercent,
 		AdaptiveSamplingMaxPercent:                      &adaptiveSamplingMaxPercent,
@@ -413,19 +415,33 @@ func TestNormalizeChannelSmartScheduleGroupPolicyPreservesWarningRecoveryHystere
 	assert.Contains(t, err.Error(), "必须保留滞回区间")
 }
 
-func TestNormalizeChannelSmartScheduleGroupPolicyDefaultsDegradedProbeDisabled(t *testing.T) {
-	policy := channelSmartScheduleTestGroupPolicy(
-		"vip", channelMonitorSmartScheduleStrategySmart, true,
-		channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
-	)
-	policy.DegradedProbeEnabled = nil
+func TestNormalizeChannelSmartScheduleGroupPolicyDefaultsDegradedProbeEnabled(t *testing.T) {
+	enabled, disabled := true, false
+	for _, test := range []struct {
+		name       string
+		configured *bool
+		want       bool
+	}{
+		{name: "omitted enables probes", want: true},
+		{name: "explicit enabled is preserved", configured: &enabled, want: true},
+		{name: "explicit disabled is preserved", configured: &disabled, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			policy := channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategySmart, true,
+				channelMonitorSmartScheduleApplyPriorityWeight, nil, 5, 80, 30,
+			)
+			policy.DegradedProbeEnabled = test.configured
+			assert.Equal(t, test.want, policy.policy().DegradedProbeEnabled)
 
-	normalized, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
-	require.NoError(t, err)
-	require.Len(t, normalized, 1)
-	require.NotNil(t, normalized[0].DegradedProbeEnabled)
-	assert.False(t, *normalized[0].DegradedProbeEnabled)
-	assert.False(t, normalized[0].policy().DegradedProbeEnabled)
+			normalized, err := normalizeChannelSmartScheduleGroupPolicies([]channelSmartScheduleGroupPolicy{policy})
+			require.NoError(t, err)
+			require.Len(t, normalized, 1)
+			require.NotNil(t, normalized[0].DegradedProbeEnabled)
+			assert.Equal(t, test.want, *normalized[0].DegradedProbeEnabled)
+			assert.Equal(t, test.want, normalized[0].policy().DegradedProbeEnabled)
+		})
+	}
 }
 
 func channelSmartScheduleTestGroupPoliciesJSON(t *testing.T, policies ...channelSmartScheduleGroupPolicy) string {

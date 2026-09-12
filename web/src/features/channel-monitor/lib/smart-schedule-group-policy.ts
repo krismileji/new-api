@@ -166,7 +166,9 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
             policy.stability_release_max_prompt_tokens
           ),
     probeIntervalMinutes: policy.probe_interval_minutes,
-    degradedProbeEnabled: policy.degraded_probe_enabled ?? false,
+    degradedProbeEnabled:
+      policy.degraded_probe_enabled ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.degradedProbeEnabled,
     adaptiveSamplingEnabled: policy.adaptive_sampling_enabled,
     adaptiveSamplingBasePercent: policy.adaptive_sampling_base_percent,
     adaptiveSamplingMaxPercent: policy.adaptive_sampling_max_percent,

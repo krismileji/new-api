@@ -213,13 +213,13 @@ describe('smart schedule group policy', () => {
 
     assert.equal(formPolicies[0]?.stabilityEnabled, false)
     assert.equal(formPolicies[0]?.stabilityWindowMinutes, 15)
-    assert.equal(formPolicies[0]?.degradedProbeEnabled, false)
+    assert.equal(formPolicies[0]?.degradedProbeEnabled, true)
     assert.deepEqual(formPolicies[0]?.models, [])
     assert.deepEqual(formPolicies[0]?.modelOrder, ['model-c', 'model-a'])
     assert.equal(apiPolicies[0]?.strategy, 'smart')
     assert.equal(apiPolicies[0]?.stability_enabled, false)
     assert.equal(apiPolicies[0]?.stability_window_minutes, 15)
-    assert.equal(apiPolicies[0]?.degraded_probe_enabled, false)
+    assert.equal(apiPolicies[0]?.degraded_probe_enabled, true)
     assert.deepEqual(apiPolicies[0]?.model_order, ['model-c', 'model-a'])
     assert.equal(formPolicies[0]?.jitterEnabled, true)
     assert.equal(formPolicies[0]?.jitterTolerancePercent, 5)
@@ -284,6 +284,7 @@ describe('smart schedule group policy', () => {
     assert.ok(currentApiPolicy)
     const legacyApiPolicy = {
       ...currentApiPolicy,
+      degraded_probe_enabled: false,
       burst_failure_window_seconds: 45,
       burst_failure_threshold: 6,
       adaptive_sampling_window_seconds: 601,
@@ -297,6 +298,7 @@ describe('smart schedule group policy', () => {
     const [legacyFormPolicy] = channelMonitorSmartScheduleGroupPoliciesToForm([
       legacyApiPolicy,
     ])
+    assert.equal(legacyFormPolicy?.degradedProbeEnabled, false)
     assert.equal(legacyFormPolicy?.burstFailureWindowMinutes, 1)
     assert.equal(legacyFormPolicy?.burstFailureWindowRequests, 100)
     assert.equal(legacyFormPolicy?.burstFailureThresholdPercent, 6)
@@ -305,6 +307,16 @@ describe('smart schedule group policy', () => {
   })
 
   test('uses a complete editor template without creating a runtime policy', () => {
+    const [apiPolicy] = channelMonitorSmartScheduleGroupPoliciesToApi([
+      createChannelMonitorSmartScheduleGroupPolicy(
+        'vip',
+        CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE
+      ),
+    ])
+    assert.equal(apiPolicy?.adaptive_sampling_base_percent, 10)
+    assert.equal(apiPolicy?.fast_failure_penalty_percent, 20)
+    assert.equal(apiPolicy?.degraded_probe_enabled, true)
+
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.strategy,
       'smart'
@@ -352,10 +364,6 @@ describe('smart schedule group policy', () => {
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.scoring
         .primarySwitchThresholdPercent,
       10
-    )
-    assert.equal(
-      CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.fastFailurePenaltyPercent,
-      40
     )
     assert.equal(
       CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_TEMPLATE.fastFailureSeconds,

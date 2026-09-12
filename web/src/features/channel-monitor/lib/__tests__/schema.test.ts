@@ -201,7 +201,7 @@ describe('smart schedule policy schema', () => {
 
     assert.equal(result.success, true)
     if (!result.success) return
-    assert.equal(result.data.degradedProbeEnabled, false)
+    assert.equal(result.data.degradedProbeEnabled, true)
     assert.equal(result.data.scoring.stabilityPercent, 50)
   })
 
@@ -232,6 +232,11 @@ describe('smart schedule policy schema', () => {
       { ...basePolicy, stabilityReleaseMaxPromptKTokens: '' },
       { ...basePolicy, probeIntervalMinutes: '', sampleMode: 'probe' },
       { ...basePolicy, degradedProbeEnabled: true, probeIntervalMinutes: '' },
+      {
+        ...basePolicy,
+        degradedProbeEnabled: undefined,
+        probeIntervalMinutes: '',
+      },
       { ...basePolicy, minSamples: '' },
       { ...basePolicy, fastFailureSameChannelRetryCount: '' },
       { ...basePolicy, fastFailureSameChannelRetryDelayMs: '' },

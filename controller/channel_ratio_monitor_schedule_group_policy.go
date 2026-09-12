@@ -335,7 +335,7 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			policy.StabilityReleaseMaxPromptTokens = &value
 		}
 		if policy.DegradedProbeEnabled == nil {
-			value := false
+			value := true
 			policy.DegradedProbeEnabled = &value
 		}
 		if policy.AdaptiveSamplingWindowMinutes == nil {
@@ -628,7 +628,7 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 	if configured.RecoverySuccessThreshold != nil {
 		recoverySuccessThreshold = *configured.RecoverySuccessThreshold
 	}
-	degradedProbeEnabled := false
+	degradedProbeEnabled := true
 	if configured.DegradedProbeEnabled != nil {
 		degradedProbeEnabled = *configured.DegradedProbeEnabled
 	}

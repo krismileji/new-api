@@ -563,7 +563,11 @@ const smartSchedulePolicyShape = {
   stabilityReleaseMaxPromptKTokens:
     smartScheduleStabilityReleasePromptKTokensSchema,
   probeIntervalMinutes: smartScheduleProbeIntervalSchema,
-  degradedProbeEnabled: z.boolean().default(false),
+  degradedProbeEnabled: z
+    .boolean()
+    .default(
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.degradedProbeEnabled
+    ),
   adaptiveSamplingEnabled: z.boolean(),
   adaptiveSamplingBasePercent: smartScheduleAdaptiveSamplingPercentSchema(
     0,
@@ -613,7 +617,10 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
   }
   if (
     policy.sampleMode !== 'probe' &&
-    !(policy.stabilityEnabled === true && policy.degradedProbeEnabled === true)
+    !(
+      policy.stabilityEnabled === true &&
+      (policy.degradedProbeEnabled ?? defaults.degradedProbeEnabled) === true
+    )
   ) {
     normalized.probeIntervalMinutes = defaults.probeIntervalMinutes
   }
