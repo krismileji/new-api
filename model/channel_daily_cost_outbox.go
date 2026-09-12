@@ -60,7 +60,9 @@ type ChannelDailyCostOutbox struct {
 type ChannelDailyCostOutboxStats struct {
 	PendingCount  int64
 	OldestPending int64
-	RetryCount    int64
+	// RetryCount counts failed or expired attempts on pending rows, excluding
+	// the current attempt while its processing lease is still valid.
+	RetryCount int64
 }
 
 func StoreChannelDailyCostOutboxEvents(ctx context.Context, deltas []ChannelDailyCostDelta) error {
@@ -303,15 +305,16 @@ func GetChannelDailyCostOutboxStats(ctx context.Context) (ChannelDailyCostOutbox
 	if DB == nil {
 		return stats, errors.New("channel daily cost outbox database is unavailable")
 	}
+	now := time.Now().Unix()
 	rows, err := DB.WithContext(ctx).Model(&ChannelDailyCostOutbox{}).
-		Select("created_at, attempt_count").Where("processed_at = ?", 0).Rows()
+		Select("created_at, attempt_count, lease_until").Where("processed_at = ?", 0).Rows()
 	if err != nil {
 		return stats, err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var createdAt, attemptCount int64
-		if err := rows.Scan(&createdAt, &attemptCount); err != nil {
+		var createdAt, attemptCount, leaseUntil int64
+		if err := rows.Scan(&createdAt, &attemptCount, &leaseUntil); err != nil {
 			return stats, err
 		}
 		if stats.PendingCount < math.MaxInt64 {
@@ -319,6 +322,12 @@ func GetChannelDailyCostOutboxStats(ctx context.Context) (ChannelDailyCostOutbox
 		}
 		if createdAt > 0 && (stats.OldestPending == 0 || createdAt < stats.OldestPending) {
 			stats.OldestPending = createdAt
+		}
+		// Claiming increments AttemptCount before the ledger write starts.
+		// A first attempt under a valid lease is normal batch processing;
+		// released or expired attempts still require retry and remain visible.
+		if attemptCount > 0 && leaseUntil > now {
+			attemptCount--
 		}
 		if attemptCount > 0 && stats.RetryCount <= math.MaxInt64-attemptCount {
 			stats.RetryCount += attemptCount

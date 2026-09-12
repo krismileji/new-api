@@ -147,6 +147,39 @@ func TestChannelMonitorRecoveryCostBacklogIsIndependentOfMonitorProgress(t *test
 	assert.Contains(t, state.Snapshot.DegradedReasons, ChannelMonitorRedisDegradedReasonCostStreamBacklog)
 }
 
+func TestChannelMonitorRecoveryHistoricalGapsDoNotEscalateNewBacklog(t *testing.T) {
+	for _, reason := range []string{"events_quarantined", ChannelMonitorRedisDegradedReasonCostDeadLetter} {
+		t.Run(reason, func(t *testing.T) {
+			input := monitoringRecoveryFixture(100)
+			if reason == "events_quarantined" {
+				input.Realtime.QuarantineCount = 10
+			} else {
+				input.Realtime.CostDeadLetterCount = 10
+			}
+			state := deriveChannelMonitorRecovery(input, channelMonitorRecoveryState{})
+			require.Equal(t, "data_incomplete", state.Snapshot.RecoveryStatus)
+
+			input.Now = 110
+			input.Realtime.PendingCount = 2
+			input.Realtime.ConsumerLagSeconds = 40
+			state = deriveChannelMonitorRecovery(input, state)
+			require.Equal(t, ChannelMonitorHealthDegraded, state.Snapshot.Status)
+			assert.Equal(t, "retrying", state.Snapshot.RecoveryStatus)
+			assert.Contains(t, state.Snapshot.DataGapReasons, reason)
+
+			input.Now = 120
+			input.Realtime.PendingCount = 1
+			state = deriveChannelMonitorRecovery(input, state)
+			assert.Equal(t, "recovering", state.Snapshot.RecoveryStatus)
+			assert.Contains(t, state.Snapshot.DataGapReasons, reason)
+
+			input.Now = 410
+			state = deriveChannelMonitorRecovery(input, state)
+			assert.Equal(t, "manual_required", state.Snapshot.RecoveryStatus, "persistent current backlog still requires attention")
+		})
+	}
+}
+
 func TestBuildChannelMonitorRecoveryEmailDoesNotPromiseHistoricalRepair(t *testing.T) {
 	snapshot := ChannelMonitorRecovery{NodeID: "<node>", DataGapReasons: []string{"samples_dropped"}}
 	subject, body := BuildChannelMonitorRecoveryEmail(snapshot, "recovery", time.Unix(100, 0))

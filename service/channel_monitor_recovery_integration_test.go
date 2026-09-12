@@ -72,10 +72,13 @@ func TestChannelMonitorHealthObservationDatabaseMatrix(t *testing.T) {
 			}
 			t.Logf("database version: %s", version)
 			previousDB := model.DB
+			previousDatabaseType := common.MainDatabaseType()
 			model.DB = db
+			common.SetMainDatabaseType(common.DatabaseType(engine))
 			t.Cleanup(func() {
 				require.NoError(t, db.Migrator().DropTable(&model.ChannelMonitorEventOutbox{}, &model.ChannelDailyCostOutbox{}))
 				model.DB = previousDB
+				common.SetMainDatabaseType(previousDatabaseType)
 				sqlDB, err := db.DB()
 				require.NoError(t, err)
 				require.NoError(t, sqlDB.Close())
@@ -108,6 +111,42 @@ func TestChannelMonitorHealthObservationDatabaseMatrix(t *testing.T) {
 			require.True(t, input.ObservationComplete)
 			state := deriveChannelMonitorRecovery(input, channelMonitorRecoveryState{})
 			assert.Equal(t, ChannelMonitorHealthHealthy, state.Snapshot.Status)
+
+			costRow := model.ChannelDailyCostOutbox{EventId: common.GetUUID(), ChannelId: 1, OccurredAt: time.Now().Unix(), CreatedAt: time.Now().Unix() - 60}
+			require.NoError(t, db.Create(&costRow).Error)
+			now := time.Now().Unix()
+			claimed, err := model.ClaimChannelDailyCostOutboxEvents(t.Context(), "health-worker", now, now, time.Minute, 1)
+			require.NoError(t, err)
+			require.Len(t, claimed, 1)
+			input = runtime.observeMonitoringHealth(t.Context(), "node-test")
+			require.True(t, input.ObservationComplete)
+			assert.Zero(t, input.Realtime.CostOutboxRetryCount, "a first active lease is normal minute batching")
+			assert.NotContains(t, input.ExtraReasons, ChannelMonitorRedisDegradedReasonCostOutboxBacklog)
+			assert.Equal(t, ChannelMonitorHealthHealthy, deriveChannelMonitorRecovery(input, state).Snapshot.Status)
+
+			require.NoError(t, db.Model(&costRow).Update("created_at", now-121).Error)
+			input = runtime.observeMonitoringHealth(t.Context(), "node-test")
+			require.True(t, input.ObservationComplete)
+			assert.Zero(t, input.Realtime.CostOutboxRetryCount)
+			assert.Contains(t, input.ExtraReasons, ChannelMonitorRedisDegradedReasonCostOutboxBacklog, "a valid first lease must not hide overdue persistence")
+			require.NoError(t, db.Model(&costRow).Update("created_at", now-60).Error)
+
+			require.NoError(t, model.FailClaimedChannelDailyCostOutboxEvents(t.Context(), "health-worker", []int64{costRow.Id}, now, assert.AnError))
+			input = runtime.observeMonitoringHealth(t.Context(), "node-test")
+			require.True(t, input.ObservationComplete)
+			assert.Equal(t, int64(1), input.Realtime.CostOutboxRetryCount)
+			assert.Contains(t, input.ExtraReasons, ChannelMonitorRedisDegradedReasonCostOutboxBacklog, "real failure remains visible immediately")
+			assert.Equal(t, ChannelMonitorHealthDegraded, deriveChannelMonitorRecovery(input, state).Snapshot.Status)
+
+			claimed, err = model.ClaimChannelDailyCostOutboxEvents(t.Context(), "health-retry-worker", now, now, time.Minute, 1)
+			require.NoError(t, err)
+			require.Len(t, claimed, 1)
+			input = runtime.observeMonitoringHealth(t.Context(), "node-test")
+			require.True(t, input.ObservationComplete)
+			assert.Equal(t, int64(1), input.Realtime.CostOutboxRetryCount)
+			assert.Contains(t, input.ExtraReasons, ChannelMonitorRedisDegradedReasonCostOutboxBacklog, "an active retry must not erase the previous failure")
+			require.NoError(t, db.Delete(&costRow).Error)
+
 			row := model.ChannelMonitorEventOutbox{EventId: common.GetUUID(), Payload: "{}", CreatedAt: time.Now().Unix() - 180}
 			require.NoError(t, db.Create(&row).Error)
 			t.Cleanup(func() { _ = db.Delete(&model.ChannelMonitorEventOutbox{}, row.Id).Error })

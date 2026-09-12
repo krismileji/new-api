@@ -156,7 +156,9 @@ func deriveChannelMonitorRecovery(input channelMonitorRecoveryInput, previous ch
 		state.Snapshot.RecoveryStatus = "retrying"
 		state.Snapshot.Message = "监控异常，等待后台重试"
 		state.Snapshot.Action = "若持续出现，请检查 Redis、监控后台任务和数据库连接。"
-		if !input.ObservationComplete || !input.WriterRunning || !input.CostWorkerRunning || input.Now-health.FirstDegradedAt >= channelMonitorRecoveryAttentionSeconds || len(gaps) > 0 && (raw.QuarantineCount > 0 || raw.CostDeadLetterCount > 0) {
+		// Historical quarantine totals belong to DataGapReasons; they do not
+		// establish that a new runtime delay needs manual intervention.
+		if !input.ObservationComplete || !input.WriterRunning || !input.CostWorkerRunning || input.Now-health.FirstDegradedAt >= channelMonitorRecoveryAttentionSeconds {
 			state.Snapshot.RecoveryStatus = "manual_required"
 			state.Snapshot.Message = "需要人工处理"
 		} else if input.ObservationComplete && raw.RedisAvailable && raw.RedisConsumerRunning && progress && pending > 0 {

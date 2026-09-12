@@ -227,6 +227,47 @@ func TestChannelDailyCostOutboxStatsSaturateRetryGauge(t *testing.T) {
 	assert.Equal(t, int64(10), stats.OldestPending)
 }
 
+func TestChannelDailyCostOutboxStatsDistinguishProcessingFromRetry(t *testing.T) {
+	now := time.Now().Unix()
+	for _, test := range []struct {
+		name        string
+		attempts    int64
+		leaseUntil  int64
+		processedAt int64
+		wantPending int64
+		wantRetries int64
+	}{
+		{name: "waiting for minute batch", wantPending: 1},
+		{name: "first attempt in progress", attempts: 1, leaseUntil: now + 3600, wantPending: 1},
+		{name: "first attempt failed", attempts: 1, wantPending: 1, wantRetries: 1},
+		{name: "retry in progress preserves previous failure", attempts: 2, leaseUntil: now + 3600, wantPending: 1, wantRetries: 1},
+		{name: "abandoned first attempt", attempts: 1, leaseUntil: now - 1, wantPending: 1, wantRetries: 1},
+		{name: "completed retry", attempts: 2, processedAt: now},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := setupChannelDailyCostOutboxTestDB(t)
+			row := ChannelDailyCostOutbox{
+				EventId: "processing-retry-stats", ChannelId: 1, OccurredAt: now,
+				CreatedAt: now - 60, AttemptCount: test.attempts,
+				LeaseUntil: test.leaseUntil, ProcessedAt: test.processedAt,
+			}
+			if test.leaseUntil > 0 {
+				row.LeaseOwner = "stats-worker"
+			}
+			require.NoError(t, db.Create(&row).Error)
+			stats, err := GetChannelDailyCostOutboxStats(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, test.wantPending, stats.PendingCount)
+			assert.Equal(t, test.wantRetries, stats.RetryCount)
+			if test.wantPending > 0 {
+				assert.Equal(t, row.CreatedAt, stats.OldestPending)
+			} else {
+				assert.Zero(t, stats.OldestPending)
+			}
+		})
+	}
+}
+
 func TestChannelDailyCostOutboxApplyRollsBackWholeBatch(t *testing.T) {
 	db := setupChannelDailyCostOutboxTestDB(t)
 	events := []ChannelDailyCostDelta{
