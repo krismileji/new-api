@@ -70,7 +70,7 @@ export function ChannelMonitorRealtimeStatus(
     {
       label: '处理延迟',
       value: formatMonitorRuntimeCount(metadata?.consumer_lag_seconds, '秒'),
-      warning: (metadata?.consumer_lag_seconds ?? 0) > 0,
+      warning: (metadata?.consumer_lag_seconds ?? 0) >= 30,
     },
     {
       label: '事件待处理',

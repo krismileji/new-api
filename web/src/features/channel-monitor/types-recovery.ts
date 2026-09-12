@@ -27,4 +27,8 @@ export type ChannelMonitorRecovery = {
   action: string
   data_gap_reasons: string[]
   notification_error?: string
+  quarantine_count?: number
+  cost_dead_letter_count?: number
+  cost_publish_failed_count?: number
+  dropped_sample_count?: number
 }

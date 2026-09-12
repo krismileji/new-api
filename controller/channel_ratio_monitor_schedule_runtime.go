@@ -1108,7 +1108,7 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 		(!softRoutingEnabled && !policy.StabilityEnabled) {
 		return false, nil
 	}
-	routes, err := model.GetChannelSmartScheduleRoutePool(poolKey.group, poolKey.model)
+	routes, err := model.GetChannelSmartScheduleRoutePoolForRefresh(ctx, poolKey.group, poolKey.model)
 	if err != nil || len(routes) == 0 {
 		return false, err
 	}
@@ -1126,7 +1126,7 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 			return false, nil
 		}
 	}
-	economicSnapshot, err := model.GetChannelSmartScheduleEconomicSnapshot()
+	economicSnapshot, err := model.GetChannelSmartScheduleEconomicSnapshotForRefresh(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -1796,6 +1796,19 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 		if outcome.Applied && outcome.ObservationSince > 0 {
 			runtimeRecovered = true
 		}
+	}
+	if conflict && redisEventSequence > 0 {
+		// Concurrent configuration changes are recoverable. The next attempt
+		// reloads current persisted state instead of retrying a stale snapshot.
+		reason := "调度写入结果不完整"
+		for _, outcome := range outcomes {
+			if outcome.ConflictReason != "" {
+				reason = outcome.ConflictReason
+				break
+			}
+		}
+		return true, fmt.Errorf("%w: 智能调度池级 Redis 软刷新发生配置冲突: group=%s model=%s detail=%s",
+			service.ErrChannelMonitorRedisRetryable, poolKey.group, poolKey.model, reason)
 	}
 	if !conflict && (routingChanged || trafficStateChanged || redisEventSequence > 0) {
 		if cacheErr := model.RefreshChannelSmartScheduleRoutePoolCache(poolKey.group, poolKey.model); cacheErr != nil {

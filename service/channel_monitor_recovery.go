@@ -15,16 +15,19 @@ const (
 // completeness of previously collected statistics.
 type ChannelMonitorRecovery struct {
 	ChannelMonitorMonitoringHealth
-	NodeID            string   `json:"node_id"`
-	CheckedAt         int64    `json:"checked_at"`
-	RecoveredAt       int64    `json:"recovered_at"`
-	RecoveryStatus    string   `json:"recovery_status"`
-	DataGapReasons    []string `json:"data_gap_reasons"`
-	Message           string   `json:"message"`
-	Action            string   `json:"action"`
-	NotificationError string   `json:"notification_error,omitempty"`
-	RecoveryConfirmed bool     `json:"recovery_confirmed"`
-	LastProgressAt    int64    `json:"last_progress_at"`
+	NodeID                 string   `json:"node_id"`
+	CheckedAt              int64    `json:"checked_at"`
+	RecoveredAt            int64    `json:"recovered_at"`
+	RecoveryStatus         string   `json:"recovery_status"`
+	DataGapReasons         []string `json:"data_gap_reasons"`
+	Message                string   `json:"message"`
+	Action                 string   `json:"action"`
+	NotificationError      string   `json:"notification_error,omitempty"`
+	RecoveryConfirmed      bool     `json:"recovery_confirmed"`
+	LastProgressAt         int64    `json:"last_progress_at"`
+	QuarantineCount        int64    `json:"quarantine_count"`
+	CostDeadLetterCount    int64    `json:"cost_dead_letter_count"`
+	CostPublishFailedCount int64    `json:"cost_publish_failed_count"`
 }
 
 type channelMonitorRecoveryInput struct {
@@ -54,6 +57,7 @@ type channelMonitorRecoveryState struct {
 	PublishFailed          int64
 	BacklogSince           int64
 	ProjectionPendingSince int64
+	EventCountsObserved    bool
 }
 
 func deriveChannelMonitorRecovery(input channelMonitorRecoveryInput, previous channelMonitorRecoveryState) channelMonitorRecoveryState {
@@ -98,6 +102,21 @@ func deriveChannelMonitorRecovery(input channelMonitorRecoveryInput, previous ch
 	if raw.CostPublishFailedCount > previous.PublishFailed {
 		reasons = append(reasons, ChannelMonitorRedisDegradedReasonCostPublishFailure)
 	}
+	quarantined, costDeadLetters := previous.Snapshot.QuarantineCount, previous.Snapshot.CostDeadLetterCount
+	countsObserved := previous.EventCountsObserved
+	newQuarantine := false
+	if input.ObservationComplete && raw.RedisAvailable {
+		quarantined, costDeadLetters = max(0, raw.QuarantineCount), max(0, raw.CostDeadLetterCount)
+		if countsObserved && quarantined > previous.Snapshot.QuarantineCount {
+			reasons = append(reasons, "events_quarantined")
+			newQuarantine = true
+		}
+		if countsObserved && costDeadLetters > previous.Snapshot.CostDeadLetterCount {
+			reasons = append(reasons, ChannelMonitorRedisDegradedReasonCostDeadLetter)
+			newQuarantine = true
+		}
+		countsObserved = true
+	}
 	if input.CostStreamOldest > 0 && input.Now-input.CostStreamOldest >= 30 {
 		reasons = append(reasons, ChannelMonitorRedisDegradedReasonCostStreamBacklog)
 	}
@@ -138,6 +157,8 @@ func deriveChannelMonitorRecovery(input channelMonitorRecoveryInput, previous ch
 	snapshot := ChannelMonitorRecovery{
 		ChannelMonitorMonitoringHealth: health, NodeID: input.NodeID, CheckedAt: input.Now,
 		RecoveredAt: previous.Snapshot.RecoveredAt, DataGapReasons: normalizeChannelMonitorHealthReasons(gaps),
+		QuarantineCount: quarantined, CostDeadLetterCount: costDeadLetters,
+		CostPublishFailedCount: max(0, raw.CostPublishFailedCount),
 	}
 	state := channelMonitorRecoveryState{
 		Health: base, Snapshot: snapshot, HealthySince: previous.HealthySince,
@@ -145,6 +166,7 @@ func deriveChannelMonitorRecovery(input channelMonitorRecoveryInput, previous ch
 		CostLedgerApplied: input.CostLedgerApplied, Dropped: raw.WriterDroppedEvents,
 		PublishFailed: raw.CostPublishFailedCount, BacklogSince: backlogSince,
 		ProjectionPendingSince: projectionSince,
+		EventCountsObserved:    countsObserved,
 	}
 	if progress {
 		state.LastProgressAt = input.Now
@@ -158,9 +180,12 @@ func deriveChannelMonitorRecovery(input channelMonitorRecoveryInput, previous ch
 		state.Snapshot.Action = "若持续出现，请检查 Redis、监控后台任务和数据库连接。"
 		// Historical quarantine totals belong to DataGapReasons; they do not
 		// establish that a new runtime delay needs manual intervention.
-		if !input.ObservationComplete || !input.WriterRunning || !input.CostWorkerRunning || input.Now-health.FirstDegradedAt >= channelMonitorRecoveryAttentionSeconds {
+		if newQuarantine || !input.ObservationComplete || !input.WriterRunning || !input.CostWorkerRunning || input.Now-health.FirstDegradedAt >= channelMonitorRecoveryAttentionSeconds {
 			state.Snapshot.RecoveryStatus = "manual_required"
 			state.Snapshot.Message = "需要人工处理"
+			if newQuarantine {
+				state.Snapshot.Action = "新增事件进入隔离队列，后台无法自动修复；请检查对应隔离原因。"
+			}
 		} else if input.ObservationComplete && raw.RedisAvailable && raw.RedisConsumerRunning && progress && pending > 0 {
 			state.Snapshot.RecoveryStatus = "recovering"
 			state.Snapshot.Message = "正在自动恢复"
@@ -194,7 +219,11 @@ func deriveChannelMonitorRecovery(input channelMonitorRecoveryInput, previous ch
 	if len(state.Snapshot.DataGapReasons) > 0 {
 		state.Snapshot.RecoveryStatus = "data_incomplete"
 		state.Snapshot.Message = "运行正常，部分历史统计不完整"
-		state.Snapshot.Action = "请复核丢弃或隔离记录；运行恢复不代表历史数据已补齐。"
+		state.Snapshot.Action = "当前事件由后台自动处理；历史缺口提示保留，仅在核对相关时段统计时需要复核。"
+		if len(state.Snapshot.DataGapReasons) == 1 && state.Snapshot.DataGapReasons[0] == "events_quarantined" {
+			state.Snapshot.Message = "运行正常，存在历史隔离记录"
+			state.Snapshot.Action = "历史隔离记录已保留，不代表同等数量的请求失败或统计丢失；当前事件由后台自动处理。"
+		}
 	}
 	return state
 }

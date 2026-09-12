@@ -149,10 +149,10 @@ describe('channel monitor realtime status', () => {
     await user.click(screen.getByRole('button', { name: '运行详情' }))
     const dialog = await screen.findByRole('dialog', { name: '监控运行详情' })
     expect(
-      within(dialog).getByRole('group', { name: '历史数据缺口' })
-    ).toHaveTextContent('日统计恢复不完整、存在隔离事件')
+      within(dialog).getByRole('group', { name: '历史记录' })
+    ).toHaveTextContent('日统计恢复不完整、存在历史隔离记录')
     expect(
-      within(dialog).getByRole('group', { name: '异常隔离' })
+      within(dialog).getByRole('group', { name: '异常隔离（累计）' })
     ).toHaveTextContent('252 条')
     expect(
       within(dialog).getByRole('group', { name: '标记清理失败（累计）' })
@@ -341,13 +341,13 @@ describe('channel monitor realtime status', () => {
       within(cost).getByRole('group', { name: '成本异常事件' })
     ).toHaveTextContent('2 条')
     expect(
-      within(history).getByRole('group', { name: '事件处理重试' })
+      within(history).getByRole('group', { name: '事件处理重试（累计）' })
     ).toHaveTextContent('3 次')
     expect(
-      within(history).getByRole('group', { name: '自动接管' })
+      within(history).getByRole('group', { name: '自动接管（累计）' })
     ).toHaveTextContent('2 次')
     expect(
-      within(history).getByRole('group', { name: '异常隔离' })
+      within(history).getByRole('group', { name: '异常隔离（累计）' })
     ).toHaveTextContent('1 条')
     await user.keyboard('{Escape}')
     await waitFor(() =>

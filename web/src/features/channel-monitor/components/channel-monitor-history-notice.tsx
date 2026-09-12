@@ -80,7 +80,20 @@ function ChannelMonitorHistoryAcknowledgment(
         localStorage.getItem(props.storageKey) ?? 'null'
       )
       const parsed = acknowledgmentSchema.safeParse(stored)
-      return parsed.success ? parsed.data : null
+      if (!parsed.success) return null
+      const fingerprint: unknown = JSON.parse(parsed.data.fingerprint)
+      // The previous format included the runtime recovery time. Preserve the
+      // acknowledgment when upgrading; only changes to history should reopen it.
+      if (Array.isArray(fingerprint) && fingerprint.length === 7) {
+        return {
+          ...parsed.data,
+          fingerprint: JSON.stringify([
+            fingerprint[0],
+            ...fingerprint.slice(2),
+          ]),
+        }
+      }
+      return parsed.data
     } catch {
       return null
     }
@@ -94,7 +107,6 @@ function ChannelMonitorHistoryAcknowledgment(
   if (dailyGap) gapReasons.add('daily_replay_incomplete')
   const fingerprint = JSON.stringify([
     [...gapReasons].sort(),
-    props.recovery?.recovered_at,
     metadata?.quarantine_count,
     metadata?.last_quarantined_at,
     metadata?.writer_dropped_events,

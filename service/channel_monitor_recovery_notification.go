@@ -15,12 +15,15 @@ import (
 )
 
 type channelMonitorRecoveryNotice struct {
-	Alerted        bool
-	LastSentAt     int64
-	LastSeverity   ChannelMonitorHealthStatus
-	GapFingerprint string
-	NextAttemptAt  int64
-	Failures       int
+	Alerted               bool
+	LastSentAt            int64
+	LastSeverity          ChannelMonitorHealthStatus
+	GapFingerprint        string
+	QuarantineCount       int64
+	CostDeadLetterCount   int64
+	HistoryCountsObserved bool
+	NextAttemptAt         int64
+	Failures              int
 }
 
 var channelMonitorRecoveryNotices = struct {
@@ -34,6 +37,22 @@ func channelMonitorRecoveryNoticeKind(snapshot ChannelMonitorRecovery, state cha
 		return ""
 	}
 	if snapshot.Status != ChannelMonitorHealthHealthy {
+		if snapshot.Status == ChannelMonitorHealthDegraded && !state.Alerted && (snapshot.RecoveryStatus == "retrying" || snapshot.RecoveryStatus == "recovering") {
+			// A short queue delay has an automatic recovery path. Notify only if
+			// it persists until manual_required, or another actionable fault joins it.
+			automaticBacklog := len(snapshot.DegradedReasons) > 0
+			for _, reason := range snapshot.DegradedReasons {
+				switch reason {
+				case ChannelMonitorRedisDegradedReasonEventBacklog, ChannelMonitorRedisDegradedReasonCostStreamBacklog,
+					ChannelMonitorRedisDegradedReasonCostOutboxBacklog, "cost_projection_pending":
+				default:
+					automaticBacklog = false
+				}
+			}
+			if automaticBacklog {
+				return ""
+			}
+		}
 		if !state.Alerted || snapshot.Status == ChannelMonitorHealthUnavailable && state.LastSeverity != ChannelMonitorHealthUnavailable || now-state.LastSentAt >= int64(channelMonitorHealthNotificationCooldown/time.Second) {
 			return "alert"
 		}
@@ -45,8 +64,11 @@ func channelMonitorRecoveryNoticeKind(snapshot ChannelMonitorRecovery, state cha
 		}
 		return "recovery"
 	}
-	if len(snapshot.DataGapReasons) > 0 && strings.Join(normalizeChannelMonitorHealthReasons(snapshot.DataGapReasons), ",") != state.GapFingerprint {
-		return "gap"
+	if len(snapshot.DataGapReasons) > 0 {
+		newIsolation := state.HistoryCountsObserved && (snapshot.QuarantineCount > state.QuarantineCount || snapshot.CostDeadLetterCount > state.CostDeadLetterCount)
+		if newIsolation || state.Failures > 0 || strings.Join(normalizeChannelMonitorHealthReasons(snapshot.DataGapReasons), ",") != state.GapFingerprint {
+			return "gap"
+		}
 	}
 	return ""
 }
@@ -65,6 +87,8 @@ func finishChannelMonitorRecoveryNotice(state channelMonitorRecoveryNotice, snap
 	state.LastSentAt = now
 	state.LastSeverity = snapshot.Status
 	state.GapFingerprint = strings.Join(normalizeChannelMonitorHealthReasons(snapshot.DataGapReasons), ",")
+	state.QuarantineCount, state.CostDeadLetterCount = snapshot.QuarantineCount, snapshot.CostDeadLetterCount
+	state.HistoryCountsObserved = true
 	state.Failures, state.NextAttemptAt = 0, 0
 	return state
 }
@@ -176,6 +200,13 @@ func deliverChannelMonitorRecoveryNotice(snapshot ChannelMonitorRecovery, receiv
 			common.SysError("渠道监控通知发送失败，将重试: " + err.Error())
 		}
 	}
+	if !state.HistoryCountsObserved && state.GapFingerprint != "" && state.Failures == 0 {
+		// Adopt the counters for an already-sent legacy history notice without
+		// resending it on upgrade. Local drop/publish counters reset on restart
+		// and must not serve as the identity of a historical incident.
+		state.QuarantineCount, state.CostDeadLetterCount = snapshot.QuarantineCount, snapshot.CostDeadLetterCount
+		state.HistoryCountsObserved = true
+	}
 	channelMonitorRecoveryNotices.Lock()
 	channelMonitorRecoveryNotices.local[key] = state
 	channelMonitorRecoveryNotices.Unlock()
@@ -206,6 +237,9 @@ func BuildChannelMonitorRecoveryEmail(snapshot ChannelMonitorRecovery, kind stri
 	message := "相关监控链路已连续正常，后台事件处理已恢复。"
 	if len(snapshot.DataGapReasons) > 0 {
 		message = "监控运行已恢复，部分历史统计仍不完整，请复核丢弃或隔离记录。"
+		if len(snapshot.DataGapReasons) == 1 && snapshot.DataGapReasons[0] == "events_quarantined" {
+			message = "监控运行已恢复，历史隔离记录已保留；隔离条数不代表请求失败数或统计丢失数。"
+		}
 	}
 	content := fmt.Sprintf(`<!doctype html><html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;background:#fff;color:#111827;font-family:Arial,'Microsoft YaHei',sans-serif;font-size:14px;line-height:1.7"><div style="max-width:680px;margin:auto;padding:16px;overflow-wrap:anywhere"><p>%s</p><p>节点：%s</p><p>时间：%s</p></div></body></html>`, message, node, html.EscapeString(observedAt.Format("2006-01-02 15:04:05 UTC-07:00")))
 	return "渠道监控运行已恢复", content

@@ -122,6 +122,12 @@ func GetChannelSmartScheduleEconomicSnapshotWithContext(
 	if channelSmartScheduleUseSharedReadModel() {
 		return channelSmartScheduleSharedEconomics()
 	}
+	return GetChannelSmartScheduleEconomicSnapshotForRefresh(ctx)
+}
+
+// GetChannelSmartScheduleEconomicSnapshotForRefresh bypasses the published
+// read model when calculating a new guarded scheduling update.
+func GetChannelSmartScheduleEconomicSnapshotForRefresh(ctx context.Context) (snapshot ChannelSmartScheduleEconomicSnapshot, err error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}

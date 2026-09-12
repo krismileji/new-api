@@ -283,7 +283,11 @@ func (aggregator *ChannelMonitorRedisLogicalAggregator) applyEffect(
 	stopRenew()
 	<-renewDone
 	if err != nil {
-		return errors.Join(err, aggregator.releaseEffectMarkers(ctx, owner, pendingKeys))
+		// The handler's deadline may have expired. Release only this owner's
+		// markers with a fresh bounded context so the next attempt can proceed.
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.WithoutCancel(ctx), channelMonitorRedisConsumerOperationTimeout)
+		defer cleanupCancel()
+		return errors.Join(err, aggregator.releaseEffectMarkers(cleanupCtx, owner, pendingKeys))
 	}
 	if err := aggregator.completeEffectMarkers(ctx, owner, pendingKeys, doneTTL); err != nil {
 		aggregator.recordEffectMarkerFailure(markerFailureField, len(pendingKeys), err)

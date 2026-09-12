@@ -66,10 +66,41 @@ export function getChannelMonitorRuntimeStatus(
     reasons.includes('daily_replay_incomplete') ||
     (recovery?.data_gap_reasons.length ?? 0) > 0 ||
     recovery?.recovery_status === 'data_incomplete'
+  const quarantineOnly =
+    recovery?.data_gap_reasons.length === 1 &&
+    recovery.data_gap_reasons[0] === 'events_quarantined' &&
+    !reasons.includes('daily_replay_incomplete')
+  const runtimeConfirmedHealthy =
+    recovery?.status === 'healthy' &&
+    recovery.checked_at >= (metadata?.generated_at ?? recovery.checked_at) - 30
+  const historicalCostEvents =
+    runtimeConfirmedHealthy &&
+    recovery?.cost_dead_letter_count !== undefined &&
+    (metadata?.cost_dead_letter_count ?? 0) <= recovery.cost_dead_letter_count
+  const historicalDrops =
+    runtimeConfirmedHealthy &&
+    recovery?.dropped_sample_count !== undefined &&
+    (metadata?.writer_dropped_events ?? 0) <= recovery.dropped_sample_count
+  const historicalPublishFailures =
+    runtimeConfirmedHealthy &&
+    recovery?.cost_publish_failed_count !== undefined &&
+    (metadata?.cost_publish_failed_count ?? 0) <=
+      recovery.cost_publish_failed_count
+  const newQuarantine =
+    recovery?.quarantine_count !== undefined &&
+    (metadata?.quarantine_count ?? 0) > recovery.quarantine_count
   const runtimeReasons = reasons.filter(
     (reason) =>
       reason !== 'daily_replay_incomplete' &&
-      !(reason === 'cost_projection_pending' && recovery?.status === 'healthy')
+      !(reason === 'cost_dead_letter' && historicalCostEvents) &&
+      !(reason === 'writer_queue_full' && historicalDrops) &&
+      !(reason === 'cost_publish_failure' && historicalPublishFailures) &&
+      !(
+        runtimeConfirmedHealthy &&
+        (reason === 'cost_projection_pending' ||
+          ((reason === 'event_backlog' || reason === 'cost_stream_backlog') &&
+            (metadata?.consumer_lag_seconds ?? 0) < 30))
+      )
   )
   // An unexplained degradation must remain visible even after runtime recovery.
   const realtimeDegraded =
@@ -116,13 +147,16 @@ export function getChannelMonitorRuntimeStatus(
   if (costUnavailable) alerts.add('成本汇总暂不可用')
   if (metadata?.marker_release_failure_active) alerts.add('事件标记清理故障')
   if (metadata?.stream_trim_failure_active) alerts.add('实时事件清理故障')
-  if ((metadata?.cost_dead_letter_count ?? 0) > 0) {
+  if (newQuarantine) alerts.add('新增监控事件隔离')
+  if ((metadata?.cost_dead_letter_count ?? 0) > 0 && !historicalCostEvents) {
     alerts.add(
       `成本异常事件 ${formatMonitorRuntimeCount(metadata?.cost_dead_letter_count, '条')}`
     )
   }
   if (historicalIncomplete) {
-    historyNotices.add('部分历史统计不完整')
+    historyNotices.add(
+      quarantineOnly ? '存在历史隔离记录' : '部分历史统计不完整'
+    )
   }
   if (recovery?.action) {
     if (recovery.status === 'healthy' && historicalIncomplete) {
@@ -138,10 +172,11 @@ export function getChannelMonitorRuntimeStatus(
     redisAvailable === false ||
     consumerRunning === false ||
     costUnavailable ||
+    newQuarantine ||
     metadata?.marker_release_failure_active === true ||
     metadata?.stream_trim_failure_active === true ||
-    (metadata?.cost_dead_letter_count ?? 0) > 0 ||
-    reasons.some((reason) =>
+    ((metadata?.cost_dead_letter_count ?? 0) > 0 && !historicalCostEvents) ||
+    runtimeReasons.some((reason) =>
       [
         'redis_unavailable',
         'consumer_stopped',

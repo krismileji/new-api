@@ -180,6 +180,7 @@ type ChannelMonitorRedisEventConsumer struct {
 	handler            ChannelMonitorRedisEventHandler
 	config             channelMonitorRedisConsumerConfig
 	pendingRetryCycles atomic.Int64
+	lastRetryLogAt     atomic.Int64
 }
 
 type channelMonitorRedisGroupInfo struct {
@@ -787,10 +788,20 @@ func (consumer *ChannelMonitorRedisEventConsumer) processMessages(
 	successfulDedupKeys := make([]string, 0, len(uniqueMessages))
 	successfulMessageIDs := make([]string, 0, len(parsedMessages))
 	var handlerErr error
+	unresolved := false
 	for _, result := range handlerResults {
 		if result.err != nil {
 			if handlerErr == nil {
 				handlerErr = result.err
+			}
+			if isChannelMonitorRedisRetryable(result.err) {
+				messageCount := 0
+				for _, parsed := range result.messages {
+					messageCount += len(messageIDsByEventID[parsed.eventID])
+				}
+				consumer.recordRetryableFailure(result.err, messageCount)
+				unresolved = true
+				continue
 			}
 			failedMessages = append(failedMessages, result.messages...)
 			continue
@@ -800,7 +811,6 @@ func (consumer *ChannelMonitorRedisEventConsumer) processMessages(
 			successfulMessageIDs = append(successfulMessageIDs, messageIDsByEventID[parsed.eventID]...)
 		}
 	}
-	unresolved := false
 	if len(failedMessages) > 0 {
 		pendingMessageIDs := make([]string, 0, len(failedMessages))
 		for _, parsed := range failedMessages {
@@ -823,7 +833,7 @@ func (consumer *ChannelMonitorRedisEventConsumer) processMessages(
 			}
 		}
 		quarantined := make([]channelMonitorRedisQuarantineItem, 0)
-		unresolved = !readyForIsolation
+		unresolved = unresolved || !readyForIsolation
 		if readyForIsolation {
 			for _, parsed := range failedMessages {
 				messageIDs := messageIDsByEventID[parsed.eventID]
@@ -838,6 +848,11 @@ func (consumer *ChannelMonitorRedisEventConsumer) processMessages(
 				if err := consumer.handleEventsWithDeadline(
 					handlerCtx, []model.ChannelMonitorEvent{parsed.event},
 				); err != nil {
+					if isChannelMonitorRedisRetryable(err) {
+						consumer.recordRetryableFailure(err, len(messageIDs))
+						unresolved = true
+						continue
+					}
 					for _, messageID := range messageIDs {
 						quarantined = append(quarantined, channelMonitorRedisQuarantineItem{
 							messageID: messageID, eventID: parsed.eventID, payload: parsed.payload,

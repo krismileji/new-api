@@ -480,8 +480,24 @@ func GetChannelSmartScheduleRoutePool(group string, modelName string) ([]Channel
 	if channelSmartScheduleUseSharedReadModel() {
 		return channelSmartScheduleSharedRoutes(group, modelName)
 	}
+	return GetChannelSmartScheduleRoutePoolForRefresh(context.Background(), group, modelName)
+}
+
+// GetChannelSmartScheduleRoutePoolForRefresh reads current persisted state for
+// guarded background writes. Published dashboard snapshots can lag behind the
+// preceding runtime event and must not be reused as a write revision.
+func GetChannelSmartScheduleRoutePoolForRefresh(ctx context.Context, group string, modelName string) ([]ChannelSmartScheduleRoute, error) {
+	group = strings.TrimSpace(group)
+	modelName = strings.TrimSpace(modelName)
+	if group == "" || modelName == "" {
+		return []ChannelSmartScheduleRoute{}, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	db := DB.WithContext(ctx)
 	var abilities []Ability
-	if err := DB.Where(&Ability{Group: group, Model: modelName}).
+	if err := db.Where(&Ability{Group: group, Model: modelName}).
 		Order("channel_id ASC").Find(&abilities).Error; err != nil {
 		return nil, err
 	}
@@ -493,18 +509,18 @@ func GetChannelSmartScheduleRoutePool(group string, modelName string) ([]Channel
 		channelIds = append(channelIds, ability.ChannelId)
 	}
 	var channels []Channel
-	if err := DB.Select("id", "name", "status", "priority", "weight").
+	if err := db.Select("id", "name", "status", "priority", "weight").
 		Where("id IN ?", channelIds).Find(&channels).Error; err != nil {
 		return nil, err
 	}
 	var states []ChannelSmartScheduleRouteState
-	if err := DB.Where("group_name = ? AND model_name = ?", group, modelName).
+	if err := db.Where("group_name = ? AND model_name = ?", group, modelName).
 		Find(&states).Error; err != nil {
 		return nil, err
 	}
 	pausedUntilByChannel := make(map[int]int64)
 	var pauses []ChannelSmartScheduleGroupPause
-	if err := DB.Select("channel_id", "paused_until").
+	if err := db.Select("channel_id", "paused_until").
 		Where(
 			"group_name = ? AND model_name = ? AND channel_id IN ? AND paused_until > ?",
 			group, modelName, channelIds, common.GetTimestamp(),
@@ -517,7 +533,7 @@ func GetChannelSmartScheduleRoutePool(group string, modelName string) ([]Channel
 	}
 	normalizedModelName := channelSmartScheduleModelName(modelName)
 	var sharedSampleStates []ChannelSmartScheduleModelSampleState
-	if err := DB.Where("channel_id IN ? AND model_name = ?", channelIds, normalizedModelName).
+	if err := db.Where("channel_id IN ? AND model_name = ?", channelIds, normalizedModelName).
 		Find(&sharedSampleStates).Error; err != nil {
 		return nil, err
 	}

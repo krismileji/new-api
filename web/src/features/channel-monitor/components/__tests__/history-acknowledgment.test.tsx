@@ -84,11 +84,11 @@ describe('channel monitor history acknowledgment', () => {
     await user.click(screen.getByRole('button', { name: '运行详情' }))
     const dialog = await screen.findByRole('dialog', { name: '监控运行详情' })
     expect(
-      within(dialog).getByRole('group', { name: '异常隔离' })
+      within(dialog).getByRole('group', { name: '异常隔离（累计）' })
     ).toHaveTextContent('252 条')
     expect(
-      within(dialog).getByRole('group', { name: '历史数据缺口' })
-    ).toHaveTextContent('日统计恢复不完整、存在隔离事件')
+      within(dialog).getByRole('group', { name: '历史记录' })
+    ).toHaveTextContent('日统计恢复不完整、存在历史隔离记录')
   })
 
   test('同一批历史在刷新及重新进入后保持收起，并可主动重新显示', async () => {
@@ -135,6 +135,53 @@ describe('channel monitor history acknowledgment', () => {
     view.rerender(
       <ChannelMonitorRealtimeStatus
         metadata={{ ...metadata, ...change }}
+        recovery={recovery}
+      />
+    )
+    expect(screen.getByRole('list', { name: '监控历史提示' })).toBeVisible()
+  })
+
+  test('没有新增缺口的再次运行恢复不会要求重复确认历史提示', async () => {
+    const user = userEvent.setup()
+    const view = render(
+      <ChannelMonitorRealtimeStatus metadata={metadata} recovery={recovery} />
+    )
+    await user.click(screen.getByRole('button', { name: '已知晓本次历史缺口' }))
+    view.rerender(
+      <ChannelMonitorRealtimeStatus
+        metadata={metadata}
+        recovery={{ ...recovery, recovered_at: recovery.recovered_at + 300 }}
+      />
+    )
+    expect(
+      screen.queryByRole('list', { name: '监控历史提示' })
+    ).not.toBeInTheDocument()
+    expect(screen.getByText('历史提示已知晓')).toBeVisible()
+  })
+
+  test('升级后沿用已知晓的历史记录，新增隔离仍重新提示', () => {
+    localStorage.setItem(
+      'channel-monitor:history-acknowledgment:v1:[1,"node-a"]',
+      JSON.stringify({
+        fingerprint: JSON.stringify([
+          [...recovery.data_gap_reasons].sort(),
+          recovery.recovered_at,
+          metadata.quarantine_count,
+          metadata.last_quarantined_at,
+          metadata.writer_dropped_events,
+          metadata.cost_publish_failed_count,
+          metadata.cost_dead_letter_count,
+        ]),
+        dailyGapDay: Math.floor((checkedAt + 8 * 3600) / 86400),
+      })
+    )
+    const view = render(
+      <ChannelMonitorRealtimeStatus metadata={metadata} recovery={recovery} />
+    )
+    expect(screen.getByText('历史提示已知晓')).toBeVisible()
+    view.rerender(
+      <ChannelMonitorRealtimeStatus
+        metadata={{ ...metadata, quarantine_count: 253 }}
         recovery={recovery}
       />
     )

@@ -30,7 +30,7 @@ type RuntimeDiagnosticGroup = {
 
 const recoveryGapLabels: Record<string, string> = {
   samples_dropped: '监控事件曾被丢弃',
-  events_quarantined: '存在隔离事件',
+  events_quarantined: '存在历史隔离记录',
   writer_queue_full: '监控写入队列曾满',
   cost_publish_failure: '成本事件发布失败',
   cost_dead_letter: '存在待复核的成本异常事件',
@@ -151,14 +151,14 @@ export function ChannelMonitorRuntimeDetails(
     {
       title: '恢复与历史',
       fields: [
-        ['恢复状态', recovery?.message || '未提供'],
+        ['恢复状态', props.status.label],
         [
           '恢复待处理',
           formatMonitorRuntimeCount(recovery?.pending_count, '条'),
         ],
         ['最近恢复', formatMonitorRuntimeTime(recovery?.recovered_at)],
         [
-          '历史数据缺口',
+          '历史记录',
           recovery
             ? recovery.data_gap_reasons
                 .map((reason) => recoveryGapLabels[reason] ?? reason)
@@ -167,12 +167,15 @@ export function ChannelMonitorRuntimeDetails(
         ],
         ['处理建议', recovery ? recovery.action || '无' : '未提供'],
         [
-          '事件处理重试',
+          '事件处理重试（累计）',
           formatMonitorRuntimeCount(metadata?.retry_count, '次'),
         ],
-        ['自动接管', formatMonitorRuntimeCount(metadata?.takeover_count, '次')],
         [
-          '异常隔离',
+          '自动接管（累计）',
+          formatMonitorRuntimeCount(metadata?.takeover_count, '次'),
+        ],
+        [
+          '异常隔离（累计）',
           formatMonitorRuntimeCount(metadata?.quarantine_count, '条'),
         ],
         ['最近隔离', formatMonitorRuntimeTime(metadata?.last_quarantined_at)],
