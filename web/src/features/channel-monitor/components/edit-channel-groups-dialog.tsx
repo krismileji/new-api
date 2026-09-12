@@ -24,6 +24,7 @@ import { useMemo } from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
 import { toast } from 'sonner'
 
+import { orderGroupNames } from '@/lib/group-order'
 import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
 import {
@@ -59,6 +60,7 @@ import type { ChannelMonitorItem } from '../types'
 
 type EditChannelGroupsDialogProps = {
   channel: ChannelMonitorItem
+  groupOrder: readonly string[]
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -83,10 +85,11 @@ export function EditChannelGroupsDialog(props: EditChannelGroupsDialogProps) {
       ...props.channel.groups,
       ...(groupsQuery.data?.data ?? []),
     ])
-    return [...groups]
-      .sort((first, second) => first.localeCompare(second))
-      .map((group) => ({ value: group, label: group }))
-  }, [groupsQuery.data?.data, props.channel.groups])
+    return orderGroupNames([...groups], props.groupOrder).map((group) => ({
+      value: group,
+      label: group,
+    }))
+  }, [groupsQuery.data?.data, props.channel.groups, props.groupOrder])
   const mutation = useMutation({
     mutationFn: updateMonitoredChannelGroups,
     onError: handleChannelMonitorMutationError,

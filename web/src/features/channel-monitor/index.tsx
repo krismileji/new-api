@@ -1740,6 +1740,7 @@ export function ChannelMonitor() {
         <EditChannelGroupsDialog
           key={dialogChannel.id}
           channel={dialogChannel}
+          groupOrder={groupOrder}
           open
           onOpenChange={(open) => {
             if (!open) setChannelDialog(null)
