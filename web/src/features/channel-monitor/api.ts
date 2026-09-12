@@ -750,6 +750,24 @@ export async function testChannelMonitorUpstreamConfig(request: {
   return ensureChannelMonitorSuccess(response.data)
 }
 
+export async function fetchChannelMonitorCustomVariable(request: {
+  channelId: number
+  config: ChannelMonitorUpstreamRequest
+  requestId: string
+}) {
+  const response = await api.post<
+    ChannelMonitorApiResponse<{
+      request_id: string
+      variables: { name: string; value: string }[]
+    }>
+  >(
+    `/api/channel_monitor/channel/${request.channelId}/upstream/variable/fetch`,
+    { ...request.config, request_id: request.requestId },
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
 export async function listChannelMonitorUpstreamGroups(request: {
   channelId: number
   config: ChannelMonitorUpstreamRequest

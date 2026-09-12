@@ -1486,6 +1486,10 @@ type SavedUpstreamCredential = {
 const customKeyValueSchema = z.object({
   key: z.string().trim().max(256, '名称不能超过 256 个字符'),
   value: z.string().max(8192, '值不能超过 8192 个字符'),
+  valueTemplate: z
+    .string()
+    .max(8192, '变量模板不能超过 8192 个字符')
+    .optional(),
   secret: z.boolean(),
   hasValue: z.boolean(),
 })
@@ -1532,6 +1536,48 @@ const customUpstreamConfigSchema = z.object({
   ratio: customMetricSchema,
   balance: customMetricSchema,
   balanceReuseRatioRequest: z.boolean(),
+  variableRequests: z
+    .array(
+      z.object({
+        id: z
+          .string()
+          .trim()
+          .regex(/^[A-Za-z0-9_-]{1,64}$/, '独立请求标识无效'),
+        name: z
+          .string()
+          .trim()
+          .min(1, '请输入请求名称')
+          .max(80, '请求名称不能超过 80 个字符'),
+        baseUrl: z
+          .string()
+          .trim()
+          .max(2048, '独立请求基础地址不能超过 2048 个字符'),
+        refreshPolicy: z.enum(['always', 'on_failure']),
+        request: customRequestSchema,
+        responseType: z.enum(['json', 'text']),
+        variables: z
+          .array(
+            z.object({
+              name: z
+                .string()
+                .trim()
+                .regex(
+                  /^[A-Za-z_][A-Za-z0-9_]{0,63}$/,
+                  '变量名须以字母或下划线开头，只能包含字母、数字和下划线，最多 64 个字符'
+                ),
+              valuePath: z
+                .string()
+                .trim()
+                .max(512, 'JSON 取值路径不能超过 512 个字符'),
+              value: z.string().max(8192, '变量值不能超过 8192 个字符'),
+              hasValue: z.boolean(),
+            })
+          )
+          .min(1, '至少添加一个变量')
+          .max(32, '变量不能超过 32 个'),
+      })
+    )
+    .max(8, '独立请求不能超过 8 个'),
 })
 
 type CustomMetricFormValue = z.infer<typeof customMetricSchema>
@@ -1562,13 +1608,100 @@ function validateCustomEntries(
       })
     }
     keys.add(normalizedKey)
-    if (entry.secret && !entry.value && !entry.hasValue) {
+    if (
+      entry.secret &&
+      !entry.value &&
+      !entry.hasValue &&
+      entry.valueTemplate === undefined
+    ) {
       context.addIssue({
         code: 'custom',
         path: [...path, index, 'value'],
         message: `敏感${label}的值不能为空`,
       })
     }
+  }
+}
+
+function validateCustomRequest(
+  request: z.infer<typeof customRequestSchema>,
+  pathPrefix: (string | number)[],
+  context: z.RefinementCtx
+) {
+  if (!request.path.trim()) {
+    context.addIssue({
+      code: 'custom',
+      path: [...pathPrefix, 'request', 'path'],
+      message: '请输入接口路径',
+    })
+  }
+  let decodedPath = request.path
+  try {
+    decodedPath = decodeURIComponent(request.path)
+  } catch {
+    context.addIssue({
+      code: 'custom',
+      path: [...pathPrefix, 'request', 'path'],
+      message: '接口路径格式无效',
+    })
+  }
+  if (
+    decodedPath.includes('?') ||
+    decodedPath.includes('#') ||
+    /^https?:\/\//i.test(request.path)
+  ) {
+    context.addIssue({
+      code: 'custom',
+      path: [...pathPrefix, 'request', 'path'],
+      message: '接口路径请填写不含查询参数的相对路径',
+    })
+  }
+  if (request.method === 'GET' && request.bodyType !== 'none') {
+    context.addIssue({
+      code: 'custom',
+      path: [...pathPrefix, 'request', 'bodyType'],
+      message: 'GET 请求不能配置请求体',
+    })
+  }
+  validateCustomEntries(
+    request.query,
+    [...pathPrefix, 'request', 'query'],
+    '查询参数',
+    context
+  )
+  validateCustomEntries(
+    request.headers,
+    [...pathPrefix, 'request', 'headers'],
+    '请求头',
+    context
+  )
+  if (request.bodyType === 'json') {
+    const preservesSavedBody = request.bodySecret && request.hasBody
+    if (!request.body && !preservesSavedBody) {
+      context.addIssue({
+        code: 'custom',
+        path: [...pathPrefix, 'request', 'body'],
+        message: 'JSON 请求体不能为空',
+      })
+    } else if (request.body) {
+      try {
+        JSON.parse(request.body)
+      } catch {
+        context.addIssue({
+          code: 'custom',
+          path: [...pathPrefix, 'request', 'body'],
+          message: 'JSON 请求体格式无效',
+        })
+      }
+    }
+  }
+  if (request.bodyType === 'form') {
+    validateCustomEntries(
+      request.form,
+      [...pathPrefix, 'request', 'form'],
+      '表单参数',
+      context
+    )
   }
 }
 
@@ -1599,82 +1732,7 @@ function validateCustomMetric(
   }
 
   if (!reuseRequest) {
-    if (!metric.request.path.trim()) {
-      context.addIssue({
-        code: 'custom',
-        path: [...pathPrefix, 'request', 'path'],
-        message: '请输入接口路径',
-      })
-    }
-    let decodedPath = metric.request.path
-    try {
-      decodedPath = decodeURIComponent(metric.request.path)
-    } catch {
-      context.addIssue({
-        code: 'custom',
-        path: [...pathPrefix, 'request', 'path'],
-        message: '接口路径格式无效',
-      })
-    }
-    if (
-      decodedPath.includes('?') ||
-      decodedPath.includes('#') ||
-      /^https?:\/\//i.test(metric.request.path)
-    ) {
-      context.addIssue({
-        code: 'custom',
-        path: [...pathPrefix, 'request', 'path'],
-        message: '接口路径请填写不含查询参数的相对路径',
-      })
-    }
-    if (metric.request.method === 'GET' && metric.request.bodyType !== 'none') {
-      context.addIssue({
-        code: 'custom',
-        path: [...pathPrefix, 'request', 'bodyType'],
-        message: 'GET 请求不能配置请求体',
-      })
-    }
-    validateCustomEntries(
-      metric.request.query,
-      [...pathPrefix, 'request', 'query'],
-      '查询参数',
-      context
-    )
-    validateCustomEntries(
-      metric.request.headers,
-      [...pathPrefix, 'request', 'headers'],
-      '请求头',
-      context
-    )
-    if (metric.request.bodyType === 'json') {
-      const preservesSavedBody =
-        metric.request.bodySecret && metric.request.hasBody
-      if (!metric.request.body && !preservesSavedBody) {
-        context.addIssue({
-          code: 'custom',
-          path: [...pathPrefix, 'request', 'body'],
-          message: 'JSON 请求体不能为空',
-        })
-      } else if (metric.request.body) {
-        try {
-          JSON.parse(metric.request.body)
-        } catch {
-          context.addIssue({
-            code: 'custom',
-            path: [...pathPrefix, 'request', 'body'],
-            message: 'JSON 请求体格式无效',
-          })
-        }
-      }
-    }
-    if (metric.request.bodyType === 'form') {
-      validateCustomEntries(
-        metric.request.form,
-        [...pathPrefix, 'request', 'form'],
-        '表单参数',
-        context
-      )
-    }
+    validateCustomRequest(metric.request, pathPrefix, context)
   }
 
   if (
@@ -1828,6 +1886,119 @@ export function createUpstreamConfigSchema(
         }
       }
       if (values.upstreamType === 'custom') {
+        const variableNames = new Set<string>()
+        const requestIDs = new Set<string>()
+        let variableCount = 0
+        for (const [
+          requestIndex,
+          request,
+        ] of values.customConfig.variableRequests.entries()) {
+          const pathPrefix = ['customConfig', 'variableRequests', requestIndex]
+          if (requestIDs.has(request.id)) {
+            context.addIssue({
+              code: 'custom',
+              path: [...pathPrefix, 'name'],
+              message: '独立请求标识重复，请重新添加',
+            })
+          }
+          requestIDs.add(request.id)
+          if (request.baseUrl) {
+            try {
+              const url = new URL(request.baseUrl)
+              if (
+                !['http:', 'https:'].includes(url.protocol) ||
+                url.username ||
+                url.password ||
+                url.search ||
+                url.hash
+              ) {
+                throw new Error('invalid URL')
+              }
+            } catch {
+              context.addIssue({
+                code: 'custom',
+                path: [...pathPrefix, 'baseUrl'],
+                message:
+                  '请输入不含账号密码、查询参数或片段的 HTTP 或 HTTPS 地址',
+              })
+            }
+          }
+          validateCustomRequest(request.request, pathPrefix, context)
+          for (const [variableIndex, variable] of request.variables.entries()) {
+            const variablePath = [...pathPrefix, 'variables', variableIndex]
+            if (variableNames.has(variable.name)) {
+              context.addIssue({
+                code: 'custom',
+                path: [...variablePath, 'name'],
+                message: '变量名不能重复，不同请求之间也需使用不同名称',
+              })
+            }
+            variableNames.add(variable.name)
+            variableCount++
+            if (request.responseType === 'json' && !variable.valuePath.trim()) {
+              context.addIssue({
+                code: 'custom',
+                path: [...variablePath, 'valuePath'],
+                message: '请输入 JSON 取值路径',
+              })
+            }
+            if (
+              [...variable.value].some(
+                (character) =>
+                  (character.charCodeAt(0) < 32 && character !== '\t') ||
+                  character.charCodeAt(0) === 127
+              )
+            ) {
+              context.addIssue({
+                code: 'custom',
+                path: [...variablePath, 'value'],
+                message: '变量值不能包含换行或控制字符',
+              })
+            }
+          }
+        }
+        if (variableCount > 32) {
+          context.addIssue({
+            code: 'custom',
+            path: ['customConfig', 'variableRequests'],
+            message: '所有独立请求的变量合计不能超过 32 个',
+          })
+        }
+        for (const metricName of ['ratio', 'balance'] as const) {
+          const metric = values.customConfig[metricName]
+          if (
+            metric.source !== 'http' ||
+            (metricName === 'balance' &&
+              values.customConfig.balanceReuseRatioRequest)
+          ) {
+            continue
+          }
+          for (const entryType of ['query', 'headers'] as const) {
+            metric.request[entryType].forEach((entry, index) => {
+              if (entry.valueTemplate === undefined) return
+              const placeholder = /\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g
+              const matches = [...entry.valueTemplate.matchAll(placeholder)]
+              if (
+                matches.length === 0 ||
+                matches.some((match) => !variableNames.has(match[1])) ||
+                /[{}]/.test(entry.valueTemplate.replace(placeholder, ''))
+              ) {
+                context.addIssue({
+                  code: 'custom',
+                  path: [
+                    'customConfig',
+                    metricName,
+                    'request',
+                    entryType,
+                    index,
+                    'valueTemplate',
+                  ],
+                  message: '请使用已配置的变量，例如 {{token}}',
+                })
+              }
+            })
+          }
+        }
         if (values.authType !== 'custom') {
           context.addIssue({
             code: 'custom',

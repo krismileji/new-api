@@ -21,6 +21,7 @@ import type {
   ChannelMonitorCustomMetricConfig,
   ChannelMonitorCustomRequestConfig,
   ChannelMonitorCustomUpstreamConfig,
+  ChannelMonitorCustomVariableRequest,
 } from '../types'
 import type { UpstreamConfigFormValues } from './schema'
 
@@ -64,6 +65,7 @@ function toFormKeyValue(value: ChannelMonitorCustomKeyValue) {
   return {
     key: value.key,
     value: value.value ?? '',
+    valueTemplate: value.value_template || undefined,
     secret: value.secret ?? false,
     hasValue: value.has_value ?? false,
   }
@@ -74,7 +76,8 @@ function toAPIKeyValue(
 ): ChannelMonitorCustomKeyValue {
   return {
     key: value.key.trim(),
-    value: value.value,
+    value: value.valueTemplate === undefined ? value.value : '',
+    value_template: value.valueTemplate,
     secret: value.secret,
     has_value: value.hasValue,
   }
@@ -117,11 +120,48 @@ function toAPIMetric(
 export function createChannelMonitorCustomFormConfig(
   config: ChannelMonitorCustomUpstreamConfig | undefined
 ): UpstreamConfigFormValues['customConfig'] {
+  const legacy = config?.variable_request
+  const requests =
+    config?.variable_requests ??
+    (legacy
+      ? [
+          {
+            id: 'legacy-variable',
+            name: `获取 ${legacy.name}`,
+            base_url: legacy.base_url,
+            refresh_policy: legacy.refresh_policy,
+            request: legacy.request,
+            response_type: legacy.result.response_type,
+            variables: [
+              {
+                name: legacy.name,
+                value: legacy.value,
+                has_value: legacy.has_value,
+                value_path: legacy.result.value_path,
+              },
+            ],
+          },
+        ]
+      : [])
   return {
     version: 1,
     ratio: createCustomMetricFormValue(config?.ratio, 1, 'data.ratio'),
     balance: createCustomMetricFormValue(config?.balance, 0, 'data.balance'),
     balanceReuseRatioRequest: config?.balance_reuse_ratio_request ?? false,
+    variableRequests: requests.map((request) => ({
+      id: request.id,
+      name: request.name,
+      baseUrl: request.base_url ?? '',
+      refreshPolicy: request.refresh_policy,
+      request: createCustomRequestFormValue(request.request),
+      responseType: request.response_type,
+      variables: request.variables.map((variable) => ({
+        name: variable.name,
+        value: variable.value ?? '',
+        valuePath: variable.value_path ?? '',
+        hasValue: variable.has_value ?? false,
+      })),
+    })),
   }
 }
 
@@ -133,5 +173,40 @@ export function createChannelMonitorCustomRequestConfig(
     ratio: toAPIMetric(config.ratio, false),
     balance: toAPIMetric(config.balance, config.balanceReuseRatioRequest),
     balance_reuse_ratio_request: config.balanceReuseRatioRequest,
+    variable_requests: config.variableRequests.map(toAPIVariableRequest),
+  }
+}
+
+function toAPIVariableRequest(
+  request: UpstreamConfigFormValues['customConfig']['variableRequests'][number]
+): ChannelMonitorCustomVariableRequest {
+  return {
+    id: request.id,
+    name: request.name.trim(),
+    base_url: request.baseUrl.trim(),
+    refresh_policy: request.refreshPolicy,
+    request: toAPIRequest(request.request),
+    response_type: request.responseType,
+    variables: request.variables.map((variable) => ({
+      name: variable.name.trim(),
+      value_path: variable.valuePath.trim(),
+      value: variable.value,
+      has_value: variable.hasValue,
+    })),
+  }
+}
+
+export function createChannelMonitorVariableRequest(
+  id: string,
+  name: string
+): UpstreamConfigFormValues['customConfig']['variableRequests'][number] {
+  return {
+    id,
+    name,
+    baseUrl: '',
+    refreshPolicy: 'on_failure',
+    request: createCustomRequestFormValue(undefined),
+    responseType: 'json',
+    variables: [{ name: '', value: '', hasValue: false, valuePath: '' }],
   }
 }

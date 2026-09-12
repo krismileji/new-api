@@ -339,14 +339,9 @@ func FetchChannelMonitorUpstreamGroupRatio(ctx context.Context, config ChannelMo
 			return result, err
 		}
 	case CustomUpstreamType:
-		result, err = fetchChannelMonitorCustomUpstreamRatio(
-			requestContext,
-			client,
-			config.BaseURL,
-			config.CustomConfig,
-			config.SkipBalance,
-			config.CustomDebug,
-		)
+		result, err = withChannelMonitorCustomVariables(requestContext, client, config, false, func(custom ChannelMonitorCustomUpstreamConfig) (NewAPIGroupRatioResult, error) {
+			return fetchChannelMonitorCustomUpstreamRatio(requestContext, client, config.BaseURL, custom, config.SkipBalance, config.CustomDebug)
+		})
 		if err != nil {
 			return result, err
 		}
@@ -397,13 +392,9 @@ func FetchChannelMonitorUpstreamBalance(ctx context.Context, config ChannelMonit
 			ChannelKeys:                  config.ChannelKeys,
 		}, ValidateSSRFProtectedFetchURL)
 	case CustomUpstreamType:
-		return fetchChannelMonitorCustomUpstreamBalance(
-			requestContext,
-			client,
-			config.BaseURL,
-			config.CustomConfig,
-			config.CustomDebug,
-		)
+		return withChannelMonitorCustomVariables(requestContext, client, config, true, func(custom ChannelMonitorCustomUpstreamConfig) (ChannelMonitorUpstreamBalanceResult, error) {
+			return fetchChannelMonitorCustomUpstreamBalance(requestContext, client, config.BaseURL, custom, config.CustomDebug)
+		})
 	default:
 		return ChannelMonitorUpstreamBalanceResult{}, errors.New("不支持的上游类型")
 	}

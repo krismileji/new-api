@@ -48,22 +48,24 @@ const (
 )
 
 type ChannelMonitorCustomKeyValue struct {
-	Key      string `json:"key"`
-	Value    string `json:"value,omitempty"`
-	Secret   bool   `json:"secret,omitempty"`
-	HasValue bool   `json:"has_value,omitempty"`
+	Key           string `json:"key"`
+	Value         string `json:"value,omitempty"`
+	ValueTemplate string `json:"value_template,omitempty"`
+	Secret        bool   `json:"secret,omitempty"`
+	HasValue      bool   `json:"has_value,omitempty"`
 }
 
 type ChannelMonitorCustomRequestConfig struct {
-	Method     string                         `json:"method"`
-	Path       string                         `json:"path"`
-	Query      []ChannelMonitorCustomKeyValue `json:"query,omitempty"`
-	Headers    []ChannelMonitorCustomKeyValue `json:"headers,omitempty"`
-	BodyType   string                         `json:"body_type"`
-	Body       string                         `json:"body,omitempty"`
-	BodySecret bool                           `json:"body_secret,omitempty"`
-	HasBody    bool                           `json:"has_body,omitempty"`
-	Form       []ChannelMonitorCustomKeyValue `json:"form,omitempty"`
+	Method       string                         `json:"method"`
+	Path         string                         `json:"path"`
+	Query        []ChannelMonitorCustomKeyValue `json:"query,omitempty"`
+	Headers      []ChannelMonitorCustomKeyValue `json:"headers,omitempty"`
+	BodyType     string                         `json:"body_type"`
+	Body         string                         `json:"body,omitempty"`
+	BodySecret   bool                           `json:"body_secret,omitempty"`
+	HasBody      bool                           `json:"has_body,omitempty"`
+	Form         []ChannelMonitorCustomKeyValue `json:"form,omitempty"`
+	HideResponse bool                           `json:"-"`
 }
 
 type ChannelMonitorCustomResultConfig struct {
@@ -80,10 +82,12 @@ type ChannelMonitorCustomMetricConfig struct {
 }
 
 type ChannelMonitorCustomUpstreamConfig struct {
-	Version                  int                              `json:"version"`
-	Ratio                    ChannelMonitorCustomMetricConfig `json:"ratio"`
-	Balance                  ChannelMonitorCustomMetricConfig `json:"balance"`
-	BalanceReuseRatioRequest bool                             `json:"balance_reuse_ratio_request,omitempty"`
+	Version                  int                                        `json:"version"`
+	Ratio                    ChannelMonitorCustomMetricConfig           `json:"ratio"`
+	Balance                  ChannelMonitorCustomMetricConfig           `json:"balance"`
+	BalanceReuseRatioRequest bool                                       `json:"balance_reuse_ratio_request,omitempty"`
+	VariableRequests         []ChannelMonitorCustomVariableRequest      `json:"variable_requests,omitempty"`
+	VariableRequest          *ChannelMonitorCustomLegacyVariableRequest `json:"variable_request,omitempty"`
 }
 
 type ChannelMonitorCustomRequestDebug struct {
@@ -146,6 +150,20 @@ func SanitizeChannelMonitorCustomUpstreamConfig(config ChannelMonitorCustomUpstr
 	}
 	sanitizeChannelMonitorCustomMetric(&sanitized.Ratio)
 	sanitizeChannelMonitorCustomMetric(&sanitized.Balance)
+	sanitized.VariableRequest = nil
+	sanitized.VariableRequests = append([]ChannelMonitorCustomVariableRequest(nil), channelMonitorCustomVariableRequests(config)...)
+	for index := range sanitized.VariableRequests {
+		request := &sanitized.VariableRequests[index]
+		request.Variables = append([]ChannelMonitorCustomVariable(nil), request.Variables...)
+		for index := range request.Variables {
+			variable := &request.Variables[index]
+			variable.HasValue = variable.Value != "" || variable.HasValue
+			variable.Value = ""
+		}
+		metric := ChannelMonitorCustomMetricConfig{Request: &request.Request}
+		sanitizeChannelMonitorCustomMetric(&metric)
+		request.Request = *metric.Request
+	}
 	return sanitized
 }
 
@@ -203,11 +221,19 @@ func normalizeChannelMonitorCustomUpstreamConfig(config ChannelMonitorCustomUpst
 	if config.BalanceReuseRatioRequest {
 		balance.Request = nil
 	}
+	variableRequests, err := normalizeChannelMonitorCustomVariableRequests(config, existing)
+	if err != nil {
+		return ChannelMonitorCustomUpstreamConfig{}, err
+	}
 	normalized := ChannelMonitorCustomUpstreamConfig{
 		Version:                  channelMonitorCustomConfigVersion,
 		Ratio:                    ratio,
 		Balance:                  balance,
 		BalanceReuseRatioRequest: config.BalanceReuseRatioRequest,
+		VariableRequests:         variableRequests,
+	}
+	if err := validateChannelMonitorCustomTemplates(normalized); err != nil {
+		return ChannelMonitorCustomUpstreamConfig{}, err
 	}
 	encoded, err := common.Marshal(normalized)
 	if err != nil {
@@ -373,7 +399,13 @@ func normalizeChannelMonitorCustomValues(values []ChannelMonitorCustomKeyValue, 
 		}
 		seen[key] = struct{}{}
 		item.Secret = item.Secret || isChannelMonitorCustomSensitiveKey(item.Key)
-		if item.Secret && item.Value == "" && item.HasValue {
+		if item.ValueTemplate != "" {
+			if len(item.ValueTemplate) > maxChannelMonitorCustomValueLength || strings.ContainsAny(item.ValueTemplate, "\r\n") {
+				return nil, fmt.Errorf("%s %s 的变量模板无效或过长", label, item.Key)
+			}
+			item.Value, item.HasValue = "", false
+		}
+		if item.Secret && item.Value == "" && item.HasValue && item.ValueTemplate == "" {
 			for _, saved := range existing {
 				if strings.EqualFold(strings.TrimSpace(saved.Key), item.Key) && saved.Value != "" {
 					item.Value = saved.Value
@@ -388,7 +420,7 @@ func normalizeChannelMonitorCustomValues(values []ChannelMonitorCustomKeyValue, 
 		if invalidValue {
 			return nil, fmt.Errorf("%s %s 的值无效或过长", label, item.Key)
 		}
-		if item.Secret && item.Value == "" {
+		if item.Secret && item.Value == "" && item.ValueTemplate == "" {
 			return nil, fmt.Errorf("敏感%s %s 的值不能为空", label, item.Key)
 		}
 		item.HasValue = item.Value != ""
@@ -550,13 +582,13 @@ func fetchChannelMonitorCustomUpstreamRatio(ctx context.Context, client *http.Cl
 		}
 	}
 	if err != nil {
-		return result, fmt.Errorf("自定义倍率更新失败: %w", err)
+		return result, &channelMonitorCustomMetricError{cause: fmt.Errorf("自定义倍率更新失败: %w", err), ratio: true, balance: balanceErr != nil}
 	}
 	if result.Ratio < 0 || result.Ratio > maxUpstreamGroupRatio || math.IsNaN(result.Ratio) || math.IsInf(result.Ratio, 0) {
-		return result, errors.New("自定义倍率必须在 0 到 1000000 之间")
+		return result, &channelMonitorCustomMetricError{cause: errors.New("自定义倍率必须在 0 到 1000000 之间"), ratio: true, balance: balanceErr != nil}
 	}
 	if balanceErr != nil {
-		return result, balanceErr
+		return result, &channelMonitorCustomMetricError{cause: balanceErr, balance: true}
 	}
 	return result, nil
 }
@@ -657,11 +689,17 @@ func requestChannelMonitorCustomUpstream(ctx context.Context, client *http.Clien
 	startedAt := time.Now()
 	response, err := client.Do(request)
 	if err != nil {
+		if config.HideResponse {
+			return channelMonitorCustomHTTPResponse{}, errors.New("自定义接口请求失败，请检查地址、网络和请求配置")
+		}
 		return channelMonitorCustomHTTPResponse{}, errors.New(redactChannelMonitorCustomText(err.Error(), config))
 	}
 	defer response.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxUpstreamGroupRatioResponseBytes+1))
 	if err != nil {
+		if config.HideResponse {
+			return channelMonitorCustomHTTPResponse{}, errors.New("读取自定义接口响应失败")
+		}
 		return channelMonitorCustomHTTPResponse{}, err
 	}
 	if len(responseBody) > maxUpstreamGroupRatioResponseBytes {
@@ -721,7 +759,7 @@ func extractChannelMonitorCustomValue(body []byte, config ChannelMonitorCustomRe
 
 func redactChannelMonitorCustomResponsePreview(body []byte, config ChannelMonitorCustomRequestConfig) string {
 	preview := strings.TrimSpace(string(body))
-	if config.BodySecret {
+	if config.BodySecret || config.HideResponse {
 		if preview == "" {
 			return ""
 		}

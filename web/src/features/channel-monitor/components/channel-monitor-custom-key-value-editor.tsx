@@ -27,6 +27,14 @@ import {
 
 import { Button } from '@/components/ui/button'
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
   FormControl,
   FormField,
   FormItem,
@@ -40,7 +48,7 @@ import {
   type UpstreamConfigFormValues,
 } from '../lib/schema'
 
-type CustomMetricName = 'ratio' | 'balance'
+type CustomMetricName = 'ratio' | 'balance' | `variableRequests.${number}`
 type CustomKeyValueArrayName =
   | `customConfig.${CustomMetricName}.request.query`
   | `customConfig.${CustomMetricName}.request.headers`
@@ -50,6 +58,8 @@ type ChannelMonitorCustomKeyValueEditorProps = {
   form: UseFormReturn<UpstreamConfigFormValues>
   name: CustomKeyValueArrayName
   label: string
+  allowVariables?: boolean
+  disabled?: boolean
 }
 
 type ChannelMonitorCustomKeyValueRowProps =
@@ -73,6 +83,22 @@ function ChannelMonitorCustomKeyValueRow(
     control: props.form.control,
     name: fieldName(`${props.name}.${props.index}.hasValue`),
   })
+  const valueTemplate = useWatch({
+    control: props.form.control,
+    name: fieldName(`${props.name}.${props.index}.valueTemplate`),
+  })
+  const usesVariable = props.allowVariables && valueTemplate !== undefined
+  const requests = useWatch({
+    control: props.form.control,
+    name: 'customConfig.variableRequests',
+  })
+  const availableRequests = requests.filter((request) =>
+    request.variables.some((variable) =>
+      /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(variable.name)
+    )
+  )
+  let placeholder = hasValue === true ? '已配置，留空保持不变' : '值'
+  if (usesVariable) placeholder = 'Bearer {{token}}'
 
   return (
     <div className='grid min-w-0 grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)_auto_auto] items-start gap-2'>
@@ -84,6 +110,7 @@ function ChannelMonitorCustomKeyValueRow(
             <FormControl>
               <Input
                 placeholder='名称'
+                aria-label={`${props.label} ${props.index + 1} 名称`}
                 value={typeof field.value === 'string' ? field.value : ''}
                 onBlur={field.onBlur}
                 onChange={field.onChange}
@@ -97,13 +124,16 @@ function ChannelMonitorCustomKeyValueRow(
       />
       <FormField
         control={props.form.control}
-        name={fieldName(`${props.name}.${props.index}.value`)}
+        name={fieldName(
+          `${props.name}.${props.index}.${usesVariable ? 'valueTemplate' : 'value'}`
+        )}
         render={({ field }) => (
           <FormItem>
             <FormControl>
               <Input
-                type={secret === true ? 'password' : 'text'}
-                placeholder={hasValue === true ? '已配置，留空保持不变' : '值'}
+                type={!usesVariable && secret === true ? 'password' : 'text'}
+                placeholder={placeholder}
+                aria-label={`${props.label} ${props.index + 1} ${usesVariable ? '变量模板' : '值'}`}
                 autoComplete='off'
                 value={typeof field.value === 'string' ? field.value : ''}
                 onBlur={field.onBlur}
@@ -123,7 +153,8 @@ function ChannelMonitorCustomKeyValueRow(
           <FormItem className='flex h-9 items-center gap-1.5'>
             <FormControl>
               <Switch
-                checked={field.value === true}
+                checked={usesVariable || field.value === true}
+                disabled={props.disabled || usesVariable}
                 onCheckedChange={field.onChange}
                 aria-label={`${props.label} ${props.index + 1} 使用敏感值`}
               />
@@ -137,10 +168,81 @@ function ChannelMonitorCustomKeyValueRow(
         variant='ghost'
         size='icon-sm'
         onClick={props.onRemove}
+        disabled={props.disabled}
         aria-label={`删除${props.label} ${props.index + 1}`}
       >
         <HugeiconsIcon icon={Delete02Icon} aria-hidden='true' />
       </Button>
+      {props.allowVariables ? (
+        <div className='col-span-4 flex items-center gap-2'>
+          <Switch
+            checked={usesVariable === true}
+            disabled={props.disabled}
+            onCheckedChange={(checked) => {
+              const name =
+                availableRequests[0]?.variables.find((variable) =>
+                  /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(variable.name)
+                )?.name || 'token'
+              props.form.setValue(
+                fieldName(`${props.name}.${props.index}.valueTemplate`),
+                checked ? `{{${name}}}` : undefined,
+                { shouldDirty: true, shouldValidate: true }
+              )
+            }}
+            aria-label={`${props.label} ${props.index + 1} 使用变量模板`}
+          />
+          <span className='text-muted-foreground text-xs'>
+            {usesVariable
+              ? '变量值按敏感信息处理，可添加 Bearer 等前缀'
+              : '使用独立请求的变量'}
+          </span>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type='button'
+                  variant='ghost'
+                  size='sm'
+                  disabled={props.disabled || availableRequests.length === 0}
+                />
+              }
+            >
+              插入变量
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align='start'>
+              {availableRequests.map((request) => (
+                <DropdownMenuGroup key={request.id}>
+                  <DropdownMenuLabel>{request.name}</DropdownMenuLabel>
+                  {request.variables
+                    .filter((variable) =>
+                      /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(variable.name)
+                    )
+                    .map((variable) => (
+                      <DropdownMenuItem
+                        key={variable.name}
+                        onClick={() => {
+                          const template =
+                            typeof valueTemplate === 'string'
+                              ? valueTemplate
+                              : ''
+                          props.form.setValue(
+                            fieldName(
+                              `${props.name}.${props.index}.valueTemplate`
+                            ),
+                            `${template}{{${variable.name}}}`,
+                            { shouldDirty: true, shouldValidate: true }
+                          )
+                        }}
+                      >
+                        <code>{`{{${variable.name}}}`}</code>
+                      </DropdownMenuItem>
+                    ))}
+                </DropdownMenuGroup>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -164,7 +266,10 @@ export function ChannelMonitorCustomKeyValueEditor(
           type='button'
           variant='ghost'
           size='sm'
-          disabled={entries.fields.length >= MAX_CUSTOM_UPSTREAM_ENTRIES}
+          disabled={
+            props.disabled ||
+            entries.fields.length >= MAX_CUSTOM_UPSTREAM_ENTRIES
+          }
           onClick={() =>
             entries.append({
               key: '',
@@ -192,6 +297,8 @@ export function ChannelMonitorCustomKeyValueEditor(
               form={props.form}
               name={props.name}
               label={props.label}
+              allowVariables={props.allowVariables}
+              disabled={props.disabled}
               index={index}
               onRemove={() => entries.remove(index)}
             />

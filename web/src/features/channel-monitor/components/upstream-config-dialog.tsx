@@ -75,6 +75,7 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 
 import {
   applyChannelMonitorUpstreamGroup,
+  fetchChannelMonitorCustomVariable,
   fetchChannelMonitorSub2APIUpstreamVersion,
   listChannelMonitorUpstreamGroups,
   saveChannelMonitorUpstreamConfig,
@@ -99,6 +100,7 @@ import type {
 } from '../types'
 import { ChannelMonitorCostConversionFields } from './channel-monitor-cost-conversion-fields'
 import { ChannelMonitorCustomUpstreamFields } from './channel-monitor-custom-upstream-fields'
+import { ChannelMonitorCustomVariableFields } from './channel-monitor-custom-variable-fields'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { EditChannelRatioDialog } from './edit-channel-ratio-dialog'
 
@@ -378,6 +380,57 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
       }
     },
   })
+  const variableMutation = useMutation({
+    mutationFn: fetchChannelMonitorCustomVariable,
+    onError: handleChannelMonitorMutationError,
+    onSuccess: (response, request) => {
+      const current = createChannelMonitorUpstreamRequest(form.getValues())
+      const index =
+        current.custom_config?.variable_requests?.findIndex(
+          (item) => item.id === request.requestId
+        ) ?? -1
+      const currentRequest = current.custom_config?.variable_requests?.[index]
+      const submittedRequest =
+        request.config.custom_config?.variable_requests?.find(
+          (item) => item.id === request.requestId
+        )
+      if (
+        !currentRequest ||
+        current.base_url !== request.config.base_url ||
+        JSON.stringify(currentRequest) !== JSON.stringify(submittedRequest)
+      ) {
+        toast.warning('独立请求配置已修改，请重新获取变量')
+        return
+      }
+      const values = new Map(
+        response.data.variables.map((variable) => [
+          variable.name,
+          variable.value,
+        ])
+      )
+      if (
+        currentRequest.variables.some((variable) => !values.has(variable.name))
+      ) {
+        toast.error('返回的变量映射不完整，请重新获取')
+        return
+      }
+      currentRequest.variables.forEach((variable, variableIndex) => {
+        form.setValue(
+          `customConfig.variableRequests.${index}.variables.${variableIndex}.value`,
+          values.get(variable.name) ?? '',
+          { shouldDirty: true, shouldValidate: true }
+        )
+        form.setValue(
+          `customConfig.variableRequests.${index}.variables.${variableIndex}.hasValue`,
+          true,
+          { shouldDirty: true }
+        )
+      })
+      toast.success(
+        `已回填 ${currentRequest.variables.length} 个变量，保存后生效`
+      )
+    },
+  })
   const versionMutation = useMutation({
     mutationFn: fetchChannelMonitorSub2APIUpstreamVersion,
     onError: handleChannelMonitorMutationError,
@@ -583,18 +636,35 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     setUpstreamVersion(null)
     versionMutation.mutate({ channelId: props.channel.id, baseUrl: value })
   }
+  const handleFetchVariable = async (requestId: string) => {
+    const index = form
+      .getValues('customConfig.variableRequests')
+      .findIndex((request) => request.id === requestId)
+    if (index < 0) return
+    const valid = await form.trigger([
+      'baseUrl',
+      `customConfig.variableRequests.${index}`,
+    ])
+    if (!valid) return
+    variableMutation.mutate({
+      channelId: props.channel.id,
+      requestId,
+      config: createChannelMonitorUpstreamRequest(form.getValues()),
+    })
+  }
   const pending =
     saveMutation.isPending ||
     testMutation.isPending ||
     groupsMutation.isPending ||
     applyGroupMutation.isPending ||
+    variableMutation.isPending ||
     versionMutation.isPending
 
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent
         className={channelMonitorDialogContentClassName(
-          'flex flex-col sm:max-w-3xl'
+          isCustom ? 'flex flex-col sm:max-w-4xl' : 'flex flex-col sm:max-w-3xl'
         )}
       >
         <DialogHeader className='shrink-0 pr-10'>
@@ -816,7 +886,19 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
               />
 
               {isCustom ? (
-                <ChannelMonitorCustomUpstreamFields form={form} />
+                <>
+                  <ChannelMonitorCustomVariableFields
+                    form={form}
+                    pending={pending}
+                    fetchingRequestId={
+                      variableMutation.isPending
+                        ? variableMutation.variables.requestId
+                        : undefined
+                    }
+                    onFetch={handleFetchVariable}
+                  />
+                  <ChannelMonitorCustomUpstreamFields form={form} />
+                </>
               ) : null}
 
               <ChannelMonitorCostConversionFields

@@ -34,14 +34,13 @@ import {
   InputGroupInput,
 } from '@/components/ui/input-group'
 import { Switch } from '@/components/ui/switch'
-import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
 import {
   MAX_CUSTOM_UPSTREAM_BALANCE,
   type UpstreamConfigFormValues,
 } from '../lib/schema'
-import { ChannelMonitorCustomKeyValueEditor } from './channel-monitor-custom-key-value-editor'
+import { ChannelMonitorCustomRequestFields } from './channel-monitor-custom-request-fields'
 
 type CustomMetricName = 'ratio' | 'balance'
 
@@ -61,202 +60,19 @@ type CustomRequestFieldsProps = ChannelMonitorCustomUpstreamFieldsProps & {
 
 function CustomRequestFields(props: CustomRequestFieldsProps) {
   const prefix = `customConfig.${props.metric}` as const
-  const method = useWatch({
-    control: props.form.control,
-    name: `${prefix}.request.method`,
-  })
-  const bodyType = useWatch({
-    control: props.form.control,
-    name: `${prefix}.request.bodyType`,
-  })
   const responseType = useWatch({
     control: props.form.control,
     name: `${prefix}.result.responseType`,
   })
-  const bodySecret = useWatch({
-    control: props.form.control,
-    name: `${prefix}.request.bodySecret`,
-  })
-  const hasBody = props.form.getValues(`${prefix}.request.hasBody`)
 
   return (
     <div className='flex min-w-0 flex-col gap-4'>
       {props.showRequest ? (
-        <>
-          <div className='grid min-w-0 gap-4 sm:grid-cols-[10rem_minmax(0,1fr)]'>
-            <FormField
-              control={props.form.control}
-              name={`${prefix}.request.method`}
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>请求方式</FormLabel>
-                  <FormControl>
-                    <ToggleGroup
-                      value={[field.value]}
-                      onValueChange={(values) => {
-                        const value = values.find(
-                          (item) => item !== field.value
-                        )
-                        if (value !== 'GET' && value !== 'POST') return
-                        field.onChange(value)
-                        if (value === 'GET') {
-                          props.form.setValue(
-                            `${prefix}.request.bodyType`,
-                            'none',
-                            { shouldValidate: true }
-                          )
-                        }
-                      }}
-                      variant='outline'
-                      spacing={2}
-                      className='grid w-full grid-cols-2'
-                    >
-                      <ToggleGroupItem value='GET' className='w-full'>
-                        GET
-                      </ToggleGroupItem>
-                      <ToggleGroupItem value='POST' className='w-full'>
-                        POST
-                      </ToggleGroupItem>
-                    </ToggleGroup>
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <FormField
-              control={props.form.control}
-              name={`${prefix}.request.path`}
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>接口路径</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder='/api/account'
-                      value={field.value}
-                      onBlur={field.onBlur}
-                      onChange={field.onChange}
-                      name={field.name}
-                      ref={field.ref}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-          </div>
-
-          <ChannelMonitorCustomKeyValueEditor
-            form={props.form}
-            name={`${prefix}.request.query`}
-            label='查询参数'
-          />
-          <ChannelMonitorCustomKeyValueEditor
-            form={props.form}
-            name={`${prefix}.request.headers`}
-            label='请求头'
-          />
-
-          {method === 'POST' ? (
-            <>
-              <FormField
-                control={props.form.control}
-                name={`${prefix}.request.bodyType`}
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>请求体</FormLabel>
-                    <FormControl>
-                      <ToggleGroup
-                        value={[field.value]}
-                        onValueChange={(values) => {
-                          const value = values.find(
-                            (item) => item !== field.value
-                          )
-                          if (
-                            value !== 'none' &&
-                            value !== 'json' &&
-                            value !== 'form'
-                          ) {
-                            return
-                          }
-                          field.onChange(value)
-                        }}
-                        variant='outline'
-                        spacing={2}
-                        className='grid w-full grid-cols-3'
-                      >
-                        <ToggleGroupItem value='none' className='w-full'>
-                          无
-                        </ToggleGroupItem>
-                        <ToggleGroupItem value='json' className='w-full'>
-                          JSON
-                        </ToggleGroupItem>
-                        <ToggleGroupItem value='form' className='w-full'>
-                          表单
-                        </ToggleGroupItem>
-                      </ToggleGroup>
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              {bodyType === 'json' ? (
-                <div className='flex min-w-0 flex-col gap-2'>
-                  <FormField
-                    control={props.form.control}
-                    name={`${prefix}.request.body`}
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>JSON 内容</FormLabel>
-                        <FormControl>
-                          <Textarea
-                            rows={5}
-                            className='font-mono text-xs'
-                            placeholder={
-                              bodySecret && hasBody
-                                ? '已配置，留空保持不变'
-                                : '{\n  "group": "vip"\n}'
-                            }
-                            value={field.value}
-                            onBlur={field.onBlur}
-                            onChange={field.onChange}
-                            name={field.name}
-                            ref={field.ref}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={props.form.control}
-                    name={`${prefix}.request.bodySecret`}
-                    render={({ field }) => (
-                      <FormItem className='flex items-center gap-2'>
-                        <FormControl>
-                          <Switch
-                            checked={field.value}
-                            onCheckedChange={field.onChange}
-                            aria-label='将 JSON 请求体作为敏感信息保存'
-                          />
-                        </FormControl>
-                        <FormLabel className='font-normal'>
-                          敏感请求体
-                        </FormLabel>
-                      </FormItem>
-                    )}
-                  />
-                </div>
-              ) : null}
-              {bodyType === 'form' ? (
-                <ChannelMonitorCustomKeyValueEditor
-                  form={props.form}
-                  name={`${prefix}.request.form`}
-                  label='表单参数'
-                />
-              ) : null}
-            </>
-          ) : null}
-        </>
+        <ChannelMonitorCustomRequestFields
+          form={props.form}
+          prefix={`${prefix}.request`}
+          allowVariables
+        />
       ) : null}
 
       <div className='grid min-w-0 gap-4 sm:grid-cols-[10rem_minmax(0,1fr)_10rem]'>

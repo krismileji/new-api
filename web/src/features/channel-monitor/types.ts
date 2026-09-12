@@ -86,6 +86,7 @@ export type ChannelMonitorCustomResponseType = 'json' | 'text'
 export type ChannelMonitorCustomKeyValue = {
   key: string
   value: string
+  value_template?: string
   secret: boolean
   has_value: boolean
 }
@@ -120,6 +121,35 @@ export type ChannelMonitorCustomUpstreamConfig = {
   ratio: ChannelMonitorCustomMetricConfig
   balance: ChannelMonitorCustomMetricConfig
   balance_reuse_ratio_request: boolean
+  variable_requests?: ChannelMonitorCustomVariableRequest[]
+  variable_request?: ChannelMonitorCustomLegacyVariableRequest
+}
+
+export type ChannelMonitorCustomLegacyVariableRequest = {
+  name: string
+  value: string
+  has_value: boolean
+  base_url: string
+  refresh_policy: 'always' | 'on_failure'
+  request: ChannelMonitorCustomRequestConfig
+  result: ChannelMonitorCustomResultConfig
+}
+
+export type ChannelMonitorCustomVariable = {
+  name: string
+  value_path: string
+  value: string
+  has_value: boolean
+}
+
+export type ChannelMonitorCustomVariableRequest = {
+  id: string
+  name: string
+  base_url: string
+  refresh_policy: 'always' | 'on_failure'
+  request: ChannelMonitorCustomRequestConfig
+  response_type: ChannelMonitorCustomResponseType
+  variables: ChannelMonitorCustomVariable[]
 }
 
 export type ChannelMonitorCostConversion =
