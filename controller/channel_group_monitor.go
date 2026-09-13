@@ -182,11 +182,8 @@ func getChannelGroupMonitorCandidateModels(ctx context.Context, enabledOnly bool
 	return candidates, nil
 }
 
-// channelGroupMonitorSupportsTextProbe keeps the model semantics used by a
-// normal /v1/responses request while filtering models that cannot be probed by
-// the text request fixture. Unlike the smart-schedule sampler, this must not
-// restrict the provider API type: Claude and DeepSeek responses adaptors are
-// valid group routes too.
+// channelGroupMonitorSupportsTextProbe filters models that cannot be probed
+// by the text request fixture and checks the channel's selected probe path.
 func channelGroupMonitorSupportsTextProbe(channel *model.Channel, modelName string) bool {
 	if channel == nil {
 		return false

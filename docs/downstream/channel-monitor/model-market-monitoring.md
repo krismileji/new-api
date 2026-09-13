@@ -14,6 +14,8 @@ Worker 每个逻辑分组每轮只执行一次探测；上游失败可以在物�
 
 探测请求根据渠道类型使用对应的 API 端点：Anthropic 渠道使用 Messages API (`/v1/messages`)，其他渠道使用 Responses API (`/v1/responses`)。系统自动选择适配的端点类型，无需手动配置。
 
+分组探测执行前检查模型名称是否合法、是否仍在所选渠道的支持范围内，并过滤非文本模型。共享的探测校验已移除渠道类型白名单，解决 Claude 模型可选但执行时返回 `model_not_supported`（“不支持自动文本探测”）的问题。修复后需重新构建并部署后端，历史失败记录会保留。
+
 ## 用户视图
 
 用户接口遵循 pricing 模块的启用和登录要求，以监控配置作为展示清单；访客、普通用户、管理员和超级管理员均看到相同的分类和监控分组，没有管理员预览分支。不会再按“用户可用分组”或分组倍率是否已配置过滤监控卡片。接口返回有序 `categories`，以及各分组的 group、可选的 category、initial、status、probe_model、latest_first_token_ms、success_rate、group_ratio、last_finished_at 和 recent_window。分组倍率沿用当前账号的实际倍率计算。不会返回渠道 ID、Key、成本、错误详情、租约或管理员配置；未加入监控配置的分组和历史记录也不返回。

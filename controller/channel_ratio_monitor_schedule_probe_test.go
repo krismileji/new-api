@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -686,28 +687,82 @@ func TestRunChannelSmartScheduleProbeSkipsNonTextModelsWithoutUpstreamRequest(t 
 	assert.Zero(t, sampleCount)
 }
 
-func TestChannelSmartScheduleTextProbeRequiresResponsesProtocol(t *testing.T) {
+func TestChannelSmartScheduleTextProbeAcceptsTextChannels(t *testing.T) {
 	assert.True(t, channelSmartScheduleSupportsTextProbe(&model.Channel{Type: constant.ChannelTypeOpenAI}, "gpt-4o-mini"))
 	assert.False(t, channelSmartScheduleSupportsTextProbe(&model.Channel{Type: constant.ChannelTypeOpenAI}, "omni-moderation-latest"))
-	assert.False(t, channelSmartScheduleSupportsTextProbe(&model.Channel{Type: constant.ChannelTypeDeepSeek}, "deepseek-chat"))
-	assert.False(t, channelSmartScheduleSupportsTextProbe(&model.Channel{Type: constant.ChannelTypeAnthropic}, "claude-sonnet-4"))
+	assert.True(t, channelSmartScheduleSupportsTextProbe(&model.Channel{Type: constant.ChannelTypeDeepSeek}, "deepseek-chat"))
+	assert.True(t, channelSmartScheduleSupportsTextProbe(&model.Channel{Type: constant.ChannelTypeAnthropic}, "claude-sonnet-4"))
 }
 
-func TestRunChannelSmartScheduleProbeSkipsUnsupportedResponseChannels(t *testing.T) {
+func TestRunChannelSmartScheduleProbeDispatchesSupportedProtocols(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
+	withSelfUseModeEnabled(t)
+	service.InitHttpClient()
+	originalStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 5
+	t.Cleanup(func() { constant.StreamingTimeout = originalStreamingTimeout })
+	user := model.User{
+		Username: "smart-probe-providers", Password: "password",
+		Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "vip", Quota: 1_000_000,
+	}
+	require.NoError(t, db.Create(&user).Error)
+	var claudeRequests, deepSeekRequests atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if !assert.NoError(t, common.DecodeJson(r.Body, &request)) {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		assert.Equal(t, true, request["stream"])
+		w.Header().Set("Content-Type", "text/event-stream")
+		var events []string
+		switch r.URL.Path {
+		case "/v1/messages":
+			claudeRequests.Add(1)
+			assert.Equal(t, "claude-sonnet-5", request["model"])
+			assert.NotEmpty(t, request["messages"])
+			events = []string{
+				`data: {"type":"message_start","message":{"id":"msg-probe","type":"message","role":"assistant","model":"claude-sonnet-5","content":[],"usage":{"input_tokens":3,"output_tokens":0}}}`,
+				`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
+				`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"OK"}}`,
+				`data: {"type":"content_block_stop","index":0}`,
+				`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}`,
+				`data: {"type":"message_stop"}`,
+			}
+		case "/responses":
+			deepSeekRequests.Add(1)
+			assert.Equal(t, "deepseek-chat", request["model"])
+			assert.NotEmpty(t, request["input"])
+			events = []string{
+				`data: {"type":"response.created","response":{"id":"resp-probe","model":"deepseek-chat","created_at":1}}`,
+				`data: {"type":"response.output_text.delta","delta":"OK"}`,
+				`data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}}`,
+			}
+		default:
+			assert.Failf(t, "unexpected probe path", "%s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, err := io.WriteString(w, strings.Join(events, "\n\n")+"\n\n")
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(upstream.Close)
 	priority := int64(80)
 	weight := uint(50)
 	require.NoError(t, db.Create(&[]model.Channel{
-		{Id: 1432, Type: constant.ChannelTypeDeepSeek, Name: "deepseek", Status: common.ChannelStatusEnabled, Models: "deepseek-chat", Group: "vip", Priority: &priority, Weight: &weight},
-		{Id: 1433, Type: constant.ChannelTypeAnthropic, Name: "claude", Status: common.ChannelStatusEnabled, Models: "claude-sonnet-4", Group: "vip", Priority: &priority, Weight: &weight},
+		{Id: 1432, Type: constant.ChannelTypeDeepSeek, Name: "deepseek", Key: "probe-key", BaseURL: &upstream.URL, Status: common.ChannelStatusEnabled, Models: "deepseek-chat", Group: "vip", Priority: &priority, Weight: &weight},
+		{Id: 1433, Type: constant.ChannelTypeAnthropic, Name: "claude", Key: "probe-key", BaseURL: &upstream.URL, Status: common.ChannelStatusEnabled, Models: "claude-sonnet-5", Group: "vip", Priority: &priority, Weight: &weight},
+		{Id: 1434, Type: constant.ChannelTypeMistral, Name: "unsupported-responses", Key: "probe-key", BaseURL: &upstream.URL, Status: common.ChannelStatusEnabled, Models: "mistral-small-latest", Group: "vip", Priority: &priority, Weight: &weight},
 	}).Error)
 	require.NoError(t, db.Create(&[]model.Ability{
 		{ChannelId: 1432, Group: "vip", Model: "deepseek-chat", Enabled: true, Priority: &priority, Weight: weight},
-		{ChannelId: 1433, Group: "vip", Model: "claude-sonnet-4", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 1433, Group: "vip", Model: "claude-sonnet-5", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 1434, Group: "vip", Model: "mistral-small-latest", Enabled: true, Priority: &priority, Weight: weight},
 	}).Error)
 	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
 		{ChannelId: 1432, GroupName: "vip", ModelName: "deepseek-chat", ParticipationSet: true},
-		{ChannelId: 1433, GroupName: "vip", ModelName: "claude-sonnet-4", ParticipationSet: true},
+		{ChannelId: 1433, GroupName: "vip", ModelName: "claude-sonnet-5", ParticipationSet: true},
+		{ChannelId: 1434, GroupName: "vip", ModelName: "mistral-small-latest", ParticipationSet: true},
 	}).Error)
 	policy := channelSmartScheduleTestGroupPolicy(
 		"vip", channelMonitorSmartScheduleStrategyFirstToken, false,
@@ -722,17 +777,23 @@ func TestRunChannelSmartScheduleProbeSkipsUnsupportedResponseChannels(t *testing
 
 	result, err := runChannelSmartScheduleProbeOnce(context.Background(), nil)
 	require.NoError(t, err)
-	assert.Equal(t, 2, result.Total)
-	assert.Zero(t, result.Probed)
+	assert.Equal(t, 3, result.Total)
+	assert.Equal(t, 2, result.Probed)
+	assert.Equal(t, 2, result.Succeeded)
 	assert.Zero(t, result.Failed)
-	assert.Equal(t, 2, result.Skipped)
+	assert.Equal(t, 1, result.Skipped)
+	assert.Equal(t, int64(1), claudeRequests.Load())
+	assert.Equal(t, int64(1), deepSeekRequests.Load())
 
-	var sampleCount int64
-	require.NoError(t, db.Model(&model.ChannelSmartScheduleModelSampleState{}).Count(&sampleCount).Error)
-	assert.Zero(t, sampleCount)
-	var errorLogCount int64
-	require.NoError(t, db.Model(&model.Log{}).Where("type = ?", model.LogTypeError).Count(&errorLogCount).Error)
-	assert.Zero(t, errorLogCount)
+	var samples []model.ChannelSmartScheduleModelSampleState
+	require.NoError(t, db.Order("channel_id ASC").Find(&samples).Error)
+	require.Len(t, samples, 2)
+	assert.Equal(t, 1432, samples[0].ChannelId)
+	assert.Equal(t, 1433, samples[1].ChannelId)
+	for _, sample := range samples {
+		assert.Equal(t, int64(1), sample.SampleCount)
+		assert.Equal(t, int64(1), sample.SuccessCount)
+	}
 }
 
 func TestRunChannelSmartScheduleDegradedProbeFailureRenewsCooldownAndRecordsError(t *testing.T) {

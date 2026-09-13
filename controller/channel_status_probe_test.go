@@ -167,6 +167,57 @@ func TestChannelStatusProbeDispatchesForDisabledChannels(t *testing.T) {
 	assert.Equal(t, int64(len(statuses)), requestCount.Load())
 }
 
+func TestChannelStatusProbeDispatchesClaudeAndDeepSeek(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		channelType int
+		modelName   string
+		requestPath string
+	}{
+		{name: "Claude", channelType: constant.ChannelTypeAnthropic, modelName: "claude-sonnet-5", requestPath: "/v1/messages"},
+		{name: "DeepSeek", channelType: constant.ChannelTypeDeepSeek, modelName: "deepseek-chat", requestPath: "/v1/chat/completions"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := setupChannelMonitorControllerTestDB(t)
+			withSelfUseModeEnabled(t)
+			service.InitHttpClient()
+			user := model.User{
+				Username: "status-probe-provider", Password: "password",
+				Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "default", Quota: 1_000_000,
+			}
+			require.NoError(t, db.Create(&user).Error)
+			var requestCount atomic.Int64
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requestCount.Add(1)
+				assert.Equal(t, test.requestPath, r.URL.Path)
+				var request map[string]any
+				if !assert.NoError(t, common.DecodeJson(r.Body, &request)) {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				assert.Equal(t, test.modelName, request["model"])
+				assert.Equal(t, true, request["stream"])
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadGateway)
+				_, err := w.Write([]byte(`{"error":{"message":"upstream unavailable"}}`))
+				assert.NoError(t, err)
+			}))
+			t.Cleanup(upstream.Close)
+			channel := &model.Channel{
+				Id: 461, Type: test.channelType, Key: "probe-key", Name: test.name,
+				Status: common.ChannelStatusEnabled, Models: test.modelName, Group: "default", BaseURL: &upstream.URL,
+			}
+
+			outcome := executeChannelStatusProbeModel(context.Background(), channel, user.Id, test.modelName)
+
+			assert.Equal(t, model.ChannelStatusProbeResultUpstreamFailure, outcome.Result)
+			assert.True(t, outcome.TestExecuted)
+			assert.True(t, outcome.ProbeResult.requestDispatched)
+			assert.Equal(t, int64(1), requestCount.Load())
+		})
+	}
+}
+
 func TestChannelStatusProbeChannelAllowed(t *testing.T) {
 	tests := []struct {
 		name    string

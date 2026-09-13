@@ -124,23 +124,7 @@ func channelSmartScheduleSupportsTextProbe(channel *model.Channel, modelName str
 		advancedCustom := channel.GetOtherSettings().AdvancedCustom
 		return advancedCustom != nil && advancedCustom.SupportsPathForModel("/v1/responses", modelName)
 	}
-	apiType, _ := common.ChannelType2APIType(channel.Type)
-	if apiType == constant.APITypeOpenAI {
-		return true
-	}
-	switch channel.Type {
-	case constant.ChannelTypeAli,
-		constant.ChannelTypeGemini,
-		constant.ChannelCloudflare,
-		constant.ChannelTypePerplexity,
-		constant.ChannelTypeVolcEngine,
-		constant.ChannelTypeXai,
-		constant.ChannelTypeCodex,
-		constant.ChannelTypeSub2API:
-		return true
-	default:
-		return false
-	}
+	return true
 }
 
 func init() {
