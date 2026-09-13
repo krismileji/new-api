@@ -1649,7 +1649,6 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 
 	updates := make([]model.ChannelSmartScheduleRouteResultUpdate, 0, len(routes))
 	hasChanges := false
-	trafficStateChanged := false
 	for _, route := range routes {
 		health, healthSet := healthByChannel[route.ChannelId]
 		healthChanged := healthSet &&
@@ -1702,7 +1701,6 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 		changed := healthChanged || rollingChanged || samplingChanged || snapshotChanged ||
 			applyPriorityWeight || runtimeRecovery
 		hasChanges = hasChanges || changed
-		trafficStateChanged = trafficStateChanged || snapshotChanged || runtimeRecovery
 		update := model.ChannelSmartScheduleRouteResultUpdate{
 			ChannelId: route.ChannelId, Group: route.Group, Model: route.Model,
 			Priority: desiredPriority[route.ChannelId], Weight: desiredWeight[route.ChannelId],
@@ -1788,11 +1786,9 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 		return false, err
 	}
 	conflict := len(outcomes) != len(updates)
-	routingChanged := false
 	runtimeRecovered := false
 	for _, outcome := range outcomes {
 		conflict = conflict || !outcome.Applied
-		routingChanged = routingChanged || outcome.RoutingChanged
 		if outcome.Applied && outcome.ObservationSince > 0 {
 			runtimeRecovered = true
 		}
@@ -1810,7 +1806,7 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 		return true, fmt.Errorf("%w: 智能调度池级 Redis 软刷新发生配置冲突: group=%s model=%s detail=%s",
 			service.ErrChannelMonitorRedisRetryable, poolKey.group, poolKey.model, reason)
 	}
-	if !conflict && (routingChanged || trafficStateChanged || redisEventSequence > 0) {
+	if !conflict {
 		if cacheErr := model.RefreshChannelSmartScheduleRoutePoolCache(poolKey.group, poolKey.model); cacheErr != nil {
 			model.InitChannelCache()
 			if redisEventSequence > 0 {

@@ -40,12 +40,14 @@ type channelSmartScheduleTaskHandler struct {
 }
 
 type channelSmartScheduleTaskPayload struct {
-	ForceReset       bool     `json:"force_reset,omitempty"`
-	TriggerSource    string   `json:"trigger_source,omitempty"`
-	TriggerCount     int      `json:"trigger_count,omitempty"`
-	FirstRequestedAt int64    `json:"first_requested_at,omitempty"`
-	LastRequestedAt  int64    `json:"last_requested_at,omitempty"`
-	DirtyReasons     []string `json:"dirty_reasons,omitempty"`
+	ForceReset           bool     `json:"force_reset,omitempty"`
+	TriggerSource        string   `json:"trigger_source,omitempty"`
+	TriggerCount         int      `json:"trigger_count,omitempty"`
+	FirstRequestedAt     int64    `json:"first_requested_at,omitempty"`
+	LastRequestedAt      int64    `json:"last_requested_at,omitempty"`
+	DirtyReasons         []string `json:"dirty_reasons,omitempty"`
+	ConflictRetryAttempt int      `json:"conflict_retry_attempt,omitempty"`
+	RetryNotBefore       int64    `json:"retry_not_before,omitempty"`
 }
 
 const channelSmartScheduleTriggerFallback = "channel_monitor.unspecified"
@@ -88,9 +90,8 @@ func normalizeChannelSmartScheduleDirtyReasons(reasons ...string) []string {
 }
 
 // MergeRequiredSystemTaskPayload is called by the required-task enqueue path
-// while a pending smart-schedule task is locked. It only aggregates trigger
-// attribution; scheduling decisions continue to use ForceReset and the normal
-// task runner inputs.
+// while a pending smart-schedule task is locked. It merges trigger attribution,
+// reset requests and conflict deadlines; calculations use current task inputs.
 func (payload channelSmartScheduleTaskPayload) MergeRequiredSystemTaskPayload(existing string) (string, error) {
 	merged := payload
 	var previous channelSmartScheduleTaskPayload
@@ -106,6 +107,15 @@ func (payload channelSmartScheduleTaskPayload) MergeRequiredSystemTaskPayload(ex
 		merged.TriggerCount = 1
 	}
 	previous.ForceReset = previous.ForceReset || merged.ForceReset
+	// Fresh input must not inherit a retry delay. Coalescing two retries keeps
+	// the earliest deadline so repeated requests cannot postpone recovery.
+	if previous.ConflictRetryAttempt > 0 && merged.ConflictRetryAttempt > 0 {
+		previous.ConflictRetryAttempt = max(previous.ConflictRetryAttempt, merged.ConflictRetryAttempt)
+		previous.RetryNotBefore = min(previous.RetryNotBefore, merged.RetryNotBefore)
+	} else {
+		previous.ConflictRetryAttempt = 0
+		previous.RetryNotBefore = 0
+	}
 	if previous.TriggerSource == "" {
 		previous.TriggerSource = merged.TriggerSource
 	}
@@ -266,6 +276,7 @@ type channelSmartScheduleTaskResult struct {
 	Failures                 []channelSmartScheduleTaskFailure    `json:"failures,omitempty"`
 	FailureDetailsTruncated  bool                                 `json:"failure_details_truncated,omitempty"`
 	Adjustments              []channelSmartScheduleTaskAdjustment `json:"adjustments,omitempty"`
+	retryRequired            bool
 }
 
 func init() {
@@ -296,11 +307,28 @@ func (handler channelSmartScheduleTaskHandler) Run(ctx context.Context, task *mo
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, channelSmartScheduleTaskResult{}, err)
 		return
 	}
+	if delay := time.Until(time.Unix(payload.RetryNotBefore, 0)); delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			runErr = ctx.Err()
+			finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, runErr)
+			return
+		case <-timer.C:
+		}
+	}
 	summary, runErr = runChannelSmartScheduleOnce(
 		ctx,
 		service.NewSystemTaskProgressReporter(task, runnerID),
 		payload.ForceReset,
 	)
+	if summary.retryRequired && ctx.Err() == nil {
+		retry := newChannelSmartScheduleConflictRetry(payload, time.Now())
+		if _, _, err := service.EnqueueRequiredSystemTask(channelMonitorSmartScheduleTaskType, retry); err != nil {
+			runErr = fmt.Errorf("%w；安排智能调度冲突重试失败：%v", runErr, err)
+		}
+	}
 	detailInputs := make([]model.ChannelSmartScheduleExecutionDetailInput, 0, len(summary.Adjustments))
 	for index, adjustment := range summary.Adjustments {
 		detailInputs = append(detailInputs, model.ChannelSmartScheduleExecutionDetailInput{

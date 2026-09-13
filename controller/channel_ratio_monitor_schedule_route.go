@@ -296,7 +296,7 @@ func runChannelSmartScheduleByRouteOnce(
 	if err != nil {
 		return result, err
 	}
-	routes, err := model.GetChannelSmartScheduleRoutes()
+	routes, err := model.GetChannelSmartScheduleRoutesForScheduling(ctx)
 	if err != nil {
 		return result, err
 	}
@@ -329,7 +329,7 @@ func runChannelSmartScheduleByRouteOnce(
 		reportProgress(0, 0)
 		return result, nil
 	}
-	economicSnapshot, err := model.GetChannelSmartScheduleEconomicSnapshot()
+	economicSnapshot, err := model.GetChannelSmartScheduleEconomicSnapshotForRefresh(ctx)
 	if err != nil {
 		return result, err
 	}
@@ -865,6 +865,9 @@ func runChannelSmartScheduleByRouteOnce(
 		}
 		rescheduleRequired = rescheduleRequired || poolConflict
 		if applyErr == nil && !poolConflict {
+			// Even unchanged routing writes a new state revision and schedule
+			// result. Publish those inputs after the complete run as well.
+			cacheDirty = true
 			enqueueChannelSmartScheduleAdaptivePoolRefresh(poolKey.group, poolKey.model)
 		}
 		for index, update := range updates {
@@ -929,9 +932,7 @@ func runChannelSmartScheduleByRouteOnce(
 		}
 	}
 	reportProgress(result.Total, result.Total)
-	if rescheduleRequired {
-		_ = requestChannelSmartScheduleRun(ctx)
-	}
+	result.retryRequired = rescheduleRequired
 	if result.Failed > 0 {
 		if len(result.Failures) > 0 {
 			return result, fmt.Errorf("%d 条智能调度路由未能应用，失败池已保留上一轮结果；首个失败原因：%s", result.Failed, result.Failures[0].Error)

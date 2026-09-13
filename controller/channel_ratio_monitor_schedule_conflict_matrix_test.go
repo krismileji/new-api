@@ -196,6 +196,51 @@ func TestRedisAdaptiveRefreshConfigurationConflictDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, publishedEconomics.Revision, stillPublished.Revision, "dashboard reads retain their published snapshot contract")
 			require.NoError(t, db.First(&effect).Error)
 			assert.Equal(t, int64(104), effect.EventSequence)
+
+			t.Run("full_schedule_recovers_without_snapshot_publication", func(t *testing.T) {
+				require.NoError(t, db.AutoMigrate(&model.SystemTask{}, &model.SystemTaskLock{}))
+				t.Cleanup(func() { assert.NoError(t, db.Migrator().DropTable(&model.SystemTask{}, &model.SystemTaskLock{})) })
+				useChannelSmartScheduleGroupRatio(t, `{"vip":1}`)
+				usePersistedChannelMonitorOptions(t, db, map[string]string{
+					channelMonitorSmartScheduleEnabledOption:         "true",
+					channelMonitorSmartScheduleControlRevisionOption: "control-current",
+					model.ChannelMonitorEconomicRevisionOption:       "economics-current",
+					"GroupRatio": `{"vip":1}`,
+					channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t,
+						channelSmartScheduleTestGroupPolicy(
+							"vip", channelMonitorSmartScheduleStrategyRatio, false,
+							channelMonitorSmartScheduleApplyWeight, []string{"model-a"}, 1, 80, 30,
+						),
+					),
+				})
+				require.NoError(t, db.Model(&model.ChannelRatioMonitor{}).Where("channel_id = ?", 1709).
+					Update("updated_time", common.GetTimestamp()).Error)
+				cached, err := model.GetChannelSmartScheduleRoutes()
+				require.NoError(t, err)
+				require.Len(t, cached, 1)
+				require.NoError(t, db.First(&state, originalState.Id).Error)
+				require.Less(t, cached[0].State.Revision, state.Revision)
+				before := state.Revision
+				for attempt := range 2 {
+					if attempt == 1 {
+						require.NoError(t, db.Save(&model.Option{Key: model.ChannelMonitorEconomicRevisionOption, Value: "economics-next"}).Error)
+					}
+					result, err := runChannelSmartScheduleOnce(context.Background(), nil, false)
+					require.NoError(t, err, "full scheduling must not reuse a published write revision or economic snapshot")
+					assert.Zero(t, result.Failed)
+					require.Len(t, result.Adjustments, 1)
+				}
+				require.NoError(t, db.First(&state, originalState.Id).Error)
+				assert.Equal(t, before+2, state.Revision)
+				assert.Equal(t, model.ChannelSmartScheduleStatusSkipped, state.LastScheduleStatus)
+				refreshed, err := model.GetChannelSmartScheduleRoutes()
+				require.NoError(t, err)
+				require.Len(t, refreshed, 1)
+				assert.Equal(t, state.Revision, refreshed[0].State.Revision, "state-only results must refresh the dashboard snapshot too")
+				var tasks int64
+				require.NoError(t, db.Model(&model.SystemTask{}).Count(&tasks).Error)
+				assert.Zero(t, tasks, "an old dashboard snapshot must not create a retry storm")
+			})
 		})
 	}
 }

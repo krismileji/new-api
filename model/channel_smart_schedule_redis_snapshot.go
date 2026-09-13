@@ -551,8 +551,11 @@ func commitChannelSmartScheduleRouteSnapshot(
 	}
 	return client.Watch(ctx, func(tx *redis.Tx) error {
 		leaseToken, err := tx.Get(ctx, channelSmartScheduleRouteSnapshotLeaseKey).Result()
-		if err != nil || leaseToken != token {
-			return ErrChannelSmartScheduleRouteSnapshotUnavailable
+		if err != nil {
+			return fmt.Errorf("%w: 读取快照发布租约失败: %v", ErrChannelSmartScheduleRouteSnapshotUnavailable, err)
+		}
+		if leaseToken != token {
+			return fmt.Errorf("%w: 快照发布租约已变化", ErrChannelSmartScheduleRouteSnapshotUnavailable)
 		}
 		pointer, err := readChannelSmartScheduleRouteCounter(ctx, tx, channelSmartScheduleRouteSnapshotPointerKey)
 		if err != nil {
@@ -566,7 +569,8 @@ func commitChannelSmartScheduleRouteSnapshot(
 			return err
 		}
 		if watermark != snapshot.SourceWatermark {
-			return ErrChannelSmartScheduleRouteSnapshotUnavailable
+			return fmt.Errorf("%w: 源状态水位已变化（快照 %d，当前 %d）",
+				ErrChannelSmartScheduleRouteSnapshotUnavailable, snapshot.SourceWatermark, watermark)
 		}
 		generatedAt, err := readChannelSmartScheduleRouteCounter(ctx, tx, channelSmartScheduleRouteSnapshotGeneratedKey)
 		if err != nil {
@@ -580,7 +584,7 @@ func commitChannelSmartScheduleRouteSnapshot(
 			return err
 		}
 		if exists != 1 {
-			return ErrChannelSmartScheduleRouteSnapshotUnavailable
+			return fmt.Errorf("%w: 待发布的临时快照已不存在", ErrChannelSmartScheduleRouteSnapshotUnavailable)
 		}
 		_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 			if len(monitorPayload) > 0 {

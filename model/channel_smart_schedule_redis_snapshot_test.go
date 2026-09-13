@@ -283,6 +283,7 @@ func TestChannelSmartScheduleRedisSnapshotRejectsWriterAfterLeaseTakeover(t *tes
 		snapshot,
 	)
 	assert.ErrorIs(t, err, ErrChannelSmartScheduleRouteSnapshotUnavailable)
+	assert.ErrorContains(t, err, "快照发布租约已变化")
 	assert.ErrorIs(t, redisClient.Get(ctx, channelSmartScheduleRouteSnapshotPointerKey).Err(), redis.Nil)
 	assert.ErrorIs(t, redisClient.Get(
 		ctx, channelSmartScheduleRouteSnapshotVersionKey(snapshot.Revision),
@@ -327,6 +328,7 @@ func TestChannelSmartScheduleRedisSnapshotDirtyWatermarkFencesActiveWriter(t *te
 		snapshot,
 	)
 	assert.ErrorIs(t, err, ErrChannelSmartScheduleRouteSnapshotUnavailable)
+	assert.ErrorContains(t, err, "源状态水位已变化")
 	assert.ErrorIs(t, redisClient.Get(ctx, channelSmartScheduleRouteSnapshotPointerKey).Err(), redis.Nil)
 }
 
