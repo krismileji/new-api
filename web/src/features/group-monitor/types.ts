@@ -70,6 +70,7 @@ export type ChannelGroupMonitorBucket = {
 
 export type ChannelGroupMonitorSettings = {
   enabled: boolean
+  show_cache_rate?: boolean
   groups: ChannelGroupMonitorGroup[]
   categories?: string[]
   interval_seconds: number
@@ -93,6 +94,7 @@ export type ChannelGroupMonitorItem = {
   probe_model?: string
   latest_first_token_ms: number | null
   success_rate: number | null
+  cache_rate?: number | null
   success_count: number
   completed_count: number
   last_finished_at: number
@@ -108,6 +110,7 @@ export type PricingGroupMonitorItem = Pick<
   | 'probe_model'
   | 'latest_first_token_ms'
   | 'success_rate'
+  | 'cache_rate'
   | 'last_finished_at'
   | 'recent_window'
 > & {
@@ -138,6 +141,7 @@ export type ChannelGroupMonitorOverview = {
 
 export type PricingGroupMonitor = {
   enabled: boolean
+  show_cache_rate?: boolean
   categories?: string[]
   server_now: number
   data_cutoff_at: number

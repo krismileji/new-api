@@ -121,6 +121,7 @@ function dataToFormValues(
   }))
   return {
     enabled: settings?.enabled ?? false,
+    showCacheRate: settings?.show_cache_rate ?? false,
     categories,
     groups:
       settings?.groups.map((group) => ({
@@ -184,6 +185,7 @@ export function ChannelGroupMonitorSettingsSheet(
     mutationFn: (values: ChannelGroupMonitorConfigFormValues) =>
       updateChannelGroupMonitorSettings({
         enabled: values.enabled,
+        showCacheRate: values.showCacheRate,
         categories: values.categories.map((category) => category.name),
         groups: values.categories.flatMap((category) =>
           values.groups
@@ -455,6 +457,35 @@ export function ChannelGroupMonitorSettingsSheet(
                   次请求
                 </span>
               </div>
+            </SideDrawerSection>
+
+            <SideDrawerSection>
+              <SideDrawerSectionHeader title='展示设置' />
+              <FormField
+                control={form.control}
+                name='showCacheRate'
+                render={({ field }) => (
+                  <FormItem
+                    className={sideDrawerSwitchItemClassName('border-t-0')}
+                  >
+                    <div className='min-w-0 space-y-1'>
+                      <FormLabel>显示缓存率</FormLabel>
+                      <FormDescription>
+                        在分组监控页展示近 24
+                        小时实际请求的缓存命中率，无有效样本时显示暂无数据
+                      </FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                        disabled={controlsDisabled}
+                        aria-label='显示缓存率'
+                      />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
             </SideDrawerSection>
 
             <ChannelGroupMonitorCategoryEditor

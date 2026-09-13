@@ -73,8 +73,9 @@ func TestChannelGroupMonitorCategoryDatabaseCompatibility(t *testing.T) {
 			require.NoError(t, db.AutoMigrate(&ChannelGroupMonitorConfig{}))
 
 			input := ChannelGroupMonitorConfigInput{
-				Enabled:    true,
-				Categories: []string{"空分类", "编程🚀", "未分类"},
+				Enabled:       true,
+				ShowCacheRate: true,
+				Categories:    []string{"空分类", "编程🚀", "未分类"},
 				Groups: []ChannelGroupMonitorGroup{
 					{GroupName: "vip", ProbeModel: "gpt-4.1", DisplayInitial: "V", Category: "编程🚀"},
 					{GroupName: "default", ProbeModel: "gpt-4.1-mini"},
@@ -93,6 +94,9 @@ func TestChannelGroupMonitorCategoryDatabaseCompatibility(t *testing.T) {
 				categories, parseErr := stored.Categories()
 				require.NoError(t, parseErr)
 				assert.Equal(t, input.Categories, categories)
+				showCacheRate, parseErr := stored.ShowCacheRate()
+				require.NoError(t, parseErr)
+				assert.True(t, showCacheRate)
 			}
 
 			// Existing installations have the same table with category absent from JSON.
@@ -100,6 +104,9 @@ func TestChannelGroupMonitorCategoryDatabaseCompatibility(t *testing.T) {
 			require.NoError(t, db.Model(&ChannelGroupMonitorConfig{}).Where("id = ?", 1).Update("groups_json", legacyJSON).Error)
 			legacy, err := GetChannelGroupMonitorConfig()
 			require.NoError(t, err)
+			showCacheRate, err := legacy.ShowCacheRate()
+			require.NoError(t, err)
+			assert.False(t, showCacheRate)
 			groups, err := legacy.Groups()
 			require.NoError(t, err)
 			require.Len(t, groups, 2)
@@ -125,6 +132,7 @@ func TestChannelGroupMonitorCategoryDatabaseCompatibility(t *testing.T) {
 			assert.Equal(t, input.Categories, categories)
 
 			input.Groups[0].Category = ""
+			input.ShowCacheRate = false
 			input.Categories = []string{"未分类"}
 			input.Revision = stored.Revision
 			_, err = SaveChannelGroupMonitorConfig(input, 1_200)
@@ -136,6 +144,9 @@ func TestChannelGroupMonitorCategoryDatabaseCompatibility(t *testing.T) {
 			assert.Equal(t, input.Groups, groups)
 
 			input.Revision, input.Groups = stored.Revision, []ChannelGroupMonitorGroup{}
+			showCacheRate, err = stored.ShowCacheRate()
+			require.NoError(t, err)
+			assert.False(t, showCacheRate)
 			input.Categories = []string{"预留分类"}
 			_, err = SaveChannelGroupMonitorConfig(input, 1_300)
 			require.NoError(t, err)

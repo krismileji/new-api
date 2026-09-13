@@ -135,6 +135,7 @@ type ChannelGroupMonitorExecutionSummary struct {
 
 type ChannelGroupMonitorConfigInput struct {
 	Enabled         bool
+	ShowCacheRate   bool
 	Groups          []ChannelGroupMonitorGroup
 	Categories      []string
 	IntervalSeconds int
@@ -248,8 +249,10 @@ func GetChannelGroupMonitorCandidateAbilities(ctx context.Context, channelIDs []
 
 func SaveChannelGroupMonitorConfig(input ChannelGroupMonitorConfigInput, now int64) (ChannelGroupMonitorConfig, error) {
 	var groupConfiguration any = input.Groups
-	if input.Categories != nil {
-		groupConfiguration = channelGroupMonitorGroupConfiguration{Categories: input.Categories, Groups: input.Groups}
+	if input.Categories != nil || input.ShowCacheRate {
+		groupConfiguration = channelGroupMonitorGroupConfiguration{
+			Categories: input.Categories, Groups: input.Groups, ShowCacheRate: input.ShowCacheRate,
+		}
 	}
 	groupsJSON, err := common.Marshal(groupConfiguration)
 	if err != nil {

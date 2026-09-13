@@ -27,6 +27,7 @@ import { api } from '@/lib/api'
 import { ChannelGroupMonitorSettingsSheet } from '../channel-group-monitor-settings-sheet'
 
 type SaveRequest = {
+  show_cache_rate?: boolean
   categories: string[]
   groups: ChannelGroupMonitorSettingsResponse['settings']['groups']
   revision: number
@@ -48,11 +49,13 @@ function renderSettings(
     default: ['gpt-4.1'],
     vip: ['gpt-4.1'],
   },
-  groupOrder: readonly string[] = []
+  groupOrder: readonly string[] = [],
+  showCacheRate?: boolean
 ) {
   const data: ChannelGroupMonitorSettingsResponse = {
     settings: {
       enabled: false,
+      show_cache_rate: showCacheRate,
       groups,
       categories,
       interval_seconds: 60,
@@ -104,6 +107,38 @@ function renderSettings(
   )
   return { requests, network, queryClient: testQueryClient }
 }
+
+test.each([undefined, true])(
+  '缓存率开关恢复配置，切换后提交并保留保存结果（%s）',
+  async (savedValue) => {
+    const user = userEvent.setup()
+    const { requests } = renderSettings([], [], undefined, [], savedValue)
+    const toggle = screen.getByRole('switch', { name: '显示缓存率' })
+    expect(toggle).toHaveAttribute('aria-checked', String(savedValue ?? false))
+
+    await user.click(toggle)
+    await user.click(screen.getByRole('button', { name: '保存配置' }))
+
+    await waitFor(() => {
+      expect(requests).toHaveLength(1)
+      expect(requests[0].show_cache_rate).toBe(!savedValue)
+    })
+    expect(toggle).toHaveAttribute('aria-checked', String(!savedValue))
+  }
+)
+
+test('保存缓存率开关失败时保留修改供重试', async () => {
+  const user = userEvent.setup()
+  const { requests, network } = renderSettings()
+  network.fail = true
+  const toggle = screen.getByRole('switch', { name: '显示缓存率' })
+  await user.click(toggle)
+  await user.click(screen.getByRole('button', { name: '保存配置' }))
+
+  await waitFor(() => expect(requests).toHaveLength(1))
+  expect(requests[0].show_cache_rate).toBe(true)
+  expect(toggle).toHaveAttribute('aria-checked', 'true')
+})
 
 test('候选分组按全局顺序排列，切换选项后保留顺序并更新探测模型', async () => {
   const user = userEvent.setup()

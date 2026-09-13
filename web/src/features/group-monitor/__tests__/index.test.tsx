@@ -46,6 +46,50 @@ function categoryMonitorResult(
   }
 }
 
+test.each([false, undefined])(
+  '关闭或缺省显示开关时隐藏缓存率，即使响应仍含缓存数据（%s）',
+  (showCacheRate) => {
+    const result = categoryMonitorResult([{ group: 'vip' }])
+    result.show_cache_rate = showCacheRate
+    result.items[0].cache_rate = 75
+    render(<GroupMonitorContent result={result} />)
+
+    expect(screen.queryByText('缓存率')).not.toBeInTheDocument()
+    expect(screen.queryByText('75.0%')).not.toBeInTheDocument()
+    expect(screen.getByRole('article', { name: 'vip' })).toHaveTextContent(
+      '成功率'
+    )
+  }
+)
+
+test('开启缓存率后展示各组百分比，区分零命中与无有效样本', () => {
+  const result = categoryMonitorResult([
+    { group: 'hit' },
+    { group: 'miss' },
+    { group: 'empty' },
+  ])
+  result.show_cache_rate = true
+  result.items[0].cache_rate = 72.5
+  result.items[1].cache_rate = 0
+  result.items[2].cache_rate = null
+  render(<GroupMonitorContent result={result} />)
+
+  const hit = within(screen.getByRole('article', { name: 'hit' }))
+  expect(hit.getByText('缓存率')).toBeInTheDocument()
+  expect(hit.getByText('72.5%')).toBeVisible()
+  expect(screen.getByRole('article', { name: 'miss' })).toHaveTextContent(
+    '0.0%'
+  )
+  expect(screen.getByRole('article', { name: 'empty' })).toHaveTextContent(
+    '暂无数据'
+  )
+  expect(hit.getByText('缓存率').closest('dl')).toHaveClass(
+    'grid-cols-2',
+    'sm:grid-cols-4',
+    'lg:col-span-4'
+  )
+})
+
 test('groups interleaved categories in first appearance order and keeps each category’s group order', () => {
   render(
     <GroupMonitorContent

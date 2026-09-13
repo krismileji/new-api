@@ -87,6 +87,8 @@ const DISPLAY_UNIT_LABEL = {
 
 const GROUP_MONITOR_COLUMNS =
   'lg:grid-cols-[minmax(0,1fr)_5.5rem_7rem_5.5rem_5rem_minmax(0,1.4fr)]'
+const GROUP_MONITOR_CACHE_COLUMNS =
+  'lg:grid-cols-[minmax(0,1fr)_5.5rem_6rem_5.5rem_5rem_5.5rem_minmax(0,1.4fr)]'
 
 function formatLatency(value: number | null): string {
   if (value == null) return '--'
@@ -377,7 +379,9 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                 aria-hidden='true'
                 className={cn(
                   'bg-muted/40 text-muted-foreground hidden items-center gap-x-4 border-b px-4 py-2 text-xs lg:grid',
-                  GROUP_MONITOR_COLUMNS
+                  props.result.show_cache_rate
+                    ? GROUP_MONITOR_CACHE_COLUMNS
+                    : GROUP_MONITOR_COLUMNS
                 )}
               >
                 <span>分组 / 探测模型</span>
@@ -385,6 +389,7 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                 <span>分组倍率</span>
                 <span>首字响应</span>
                 <span>成功率</span>
+                {props.result.show_cache_rate ? <span>缓存率</span> : null}
                 <span>
                   近 {props.result.display_value}{' '}
                   {DISPLAY_UNIT_LABEL[props.result.display_unit]} 状态
@@ -404,7 +409,9 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                         aria-label={item.group}
                         className={cn(
                           'hover:bg-muted/30 grid min-w-0 grid-cols-3 items-center gap-x-4 gap-y-3 px-4 py-3 transition-colors',
-                          GROUP_MONITOR_COLUMNS
+                          props.result.show_cache_rate
+                            ? GROUP_MONITOR_CACHE_COLUMNS
+                            : GROUP_MONITOR_COLUMNS
                         )}
                       >
                         <div className='col-span-2 flex min-w-0 items-center gap-2.5 lg:col-span-1'>
@@ -443,7 +450,14 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                           </Badge>
                         </div>
 
-                        <dl className='col-span-3 grid grid-cols-3 gap-x-4 lg:grid-cols-subgrid'>
+                        <dl
+                          className={cn(
+                            'col-span-3 grid gap-x-4 gap-y-3 lg:grid-cols-subgrid',
+                            props.result.show_cache_rate
+                              ? 'grid-cols-2 sm:grid-cols-4 lg:col-span-4'
+                              : 'grid-cols-3'
+                          )}
+                        >
                           <div className='min-w-0'>
                             <dt className='text-muted-foreground mb-1 text-[11px] lg:sr-only'>
                               分组倍率
@@ -471,6 +485,21 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                               {formatRate(item.success_rate)}
                             </dd>
                           </div>
+                          {props.result.show_cache_rate ? (
+                            <div
+                              className='min-w-0'
+                              title='近 24 小时命中缓存的请求数 / 有效缓存样本数'
+                            >
+                              <dt className='text-muted-foreground mb-1 text-[11px] lg:sr-only'>
+                                缓存率
+                              </dt>
+                              <dd className='font-mono text-xs font-medium tabular-nums'>
+                                {item.cache_rate == null
+                                  ? '暂无数据'
+                                  : formatRate(item.cache_rate)}
+                              </dd>
+                            </div>
+                          ) : null}
                         </dl>
                         <div className='col-span-3 min-w-0 lg:col-span-1'>
                           <div className='text-muted-foreground mb-1.5 flex items-center justify-between gap-2 text-[11px] lg:hidden'>
@@ -557,6 +586,9 @@ export function GroupMonitor() {
                 <p className='text-muted-foreground text-sm'>
                   成功率按近 {result.display_value}{' '}
                   {DISPLAY_UNIT_LABEL[result.display_unit]}内的有效逻辑探测统计
+                  {result.show_cache_rate
+                    ? '；缓存率按近 24 小时实际请求的有效缓存样本统计'
+                    : null}
                 </p>
                 {!result.enabled ? (
                   <Badge variant='secondary'>分组监控已停用</Badge>

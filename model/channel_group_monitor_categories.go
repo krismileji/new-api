@@ -10,8 +10,9 @@ import (
 // The existing TEXT field also stores category order and empty categories.
 // Legacy arrays remain readable and are converted only when categories are saved.
 type channelGroupMonitorGroupConfiguration struct {
-	Categories []string                   `json:"categories"`
-	Groups     []ChannelGroupMonitorGroup `json:"groups"`
+	Categories    []string                   `json:"categories"`
+	Groups        []ChannelGroupMonitorGroup `json:"groups"`
+	ShowCacheRate bool                       `json:"show_cache_rate,omitempty"`
 }
 
 func (config ChannelGroupMonitorConfig) groupConfiguration() (channelGroupMonitorGroupConfiguration, error) {
@@ -50,4 +51,9 @@ func (config ChannelGroupMonitorConfig) groupConfiguration() (channelGroupMonito
 func (config ChannelGroupMonitorConfig) Categories() ([]string, error) {
 	configuration, err := config.groupConfiguration()
 	return configuration.Categories, err
+}
+
+func (config ChannelGroupMonitorConfig) ShowCacheRate() (bool, error) {
+	configuration, err := config.groupConfiguration()
+	return configuration.ShowCacheRate, err
 }

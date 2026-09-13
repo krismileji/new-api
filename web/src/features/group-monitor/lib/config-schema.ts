@@ -38,6 +38,7 @@ function channelGroupMonitorDisplaySeconds(
 export const channelGroupMonitorConfigSchema = z
   .object({
     enabled: z.boolean(),
+    showCacheRate: z.boolean().default(false),
     categories: z
       .array(
         z.object({

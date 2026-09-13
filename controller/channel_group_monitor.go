@@ -31,6 +31,7 @@ const (
 
 type channelGroupMonitorConfigResponse struct {
 	Enabled           bool                             `json:"enabled"`
+	ShowCacheRate     bool                             `json:"show_cache_rate"`
 	Groups            []model.ChannelGroupMonitorGroup `json:"groups"`
 	Categories        []string                         `json:"categories"`
 	IntervalSeconds   int                              `json:"interval_seconds"`
@@ -48,6 +49,7 @@ type channelGroupMonitorConfigResponse struct {
 
 type channelGroupMonitorConfigRequest struct {
 	Enabled         *bool                             `json:"enabled"`
+	ShowCacheRate   *bool                             `json:"show_cache_rate"`
 	Groups          *[]model.ChannelGroupMonitorGroup `json:"groups"`
 	Categories      *[]string                         `json:"categories"`
 	IntervalSeconds *int                              `json:"interval_seconds"`
@@ -63,6 +65,7 @@ type channelGroupMonitorItemResponse struct {
 	Status             string                              `json:"status"`
 	LatestFirstTokenMs *float64                            `json:"latest_first_token_ms"`
 	SuccessRate        *float64                            `json:"success_rate"`
+	CacheRate          *float64                            `json:"cache_rate,omitempty"`
 	SuccessCount       int                                 `json:"success_count"`
 	CompletedCount     int                                 `json:"completed_count"`
 	LastFinishedAt     int64                               `json:"last_finished_at"`
@@ -108,6 +111,7 @@ type pricingGroupMonitorItemResponse struct {
 	ProbeModel         string                              `json:"probe_model,omitempty"`
 	LatestFirstTokenMs *float64                            `json:"latest_first_token_ms"`
 	SuccessRate        *float64                            `json:"success_rate"`
+	CacheRate          *float64                            `json:"cache_rate,omitempty"`
 	GroupRatio         float64                             `json:"group_ratio"`
 	LastFinishedAt     int64                               `json:"last_finished_at"`
 	RecentWindow       []channelGroupMonitorBucketResponse `json:"recent_window"`
@@ -121,6 +125,10 @@ type channelGroupMonitorOverviewResponse struct {
 }
 
 func channelGroupMonitorConfigToResponse(config model.ChannelGroupMonitorConfig) (channelGroupMonitorConfigResponse, error) {
+	showCacheRate, err := config.ShowCacheRate()
+	if err != nil {
+		return channelGroupMonitorConfigResponse{}, err
+	}
 	groups, err := config.Groups()
 	if err != nil {
 		return channelGroupMonitorConfigResponse{}, err
@@ -131,7 +139,8 @@ func channelGroupMonitorConfigToResponse(config model.ChannelGroupMonitorConfig)
 	}
 	displayValue, displayUnit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
 	return channelGroupMonitorConfigResponse{
-		Enabled: config.Enabled, Groups: groups, Categories: categories, IntervalSeconds: config.IntervalSeconds,
+		ShowCacheRate: showCacheRate,
+		Enabled:       config.Enabled, Groups: groups, Categories: categories, IntervalSeconds: config.IntervalSeconds,
 		DisplayValue: displayValue, DisplayUnit: displayUnit, NextRunAt: config.NextRunAt,
 		ManualRequestId: config.ManualRequestId, ManualRequestedAt: config.ManualRequestedAt,
 		Revision: config.Revision, RunningTrigger: config.RunningTrigger, RunningRunId: config.RunningRunId,
@@ -490,6 +499,17 @@ func buildChannelGroupMonitorItems(
 	for _, state := range states {
 		stateByGroup[state.GroupName] = state
 	}
+	showCacheRate, err := config.ShowCacheRate()
+	if err != nil {
+		return nil, err
+	}
+	var cacheRates map[string]float64
+	if showCacheRate {
+		cacheRates, err = service.GetChannelGroupMonitorCacheRates(ctx, groupNames, now)
+		if err != nil {
+			common.SysError("读取分组监控缓存率失败: " + err.Error())
+		}
+	}
 	displayValue, displayUnit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
 	bucketSeconds := model.ChannelStatusProbeDisplayBucketSeconds(displayUnit)
 	windowStart := model.ChannelStatusProbeDisplayBucketStart(now, displayUnit) -
@@ -532,6 +552,9 @@ func buildChannelGroupMonitorItems(
 			ConfigValid: configValid, RecentWindow: recentWindows[group.GroupName],
 		}
 		window := summaryByGroup[group.GroupName]
+		if rate, exists := cacheRates[group.GroupName]; exists {
+			item.CacheRate = &rate
+		}
 		item.SuccessCount = window.success
 		item.CompletedCount = window.completed
 		if window.completed > 0 {
@@ -657,8 +680,17 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return
 	}
+	showCacheRate, err := currentConfig.ShowCacheRate()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if request.ShowCacheRate != nil {
+		showCacheRate = *request.ShowCacheRate
+	}
 	saved, err := model.SaveChannelGroupMonitorConfig(model.ChannelGroupMonitorConfigInput{
-		Enabled: *request.Enabled, Groups: groups, IntervalSeconds: *request.IntervalSeconds,
+		ShowCacheRate: showCacheRate,
+		Enabled:       *request.Enabled, Groups: groups, IntervalSeconds: *request.IntervalSeconds,
 		Categories:   categories,
 		DisplayValue: *request.DisplayValue, DisplayUnit: *request.DisplayUnit, Revision: *request.Revision,
 	}, common.GetTimestamp())
@@ -676,7 +708,8 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 		return
 	}
 	recordManageAudit(c, "channel.group_monitor_config_changed", map[string]any{
-		"enabled": *request.Enabled, "groups": groups, "group_count": len(groups),
+		"show_cache_rate": showCacheRate,
+		"enabled":         *request.Enabled, "groups": groups, "group_count": len(groups),
 		"categories":       categories,
 		"interval_seconds": *request.IntervalSeconds, "display_value": *request.DisplayValue,
 		"display_unit": *request.DisplayUnit,
@@ -777,6 +810,11 @@ func GetPricingGroupMonitor(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	showCacheRate, err := config.ShowCacheRate()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	userGroup := ""
 	if userId, exists := c.Get("id"); exists {
 		if user, userErr := model.GetUserCache(userId.(int)); userErr == nil {
@@ -816,6 +854,7 @@ func GetPricingGroupMonitor(c *gin.Context) {
 			ProbeModel:         item.ProbeModel,
 			LatestFirstTokenMs: item.LatestFirstTokenMs,
 			SuccessRate:        item.SuccessRate,
+			CacheRate:          item.CacheRate,
 			GroupRatio:         service.GetUserGroupRatio(userGroup, item.Group),
 			LastFinishedAt:     item.LastFinishedAt,
 			RecentWindow:       item.RecentWindow,
@@ -824,7 +863,8 @@ func GetPricingGroupMonitor(c *gin.Context) {
 	displayValue, displayUnit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{
 		"enabled": config.Enabled, "server_now": now,
-		"data_cutoff_at": now - channelGroupMonitorDisplaySeconds(displayValue, displayUnit),
-		"display_value":  displayValue, "display_unit": displayUnit, "items": publicItems, "categories": categories,
+		"show_cache_rate": showCacheRate,
+		"data_cutoff_at":  now - channelGroupMonitorDisplaySeconds(displayValue, displayUnit),
+		"display_value":   displayValue, "display_unit": displayUnit, "items": publicItems, "categories": categories,
 	}})
 }
