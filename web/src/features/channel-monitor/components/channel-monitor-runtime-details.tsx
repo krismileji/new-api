@@ -22,19 +22,12 @@ import {
   type getChannelMonitorRuntimeStatus,
   type ChannelMonitorRuntimeInput,
 } from '../lib/runtime-status'
+import { ChannelMonitorRuntimeDiagnostics } from './channel-monitor-runtime-diagnostics'
+import { ChannelMonitorRuntimeHistory } from './channel-monitor-runtime-history'
 
 type RuntimeDiagnosticGroup = {
   title: string
   fields: [label: string, value: string][]
-}
-
-const recoveryGapLabels: Record<string, string> = {
-  samples_dropped: '监控事件曾被丢弃',
-  events_quarantined: '存在历史隔离记录',
-  writer_queue_full: '监控写入队列曾满',
-  cost_publish_failure: '成本事件发布失败',
-  cost_dead_letter: '存在待复核的成本异常事件',
-  daily_replay_incomplete: '日统计恢复不完整',
 }
 
 export function ChannelMonitorRuntimeDetails(
@@ -59,6 +52,10 @@ export function ChannelMonitorRuntimeDetails(
   let trimLabel = '未提供'
   if (metadata?.stream_trim_failure_active !== undefined) {
     trimLabel = metadata.stream_trim_failure_active ? '故障' : '正常'
+  }
+  let actionLabel = recovery ? recovery.action || '无' : '未提供'
+  if (props.status.healthy) {
+    actionLabel = '后台自动处理新事件，少量待处理不代表故障。'
   }
 
   const groups: RuntimeDiagnosticGroup[] = [
@@ -149,49 +146,22 @@ export function ChannelMonitorRuntimeDetails(
       ],
     },
     {
-      title: '恢复与历史',
+      title: '后台恢复',
       fields: [
         ['恢复状态', props.status.label],
         [
-          '恢复待处理',
+          '当前异常',
+          props.status.alerts.join('；') ||
+            (props.status.healthy ? '无' : '未确认'),
+        ],
+        [
+          '后台待处理',
           formatMonitorRuntimeCount(recovery?.pending_count, '条'),
         ],
         ['最近恢复', formatMonitorRuntimeTime(recovery?.recovered_at)],
-        [
-          '历史记录',
-          recovery
-            ? recovery.data_gap_reasons
-                .map((reason) => recoveryGapLabels[reason] ?? reason)
-                .join('、') || '无'
-            : '未提供',
-        ],
-        ['处理建议', recovery ? recovery.action || '无' : '未提供'],
-        [
-          '事件处理重试（累计）',
-          formatMonitorRuntimeCount(metadata?.retry_count, '次'),
-        ],
-        [
-          '自动接管（累计）',
-          formatMonitorRuntimeCount(metadata?.takeover_count, '次'),
-        ],
-        [
-          '异常隔离（累计）',
-          formatMonitorRuntimeCount(metadata?.quarantine_count, '条'),
-        ],
-        ['最近隔离', formatMonitorRuntimeTime(metadata?.last_quarantined_at)],
+        ['处理建议', actionLabel],
         ['事件标记清理', markerLabel],
-        [
-          '标记清理失败（累计）',
-          formatMonitorRuntimeCount(
-            metadata?.marker_release_failure_count,
-            '次'
-          ),
-        ],
         ['实时事件清理', trimLabel],
-        [
-          '事件清理失败（累计）',
-          formatMonitorRuntimeCount(metadata?.stream_trim_failure_count, '次'),
-        ],
         ['通知错误', recovery ? recovery.notification_error || '无' : '未提供'],
       ],
     },
@@ -202,10 +172,11 @@ export function ChannelMonitorRuntimeDetails(
       className='grid min-w-0 grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3'
       data-slot='runtime-diagnostic-groups'
     >
+      <ChannelMonitorRuntimeDiagnostics diagnostics={props.diagnostics} />
       {groups.map((group) => (
         <section key={group.title} className='min-w-0' aria-label={group.title}>
           <h3 className='mb-3 text-sm font-medium'>{group.title}</h3>
-          {group.title === '恢复与历史' && props.recoveryFailed ? (
+          {group.title === '后台恢复' && props.recoveryFailed ? (
             <p className='text-warning mb-3 text-xs'>
               恢复状态获取失败，以下恢复信息为上次记录。
             </p>
@@ -229,6 +200,7 @@ export function ChannelMonitorRuntimeDetails(
           </dl>
         </section>
       ))}
+      <ChannelMonitorRuntimeHistory metadata={metadata} recovery={recovery} />
     </div>
   )
 }

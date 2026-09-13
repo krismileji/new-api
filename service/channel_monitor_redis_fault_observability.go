@@ -19,10 +19,10 @@ func recordChannelMonitorRedisFault(
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), channelMonitorRedisConsumerOperationTimeout)
 	defer cancel()
-	pipe := client.TxPipeline()
-	pipe.HIncrBy(ctx, ChannelMonitorRedisObservabilityKey, countField, amount)
-	pipe.HSet(ctx, ChannelMonitorRedisObservabilityKey, activeField, 1)
-	if _, err := pipe.Exec(ctx); err != nil {
+	if err := client.Eval(ctx, channelMonitorDiagnosticsScript,
+		[]string{ChannelMonitorRedisObservabilityKey, channelMonitorDiagnosticsTodayKey},
+		"increment", countField, amount, activeField,
+	).Err(); err != nil {
 		common.SysError("记录渠道监控 Redis 故障状态失败: " + err.Error())
 	}
 }

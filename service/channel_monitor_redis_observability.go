@@ -531,5 +531,14 @@ func incrementChannelMonitorRedisObservation(client *redis.Client, field string,
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), channelMonitorRedisConsumerOperationTimeout)
 	defer cancel()
+	switch field {
+	case ChannelMonitorRedisObservabilityFieldRetryCount, ChannelMonitorRedisObservabilityFieldTakeoverCount,
+		ChannelMonitorRedisObservabilityFieldQuarantineCount:
+		_ = client.Eval(ctx, channelMonitorDiagnosticsScript,
+			[]string{ChannelMonitorRedisObservabilityKey, channelMonitorDiagnosticsTodayKey},
+			"increment", field, amount, "",
+		).Err()
+		return
+	}
 	_ = client.HIncrBy(ctx, ChannelMonitorRedisObservabilityKey, field, amount).Err()
 }

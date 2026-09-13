@@ -63,6 +63,7 @@ import type {
   ChannelMonitorAnalyticsQuery,
   ChannelMonitorAnalyticsResponse,
 } from './types-analytics'
+import type { ChannelMonitorDiagnostics } from './types-diagnostics'
 import type {
   ChannelModelDetectionApiResponse,
   ChannelModelDetectionOverview,
@@ -142,6 +143,27 @@ export async function getChannelMonitorRecovery() {
     ChannelMonitorApiResponse<ChannelMonitorRecovery>
   >(
     '/api/channel_monitor/health',
+    channelMonitorRequestConfig({ timeout: 10_000 })
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function getChannelMonitorDiagnostics(signal?: AbortSignal) {
+  const response = await api.get<
+    ChannelMonitorApiResponse<ChannelMonitorDiagnostics>
+  >(
+    '/api/channel_monitor/diagnostics',
+    channelMonitorRequestConfig({ timeout: 10_000, signal })
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function resetChannelMonitorDiagnostics(dayStart: number) {
+  const response = await api.post<
+    ChannelMonitorApiResponse<ChannelMonitorDiagnostics>
+  >(
+    '/api/channel_monitor/diagnostics/reset',
+    { day_start: dayStart },
     channelMonitorRequestConfig({ timeout: 10_000 })
   )
   return ensureChannelMonitorSuccess(response.data)

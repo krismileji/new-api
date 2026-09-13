@@ -156,6 +156,7 @@ export function ChannelMonitorRealtimeStatus(
                 recovery={props.recovery}
                 recoveryFailed={props.recoveryFailed}
                 recoveryLoading={props.recoveryLoading}
+                diagnostics={props.diagnostics}
                 status={status}
               />
             </div>

@@ -148,6 +148,9 @@ describe('channel monitor realtime status', () => {
     expect(screen.getByText('待记账 1 条')).toBeVisible()
     await user.click(screen.getByRole('button', { name: '运行详情' }))
     const dialog = await screen.findByRole('dialog', { name: '监控运行详情' })
+    await user.click(
+      within(dialog).getByRole('button', { name: '历史诊断（累计）' })
+    )
     expect(
       within(dialog).getByRole('group', { name: '历史记录' })
     ).toHaveTextContent('日统计恢复不完整、存在历史隔离记录')
@@ -158,7 +161,7 @@ describe('channel monitor realtime status', () => {
       within(dialog).getByRole('group', { name: '标记清理失败（累计）' })
     ).toHaveTextContent('161 次')
     expect(
-      within(dialog).getByRole('group', { name: '处理建议' })
+      within(dialog).getByRole('group', { name: '历史处理建议' })
     ).toHaveTextContent(recoveredWithGaps.action)
   })
 
@@ -293,7 +296,7 @@ describe('channel monitor realtime status', () => {
     ).toHaveTextContent('3 次')
   })
 
-  test('键盘打开居中弹窗后可读取三组完整数据，关闭后焦点回到入口', async () => {
+  test('键盘打开弹窗可读取当前诊断并展开历史，关闭后焦点回到入口', async () => {
     const user = userEvent.setup()
     render(<ChannelMonitorRealtimeStatus metadata={alertMetadata} />)
     const trigger = screen.getByRole('button', { name: '运行详情' })
@@ -307,9 +310,15 @@ describe('channel monitor realtime status', () => {
     })
     const events = within(diagnostics).getByRole('region', { name: '实时事件' })
     const cost = within(diagnostics).getByRole('region', { name: '成本处理' })
-    const history = within(diagnostics).getByRole('region', {
-      name: '恢复与历史',
+    const runtime = within(diagnostics).getByRole('region', {
+      name: '后台恢复',
     })
+    expect(
+      within(runtime).getByRole('group', { name: '事件标记清理' })
+    ).toHaveTextContent('故障')
+    expect(
+      within(runtime).getByRole('group', { name: '实时事件清理' })
+    ).toHaveTextContent('故障')
     expect(
       within(events).getByRole('group', { name: '已处理事件序号' })
     ).toHaveTextContent('42')
@@ -340,6 +349,12 @@ describe('channel monitor realtime status', () => {
     expect(
       within(cost).getByRole('group', { name: '成本异常事件' })
     ).toHaveTextContent('2 条')
+    await user.click(
+      within(diagnostics).getByRole('button', { name: '历史诊断（累计）' })
+    )
+    const history = within(diagnostics).getByRole('region', {
+      name: '历史诊断（累计）',
+    })
     expect(
       within(history).getByRole('group', { name: '事件处理重试（累计）' })
     ).toHaveTextContent('3 次')
@@ -431,6 +446,12 @@ describe('channel monitor realtime status', () => {
     ).toHaveTextContent('未提供')
     expect(
       within(dialog).getByRole('group', { name: '通知错误' })
+    ).toHaveTextContent('未提供')
+    await user.click(
+      within(dialog).getByRole('button', { name: '历史诊断（累计）' })
+    )
+    expect(
+      within(dialog).getByRole('group', { name: '异常隔离（累计）' })
     ).toHaveTextContent('未提供')
   })
 

@@ -22,6 +22,7 @@ import type {
   ChannelMonitorRealtimeDegradedReason,
   ChannelMonitorRealtimeMetadata,
 } from '../types'
+import type { ChannelMonitorDiagnosticsInput } from '../types-diagnostics'
 import type { ChannelMonitorRecovery } from '../types-recovery'
 
 export type ChannelMonitorRuntimeInput = {
@@ -29,6 +30,7 @@ export type ChannelMonitorRuntimeInput = {
   recovery?: ChannelMonitorRecovery
   recoveryLoading?: boolean
   recoveryFailed?: boolean
+  diagnostics?: ChannelMonitorDiagnosticsInput
 }
 
 const degradedReasonLabels: Record<

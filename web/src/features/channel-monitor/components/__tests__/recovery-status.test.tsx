@@ -43,17 +43,31 @@ describe('channel monitor recovery status', () => {
       data: {
         success: true,
         message: '',
-        data: {
-          status: 'degraded',
-          recovery_status: 'recovering',
-          node_id: 'node-a',
-          checked_at: 100,
-          recovered_at: 0,
-          pending_count: ++requests,
-          message: '正在自动恢复',
-          action: '',
-          data_gap_reasons: [],
-        },
+        data:
+          config.url === '/api/channel_monitor/diagnostics'
+            ? {
+                day_start: 1,
+                counted_since: 100,
+                observed_at: 100,
+                last_reset_at: 0,
+                retry_count: 0,
+                takeover_count: 0,
+                quarantine_count: 0,
+                marker_release_failure_count: 0,
+                stream_trim_failure_count: 0,
+                last_quarantined_at: 0,
+              }
+            : {
+                status: 'degraded',
+                recovery_status: 'recovering',
+                node_id: 'node-a',
+                checked_at: 100,
+                recovered_at: 0,
+                pending_count: ++requests,
+                message: '正在自动恢复',
+                action: '',
+                data_gap_reasons: [],
+              },
       },
     })
     const view = render(

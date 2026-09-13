@@ -19,14 +19,17 @@ For commercial licensing, please contact support@quantumnous.com
 import { useQuery } from '@tanstack/react-query'
 
 import { getChannelMonitorRecovery } from '../api'
+import { useChannelMonitorDiagnostics } from '../hooks/use-channel-monitor-diagnostics'
 import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-options'
 import type { ChannelMonitorRealtimeMetadata } from '../types'
+import type { ChannelMonitorDiagnosticsInput } from '../types-diagnostics'
 import type { ChannelMonitorRecovery } from '../types-recovery'
 import { ChannelMonitorRealtimeStatus } from './channel-monitor-realtime-status'
 
 export function ChannelMonitorHealthStatus(props: {
   metadata?: ChannelMonitorRealtimeMetadata
 }) {
+  const diagnostics = useChannelMonitorDiagnostics()
   const query = useQuery({
     queryKey: ['channel-monitor', 'health'],
     queryFn: getChannelMonitorRecovery,
@@ -40,6 +43,7 @@ export function ChannelMonitorHealthStatus(props: {
       data={query.data?.data}
       failed={query.isError}
       metadata={props.metadata}
+      diagnostics={diagnostics}
     />
   )
 }
@@ -48,6 +52,7 @@ export function ChannelMonitorRecoverySummary(props: {
   data?: ChannelMonitorRecovery
   failed?: boolean
   metadata?: ChannelMonitorRealtimeMetadata
+  diagnostics?: ChannelMonitorDiagnosticsInput
 }) {
   return (
     <ChannelMonitorRealtimeStatus
@@ -55,6 +60,7 @@ export function ChannelMonitorRecoverySummary(props: {
       recovery={props.data}
       recoveryFailed={props.failed}
       recoveryLoading={!props.failed && !props.data}
+      diagnostics={props.diagnostics}
     />
   )
 }

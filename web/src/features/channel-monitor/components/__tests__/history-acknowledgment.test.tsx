@@ -83,6 +83,9 @@ describe('channel monitor history acknowledgment', () => {
     ).toHaveFocus()
     await user.click(screen.getByRole('button', { name: '运行详情' }))
     const dialog = await screen.findByRole('dialog', { name: '监控运行详情' })
+    await user.click(
+      within(dialog).getByRole('button', { name: '历史诊断（累计）' })
+    )
     expect(
       within(dialog).getByRole('group', { name: '异常隔离（累计）' })
     ).toHaveTextContent('252 条')

@@ -42,6 +42,11 @@ export const CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS = {
 // views cannot drift apart.
 export const CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS = 1000
 
+export const CHANNEL_MONITOR_DIAGNOSTICS_QUERY_KEY = [
+  'channel-monitor',
+  'diagnostics',
+] as const
+
 export function getChannelMonitorActiveRefetchInterval(active: boolean) {
   return active ? CHANNEL_MONITOR_ACTIVE_REFETCH_INTERVAL_MS : false
 }
@@ -111,6 +116,7 @@ function getChannelMonitorManualRefreshTargets(
   const targets: ChannelMonitorRefreshTarget[] = [
     { queryKey: ['channel-monitor'], exact: true },
     { queryKey: ['channel-monitor', 'health'], exact: true },
+    { queryKey: CHANNEL_MONITOR_DIAGNOSTICS_QUERY_KEY, exact: true },
     { queryKey: CHANNEL_MONITOR_CONCURRENCY_QUERY_KEY, exact: true },
     { queryKey: ['channel-monitor-performance'] },
     { queryKey: ['channel-monitor', 'cost', 'summary', 2], exact: true },

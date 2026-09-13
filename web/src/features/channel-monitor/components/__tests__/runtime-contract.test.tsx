@@ -33,6 +33,63 @@ const metadata: ChannelMonitorRealtimeMetadata = {
 }
 
 describe('后台恢复状态与页面摘要一致', () => {
+  test('运行正常时累计诊断默认收起，键盘展开后保留计数与含义', async () => {
+    const user = userEvent.setup()
+    render(
+      <ChannelMonitorRealtimeStatus
+        metadata={{
+          ...metadata,
+          retry_count: 131365,
+          takeover_count: 130,
+          marker_release_failure_count: 162,
+          marker_release_failure_active: false,
+          stream_trim_failure_count: 0,
+          stream_trim_failure_active: false,
+        }}
+        recovery={{ ...recovery, pending_count: 1 }}
+      />
+    )
+    await user.click(screen.getByRole('button', { name: '运行详情' }))
+    const dialog = await screen.findByRole('dialog', { name: '监控运行详情' })
+    expect(
+      within(dialog).getByRole('group', { name: '恢复状态' })
+    ).toHaveTextContent('监控运行正常')
+    expect(
+      within(dialog).getByRole('group', { name: '当前异常' })
+    ).toHaveTextContent('无')
+    expect(
+      within(dialog).getByRole('group', { name: '后台待处理' })
+    ).toHaveTextContent('1 条')
+    expect(
+      within(dialog).getByRole('group', { name: '事件标记清理' })
+    ).toHaveTextContent('正常')
+    expect(
+      within(dialog).queryByRole('group', { name: '异常隔离（累计）' })
+    ).not.toBeInTheDocument()
+    const historyTrigger = within(dialog).getByRole('button', {
+      name: '历史诊断（累计）',
+    })
+    expect(historyTrigger).toHaveAttribute('aria-expanded', 'false')
+    historyTrigger.focus()
+    await user.keyboard('{Enter}')
+    expect(historyTrigger).toHaveAttribute('aria-expanded', 'true')
+    expect(
+      within(dialog).getByRole('group', { name: '事件处理重试（累计）' })
+    ).toHaveTextContent('131,365 次')
+    expect(
+      within(dialog).getByRole('group', { name: '异常隔离（累计）' })
+    ).toHaveTextContent('2,604 条')
+    expect(
+      within(dialog).getByText(/没有新增重试、接管或故障时保持不变/)
+    ).toBeVisible()
+    expect(within(dialog).getByText(/同一事件可多次重试/)).toBeVisible()
+    await user.keyboard(' ')
+    expect(historyTrigger).toHaveAttribute('aria-expanded', 'false')
+    expect(
+      within(dialog).queryByRole('group', { name: '事件处理重试（累计）' })
+    ).not.toBeInTheDocument()
+  })
+
   test('仅有历史隔离时不宣称统计丢失', () => {
     render(
       <ChannelMonitorRealtimeStatus metadata={metadata} recovery={recovery} />
@@ -147,6 +204,15 @@ describe('后台恢复状态与页面摘要一致', () => {
     expect(
       within(dialog).getByRole('group', { name: '恢复状态' })
     ).toHaveTextContent('监控异常')
+    expect(
+      within(dialog).getByRole('group', { name: '当前异常' })
+    ).toHaveTextContent('新增监控事件隔离')
+    expect(
+      within(dialog).queryByRole('group', { name: '异常隔离（累计）' })
+    ).not.toBeInTheDocument()
+    await user.click(
+      within(dialog).getByRole('button', { name: '历史诊断（累计）' })
+    )
     expect(
       within(dialog).getByRole('group', { name: '历史记录' })
     ).toHaveTextContent('存在历史隔离记录')
