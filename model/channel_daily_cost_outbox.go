@@ -73,25 +73,35 @@ func StoreChannelDailyCostOutboxEvents(ctx context.Context, deltas []ChannelDail
 // StoreChannelDailyCostOutboxEventsWithResult stores a batch idempotently and
 // returns the number of rows newly accepted by this call.
 func StoreChannelDailyCostOutboxEventsWithResult(ctx context.Context, deltas []ChannelDailyCostDelta) (int64, error) {
+	_, inserted, err := StoreChannelDailyCostOutboxEventsWithRecords(ctx, deltas)
+	return inserted, err
+}
+
+// StoreChannelDailyCostOutboxEventsWithRecords returns the committed records,
+// including matching duplicates, and the number of newly inserted rows. Their
+// persisted IDs are the Redis projection versions. A rolled-back batch never
+// exposes records that a caller could accidentally project.
+func StoreChannelDailyCostOutboxEventsWithRecords(ctx context.Context, deltas []ChannelDailyCostDelta) ([]ChannelDailyCostOutbox, int64, error) {
 	if len(deltas) == 0 {
-		return 0, nil
+		return nil, 0, nil
 	}
 	if DB == nil {
-		return 0, errors.New("channel daily cost outbox database is unavailable")
+		return nil, 0, errors.New("channel daily cost outbox database is unavailable")
 	}
 	normalized := make([]ChannelDailyCostDelta, len(deltas))
 	copy(normalized, deltas)
 	for index := range normalized {
 		normalized[index].EventId = strings.TrimSpace(normalized[index].EventId)
 		if normalized[index].EventId == "" || len(normalized[index].EventId) > ChannelDailyCostOutboxEventIDMaxLength {
-			return 0, errors.New("channel daily cost outbox event id is invalid")
+			return nil, 0, errors.New("channel daily cost outbox event id is invalid")
 		}
 		if err := normalizeChannelDailyCostDelta(&normalized[index]); err != nil {
-			return 0, err
+			return nil, 0, err
 		}
 	}
 	now := time.Now().Unix()
 	var inserted int64
+	records := make([]ChannelDailyCostOutbox, 0, len(normalized))
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for _, delta := range normalized {
 			record := channelDailyCostOutboxFromDelta(delta, now)
@@ -102,6 +112,7 @@ func StoreChannelDailyCostOutboxEventsWithResult(ctx context.Context, deltas []C
 			createErr := tx.Create(&record).Error
 			if createErr == nil {
 				inserted++
+				records = append(records, record)
 				continue
 			}
 			// MySQL implements GORM's OnConflict DoNothing as a no-op UPDATE.
@@ -122,13 +133,14 @@ func StoreChannelDailyCostOutboxEventsWithResult(ctx context.Context, deltas []C
 			if !channelDailyCostOutboxMatchesDelta(existing, delta) {
 				return fmt.Errorf("%w: %s", ErrChannelDailyCostOutboxEventIDCollision, delta.EventId)
 			}
+			records = append(records, existing)
 		}
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
-	return inserted, nil
+	return records, inserted, nil
 }
 
 func ClaimChannelDailyCostOutboxEvents(ctx context.Context, owner string, now int64, readyBefore int64, leaseDuration time.Duration, limit int, createdBefore ...int64) ([]ChannelDailyCostOutbox, error) {

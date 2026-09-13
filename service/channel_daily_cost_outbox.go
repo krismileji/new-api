@@ -88,6 +88,7 @@ type ChannelDailyCostOutboxRuntime struct {
 	operationWait       sync.WaitGroup
 	lastDBRecoveryAt    atomic.Int64
 	lastRedisConsumerAt atomic.Int64
+	projectionRetry     atomic.Bool
 }
 
 type ChannelDailyCostReliableStats struct {
@@ -332,7 +333,7 @@ func (runtime *ChannelDailyCostOutboxRuntime) consumeRedisBatch(ctx context.Cont
 		return nil
 	}
 	opCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), channelDailyCostOutboxDBOperationTimeout)
-	inserted, err := model.StoreChannelDailyCostOutboxEventsWithResult(opCtx, deltas)
+	records, inserted, err := model.StoreChannelDailyCostOutboxEventsWithRecords(opCtx, deltas)
 	cancel()
 	if err != nil && !errors.Is(err, model.ErrChannelDailyCostOutboxEventIDCollision) {
 		return err
@@ -342,7 +343,7 @@ func (runtime *ChannelDailyCostOutboxRuntime) consumeRedisBatch(ctx context.Cont
 		messageIDs = messageIDs[:0]
 		for index, delta := range deltas {
 			opCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), channelDailyCostOutboxDBOperationTimeout)
-			stored, storeErr := model.StoreChannelDailyCostOutboxEventsWithResult(opCtx, []model.ChannelDailyCostDelta{delta})
+			committed, stored, storeErr := model.StoreChannelDailyCostOutboxEventsWithRecords(opCtx, []model.ChannelDailyCostDelta{delta})
 			cancel()
 			if errors.Is(storeErr, model.ErrChannelDailyCostOutboxEventIDCollision) {
 				if deadErr := runtime.deadLetterRedisMessage(ctx, validMessages[index], storeErr); deadErr != nil {
@@ -354,12 +355,24 @@ func (runtime *ChannelDailyCostOutboxRuntime) consumeRedisBatch(ctx context.Cont
 				return storeErr
 			}
 			inserted += stored
+			records = append(records, committed...)
 			messageIDs = append(messageIDs, validMessages[index].ID)
 		}
 	}
 	channelDailyCostReliableStatsState.outboxPending.Add(inserted)
 	if len(messageIDs) == 0 {
 		return nil
+	}
+	// Project the committed records immediately, using their durable IDs for
+	// deduplication. Redis delivery failures do not undo a successful database
+	// handoff: leave redis_projected_at unset for the recovery worker and still
+	// acknowledge the Stream messages once they are durably stored.
+	projectionCtx, projectionCancel := context.WithTimeout(context.WithoutCancel(ctx), channelDailyCostOutboxDBOperationTimeout)
+	projectionErr := applyChannelDailyCostOutboxProjection(projectionCtx, runtime.redisClient, records)
+	projectionCancel()
+	if projectionErr != nil {
+		runtime.projectionRetry.Store(true)
+		logger.LogWarn(ctx, "渠道成本已保存，Redis 实时统计更新失败，将补偿重试: "+projectionErr.Error())
 	}
 	ackCtx, ackCancel := context.WithTimeout(ctx, channelDailyCostOutboxDBOperationTimeout)
 	defer ackCancel()

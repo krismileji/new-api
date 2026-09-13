@@ -21,6 +21,7 @@ const (
 	channelMonitorEventWriterOutboxLeaseDuration  = 30 * time.Second
 	channelMonitorEventWriterOutboxBatchSize      = 100
 	channelMonitorEventWriterOutboxPollInterval   = 500 * time.Millisecond
+	channelMonitorEventOutboxMaxIdleInterval      = 5 * time.Second
 	channelMonitorEventOutboxStoreConcurrency     = 16
 )
 
@@ -57,7 +58,7 @@ type channelMonitorEventWriter struct {
 	outboxCtx    context.Context
 	outboxCancel context.CancelFunc
 	outboxDone   chan struct{}
-	outboxOnce   sync.Once
+	outboxWake   chan struct{}
 	outboxMu     sync.Mutex
 	outboxOwner  string
 
@@ -121,39 +122,56 @@ func StartChannelMonitorEventWriter() (*channelMonitorEventWriter, error) {
 }
 
 func (writer *channelMonitorEventWriter) startOutbox() {
-	if writer == nil || writer.stopping.Load() || !channelMonitorEventOutboxTableReady() {
+	if writer == nil || writer.stopping.Load() || model.DB == nil {
+		return
+	}
+	writer.outboxMu.Lock()
+	started := writer.outboxDone != nil
+	writer.outboxMu.Unlock()
+	// Migrations run before the writer starts. Probe once here, rather than
+	// querying schema metadata on every recovery poll. Keep schema I/O outside
+	// outboxMu so Stop does not have to wait for a database probe.
+	if started || !model.DB.Migrator().HasTable(&model.ChannelMonitorEventOutbox{}) {
 		return
 	}
 	writer.outboxMu.Lock()
 	defer writer.outboxMu.Unlock()
-	if writer.stopping.Load() {
+	if writer.stopping.Load() || writer.outboxDone != nil {
 		return
 	}
-	writer.outboxOnce.Do(func() {
-		writer.outboxCtx, writer.outboxCancel = context.WithCancel(context.Background())
-		writer.outboxDone = make(chan struct{})
-		writer.outboxOwner = "channel-monitor-event-writer:" + common.GetUUID()
-		go writer.runOutbox()
-	})
+	writer.outboxCtx, writer.outboxCancel = context.WithCancel(context.Background())
+	writer.outboxDone = make(chan struct{})
+	writer.outboxOwner = "channel-monitor-event-writer:" + common.GetUUID()
+	go writer.runOutbox()
 }
 
 func (writer *channelMonitorEventWriter) runOutbox() {
 	defer close(writer.outboxDone)
-	ticker := time.NewTicker(channelMonitorEventWriterOutboxPollInterval)
-	defer ticker.Stop()
+	delay := channelMonitorEventWriterOutboxPollInterval
+	timer := time.NewTimer(0)
+	defer timer.Stop()
 	for {
-		writer.replayOutboxBatch()
 		select {
 		case <-writer.outboxCtx.Done():
 			return
-		case <-ticker.C:
+		case <-writer.outboxWake:
+			delay = channelMonitorEventWriterOutboxPollInterval
+		case <-timer.C:
 		}
+		if writer.replayOutboxBatch() {
+			delay = channelMonitorEventWriterOutboxPollInterval
+		} else {
+			delay = min(delay*2, channelMonitorEventOutboxMaxIdleInterval)
+		}
+		// Notifications only cover this process. Keep polling to recover rows
+		// written by another instance or committed after a fallback timed out.
+		timer.Reset(delay)
 	}
 }
 
-func (writer *channelMonitorEventWriter) replayOutboxBatch() {
-	if writer == nil || writer.outboxCtx == nil || writer.outboxCtx.Err() != nil || !channelMonitorEventOutboxTableReady() {
-		return
+func (writer *channelMonitorEventWriter) replayOutboxBatch() bool {
+	if writer == nil || writer.outboxCtx == nil || writer.outboxCtx.Err() != nil {
+		return false
 	}
 	now := time.Now().Unix()
 	owner := writer.outboxOwner
@@ -165,7 +183,7 @@ func (writer *channelMonitorEventWriter) replayOutboxBatch() {
 		channelMonitorEventWriterOutboxBatchSize,
 	)
 	if err != nil || len(claimed) == 0 {
-		return
+		return false
 	}
 	for _, row := range claimed {
 		publishCtx, cancel := context.WithTimeout(writer.outboxCtx, writer.config.OverflowPublishTimeout)
@@ -203,6 +221,7 @@ func (writer *channelMonitorEventWriter) replayOutboxBatch() {
 			publishErr,
 		)
 	}
+	return true
 }
 
 func newChannelMonitorEventWriter(
@@ -231,6 +250,7 @@ func newChannelMonitorEventWriter(
 		config: config,
 		runCtx: runCtx, cancelRun: cancelRun,
 		stopCh: make(chan struct{}), doneCh: make(chan struct{}),
+		outboxWake: make(chan struct{}, 1),
 	}
 }
 
@@ -440,11 +460,22 @@ func storeChannelMonitorEventOutbox(ctx context.Context, event model.ChannelMoni
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	_, err := model.StoreChannelMonitorEventOutbox(ctx, event.EventId, payload)
+	inserted, err := model.StoreChannelMonitorEventOutbox(ctx, event.EventId, payload)
 	if err != nil {
 		// Keep the public availability contract stable even when the database
 		// handle exists but migrations are incomplete or the table is offline.
 		return false, fmt.Errorf("%w: outbox 持久化失败: %v", ErrChannelMonitorEventRedisUnavailable, err)
+	}
+	if inserted {
+		channelMonitorEventWriterState.RLock()
+		writer := channelMonitorEventWriterState.writer
+		if writer != nil && !writer.stopping.Load() {
+			select {
+			case writer.outboxWake <- struct{}{}:
+			default:
+			}
+		}
+		channelMonitorEventWriterState.RUnlock()
 	}
 	return true, nil
 }
@@ -485,13 +516,6 @@ func storeChannelMonitorEventOutboxBounded(
 	case <-ctx.Done():
 		return false, ctx.Err()
 	}
-}
-
-func channelMonitorEventOutboxTableReady() bool {
-	if model.DB == nil {
-		return false
-	}
-	return model.DB.Migrator().HasTable(&model.ChannelMonitorEventOutbox{})
 }
 
 func (writer *channelMonitorEventWriter) dropQueued() {

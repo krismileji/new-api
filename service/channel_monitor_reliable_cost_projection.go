@@ -421,40 +421,33 @@ func rebuildChannelMonitorReliableDailyCosts(ctx context.Context, client *redis.
 func (runtime *ChannelDailyCostOutboxRuntime) runRedisProjection(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
+	recoveryTicker := time.NewTicker(channelDailyCostProjectionRecoveryInterval)
+	defer recoveryTicker.Stop()
+	recoveryDue := true
 	for ctx.Err() == nil {
 		status := ChannelMonitorReliableCostStatus{CheckedAt: time.Now().Unix()}
-		deadline := time.Now().Add(2 * time.Second)
-		for ctx.Err() == nil {
-			opCtx, cancel := context.WithTimeout(ctx, channelDailyCostOutboxDBOperationTimeout)
-			day := model.ChannelDailyCostDayStart(time.Now().Unix())
-			version, err := runtime.redisClient.HGet(opCtx, ChannelMonitorRedisCostDayKey(day), channelMonitorReliableCostVersionField).Result()
-			if errors.Is(err, redis.Nil) || err == nil && version != "1" {
-				err = rebuildChannelMonitorReliableDailyCosts(opCtx, runtime.redisClient, day)
-			}
-			var rows []model.ChannelDailyCostOutbox
-			if err == nil {
-				rows, err = model.PendingChannelDailyCostProjections(opCtx, channelDailyCostOutboxBatchSize)
-			}
-			if err == nil && len(rows) > 0 {
-				err = projectChannelDailyCostOutboxRows(opCtx, runtime.redisClient, rows)
-				if err == nil {
-					ids := make([]int64, 0, len(rows))
-					for _, row := range rows {
-						ids = append(ids, row.Id)
-					}
-					err = model.MarkChannelDailyCostProjectionsApplied(opCtx, ids, time.Now().Unix())
-				}
-			}
-			cancel()
-			status.Pending = len(rows) >= channelDailyCostOutboxBatchSize || err != nil
-			status.Failed = err != nil
-			if err != nil {
-				common.SysError("渠道成本 Redis 投影更新失败，将重试: " + err.Error())
-				break
-			}
-			if len(rows) < channelDailyCostOutboxBatchSize || time.Now().After(deadline) {
-				break
-			}
+		retry := runtime.projectionRetry.Swap(false)
+		// Redis health and day rollover are still checked every second. The
+		// database is scanned only for periodic recovery, failures, or backlog.
+		opCtx, cancel := context.WithTimeout(ctx, channelDailyCostOutboxDBOperationTimeout)
+		day := model.ChannelDailyCostDayStart(time.Now().Unix())
+		version, err := runtime.redisClient.HGet(opCtx, ChannelMonitorRedisCostDayKey(day), channelMonitorReliableCostVersionField).Result()
+		if errors.Is(err, redis.Nil) || err == nil && version != "1" {
+			err = rebuildChannelMonitorReliableDailyCosts(opCtx, runtime.redisClient, day)
+			recoveryDue = true
+		}
+		cancel()
+		if err == nil && (recoveryDue || retry) {
+			recoveryDue, err = runtime.recoverRedisCostProjections(ctx)
+		}
+		status.Pending = recoveryDue || err != nil
+		status.Failed = err != nil
+		if err != nil {
+			runtime.projectionRetry.Store(true)
+			common.SysError("渠道成本 Redis 投影更新失败，将重试: " + err.Error())
+		}
+		if runtime.projectionRetry.Load() {
+			status.Pending, status.Failed = true, true
 		}
 		if payload, err := common.Marshal(status); err == nil && ctx.Err() == nil {
 			opCtx, cancel := context.WithTimeout(ctx, channelMonitorRedisSharedOperationTimeout)
@@ -473,6 +466,8 @@ func (runtime *ChannelDailyCostOutboxRuntime) runRedisProjection(ctx context.Con
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-recoveryTicker.C:
+			recoveryDue = true
 		}
 	}
 }
