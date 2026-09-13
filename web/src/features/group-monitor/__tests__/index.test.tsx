@@ -127,6 +127,35 @@ test('an empty monitor result shows the empty state without category sections', 
   expect(screen.queryByRole('region')).not.toBeInTheDocument()
 })
 
+test('按保存的分类顺序展示分组并保留空分类', () => {
+  const result = {
+    ...categoryMonitorResult([
+      { group: 'default', category: '88' },
+      { group: 'cache-demo', category: '77' },
+    ]),
+    categories: ['77', '空分类', '88'],
+  }
+  render(<GroupMonitorContent result={result} />)
+
+  expect(
+    screen
+      .getAllByRole('region')
+      .map((region) => region.getAttribute('aria-label'))
+  ).toEqual(['77', '空分类', '88'])
+  const emptyCategory = within(screen.getByRole('region', { name: '空分类' }))
+  expect(emptyCategory.getByText('0 个分组')).toBeVisible()
+  expect(emptyCategory.getByText('此分类暂无监控分组')).toBeVisible()
+})
+
+test('只保存分类还未添加分组时仍展示分类', () => {
+  const result = { ...categoryMonitorResult([]), categories: ['空分类'] }
+  render(<GroupMonitorContent result={result} />)
+
+  expect(screen.getByRole('region', { name: '空分类' })).toBeVisible()
+  expect(screen.getByText('此分类暂无监控分组')).toBeVisible()
+  expect(screen.queryByText('暂无分组监控')).not.toBeInTheDocument()
+})
+
 describe('group monitor content', () => {
   test('hover details show only first token, TPS, and response time', () => {
     const markup = renderToStaticMarkup(

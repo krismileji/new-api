@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Activity01Icon, Refresh01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { useQuery } from '@tanstack/react-query'
 
 import { PublicLayout } from '@/components/layout'
 import { PageTransition } from '@/components/page-transition'
@@ -47,7 +46,7 @@ import { formatChannelMonitorStatusWindowRange } from '@/features/channel-monito
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { getPricingGroupMonitor } from './api'
+import { useGroupMonitor } from './hooks/use-group-monitor'
 import type {
   ChannelGroupMonitorBucket,
   ChannelGroupMonitorStatus,
@@ -294,21 +293,10 @@ function GroupMonitorSkeleton() {
 }
 
 export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
-  if (props.result.items.length === 0) {
-    return (
-      <Empty className='min-h-80 border border-dashed'>
-        <EmptyHeader>
-          <EmptyMedia variant='icon'>
-            <HugeiconsIcon icon={Activity01Icon} />
-          </EmptyMedia>
-          <EmptyTitle>暂无分组监控</EmptyTitle>
-          <EmptyDescription>当前账号没有可展示的分组状态</EmptyDescription>
-        </EmptyHeader>
-      </Empty>
-    )
-  }
-
   const categories = new Map<string, PricingGroupMonitor['items']>()
+  for (const category of props.result.categories ?? []) {
+    categories.set(category, [])
+  }
   for (const item of props.result.items) {
     const category = item.category?.trim() || '未分类'
     const items = categories.get(category)
@@ -317,6 +305,20 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
     } else {
       categories.set(category, [item])
     }
+  }
+
+  if (categories.size === 0) {
+    return (
+      <Empty className='min-h-80 border border-dashed'>
+        <EmptyHeader>
+          <EmptyMedia variant='icon'>
+            <HugeiconsIcon icon={Activity01Icon} />
+          </EmptyMedia>
+          <EmptyTitle>暂无分组监控</EmptyTitle>
+          <EmptyDescription>暂未配置监控分类和分组</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    )
   }
 
   return (
@@ -361,6 +363,11 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
               {items.length} 个分组
             </Badge>
           </div>
+          {items.length === 0 ? (
+            <p className='text-muted-foreground rounded-xl border border-dashed p-5 text-sm'>
+              此分类暂无监控分组
+            </p>
+          ) : null}
           <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>
             {items.map((item) => {
               const presentation = STATUS_PRESENTATION[item.status]
@@ -490,12 +497,7 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
 }
 
 export function GroupMonitor() {
-  const query = useQuery({
-    queryKey: ['pricing', 'group-monitor'],
-    queryFn: getPricingGroupMonitor,
-    staleTime: 30_000,
-    refetchOnWindowFocus: false,
-  })
+  const query = useGroupMonitor()
   const result = query.data?.data
 
   return (

@@ -138,6 +138,7 @@ export type ChannelGroupMonitorOverview = {
 
 export type PricingGroupMonitor = {
   enabled: boolean
+  categories?: string[]
   server_now: number
   data_cutoff_at: number
   display_value: number

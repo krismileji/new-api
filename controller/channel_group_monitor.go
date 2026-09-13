@@ -475,7 +475,6 @@ func buildChannelGroupMonitorItems(
 	ctx context.Context,
 	config model.ChannelGroupMonitorConfig,
 	validCandidates map[string][]string,
-	usableGroups map[string]string,
 	now int64,
 ) ([]channelGroupMonitorItemResponse, error) {
 	groups, err := config.Groups()
@@ -484,11 +483,6 @@ func buildChannelGroupMonitorItems(
 	}
 	groupNames := make([]string, 0, len(groups))
 	for _, group := range groups {
-		if usableGroups != nil {
-			if _, allowed := usableGroups[group.GroupName]; !allowed {
-				continue
-			}
-		}
 		groupNames = append(groupNames, group.GroupName)
 	}
 	states, err := model.GetChannelGroupMonitorStatesForGroups(ctx, groupNames)
@@ -534,11 +528,6 @@ func buildChannelGroupMonitorItems(
 	}
 	items := make([]channelGroupMonitorItemResponse, 0, len(groups))
 	for _, group := range groups {
-		if usableGroups != nil {
-			if _, allowed := usableGroups[group.GroupName]; !allowed {
-				continue
-			}
-		}
 		configValid := groupMonitorModelIsCandidate(validCandidates, group.GroupName, group.ProbeModel)
 		item := channelGroupMonitorItemResponse{
 			Group: group.GroupName, Initial: channelGroupMonitorInitial(group.GroupName, group.DisplayInitial), ProbeModel: group.ProbeModel,
@@ -716,7 +705,7 @@ func GetChannelGroupMonitorOverview(c *gin.Context) {
 		respondChannelGroupMonitorQueryError(c, err)
 		return
 	}
-	items, err := buildChannelGroupMonitorItems(c.Request.Context(), config, candidates, nil, now)
+	items, err := buildChannelGroupMonitorItems(c.Request.Context(), config, candidates, now)
 	if err != nil {
 		respondChannelGroupMonitorQueryError(c, err)
 		return
@@ -797,13 +786,19 @@ func GetPricingGroupMonitor(c *gin.Context) {
 			userGroup = user.Group
 		}
 	}
-	usableGroups := service.GetRoleUsableGroups(userGroup, c.GetInt("role"))
+	categories, err := config.Categories()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), true)
 	if err != nil {
 		respondChannelGroupMonitorQueryError(c, err)
 		return
 	}
-	items, err := buildChannelGroupMonitorItems(c.Request.Context(), config, candidates, usableGroups, now)
+	// Monitoring configuration is the public display list, independent of which
+	// groups the current account may select when making model requests.
+	items, err := buildChannelGroupMonitorItems(c.Request.Context(), config, candidates, now)
 	if err != nil {
 		respondChannelGroupMonitorQueryError(c, err)
 		return
@@ -833,6 +828,6 @@ func GetPricingGroupMonitor(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{
 		"enabled": config.Enabled, "server_now": now,
 		"data_cutoff_at": now - channelGroupMonitorDisplaySeconds(displayValue, displayUnit),
-		"display_value":  displayValue, "display_unit": displayUnit, "items": publicItems,
+		"display_value":  displayValue, "display_unit": displayUnit, "items": publicItems, "categories": categories,
 	}})
 }

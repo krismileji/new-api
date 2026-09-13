@@ -271,7 +271,7 @@ export function ChannelGroupMonitorSettingsSheet(
             <span className='min-w-0 truncate'>配置分组监控</span>
           </SheetTitle>
           <SheetDescription className='mt-1'>
-            通过真实请求验证用户可见分组的当前可用性
+            保存的分类和监控分组将展示在用户页面，模型调用权限保持不变。
           </SheetDescription>
         </SheetHeader>
 

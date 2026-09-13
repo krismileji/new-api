@@ -172,7 +172,7 @@ func TestBuildChannelGroupMonitorItemsUsesLatestResultAndDisplayWindow(t *testin
 	candidates, err := getChannelGroupMonitorCandidateModels(t.Context(), true)
 	require.NoError(t, err)
 	items, err := buildChannelGroupMonitorItems(
-		t.Context(), config, candidates, map[string]string{"default": "默认分组"}, 1_000,
+		t.Context(), config, candidates, 1_000,
 	)
 	require.NoError(t, err)
 	require.Len(t, items, 1)
@@ -332,7 +332,7 @@ func TestUpdateChannelGroupMonitorSettingsKeepsDisabledConfiguredModel(t *testin
 	assert.True(t, payload.Success)
 }
 
-func TestGetPricingGroupMonitorOnlyReturnsVisiblePublicFields(t *testing.T) {
+func TestGetPricingGroupMonitorOnlyReturnsConfiguredGroupsAndPublicFields(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(
 		&model.ChannelGroupMonitorConfig{},
@@ -363,7 +363,6 @@ func TestGetPricingGroupMonitorOnlyReturnsVisiblePublicFields(t *testing.T) {
 		Enabled: true,
 		Groups: []model.ChannelGroupMonitorGroup{
 			{GroupName: "private", ProbeModel: "gpt-4.1", Category: "通用模型"},
-			{GroupName: "restricted", ProbeModel: "gpt-4.1", Category: "隐藏分类"},
 		},
 		IntervalSeconds: 300, DisplayValue: 60,
 		DisplayUnit: model.ChannelStatusProbeDisplayUnitMinute,
@@ -407,7 +406,7 @@ func TestGetPricingGroupMonitorOnlyReturnsVisiblePublicFields(t *testing.T) {
 	item := payload.Data.Items[0]
 	assert.Equal(t, "private", item["group"])
 	assert.Equal(t, "通用模型", item["category"])
-	assert.NotContains(t, recorder.Body.String(), "隐藏分类")
+	assert.NotContains(t, recorder.Body.String(), "restricted")
 	assert.Equal(t, "gpt-4.1", item["probe_model"])
 	assert.InDelta(t, 100, item["success_rate"], 0.001)
 	for _, sensitiveField := range []string{
