@@ -63,10 +63,13 @@ test('groups interleaved categories in first appearance order and keeps each cat
       .map((region) => region.getAttribute('aria-label'))
   ).toEqual(['编程模型', '通用模型'])
   const coding = within(screen.getByRole('region', { name: '编程模型' }))
+  const codingList = within(
+    coding.getByRole('list', { name: '编程模型分组列表' })
+  )
   expect(
-    coding
-      .getAllByRole('heading', { level: 3 })
-      .map((heading) => heading.textContent)
+    codingList
+      .getAllByRole('listitem')
+      .map((row) => within(row).getByRole('heading', { level: 3 }).textContent)
   ).toEqual(['coding-vip', 'coding-basic'])
   expect(coding.getByText('2 个分组')).toBeVisible()
   expect(
@@ -91,10 +94,12 @@ test('legacy, blank and explicitly uncategorized groups share one uncategorized 
   expect(screen.getAllByRole('region')).toHaveLength(1)
   const uncategorized = within(screen.getByRole('region', { name: '未分类' }))
   expect(uncategorized.getByText('3 个分组')).toBeVisible()
-  expect(uncategorized.getAllByRole('article')).toHaveLength(3)
+  expect(
+    within(uncategorized.getByRole('list')).getAllByRole('listitem')
+  ).toHaveLength(3)
 })
 
-test('updated categories move cards immediately and long names can wrap', () => {
+test('updated categories move rows immediately and long names can wrap', () => {
   const longCategory = 'a'.repeat(64)
   const view = render(
     <GroupMonitorContent
@@ -238,8 +243,10 @@ describe('group monitor content', () => {
     assert.match(markup, /data-group-monitor-window-value="60"/)
   })
 
-  test('keeps precise group ratios visible in the monitor card', () => {
-    const markup = renderToStaticMarkup(
+  test('long group and model names truncate with full titles and missing probe data stays explicit in a list row', () => {
+    const groupName = 'precision-group-with-a-long-unbroken-name'
+    const probeModel = 'provider/model-with-a-long-unbroken-version-name'
+    render(
       <GroupMonitorContent
         result={{
           enabled: true,
@@ -249,9 +256,10 @@ describe('group monitor content', () => {
           display_unit: 'minute',
           items: [
             {
-              group: 'precision',
+              group: groupName,
               initial: 'P',
-              status: 'healthy',
+              status: 'pending',
+              probe_model: probeModel,
               group_ratio: 0.00123456789,
               latest_first_token_ms: null,
               success_rate: null,
@@ -263,7 +271,22 @@ describe('group monitor content', () => {
       />
     )
 
-    assert.ok(markup.includes('0.00123456789x'))
+    const list = within(screen.getByRole('list', { name: '未分类分组列表' }))
+    expect(list.getAllByRole('listitem')).toHaveLength(1)
+    const row = within(list.getByRole('article', { name: groupName }))
+    expect(row.getByRole('heading', { name: groupName })).toHaveAttribute(
+      'title',
+      groupName
+    )
+    expect(row.getByTitle(groupName)).toHaveClass('truncate')
+    expect(row.getByTitle(probeModel)).toHaveClass('truncate')
+    expect(row.getByText('0.00123456789x')).toHaveAttribute(
+      'title',
+      '0.00123456789x'
+    )
+    expect(row.getByText('待检测')).toBeVisible()
+    expect(row.getAllByText('--')).toHaveLength(2)
+    expect(row.getByText('暂无探测记录')).toBeVisible()
   })
 
   test('renders a timed out probe as a yellow warning', () => {
