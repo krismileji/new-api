@@ -47,7 +47,8 @@ function renderSettings(
   candidateModelsByGroup: Record<string, string[]> = {
     default: ['gpt-4.1'],
     vip: ['gpt-4.1'],
-  }
+  },
+  groupOrder: readonly string[] = []
 ) {
   const data: ChannelGroupMonitorSettingsResponse = {
     settings: {
@@ -95,6 +96,7 @@ function renderSettings(
     <QueryClientProvider client={testQueryClient}>
       <ChannelGroupMonitorSettingsSheet
         data={data}
+        groupOrder={groupOrder}
         open
         onOpenChange={() => undefined}
       />
@@ -102,6 +104,92 @@ function renderSettings(
   )
   return { requests, network, queryClient: testQueryClient }
 }
+
+test('候选分组按全局顺序排列，切换选项后保留顺序并更新探测模型', async () => {
+  const user = userEvent.setup()
+  renderSettings(
+    [
+      { group_name: 'default', probe_model: 'gpt-4.1', category: '通用模型' },
+      { group_name: 'used', probe_model: 'gpt-4.1', category: '通用模型' },
+    ],
+    ['通用模型'],
+    {
+      default: ['gpt-4.1'],
+      used: ['gpt-4.1'],
+      vip: ['gpt-5.4'],
+      '2': ['gpt-4.1'],
+      '10': ['gpt-4.1'],
+      extra: [],
+      alpha: ['gpt-4.1'],
+    },
+    ['vip', '10', 'used', '2', 'default', 'missing']
+  )
+  const trigger = screen.getByRole('combobox', { name: '第 1 个监控分组' })
+  await user.click(trigger)
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual(['vip', '10', '2', 'default', 'alpha', 'extra'])
+  expect(screen.getByRole('option', { name: 'default' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+
+  await user.click(screen.getByRole('option', { name: 'vip' }))
+  expect(
+    screen.getByRole('combobox', { name: 'vip的探测模型' })
+  ).toHaveTextContent('gpt-5.4')
+  await user.click(trigger)
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual(['vip', '10', '2', 'default', 'alpha', 'extra'])
+  expect(screen.getByRole('option', { name: 'vip' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+})
+
+test('连续添加分组时按全局顺序选择尚未配置的第一个分组', async () => {
+  const user = userEvent.setup()
+  renderSettings([], ['通用模型'], undefined, ['vip', 'default'])
+  const addGroup = screen.getByRole('button', {
+    name: '在 通用模型 中添加分组',
+  })
+  await user.click(addGroup)
+  expect(
+    screen.getByRole('combobox', { name: '第 1 个监控分组' })
+  ).toHaveTextContent('vip')
+  await user.click(addGroup)
+  expect(
+    screen.getByRole('combobox', { name: '第 2 个监控分组' })
+  ).toHaveTextContent('default')
+  expect(addGroup).toBeDisabled()
+})
+
+test.each<{ candidates: Record<string, string[]>; expected: string[] }>([
+  {
+    candidates: { vip: ['gpt-4.1'], default: ['gpt-4.1'] },
+    expected: ['default', 'legacy', 'vip'],
+  },
+  { candidates: {}, expected: ['legacy'] },
+])(
+  '未提供分组顺序时按名称排列并保留已保存的不可用分组：$expected',
+  async ({ candidates, expected }) => {
+    const user = userEvent.setup()
+    renderSettings(
+      [{ group_name: 'legacy', probe_model: 'gpt-4.1', category: '通用模型' }],
+      ['通用模型'],
+      candidates
+    )
+    await user.click(screen.getByRole('combobox', { name: '第 1 个监控分组' }))
+    expect(
+      screen.getAllByRole('option').map((option) => option.textContent)
+    ).toEqual(expected)
+    expect(screen.getByRole('option', { name: 'legacy' })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+  }
+)
 
 test('首次配置先创建并命名分类，再在该分类下添加分组', async () => {
   const user = userEvent.setup()

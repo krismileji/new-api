@@ -1819,6 +1819,7 @@ export function ChannelMonitor() {
       {groupMonitorSettingsOpen && (
         <ChannelGroupMonitorSettingsSheet
           data={groupMonitorSettingsQuery.data?.data}
+          groupOrder={groupOrder}
           open
           onOpenChange={setGroupMonitorSettingsOpen}
         />

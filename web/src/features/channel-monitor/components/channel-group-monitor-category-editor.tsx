@@ -52,10 +52,12 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { ChannelGroupMonitorConfigFormValues } from '@/features/group-monitor/lib/config-schema'
+import { orderGroupNames } from '@/lib/group-order'
 
 export function ChannelGroupMonitorCategoryEditor(props: {
   disabled: boolean
   candidateModelsByGroup: Record<string, string[]>
+  groupOrder: readonly string[]
 }) {
   const form = useFormContext<ChannelGroupMonitorConfigFormValues>()
   const categories = useFieldArray({
@@ -66,9 +68,10 @@ export function ChannelGroupMonitorCategoryEditor(props: {
   const categoryValues = form.watch('categories')
   const groupValues = form.watch('groups')
   const selectedGroups = new Set(groupValues.map((group) => group.groupName))
-  const availableGroupItems = Object.keys(props.candidateModelsByGroup)
-    .filter((name) => !selectedGroups.has(name))
-    .map((name) => ({ value: name, label: name }))
+  const availableGroupNames = orderGroupNames(
+    Object.keys(props.candidateModelsByGroup),
+    props.groupOrder
+  ).filter((name) => !selectedGroups.has(name))
   const categoryOptions = categoryValues
     .filter((category) => category.name.trim())
     .map((category) => ({
@@ -209,12 +212,12 @@ export function ChannelGroupMonitorCategoryEditor(props: {
                   disabled={
                     props.disabled ||
                     !categoryName ||
-                    availableGroupItems.length === 0 ||
+                    availableGroupNames.length === 0 ||
                     groups.fields.length >= 100
                   }
                   aria-label={`在 ${categoryName || '新分类'} 中添加分组`}
                   onClick={() => {
-                    const groupName = availableGroupItems[0]?.value
+                    const groupName = availableGroupNames[0]
                     if (!groupName) return
                     groups.append({
                       groupName,
@@ -237,16 +240,10 @@ export function ChannelGroupMonitorCategoryEditor(props: {
               <div className='flex min-w-0 flex-col gap-3'>
                 {categoryGroups.map(({ group, index }) => {
                   const currentGroupName = groupValues[index]?.groupName ?? ''
-                  const groupItems = [
-                    { value: currentGroupName, label: currentGroupName },
-                    ...availableGroupItems,
-                  ].filter(
-                    (option, optionIndex, options) =>
-                      option.value &&
-                      options.findIndex(
-                        (candidate) => candidate.value === option.value
-                      ) === optionIndex
-                  )
+                  const groupItems = orderGroupNames(
+                    [currentGroupName, ...availableGroupNames].filter(Boolean),
+                    props.groupOrder
+                  ).map((name) => ({ value: name, label: name }))
                   const availableModelNames =
                     props.candidateModelsByGroup[currentGroupName] ?? []
                   const configuredProbeModel =

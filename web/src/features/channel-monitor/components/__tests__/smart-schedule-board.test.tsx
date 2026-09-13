@@ -402,6 +402,7 @@ function renderBoard(
   options: {
     result?: ChannelMonitorSmartScheduleRouteResult
     groupRatios?: Readonly<Record<string, number>>
+    groupOrder?: readonly string[]
     channels?: ChannelMonitorItem[]
     groupPolicies?: ChannelMonitorSmartScheduleGroupPolicy[]
     selection?: { group: string; model: string }
@@ -507,6 +508,7 @@ function renderBoard(
           ]
         }
         groupRatios={options.groupRatios ?? { default: 1, vip: 0.5 }}
+        groupOrder={options.groupOrder ?? ['vip', 'default']}
         isLoading={false}
         isError={options.isError ?? false}
         onOpenHistory={noop}
@@ -557,7 +559,32 @@ describe('channel monitor smart schedule board', () => {
     expect(view.getByRole('table')).toBeDefined()
   })
 
-  test('orders group navigation by ratio and shows only the selected model pool', () => {
+  test.each([{ groupOrder: ['default', 'vip'] }, { groupOrder: [] }])(
+    'uses group order $groupOrder with name fallback and preserves the selected pool',
+    ({ groupOrder }) => {
+      const container = document.createElement('div')
+      container.innerHTML = renderBoard({
+        groupOrder,
+        selection: { group: 'vip', model: 'model-fast' },
+      })
+      const view = within(container)
+      const navigation = within(
+        view.getByRole('navigation', { name: '智能调度分组' })
+      )
+      const buttons = navigation.getAllByRole('button')
+      expect(buttons).toHaveLength(2)
+      expect(buttons[0]).toHaveAccessibleName(/^default/)
+      expect(navigation.getByRole('button', { name: /^vip/ })).toHaveAttribute(
+        'aria-pressed',
+        'true'
+      )
+      expect(
+        view.getByRole('region', { name: 'model-fast 调度池' })
+      ).toBeDefined()
+    }
+  )
+
+  test('orders group navigation by configured order and shows only the selected model pool', () => {
     const markup = renderBoard()
 
     assert.ok(markup.indexOf('vip') < markup.indexOf('default'))
@@ -783,9 +810,10 @@ describe('channel monitor smart schedule board', () => {
     assert.equal(markup.includes('Gamma 渠道'), false)
   })
 
-  test('opens the lowest-ratio group without prioritizing a group that needs attention', () => {
+  test('opens the first configured group without prioritizing ratio or a group that needs attention', () => {
     const markup = renderBoard({
-      groupRatios: { default: 0.1, vip: 0.5 },
+      groupOrder: ['default', 'vip'],
+      groupRatios: { default: 2, vip: 0.5 },
     })
 
     assert.ok(markup.indexOf('default') < markup.indexOf('vip'))

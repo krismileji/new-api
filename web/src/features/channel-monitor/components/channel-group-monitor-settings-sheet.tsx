@@ -102,6 +102,7 @@ const DISPLAY_UNITS: Array<{
 
 export type ChannelGroupMonitorSettingsSheetProps = {
   data: ChannelGroupMonitorSettingsResponse | undefined
+  groupOrder: readonly string[]
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -459,6 +460,7 @@ export function ChannelGroupMonitorSettingsSheet(
             <ChannelGroupMonitorCategoryEditor
               disabled={controlsDisabled}
               candidateModelsByGroup={candidateModelsByGroup}
+              groupOrder={props.groupOrder}
             />
           </form>
         </Form>

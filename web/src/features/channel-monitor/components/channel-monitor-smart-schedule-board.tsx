@@ -170,19 +170,14 @@ export function ChannelMonitorSmartScheduleBoard(
     () => summarizeChannelMonitorSmartScheduleOverview(routes),
     [routes]
   )
-  const groups = useMemo(() => {
-    const groupNames = [...new Set(routes.map((route) => route.group))]
-    if (props.groupOrder?.length) {
-      return orderGroupNames(groupNames, props.groupOrder)
-    }
-    return groupNames.sort((first, second) =>
-      compareChannelMonitorSmartScheduleGroupsByRatio(
-        first,
-        second,
-        props.groupRatios
-      )
-    )
-  }, [props.groupOrder, props.groupRatios, routes])
+  const groups = useMemo(
+    () =>
+      orderGroupNames(
+        [...new Set(routes.map((route) => route.group))],
+        props.groupOrder
+      ),
+    [props.groupOrder, routes]
+  )
   const poolSummaries = useMemo(
     () => summarizeChannelMonitorSmartSchedulePools(routes, props.groupRatios),
     [props.groupRatios, routes]
