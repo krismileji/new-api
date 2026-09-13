@@ -27,6 +27,7 @@ type ChannelMonitorPageLayoutProps = {
 }
 
 export function ChannelMonitorPageLayout(props: ChannelMonitorPageLayoutProps) {
+  // Dense monitor views must not animate layout or scrollbar-color on resize.
   return (
     <SectionPageLayout stackHeaderOnMobile>
       <SectionPageLayout.Title>渠道监控</SectionPageLayout.Title>
@@ -34,7 +35,7 @@ export function ChannelMonitorPageLayout(props: ChannelMonitorPageLayoutProps) {
         <div
           role='toolbar'
           aria-label='渠道监控操作'
-          className='flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:gap-x-4'
+          className='flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto sm:gap-x-4 [&_.transition-all]:transition'
         >
           {props.actions}
         </div>
@@ -42,7 +43,7 @@ export function ChannelMonitorPageLayout(props: ChannelMonitorPageLayoutProps) {
       <SectionPageLayout.Content>
         <div
           data-slot='channel-monitor-page-content'
-          className='flex min-w-0 flex-col gap-4'
+          className='flex min-w-0 flex-col gap-4 [&_.transition-all]:transition'
         >
           <section
             aria-label='实时运行状态'

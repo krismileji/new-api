@@ -17,7 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { render, screen, within } from '@testing-library/react'
+import { compile } from 'tailwindcss'
 import { describe, expect, test } from 'vitest'
+
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 
 import { ChannelMonitorPageLayout } from '../channel-monitor-page-layout'
 
@@ -47,6 +51,76 @@ function renderPageLayout() {
 }
 
 describe('渠道监控页面响应式框架', () => {
+  test('缩放时控件只过渡交互样式，同时保留明确指定的尺寸动画', async () => {
+    const { container } = render(
+      <>
+        <Button>其他页面操作</Button>
+        <ChannelMonitorPageLayout
+          actions={<Button>刷新监控</Button>}
+          realtimeStatus={<Badge>监控正常</Badge>}
+        >
+          <Button>查看渠道</Button>
+          <div className='transition-[width]'>调度进度</div>
+        </ChannelMonitorPageLayout>
+      </>
+    )
+    const classes = new Set<string>()
+    for (const element of container.querySelectorAll('[class]')) {
+      for (const className of element.classList) {
+        if (className.includes('transition')) classes.add(className)
+      }
+    }
+    const compiler = await compile('@tailwind utilities;')
+    const style = document.createElement('style')
+    style.textContent = compiler.build([...classes])
+    document.head.append(style)
+
+    try {
+      // jsdom cannot match this escaped Tailwind descendant selector. Check
+      // the generated transition properties and their DOM scope separately.
+      const transitionRule = [...(style.sheet?.cssRules ?? [])].find(
+        (rule): rule is CSSStyleRule =>
+          rule instanceof CSSStyleRule &&
+          rule.selectorText.endsWith(' .transition-all')
+      )
+      expect(transitionRule).toBeDefined()
+      const properties = transitionRule?.style
+        .getPropertyValue('transition-property')
+        .split(',')
+        .map((property) => property.trim())
+      expect(properties).toEqual(
+        expect.arrayContaining(['background-color', 'opacity', 'translate'])
+      )
+      for (const property of ['all', 'width', 'height', 'scrollbar-color']) {
+        expect(properties).not.toContain(property)
+      }
+
+      const toolbar = screen.getByRole('toolbar', { name: '渠道监控操作' })
+      const content = container.querySelector(
+        '[data-slot="channel-monitor-page-content"]'
+      )
+      for (const scope of [toolbar, content]) {
+        expect(scope).toHaveClass('[&_.transition-all]:transition')
+      }
+      expect(toolbar).toContainElement(
+        screen.getByRole('button', { name: '刷新监控' })
+      )
+      expect(content).toContainElement(screen.getByText('监控正常'))
+      expect(content).toContainElement(
+        screen.getByRole('button', { name: '查看渠道' })
+      )
+      expect(
+        getComputedStyle(screen.getByText('调度进度')).transitionProperty
+      ).toBe('width')
+      expect(
+        getComputedStyle(screen.getByRole('button', { name: '其他页面操作' }))
+          .transitionProperty
+      ).toBe('all')
+    } finally {
+      style.remove()
+    }
+  })
+
   test('标题只包含页面名称，实时状态位于可滚动内容区', () => {
     const { container } = renderPageLayout()
 
