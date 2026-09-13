@@ -44,6 +44,7 @@ export type ChannelGroupMonitorGroup = {
   probe_model: string
   display_initial?: string
   category?: string
+  enabled?: boolean
 }
 
 export type ChannelGroupMonitorBucket = {

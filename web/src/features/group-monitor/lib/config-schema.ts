@@ -62,6 +62,7 @@ export const channelGroupMonitorConfigSchema = z
             .trim()
             .min(1, '请选择监控分组')
             .max(64, '分组名称不能超过 64 个字符'),
+          enabled: z.boolean().default(true),
           probeModel: z
             .string()
             .trim()

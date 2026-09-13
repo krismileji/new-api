@@ -430,3 +430,107 @@ test('已有配置迁入未分类后保留暂不可用模型、展示字和立�
   )
   expect(screen.getByRole('button', { name: '立即探测' })).toBeEnabled()
 })
+
+test('关闭单个分组后保存开关和完整配置，可通过键盘重新启用', async () => {
+  const user = userEvent.setup()
+  const { requests } = renderSettings([
+    {
+      group_name: 'default',
+      probe_model: 'gpt-4.1',
+      display_initial: 'D',
+      category: '通用模型',
+    },
+    { group_name: 'vip', probe_model: 'gpt-4.1', category: '通用模型' },
+  ])
+  const toggle = screen.getByRole('switch', { name: '启用 default 的监控' })
+  expect(toggle).toBeChecked()
+  await user.click(toggle)
+  expect(toggle).not.toBeChecked()
+  expect(screen.getByRole('switch', { name: '启用 vip 的监控' })).toBeChecked()
+  expect(screen.getByText('已暂停，重新启用后恢复探测')).toBeVisible()
+  expect(screen.getByText(/每小时约/)).toHaveTextContent('每小时约 60.0 次请求')
+  expect(screen.getByRole('textbox', { name: 'default的展示字' })).toHaveValue(
+    'D'
+  )
+  expect(requests).toEqual([])
+  expect(screen.getByRole('button', { name: '立即探测' })).toBeDisabled()
+  await user.click(screen.getByRole('button', { name: '保存配置' }))
+  await waitFor(() =>
+    expect(requests[0]?.groups).toEqual([
+      {
+        group_name: 'default',
+        probe_model: 'gpt-4.1',
+        display_initial: 'D',
+        category: '通用模型',
+        enabled: false,
+      },
+      {
+        group_name: 'vip',
+        probe_model: 'gpt-4.1',
+        display_initial: '',
+        category: '通用模型',
+        enabled: true,
+      },
+    ])
+  )
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: '保存配置' })).toBeEnabled()
+  )
+  const savedToggle = screen.getByRole('switch', {
+    name: '启用 default 的监控',
+  })
+  expect(savedToggle).not.toBeChecked()
+  expect(screen.getByRole('button', { name: '立即探测' })).toBeEnabled()
+
+  savedToggle.focus()
+  await user.keyboard('[Space]')
+  expect(savedToggle).toBeChecked()
+  await user.click(screen.getByRole('button', { name: '保存配置' }))
+  await waitFor(() => expect(requests).toHaveLength(2))
+  expect(requests[1].groups).toEqual([
+    { ...requests[0].groups[0], enabled: true },
+    requests[0].groups[1],
+  ])
+})
+
+test('重新打开全部暂停的配置时保留分组并禁用立即探测', () => {
+  renderSettings([
+    { group_name: 'default', probe_model: 'gpt-4.1', enabled: false },
+  ])
+  expect(
+    screen.getByRole('switch', { name: '启用 default 的监控' })
+  ).not.toBeChecked()
+  expect(
+    screen.getByRole('combobox', { name: 'default的探测模型' })
+  ).toHaveTextContent('gpt-4.1')
+  expect(screen.getByText(/每小时约/)).toHaveTextContent('每小时约 0.0 次请求')
+  expect(screen.getByRole('button', { name: '立即探测' })).toBeDisabled()
+})
+
+test('关闭全部分组后保存失败保留开关状态，重试成功后仍禁止立即探测', async () => {
+  const user = userEvent.setup()
+  const { requests, network } = renderSettings([
+    { group_name: 'default', probe_model: 'gpt-4.1' },
+  ])
+  await user.click(screen.getByRole('switch', { name: '启用 default 的监控' }))
+  network.fail = true
+  await user.click(screen.getByRole('button', { name: '保存配置' }))
+  await waitFor(() => expect(requests).toHaveLength(1))
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: '保存配置' })).toBeEnabled()
+  )
+  expect(
+    screen.getByRole('switch', { name: '启用 default 的监控' })
+  ).not.toBeChecked()
+  network.fail = false
+  await user.click(screen.getByRole('button', { name: '保存配置' }))
+  await waitFor(() => expect(requests).toHaveLength(2))
+  expect(requests[1]).toEqual(requests[0])
+  expect(requests[1].groups).toMatchObject([
+    { group_name: 'default', enabled: false },
+  ])
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: '保存配置' })).toBeEnabled()
+  )
+  expect(screen.getByRole('button', { name: '立即探测' })).toBeDisabled()
+})

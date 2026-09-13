@@ -37,6 +37,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -51,6 +52,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { Switch } from '@/components/ui/switch'
 import type { ChannelGroupMonitorConfigFormValues } from '@/features/group-monitor/lib/config-schema'
 import { orderGroupNames } from '@/lib/group-order'
 
@@ -221,6 +223,7 @@ export function ChannelGroupMonitorCategoryEditor(props: {
                     if (!groupName) return
                     groups.append({
                       groupName,
+                      enabled: true,
                       probeModel:
                         props.candidateModelsByGroup[groupName]?.[0] ?? '',
                       displayInitial: '',
@@ -262,6 +265,35 @@ export function ChannelGroupMonitorCategoryEditor(props: {
                       key={group.id}
                       className='border-border/60 bg-muted/10 grid min-w-0 gap-3 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_5rem_auto]'
                     >
+                      <FormField
+                        control={form.control}
+                        name={`groups.${index}.enabled`}
+                        render={({ field }) => (
+                          <FormItem className='flex items-center justify-between gap-3 sm:col-span-full'>
+                            <div className='min-w-0 space-y-1'>
+                              <FormLabel>
+                                <span aria-hidden='true'>启用监控</span>
+                                <span className='sr-only'>
+                                  {`启用 ${currentGroupName || '当前分组'} 的监控`}
+                                </span>
+                              </FormLabel>
+                              <FormDescription>
+                                {field.value
+                                  ? '关闭后保留配置和历史，暂停此分组的定时和手动探测'
+                                  : '已暂停，重新启用后恢复探测'}
+                              </FormDescription>
+                            </div>
+                            <FormControl>
+                              <Switch
+                                checked={field.value}
+                                onCheckedChange={field.onChange}
+                                disabled={props.disabled}
+                                aria-label={`启用 ${currentGroupName || '当前分组'} 的监控`}
+                              />
+                            </FormControl>
+                          </FormItem>
+                        )}
+                      />
                       <FormField
                         control={form.control}
                         name={`groups.${index}.groupName`}

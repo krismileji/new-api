@@ -126,6 +126,7 @@ function dataToFormValues(
     groups:
       settings?.groups.map((group) => ({
         groupName: group.group_name,
+        enabled: group.enabled ?? true,
         probeModel: group.probe_model,
         displayInitial: group.display_initial ?? '',
         categoryId: `saved:${group.category?.trim() || '未分类'}`,
@@ -192,6 +193,7 @@ export function ChannelGroupMonitorSettingsSheet(
             .filter((group) => group.categoryId === category.categoryId)
             .map((group) => ({
               group_name: group.groupName,
+              enabled: group.enabled,
               probe_model: group.probeModel,
               display_initial: group.displayInitial.trim(),
               category: category.name,
@@ -240,9 +242,10 @@ export function ChannelGroupMonitorSettingsSheet(
   const controlsDisabled =
     !props.data || saveMutation.isPending || Boolean(conflictMessage)
   const canRunSavedConfiguration =
-    (props.data?.settings.groups.length ?? 0) > 0 && !form.formState.isDirty
+    groupValues.some((group) => group.enabled) && !form.formState.isDirty
+  const enabledGroupCount = groupValues.filter((group) => group.enabled).length
   const requestsPerHour =
-    intervalSeconds > 0 ? (groupValues.length * 3600) / intervalSeconds : 0
+    intervalSeconds > 0 ? (enabledGroupCount * 3600) / intervalSeconds : 0
 
   const handleSubmit = form.handleSubmit((values) => {
     if (conflictMessage) return

@@ -294,7 +294,7 @@ func normalizeChannelGroupMonitorGroups(rawGroups []model.ChannelGroupMonitorGro
 		seen[groupName] = struct{}{}
 		groups = append(groups, model.ChannelGroupMonitorGroup{
 			GroupName: groupName, ProbeModel: probeModel, DisplayInitial: displayInitial,
-			Category: category,
+			Category: category, Enabled: rawGroup.Enabled,
 		})
 	}
 	return groups, nil
@@ -576,6 +576,9 @@ func buildChannelGroupMonitorItems(
 		if !configValid {
 			item.Status = channelGroupMonitorHealthUnconfigured
 		}
+		if !group.IsEnabled() {
+			item.Status = channelGroupMonitorHealthPaused
+		}
 		items = append(items, item)
 	}
 	return items, nil
@@ -841,7 +844,7 @@ func GetPricingGroupMonitor(c *gin.Context) {
 	publicItems := make([]pricingGroupMonitorItemResponse, 0, len(items))
 	for _, item := range items {
 		status := item.Status
-		if !config.Enabled {
+		if !config.Enabled || status == channelGroupMonitorHealthPaused {
 			status = channelGroupMonitorHealthPaused
 		} else if !item.ConfigValid {
 			status = channelGroupMonitorHealthUnavailable

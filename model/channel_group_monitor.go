@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 
@@ -55,6 +56,7 @@ type ChannelGroupMonitorGroup struct {
 	ProbeModel     string `json:"probe_model"`
 	DisplayInitial string `json:"display_initial,omitempty"`
 	Category       string `json:"category,omitempty"`
+	Enabled        *bool  `json:"enabled,omitempty"`
 }
 
 type ChannelGroupMonitorConfig struct {
@@ -248,6 +250,7 @@ func GetChannelGroupMonitorCandidateAbilities(ctx context.Context, channelIDs []
 }
 
 func SaveChannelGroupMonitorConfig(input ChannelGroupMonitorConfigInput, now int64) (ChannelGroupMonitorConfig, error) {
+	hasEnabledGroups := slices.ContainsFunc(input.Groups, ChannelGroupMonitorGroup.IsEnabled)
 	var groupConfiguration any = input.Groups
 	if input.Categories != nil || input.ShowCacheRate {
 		groupConfiguration = channelGroupMonitorGroupConfiguration{
@@ -268,7 +271,7 @@ func SaveChannelGroupMonitorConfig(input ChannelGroupMonitorConfigInput, now int
 				return ErrChannelGroupMonitorConfigChanged
 			}
 			nextRunAt := int64(0)
-			if input.Enabled && len(input.Groups) > 0 {
+			if input.Enabled && hasEnabledGroups {
 				nextRunAt = nextChannelGroupMonitorRunAt(now, input.IntervalSeconds)
 			}
 			saved = ChannelGroupMonitorConfig{
@@ -286,19 +289,24 @@ func SaveChannelGroupMonitorConfig(input ChannelGroupMonitorConfigInput, now int
 		}
 		nextRunAt := current.NextRunAt
 		configurationChanged := current.GroupsJSON != string(groupsJSON) || current.IntervalSeconds != input.IntervalSeconds
-		if !input.Enabled || len(input.Groups) == 0 {
+		if !input.Enabled || !hasEnabledGroups {
 			nextRunAt = 0
 		} else if !current.Enabled || configurationChanged || nextRunAt <= 0 || nextRunAt%int64(input.IntervalSeconds) != 0 {
 			nextRunAt = nextChannelGroupMonitorRunAt(now, input.IntervalSeconds)
 		}
+		updates := map[string]any{
+			"enabled": input.Enabled, "groups_json": string(groupsJSON),
+			"interval_seconds": input.IntervalSeconds, "display_value": displayValue,
+			"display_unit": displayUnit, "next_run_at": nextRunAt,
+			"revision": current.Revision + 1, "updated_at": now,
+		}
+		if !hasEnabledGroups {
+			updates["manual_request_id"] = ""
+			updates["manual_requested_at"] = int64(0)
+		}
 		updated := tx.Model(&ChannelGroupMonitorConfig{}).
 			Where("id = ? AND revision = ?", current.Id, current.Revision).
-			Updates(map[string]any{
-				"enabled": input.Enabled, "groups_json": string(groupsJSON),
-				"interval_seconds": input.IntervalSeconds, "display_value": displayValue,
-				"display_unit": displayUnit, "next_run_at": nextRunAt,
-				"revision": current.Revision + 1, "updated_at": now,
-			})
+			Updates(updates)
 		if updated.Error != nil {
 			return updated.Error
 		}
@@ -326,6 +334,9 @@ func RequestChannelGroupMonitorManualRun(now int64) (string, error) {
 		}
 		if len(groups) == 0 {
 			return errors.New("请先保存至少一个监控分组")
+		}
+		if !slices.ContainsFunc(groups, ChannelGroupMonitorGroup.IsEnabled) {
+			return errors.New("请先保存并启用至少一个监控分组")
 		}
 		if config.LeaseUntil <= now && strings.TrimSpace(config.RunningRunId) != "" {
 			staleManualRun := config.RunningTrigger == ChannelGroupMonitorTriggerManual
@@ -378,7 +389,7 @@ func ClaimDueChannelGroupMonitor(now int64) (*ChannelGroupMonitorClaim, error) {
 	if err != nil {
 		return nil, err
 	}
-	groups, err := candidate.Groups()
+	groups, err := candidate.EnabledGroups()
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +471,7 @@ func TimeoutOverdueChannelGroupMonitor(now int64, limit int) (int, error) {
 		if !current.Enabled || current.NextRunAt <= 0 || current.NextRunAt > now || strings.TrimSpace(current.RunningRunId) == "" {
 			return nil
 		}
-		groups, err := current.Groups()
+		groups, err := current.EnabledGroups()
 		if err != nil {
 			return err
 		}
