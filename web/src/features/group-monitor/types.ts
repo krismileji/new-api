@@ -43,6 +43,7 @@ export type ChannelGroupMonitorGroup = {
   group_name: string
   probe_model: string
   display_initial?: string
+  category?: string
 }
 
 export type ChannelGroupMonitorBucket = {
@@ -70,6 +71,7 @@ export type ChannelGroupMonitorBucket = {
 export type ChannelGroupMonitorSettings = {
   enabled: boolean
   groups: ChannelGroupMonitorGroup[]
+  categories?: string[]
   interval_seconds: number
   display_value: number
   display_unit: ChannelGroupMonitorDisplayUnit
@@ -85,6 +87,7 @@ export type ChannelGroupMonitorSettings = {
 
 export type ChannelGroupMonitorItem = {
   group: string
+  category?: string
   initial: string
   status: ChannelGroupMonitorStatus
   probe_model?: string
@@ -99,6 +102,7 @@ export type ChannelGroupMonitorItem = {
 export type PricingGroupMonitorItem = Pick<
   ChannelGroupMonitorItem,
   | 'group'
+  | 'category'
   | 'initial'
   | 'status'
   | 'probe_model'

@@ -75,6 +75,7 @@ export async function getChannelGroupMonitorOverview(): Promise<
 export async function updateChannelGroupMonitorSettings(request: {
   enabled: boolean
   groups: ChannelGroupMonitorGroup[]
+  categories?: string[]
   intervalSeconds: number
   displayValue: number
   displayUnit: ChannelGroupMonitorSettings['display_unit']
@@ -87,6 +88,7 @@ export async function updateChannelGroupMonitorSettings(request: {
     {
       enabled: request.enabled,
       groups: request.groups,
+      categories: request.categories,
       interval_seconds: request.intervalSeconds,
       display_value: request.displayValue,
       display_unit: request.displayUnit,

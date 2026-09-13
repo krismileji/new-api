@@ -71,7 +71,7 @@ const STATUS_PRESENTATION: Record<
   pending: { label: '待检测', dot: 'bg-primary', badge: 'secondary' },
   healthy: { label: '正常', dot: 'bg-success', badge: 'secondary' },
   unavailable: {
-    label: '无可用路由',
+    label: '暂不可用',
     dot: 'bg-destructive',
     badge: 'destructive',
   },
@@ -131,7 +131,7 @@ const BUCKET_RESULT_LABEL: Record<
   upstream_failure: '上游失败',
   rate_limited: '限流',
   local_failure: '本地失败',
-  unavailable: '无可用路由',
+  unavailable: '暂不可用',
   skipped: '跳过',
   timeout: '超时',
 }
@@ -308,6 +308,17 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
     )
   }
 
+  const categories = new Map<string, PricingGroupMonitor['items']>()
+  for (const item of props.result.items) {
+    const category = item.category?.trim() || '未分类'
+    const items = categories.get(category)
+    if (items) {
+      items.push(item)
+    } else {
+      categories.set(category, [item])
+    }
+  }
+
   return (
     <div className='space-y-6'>
       <section className='relative overflow-hidden rounded-2xl border border-border/60 bg-gradient-to-br from-card via-card to-muted/40 p-5 shadow-sm sm:p-6'>
@@ -328,121 +339,152 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
           <div className='flex justify-start lg:justify-end'>
             <div className='rounded-xl border border-border/60 bg-background/70 px-4 py-2.5'>
               <div className='text-muted-foreground text-[11px]'>监控状态</div>
-              <div className='mt-1 text-lg font-semibold'>{props.result.enabled ? '运行中' : '已停用'}</div>
+              <div className='mt-1 text-lg font-semibold'>
+                {props.result.enabled ? '运行中' : '已停用'}
+              </div>
             </div>
           </div>
         </div>
       </section>
 
-      <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>
-      {props.result.items.map((item) => {
-        const presentation = STATUS_PRESENTATION[item.status]
-        const updatedAt = formatTimestampToDate(item.last_finished_at)
-        const recentWindow = item.recent_window ?? []
-        return (
-          <article
-            key={item.group}
-            className='border-border/70 bg-card group relative min-w-0 overflow-hidden rounded-2xl border p-5 shadow-xs transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md'
-          >
-            <div
-              aria-hidden
-              className={cn('absolute inset-y-0 left-0 w-1', presentation.dot)}
-            />
-            <div className='flex min-w-0 items-start justify-between gap-3 pl-2'>
-              <div className='flex min-w-0 items-center gap-3'>
-                <span className='bg-muted text-muted-foreground flex size-11 shrink-0 items-center justify-center rounded-xl text-base font-semibold ring-1 ring-border/60'>
-                  {item.initial || '?'}
-                </span>
-                <h2
-                  className='truncate text-base font-semibold'
-                  title={item.group}
+      {[...categories].map(([category, items]) => (
+        <section
+          key={category}
+          aria-label={category}
+          className='min-w-0 space-y-4'
+        >
+          <div className='flex min-w-0 items-center gap-3 border-b border-border/60 pb-3'>
+            <h2 className='min-w-0 break-words text-lg font-semibold'>
+              {category}
+            </h2>
+            <Badge variant='outline' className='shrink-0'>
+              {items.length} 个分组
+            </Badge>
+          </div>
+          <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-3'>
+            {items.map((item) => {
+              const presentation = STATUS_PRESENTATION[item.status]
+              const updatedAt = formatTimestampToDate(item.last_finished_at)
+              const recentWindow = item.recent_window ?? []
+              return (
+                <article
+                  key={item.group}
+                  className='border-border/70 bg-card group relative min-w-0 overflow-hidden rounded-2xl border p-5 shadow-xs transition-all duration-300 hover:-translate-y-0.5 hover:shadow-md'
                 >
-                  {item.group}
-                </h2>
-              </div>
-              <div className='flex shrink-0 items-center gap-2'>
-                <span
-                  className='rounded-full bg-primary/10 px-2 py-1 font-mono text-xs font-semibold text-primary'
-                  title='分组倍率'
-                >
-                  {formatMonitorRatio(item.group_ratio ?? 1)}x
-                </span>
-                <Badge variant={presentation.badge}>{presentation.label}</Badge>
-              </div>
-            </div>
-
-            <dl className='mt-6 grid grid-cols-2 gap-x-4 gap-y-4 pl-2'>
-              <div className='min-w-0'>
-                <dt className='text-muted-foreground text-xs'>首字响应</dt>
-                <dd className='mt-1 truncate font-mono text-sm font-medium tabular-nums'>
-                  {formatLatency(item.latest_first_token_ms)}
-                </dd>
-              </div>
-              <div className='min-w-0'>
-                <dt className='text-muted-foreground text-xs'>成功率</dt>
-                <dd className='mt-1 font-mono text-sm font-medium tabular-nums'>
-                  {formatRate(item.success_rate)}
-                </dd>
-              </div>
-              <div className='col-span-2 min-w-0'>
-                <dt className='text-muted-foreground text-xs'>探测模型</dt>
-                <dd
-                  className='mt-1 truncate font-mono text-xs tabular-nums'
-                  title={item.probe_model || undefined}
-                >
-                  {item.probe_model || '--'}
-                </dd>
-              </div>
-              <div className='col-span-2 min-w-0'>
-                <dt className='text-muted-foreground text-xs'>更新时间</dt>
-                <dd
-                  className='mt-1 truncate font-mono text-xs tabular-nums'
-                  title={updatedAt}
-                >
-                  {updatedAt}
-                </dd>
-              </div>
-            </dl>
-            <div className='mt-6 border-t border-border/60 pt-4 pl-2'>
-              <div className='text-muted-foreground mb-1.5 flex items-center justify-between gap-2 text-[11px]'>
-                <span>
-                  近 {props.result.display_value}{' '}
-                  {DISPLAY_UNIT_LABEL[props.result.display_unit]} 状态
-                </span>
-                <span className='tabular-nums'>
-                  {recentWindow.length} 个时间格
-                </span>
-              </div>
-              <ChannelMonitorStatusWindow
-                buckets={recentWindow}
-                bucketSlot='group-monitor-bucket'
-                bucketStateDataAttribute='data-group-monitor-bucket-state'
-                gridProps={{
-                  'aria-label': `${item.group} 近 ${props.result.display_value} ${DISPLAY_UNIT_LABEL[props.result.display_unit]}分组监控结果`,
-                  'data-window-buckets': recentWindow.length,
-                  'data-group-monitor-window-value': props.result.display_value,
-                  'data-group-monitor-window-unit': props.result.display_unit,
-                }}
-                getBucketPresentation={(bucket) =>
-                  groupMonitorBucketPresentation(
-                    bucket,
-                    props.result.display_unit,
-                    props.result.enabled
-                  )
-                }
-                renderDetails={(bucket) => (
-                  <GroupMonitorBucketDetails
-                    bucket={bucket}
-                    displayUnit={props.result.display_unit}
-                    enabled={props.result.enabled}
+                  <div
+                    aria-hidden
+                    className={cn(
+                      'absolute inset-y-0 left-0 w-1',
+                      presentation.dot
+                    )}
                   />
-                )}
-              />
-            </div>
-          </article>
-        )
-      })}
-      </div>
+                  <div className='flex min-w-0 items-start justify-between gap-3 pl-2'>
+                    <div className='flex min-w-0 items-center gap-3'>
+                      <span className='bg-muted text-muted-foreground flex size-11 shrink-0 items-center justify-center rounded-xl text-base font-semibold ring-1 ring-border/60'>
+                        {item.initial || '?'}
+                      </span>
+                      <h3
+                        className='truncate text-base font-semibold'
+                        title={item.group}
+                      >
+                        {item.group}
+                      </h3>
+                    </div>
+                    <div className='flex shrink-0 items-center gap-2'>
+                      <span
+                        className='rounded-full bg-primary/10 px-2 py-1 font-mono text-xs font-semibold text-primary'
+                        title='分组倍率'
+                      >
+                        {formatMonitorRatio(item.group_ratio ?? 1)}x
+                      </span>
+                      <Badge variant={presentation.badge}>
+                        {presentation.label}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <dl className='mt-6 grid grid-cols-2 gap-x-4 gap-y-4 pl-2'>
+                    <div className='min-w-0'>
+                      <dt className='text-muted-foreground text-xs'>
+                        首字响应
+                      </dt>
+                      <dd className='mt-1 truncate font-mono text-sm font-medium tabular-nums'>
+                        {formatLatency(item.latest_first_token_ms)}
+                      </dd>
+                    </div>
+                    <div className='min-w-0'>
+                      <dt className='text-muted-foreground text-xs'>成功率</dt>
+                      <dd className='mt-1 font-mono text-sm font-medium tabular-nums'>
+                        {formatRate(item.success_rate)}
+                      </dd>
+                    </div>
+                    <div className='col-span-2 min-w-0'>
+                      <dt className='text-muted-foreground text-xs'>
+                        探测模型
+                      </dt>
+                      <dd
+                        className='mt-1 truncate font-mono text-xs tabular-nums'
+                        title={item.probe_model || undefined}
+                      >
+                        {item.probe_model || '--'}
+                      </dd>
+                    </div>
+                    <div className='col-span-2 min-w-0'>
+                      <dt className='text-muted-foreground text-xs'>
+                        更新时间
+                      </dt>
+                      <dd
+                        className='mt-1 truncate font-mono text-xs tabular-nums'
+                        title={updatedAt}
+                      >
+                        {updatedAt}
+                      </dd>
+                    </div>
+                  </dl>
+                  <div className='mt-6 border-t border-border/60 pt-4 pl-2'>
+                    <div className='text-muted-foreground mb-1.5 flex items-center justify-between gap-2 text-[11px]'>
+                      <span>
+                        近 {props.result.display_value}{' '}
+                        {DISPLAY_UNIT_LABEL[props.result.display_unit]} 状态
+                      </span>
+                      <span className='tabular-nums'>
+                        {recentWindow.length} 个时间格
+                      </span>
+                    </div>
+                    <ChannelMonitorStatusWindow
+                      buckets={recentWindow}
+                      bucketSlot='group-monitor-bucket'
+                      bucketStateDataAttribute='data-group-monitor-bucket-state'
+                      gridProps={{
+                        'aria-label': `${item.group} 近 ${props.result.display_value} ${DISPLAY_UNIT_LABEL[props.result.display_unit]}分组监控结果`,
+                        'data-window-buckets': recentWindow.length,
+                        'data-group-monitor-window-value':
+                          props.result.display_value,
+                        'data-group-monitor-window-unit':
+                          props.result.display_unit,
+                      }}
+                      getBucketPresentation={(bucket) =>
+                        groupMonitorBucketPresentation(
+                          bucket,
+                          props.result.display_unit,
+                          props.result.enabled
+                        )
+                      }
+                      renderDetails={(bucket) => (
+                        <GroupMonitorBucketDetails
+                          bucket={bucket}
+                          displayUnit={props.result.display_unit}
+                          enabled={props.result.enabled}
+                        />
+                      )}
+                    />
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        </section>
+      ))}
     </div>
   )
 }

@@ -38,6 +38,21 @@ function channelGroupMonitorDisplaySeconds(
 export const channelGroupMonitorConfigSchema = z
   .object({
     enabled: z.boolean(),
+    categories: z
+      .array(
+        z.object({
+          categoryId: z.string().min(1),
+          name: z
+            .string()
+            .trim()
+            .min(1, '请填写分类名称')
+            .refine(
+              (value) => [...value].length <= 64,
+              '分类名称不能超过 64 个字符'
+            ),
+        })
+      )
+      .max(100, '最多配置 100 个监控分类'),
     groups: z
       .array(
         z.object({
@@ -60,6 +75,7 @@ export const channelGroupMonitorConfigSchema = z
               '分组展示字只能配置一个字符'
             )
             .default(''),
+          categoryId: z.string().min(1, '请选择所属分类'),
         })
       )
       .max(100, '最多配置 100 个监控分组'),
@@ -99,8 +115,28 @@ export const channelGroupMonitorConfigSchema = z
       })
     }
 
+    const categoryNames = new Set<string>()
+    const categoryIds = new Set<string>()
+    for (const [index, category] of value.categories.entries()) {
+      if (categoryNames.has(category.name)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['categories', index, 'name'],
+          message: '分类名称不能重复',
+        })
+      }
+      categoryNames.add(category.name)
+      categoryIds.add(category.categoryId)
+    }
     const groups = new Set<string>()
     for (const [index, group] of value.groups.entries()) {
+      if (!categoryIds.has(group.categoryId)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['groups', index, 'categoryId'],
+          message: '请选择已创建的分类',
+        })
+      }
       if (groups.has(group.groupName)) {
         context.addIssue({
           code: 'custom',

@@ -32,6 +32,7 @@ const (
 type channelGroupMonitorConfigResponse struct {
 	Enabled           bool                             `json:"enabled"`
 	Groups            []model.ChannelGroupMonitorGroup `json:"groups"`
+	Categories        []string                         `json:"categories"`
 	IntervalSeconds   int                              `json:"interval_seconds"`
 	DisplayValue      int                              `json:"display_value"`
 	DisplayUnit       string                           `json:"display_unit"`
@@ -48,6 +49,7 @@ type channelGroupMonitorConfigResponse struct {
 type channelGroupMonitorConfigRequest struct {
 	Enabled         *bool                             `json:"enabled"`
 	Groups          *[]model.ChannelGroupMonitorGroup `json:"groups"`
+	Categories      *[]string                         `json:"categories"`
 	IntervalSeconds *int                              `json:"interval_seconds"`
 	DisplayValue    *int                              `json:"display_value"`
 	DisplayUnit     *string                           `json:"display_unit"`
@@ -56,6 +58,7 @@ type channelGroupMonitorConfigRequest struct {
 
 type channelGroupMonitorItemResponse struct {
 	Group              string                              `json:"group"`
+	Category           string                              `json:"category,omitempty"`
 	Initial            string                              `json:"initial"`
 	Status             string                              `json:"status"`
 	LatestFirstTokenMs *float64                            `json:"latest_first_token_ms"`
@@ -99,6 +102,7 @@ type channelGroupMonitorBucketResponse struct {
 // Administrative configuration and diagnostic fields remain on the admin API only.
 type pricingGroupMonitorItemResponse struct {
 	Group              string                              `json:"group"`
+	Category           string                              `json:"category,omitempty"`
 	Initial            string                              `json:"initial"`
 	Status             string                              `json:"status"`
 	ProbeModel         string                              `json:"probe_model,omitempty"`
@@ -121,9 +125,13 @@ func channelGroupMonitorConfigToResponse(config model.ChannelGroupMonitorConfig)
 	if err != nil {
 		return channelGroupMonitorConfigResponse{}, err
 	}
+	categories, err := config.Categories()
+	if err != nil {
+		return channelGroupMonitorConfigResponse{}, err
+	}
 	displayValue, displayUnit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
 	return channelGroupMonitorConfigResponse{
-		Enabled: config.Enabled, Groups: groups, IntervalSeconds: config.IntervalSeconds,
+		Enabled: config.Enabled, Groups: groups, Categories: categories, IntervalSeconds: config.IntervalSeconds,
 		DisplayValue: displayValue, DisplayUnit: displayUnit, NextRunAt: config.NextRunAt,
 		ManualRequestId: config.ManualRequestId, ManualRequestedAt: config.ManualRequestedAt,
 		Revision: config.Revision, RunningTrigger: config.RunningTrigger, RunningRunId: config.RunningRunId,
@@ -258,6 +266,7 @@ func normalizeChannelGroupMonitorGroups(rawGroups []model.ChannelGroupMonitorGro
 		groupName := strings.TrimSpace(rawGroup.GroupName)
 		probeModel := strings.TrimSpace(rawGroup.ProbeModel)
 		displayInitial := strings.TrimSpace(rawGroup.DisplayInitial)
+		category := strings.TrimSpace(rawGroup.Category)
 		if groupName == "" || utf8.RuneCountInString(groupName) > 64 {
 			return nil, errors.New("分组名称不能为空且长度不能超过 64 个字符")
 		}
@@ -266,6 +275,9 @@ func normalizeChannelGroupMonitorGroups(rawGroups []model.ChannelGroupMonitorGro
 		}
 		if utf8.RuneCountInString(displayInitial) > 1 {
 			return nil, errors.New("分组展示字只能配置一个字符")
+		}
+		if utf8.RuneCountInString(category) > 64 {
+			return nil, errors.New("分类名称不能超过 64 个字符")
 		}
 		if _, exists := seen[groupName]; exists {
 			return nil, errors.New("同一个监控分组只能配置一次")
@@ -276,6 +288,7 @@ func normalizeChannelGroupMonitorGroups(rawGroups []model.ChannelGroupMonitorGro
 		seen[groupName] = struct{}{}
 		groups = append(groups, model.ChannelGroupMonitorGroup{
 			GroupName: groupName, ProbeModel: probeModel, DisplayInitial: displayInitial,
+			Category: category,
 		})
 	}
 	return groups, nil
@@ -462,7 +475,6 @@ func buildChannelGroupMonitorItems(
 	ctx context.Context,
 	config model.ChannelGroupMonitorConfig,
 	validCandidates map[string][]string,
-	includeInvalid bool,
 	usableGroups map[string]string,
 	now int64,
 ) ([]channelGroupMonitorItemResponse, error) {
@@ -528,17 +540,10 @@ func buildChannelGroupMonitorItems(
 			}
 		}
 		configValid := groupMonitorModelIsCandidate(validCandidates, group.GroupName, group.ProbeModel)
-		if !configValid && !includeInvalid {
-			continue
-		}
 		item := channelGroupMonitorItemResponse{
 			Group: group.GroupName, Initial: channelGroupMonitorInitial(group.GroupName, group.DisplayInitial), ProbeModel: group.ProbeModel,
+			Category:    group.Category,
 			ConfigValid: configValid, RecentWindow: recentWindows[group.GroupName],
-		}
-		if !configValid {
-			item.Status = channelGroupMonitorHealthUnconfigured
-			items = append(items, item)
-			continue
 		}
 		window := summaryByGroup[group.GroupName]
 		item.SuccessCount = window.success
@@ -558,6 +563,9 @@ func buildChannelGroupMonitorItems(
 			item.ConsecutiveFailure = state.ConsecutiveFailure
 		} else {
 			item.Status = channelGroupMonitorHealth(config, nil, now)
+		}
+		if !configValid {
+			item.Status = channelGroupMonitorHealthUnconfigured
 		}
 		items = append(items, item)
 	}
@@ -633,8 +641,39 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return
 	}
+	var categories []string
+	if request.Categories != nil {
+		categories = *request.Categories
+	} else {
+		// Older clients omit category metadata; retain empty categories as well.
+		categories, err = currentConfig.Categories()
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		knownCategories := make(map[string]bool, len(categories))
+		for _, category := range categories {
+			knownCategories[category] = true
+		}
+		for _, group := range groups {
+			category := group.Category
+			if category == "" {
+				category = "未分类"
+			}
+			if !knownCategories[category] {
+				categories = append(categories, category)
+				knownCategories[category] = true
+			}
+		}
+	}
+	categories, err = normalizeChannelGroupMonitorCategories(categories, groups)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		return
+	}
 	saved, err := model.SaveChannelGroupMonitorConfig(model.ChannelGroupMonitorConfigInput{
 		Enabled: *request.Enabled, Groups: groups, IntervalSeconds: *request.IntervalSeconds,
+		Categories:   categories,
 		DisplayValue: *request.DisplayValue, DisplayUnit: *request.DisplayUnit, Revision: *request.Revision,
 	}, common.GetTimestamp())
 	if err != nil {
@@ -652,6 +691,7 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 	}
 	recordManageAudit(c, "channel.group_monitor_config_changed", map[string]any{
 		"enabled": *request.Enabled, "groups": groups, "group_count": len(groups),
+		"categories":       categories,
 		"interval_seconds": *request.IntervalSeconds, "display_value": *request.DisplayValue,
 		"display_unit": *request.DisplayUnit,
 	})
@@ -676,7 +716,7 @@ func GetChannelGroupMonitorOverview(c *gin.Context) {
 		respondChannelGroupMonitorQueryError(c, err)
 		return
 	}
-	items, err := buildChannelGroupMonitorItems(c.Request.Context(), config, candidates, true, nil, now)
+	items, err := buildChannelGroupMonitorItems(c.Request.Context(), config, candidates, nil, now)
 	if err != nil {
 		respondChannelGroupMonitorQueryError(c, err)
 		return
@@ -763,17 +803,24 @@ func GetPricingGroupMonitor(c *gin.Context) {
 		respondChannelGroupMonitorQueryError(c, err)
 		return
 	}
-	items, err := buildChannelGroupMonitorItems(c.Request.Context(), config, candidates, false, usableGroups, now)
+	items, err := buildChannelGroupMonitorItems(c.Request.Context(), config, candidates, usableGroups, now)
 	if err != nil {
 		respondChannelGroupMonitorQueryError(c, err)
 		return
 	}
 	publicItems := make([]pricingGroupMonitorItemResponse, 0, len(items))
 	for _, item := range items {
+		status := item.Status
+		if !config.Enabled {
+			status = channelGroupMonitorHealthPaused
+		} else if !item.ConfigValid {
+			status = channelGroupMonitorHealthUnavailable
+		}
 		publicItems = append(publicItems, pricingGroupMonitorItemResponse{
 			Group:              item.Group,
+			Category:           item.Category,
 			Initial:            item.Initial,
-			Status:             item.Status,
+			Status:             status,
 			ProbeModel:         item.ProbeModel,
 			LatestFirstTokenMs: item.LatestFirstTokenMs,
 			SuccessRate:        item.SuccessRate,

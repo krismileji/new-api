@@ -3,7 +3,6 @@ package model
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 
@@ -55,6 +54,7 @@ type ChannelGroupMonitorGroup struct {
 	GroupName      string `json:"group_name"`
 	ProbeModel     string `json:"probe_model"`
 	DisplayInitial string `json:"display_initial,omitempty"`
+	Category       string `json:"category,omitempty"`
 }
 
 type ChannelGroupMonitorConfig struct {
@@ -78,14 +78,8 @@ type ChannelGroupMonitorConfig struct {
 }
 
 func (config ChannelGroupMonitorConfig) Groups() ([]ChannelGroupMonitorGroup, error) {
-	groups := []ChannelGroupMonitorGroup{}
-	if strings.TrimSpace(config.GroupsJSON) == "" {
-		return groups, nil
-	}
-	if err := common.UnmarshalJsonStr(config.GroupsJSON, &groups); err != nil {
-		return nil, fmt.Errorf("解析分组监控配置失败: %w", err)
-	}
-	return groups, nil
+	configuration, err := config.groupConfiguration()
+	return configuration.Groups, err
 }
 
 type ChannelGroupMonitorState struct {
@@ -142,6 +136,7 @@ type ChannelGroupMonitorExecutionSummary struct {
 type ChannelGroupMonitorConfigInput struct {
 	Enabled         bool
 	Groups          []ChannelGroupMonitorGroup
+	Categories      []string
 	IntervalSeconds int
 	DisplayValue    int
 	DisplayUnit     string
@@ -252,7 +247,11 @@ func GetChannelGroupMonitorCandidateAbilities(ctx context.Context, channelIDs []
 }
 
 func SaveChannelGroupMonitorConfig(input ChannelGroupMonitorConfigInput, now int64) (ChannelGroupMonitorConfig, error) {
-	groupsJSON, err := common.Marshal(input.Groups)
+	var groupConfiguration any = input.Groups
+	if input.Categories != nil {
+		groupConfiguration = channelGroupMonitorGroupConfiguration{Categories: input.Categories, Groups: input.Groups}
+	}
+	groupsJSON, err := common.Marshal(groupConfiguration)
 	if err != nil {
 		return ChannelGroupMonitorConfig{}, err
 	}

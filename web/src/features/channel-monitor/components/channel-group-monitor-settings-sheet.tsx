@@ -18,19 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import {
-  Add01Icon,
-  Activity01Icon,
   Alert02Icon,
-  ArrowDown01Icon,
-  ArrowUp01Icon,
-  Delete02Icon,
   Refresh01Icon,
   Settings02Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useFieldArray, useForm, type Resolver } from 'react-hook-form'
+import { useEffect, useRef, useState } from 'react'
+import { useForm, type Resolver } from 'react-hook-form'
 import { toast } from 'sonner'
 
 import {
@@ -43,7 +38,6 @@ import {
   sideDrawerSwitchItemClassName,
 } from '@/components/drawer-layout'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -56,14 +50,6 @@ import {
 } from '@/components/ui/form'
 import { IconBadge } from '@/components/ui/icon-badge'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   Sheet,
   SheetClose,
@@ -90,6 +76,8 @@ import type {
   ChannelGroupMonitorSettingsResponse,
   ChannelGroupMonitorDisplayUnit,
 } from '@/features/group-monitor/types'
+
+import { ChannelGroupMonitorCategoryEditor } from './channel-group-monitor-category-editor'
 
 const OVERVIEW_QUERY_KEY = [
   'channel-monitor',
@@ -122,13 +110,23 @@ function dataToFormValues(
   data: ChannelGroupMonitorSettingsResponse | undefined
 ): ChannelGroupMonitorConfigFormValues {
   const settings = data?.settings
+  const names = new Set(settings?.categories ?? [])
+  for (const group of settings?.groups ?? []) {
+    names.add(group.category?.trim() || '未分类')
+  }
+  const categories = [...names].map((name) => ({
+    categoryId: `saved:${name}`,
+    name,
+  }))
   return {
     enabled: settings?.enabled ?? false,
+    categories,
     groups:
       settings?.groups.map((group) => ({
         groupName: group.group_name,
         probeModel: group.probe_model,
         displayInitial: group.display_initial ?? '',
+        categoryId: `saved:${group.category?.trim() || '未分类'}`,
       })) ?? [],
     intervalSeconds:
       settings?.interval_seconds ??
@@ -160,7 +158,6 @@ export function ChannelGroupMonitorSettingsSheet(
     ) as Resolver<ChannelGroupMonitorConfigFormValues>,
     defaultValues: dataToFormValues(props.data),
   })
-  const groups = useFieldArray({ control: form.control, name: 'groups' })
   const displayUnit = form.watch('displayUnit')
   const displayValue = form.watch('displayValue')
   const intervalSeconds = form.watch('intervalSeconds')
@@ -168,16 +165,6 @@ export function ChannelGroupMonitorSettingsSheet(
   const displayLimit = CHANNEL_GROUP_MONITOR_DISPLAY_LIMITS[displayUnit]
   const candidateModelsByGroup =
     props.data?.candidate_models_by_group ?? EMPTY_CANDIDATE_MODELS_BY_GROUP
-  const availableGroupItems = useMemo(
-    () =>
-      Object.keys(candidateModelsByGroup)
-        .filter(
-          (groupName) =>
-            !groupValues.some((group) => group.groupName === groupName)
-        )
-        .map((groupName) => ({ value: groupName, label: groupName })),
-    [candidateModelsByGroup, groupValues]
-  )
 
   useEffect(() => {
     if (!props.open) {
@@ -196,11 +183,17 @@ export function ChannelGroupMonitorSettingsSheet(
     mutationFn: (values: ChannelGroupMonitorConfigFormValues) =>
       updateChannelGroupMonitorSettings({
         enabled: values.enabled,
-        groups: values.groups.map((group) => ({
-          group_name: group.groupName,
-          probe_model: group.probeModel,
-          display_initial: group.displayInitial.trim(),
-        })),
+        categories: values.categories.map((category) => category.name),
+        groups: values.categories.flatMap((category) =>
+          values.groups
+            .filter((group) => group.categoryId === category.categoryId)
+            .map((group) => ({
+              group_name: group.groupName,
+              probe_model: group.probeModel,
+              display_initial: group.displayInitial.trim(),
+              category: category.name,
+            }))
+        ),
         intervalSeconds: values.intervalSeconds,
         displayValue: values.displayValue,
         displayUnit: values.displayUnit,
@@ -218,6 +211,7 @@ export function ChannelGroupMonitorSettingsSheet(
       toast.success('分组监控配置已保存')
       queryClient.invalidateQueries({ queryKey: OVERVIEW_QUERY_KEY })
       queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY })
+      queryClient.invalidateQueries({ queryKey: ['pricing', 'group-monitor'] })
     },
     onError: (error) => {
       if (isGroupMonitorConfigConflict(error)) {
@@ -251,12 +245,6 @@ export function ChannelGroupMonitorSettingsSheet(
     if (conflictMessage) return
     saveMutation.mutate(values)
   })
-
-  function moveGroup(index: number, direction: -1 | 1) {
-    const targetIndex = index + direction
-    if (targetIndex < 0 || targetIndex >= groups.fields.length) return
-    groups.move(index, targetIndex)
-  }
 
   function refreshConfiguration() {
     void queryClient.refetchQueries({ queryKey: SETTINGS_QUERY_KEY })
@@ -468,238 +456,10 @@ export function ChannelGroupMonitorSettingsSheet(
               </div>
             </SideDrawerSection>
 
-            <SideDrawerSection>
-              <SideDrawerSectionHeader
-                title='监控分组'
-                description='按列表顺序执行；每个分组需要指定一个当前可用的具体文本模型'
-                icon={<HugeiconsIcon icon={Activity01Icon} />}
-                iconTone='info'
-              />
-              <div className='flex items-center justify-between gap-3'>
-                <Badge variant='outline'>{groups.fields.length} / 100</Badge>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  disabled={
-                    controlsDisabled ||
-                    availableGroupItems.length === 0 ||
-                    groups.fields.length >= 100
-                  }
-                  onClick={() => {
-                    const groupName = availableGroupItems[0]?.value
-                    if (!groupName) return
-                    groups.append({
-                      groupName,
-                      probeModel: candidateModelsByGroup[groupName]?.[0] ?? '',
-                      displayInitial: '',
-                    })
-                  }}
-                >
-                  <HugeiconsIcon icon={Add01Icon} data-icon='inline-start' />
-                  添加分组
-                </Button>
-              </div>
-              {groups.fields.length === 0 ? (
-                <Alert>
-                  <HugeiconsIcon icon={Alert02Icon} />
-                  <AlertTitle>尚未配置监控分组</AlertTitle>
-                  <AlertDescription>
-                    保存后用户侧才会展示已配置且有效的分组。
-                  </AlertDescription>
-                </Alert>
-              ) : null}
-              <div className='flex min-w-0 flex-col gap-3'>
-                {groups.fields.map((group, index) => {
-                  const currentGroupName = groupValues[index]?.groupName ?? ''
-                  const groupItems = [
-                    { value: currentGroupName, label: currentGroupName },
-                    ...availableGroupItems,
-                  ].filter(
-                    (option, optionIndex, options) =>
-                      option.value &&
-                      options.findIndex(
-                        (candidate) => candidate.value === option.value
-                      ) === optionIndex
-                  )
-                  const availableModelNames =
-                    candidateModelsByGroup[currentGroupName] ?? []
-                  const configuredProbeModel =
-                    groupValues[index]?.probeModel?.trim() ?? ''
-                  const modelNames =
-                    configuredProbeModel &&
-                    !availableModelNames.includes(configuredProbeModel)
-                      ? [...availableModelNames, configuredProbeModel]
-                      : availableModelNames
-                  const modelItems = modelNames.map((modelName) => ({
-                    value: modelName,
-                    label: modelName,
-                  }))
-                  return (
-                    <article
-                      key={group.id}
-                      className='border-border/60 bg-muted/10 grid min-w-0 gap-3 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_5rem_auto]'
-                    >
-                      <FormField
-                        control={form.control}
-                        name={`groups.${index}.groupName`}
-                        render={({ field }) => (
-                          <FormItem className='min-w-0'>
-                            <FormLabel>分组</FormLabel>
-                            <Select
-                              items={groupItems}
-                              value={field.value || null}
-                              disabled={controlsDisabled}
-                              onValueChange={(value) => {
-                                if (value == null) return
-                                field.onChange(value)
-                                form.setValue(
-                                  `groups.${index}.probeModel`,
-                                  candidateModelsByGroup[value]?.[0] ?? '',
-                                  { shouldDirty: true, shouldValidate: true }
-                                )
-                              }}
-                            >
-                              <FormControl>
-                                <SelectTrigger
-                                  className='w-full min-w-0'
-                                  aria-label={`第 ${index + 1} 个监控分组`}
-                                >
-                                  <SelectValue placeholder='选择分组' />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent alignItemWithTrigger={false}>
-                                <SelectGroup>
-                                  {groupItems.map((item) => (
-                                    <SelectItem
-                                      key={item.value}
-                                      value={item.value}
-                                    >
-                                      {item.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectGroup>
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name={`groups.${index}.probeModel`}
-                        render={({ field }) => (
-                          <FormItem className='min-w-0'>
-                            <FormLabel>探测模型</FormLabel>
-                            <Select
-                              items={modelItems}
-                              value={field.value || null}
-                              disabled={
-                                controlsDisabled || modelItems.length === 0
-                              }
-                              onValueChange={(value) => {
-                                if (value !== null) field.onChange(value)
-                              }}
-                            >
-                              <FormControl>
-                                <SelectTrigger
-                                  className='w-full min-w-0'
-                                  aria-label={`${currentGroupName || '当前分组'}的探测模型`}
-                                >
-                                  <SelectValue placeholder='选择具体模型' />
-                                </SelectTrigger>
-                              </FormControl>
-                              <SelectContent alignItemWithTrigger={false}>
-                                <SelectGroup>
-                                  {modelItems.map((item) => (
-                                    <SelectItem
-                                      key={item.value}
-                                      value={item.value}
-                                    >
-                                      {item.label}
-                                    </SelectItem>
-                                  ))}
-                                </SelectGroup>
-                              </SelectContent>
-                            </Select>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <FormField
-                        control={form.control}
-                        name={`groups.${index}.displayInitial`}
-                        render={({ field }) => (
-                          <FormItem className='min-w-0'>
-                            <FormLabel>展示字</FormLabel>
-                            <FormControl>
-                              <Input
-                                value={field.value}
-                                maxLength={2}
-                                placeholder='默认'
-                                disabled={controlsDisabled}
-                                aria-label={`${currentGroupName || '当前分组'}的展示字`}
-                                onChange={(event) => {
-                                  const value = event.target.value.trim()
-                                  field.onChange(
-                                    [...value].slice(0, 1).join('')
-                                  )
-                                }}
-                              />
-                            </FormControl>
-                            <FormMessage />
-                          </FormItem>
-                        )}
-                      />
-                      <div className='flex items-end justify-end gap-1'>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          size='icon-sm'
-                          onClick={() => moveGroup(index, -1)}
-                          disabled={controlsDisabled || index === 0}
-                          aria-label={`上移 ${currentGroupName}`}
-                        >
-                          <HugeiconsIcon icon={ArrowUp01Icon} />
-                        </Button>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          size='icon-sm'
-                          onClick={() => moveGroup(index, 1)}
-                          disabled={
-                            controlsDisabled ||
-                            index === groups.fields.length - 1
-                          }
-                          aria-label={`下移 ${currentGroupName}`}
-                        >
-                          <HugeiconsIcon icon={ArrowDown01Icon} />
-                        </Button>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          size='icon-sm'
-                          onClick={() => groups.remove(index)}
-                          disabled={controlsDisabled}
-                          aria-label={`移除 ${currentGroupName}`}
-                        >
-                          <HugeiconsIcon icon={Delete02Icon} />
-                        </Button>
-                      </div>
-                    </article>
-                  )
-                })}
-              </div>
-              <FormField
-                control={form.control}
-                name='groups'
-                render={() => (
-                  <FormItem>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </SideDrawerSection>
+            <ChannelGroupMonitorCategoryEditor
+              disabled={controlsDisabled}
+              candidateModelsByGroup={candidateModelsByGroup}
+            />
           </form>
         </Form>
 
@@ -712,7 +472,7 @@ export function ChannelGroupMonitorSettingsSheet(
               controlsDisabled ||
               runMutation.isPending ||
               !canRunSavedConfiguration ||
-              groups.fields.length === 0
+              groupValues.length === 0
             }
           >
             {runMutation.isPending ? (
