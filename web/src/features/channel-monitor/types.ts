@@ -123,6 +123,35 @@ export type ChannelMonitorCustomUpstreamConfig = {
   balance_reuse_ratio_request: boolean
   variable_requests?: ChannelMonitorCustomVariableRequest[]
   variable_request?: ChannelMonitorCustomLegacyVariableRequest
+  actions?: ChannelMonitorCustomAction[]
+}
+
+export type ChannelMonitorCustomAction = {
+  id: string
+  name: string
+  enabled: boolean
+  metric: 'balance' | 'ratio'
+  operator: 'lt' | 'lte' | 'gt' | 'gte'
+  threshold: number
+  timezone: string
+  start_time: string
+  end_time: string
+  daily_limit: number
+  cooldown_minutes: number
+  base_url: string
+  request: ChannelMonitorCustomRequestConfig
+  success_path: string
+  success_value: string
+}
+
+export type ChannelMonitorCustomActionState = {
+  triggered: boolean
+  day: string
+  attempts: number
+  last_attempt: number
+  last_value: number
+  status: 'running' | 'succeeded' | 'failed'
+  message: string
 }
 
 export type ChannelMonitorCustomLegacyVariableRequest = {
@@ -184,6 +213,8 @@ export type ChannelMonitorUpstreamConfig = {
   balance_sync_enabled: boolean
   cost_conversion: ChannelMonitorCostConversion
   custom_config?: ChannelMonitorCustomUpstreamConfig
+  custom_action_states?: Record<string, ChannelMonitorCustomActionState>
+  custom_action_state_error?: string
 }
 
 export type ChannelMonitorUpstreamRequest = {

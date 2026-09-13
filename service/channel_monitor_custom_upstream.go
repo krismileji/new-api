@@ -88,6 +88,7 @@ type ChannelMonitorCustomUpstreamConfig struct {
 	BalanceReuseRatioRequest bool                                       `json:"balance_reuse_ratio_request,omitempty"`
 	VariableRequests         []ChannelMonitorCustomVariableRequest      `json:"variable_requests,omitempty"`
 	VariableRequest          *ChannelMonitorCustomLegacyVariableRequest `json:"variable_request,omitempty"`
+	Actions                  []ChannelMonitorCustomAction               `json:"actions,omitempty"`
 }
 
 type ChannelMonitorCustomRequestDebug struct {
@@ -150,6 +151,12 @@ func SanitizeChannelMonitorCustomUpstreamConfig(config ChannelMonitorCustomUpstr
 	}
 	sanitizeChannelMonitorCustomMetric(&sanitized.Ratio)
 	sanitizeChannelMonitorCustomMetric(&sanitized.Balance)
+	sanitized.Actions = append([]ChannelMonitorCustomAction(nil), config.Actions...)
+	for index := range sanitized.Actions {
+		metric := ChannelMonitorCustomMetricConfig{Request: &sanitized.Actions[index].Request}
+		sanitizeChannelMonitorCustomMetric(&metric)
+		sanitized.Actions[index].Request = *metric.Request
+	}
 	sanitized.VariableRequest = nil
 	sanitized.VariableRequests = append([]ChannelMonitorCustomVariableRequest(nil), channelMonitorCustomVariableRequests(config)...)
 	for index := range sanitized.VariableRequests {
@@ -225,12 +232,17 @@ func normalizeChannelMonitorCustomUpstreamConfig(config ChannelMonitorCustomUpst
 	if err != nil {
 		return ChannelMonitorCustomUpstreamConfig{}, err
 	}
+	actions, err := normalizeChannelMonitorCustomActions(config.Actions, existing)
+	if err != nil {
+		return ChannelMonitorCustomUpstreamConfig{}, err
+	}
 	normalized := ChannelMonitorCustomUpstreamConfig{
 		Version:                  channelMonitorCustomConfigVersion,
 		Ratio:                    ratio,
 		Balance:                  balance,
 		BalanceReuseRatioRequest: config.BalanceReuseRatioRequest,
 		VariableRequests:         variableRequests,
+		Actions:                  actions,
 	}
 	if err := validateChannelMonitorCustomTemplates(normalized); err != nil {
 		return ChannelMonitorCustomUpstreamConfig{}, err

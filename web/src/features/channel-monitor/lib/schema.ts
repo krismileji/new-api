@@ -1536,6 +1536,64 @@ const customUpstreamConfigSchema = z.object({
   ratio: customMetricSchema,
   balance: customMetricSchema,
   balanceReuseRatioRequest: z.boolean(),
+  actions: z
+    .array(
+      z.object({
+        id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, '触发规则标识无效'),
+        name: z
+          .string()
+          .trim()
+          .min(1, '请输入规则名称')
+          .max(80, '规则名称不能超过 80 个字符'),
+        enabled: z.boolean(),
+        metric: z.enum(['balance', 'ratio']),
+        operator: z.enum(['lt', 'lte', 'gt', 'gte']),
+        threshold: z
+          .union([z.number(), z.string().trim().min(1, '请输入触发阈值')])
+          .pipe(
+            z.coerce
+              .number<string | number>()
+              .finite('请输入有效阈值')
+              .min(-MAX_CUSTOM_UPSTREAM_BALANCE, '阈值超出允许范围')
+              .max(MAX_CUSTOM_UPSTREAM_BALANCE, '阈值超出允许范围')
+          ),
+        timezone: z
+          .string()
+          .trim()
+          .min(1, '请输入时区')
+          .refine((value) => {
+            if (value === 'Local') return false
+            try {
+              new Intl.DateTimeFormat('en', { timeZone: value })
+              return true
+            } catch {
+              return false
+            }
+          }, '请输入有效时区，例如 Asia/Shanghai'),
+        startTime: z
+          .string()
+          .regex(/^([01]\d|2[0-3]):[0-5]\d$/, '请输入 HH:mm 格式的时间'),
+        endTime: z
+          .string()
+          .regex(/^([01]\d|2[0-3]):[0-5]\d$/, '请输入 HH:mm 格式的时间'),
+        dailyLimit: z.coerce
+          .number()
+          .int('每日次数必须为整数')
+          .min(1, '每日次数至少为 1')
+          .max(100, '每日次数不能超过 100'),
+        cooldownMinutes: z.coerce
+          .number()
+          .int('冷却时间必须为整数')
+          .min(1, '冷却时间至少为 1 分钟')
+          .max(10080, '冷却时间不能超过 10080 分钟'),
+        baseUrl: z.string().trim().max(2048, '接口基础地址过长'),
+        request: customRequestSchema,
+        successPath: z.string().trim().max(512, '成功判定路径过长'),
+        successValue: z.string().max(256, '成功判定期望值过长'),
+      })
+    )
+    .max(8, '触发规则不能超过 8 条')
+    .default([]),
   variableRequests: z
     .array(
       z.object({
@@ -1886,6 +1944,57 @@ export function createUpstreamConfigSchema(
         }
       }
       if (values.upstreamType === 'custom') {
+        const actionIDs = new Set<string>()
+        for (const [index, action] of values.customConfig.actions.entries()) {
+          const path = ['customConfig', 'actions', index]
+          if (actionIDs.has(action.id)) {
+            context.addIssue({
+              code: 'custom',
+              path: [...path, 'name'],
+              message: '触发规则标识重复，请重新添加',
+            })
+          }
+          actionIDs.add(action.id)
+          if (action.startTime >= action.endTime) {
+            context.addIssue({
+              code: 'custom',
+              path: [...path, 'endTime'],
+              message: '截止时间须晚于开始时间，不支持跨日时段',
+            })
+          }
+          if (
+            action.metric === 'ratio' &&
+            (action.threshold < 0 || action.threshold > MAX_MONITOR_RATIO)
+          ) {
+            context.addIssue({
+              code: 'custom',
+              path: [...path, 'threshold'],
+              message: '倍率阈值必须在 0 到 1000000 之间',
+            })
+          }
+          if (action.baseUrl) {
+            try {
+              const url = new URL(action.baseUrl)
+              if (
+                !['http:', 'https:'].includes(url.protocol) ||
+                url.username ||
+                url.password ||
+                url.search ||
+                url.hash
+              ) {
+                throw new Error('invalid URL')
+              }
+            } catch {
+              context.addIssue({
+                code: 'custom',
+                path: [...path, 'baseUrl'],
+                message:
+                  '请输入不含账号密码、查询参数或片段的 HTTP 或 HTTPS 地址',
+              })
+            }
+          }
+          validateCustomRequest(action.request, path, context)
+        }
         const variableNames = new Set<string>()
         const requestIDs = new Set<string>()
         let variableCount = 0
@@ -1964,15 +2073,26 @@ export function createUpstreamConfigSchema(
             message: '所有独立请求的变量合计不能超过 32 个',
           })
         }
-        for (const metricName of ['ratio', 'balance'] as const) {
-          const metric = values.customConfig[metricName]
-          if (
-            metric.source !== 'http' ||
-            (metricName === 'balance' &&
-              values.customConfig.balanceReuseRatioRequest)
-          ) {
-            continue
-          }
+        const templateRequests = (['ratio', 'balance'] as const)
+          .filter(
+            (name) =>
+              values.customConfig[name].source === 'http' &&
+              !(
+                name === 'balance' &&
+                values.customConfig.balanceReuseRatioRequest
+              )
+          )
+          .map((name) => ({
+            request: values.customConfig[name].request,
+            path: ['customConfig', name] as (string | number)[],
+          }))
+        for (const [index, action] of values.customConfig.actions.entries()) {
+          templateRequests.push({
+            request: action.request,
+            path: ['customConfig', 'actions', index],
+          })
+        }
+        for (const metric of templateRequests) {
           for (const entryType of ['query', 'headers'] as const) {
             metric.request[entryType].forEach((entry, index) => {
               if (entry.valueTemplate === undefined) return
@@ -1986,8 +2106,7 @@ export function createUpstreamConfigSchema(
                 context.addIssue({
                   code: 'custom',
                   path: [
-                    'customConfig',
-                    metricName,
+                    ...metric.path,
                     'request',
                     entryType,
                     index,

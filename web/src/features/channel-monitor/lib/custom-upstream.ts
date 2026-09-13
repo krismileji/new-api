@@ -148,6 +148,23 @@ export function createChannelMonitorCustomFormConfig(
     ratio: createCustomMetricFormValue(config?.ratio, 1, 'data.ratio'),
     balance: createCustomMetricFormValue(config?.balance, 0, 'data.balance'),
     balanceReuseRatioRequest: config?.balance_reuse_ratio_request ?? false,
+    actions: (config?.actions ?? []).map((action) => ({
+      id: action.id,
+      name: action.name,
+      enabled: action.enabled,
+      metric: action.metric,
+      operator: action.operator,
+      threshold: action.threshold,
+      timezone: action.timezone,
+      startTime: action.start_time,
+      endTime: action.end_time,
+      dailyLimit: action.daily_limit,
+      cooldownMinutes: action.cooldown_minutes,
+      baseUrl: action.base_url ?? '',
+      request: createCustomRequestFormValue(action.request),
+      successPath: action.success_path ?? '',
+      successValue: action.success_value ?? '',
+    })),
     variableRequests: requests.map((request) => ({
       id: request.id,
       name: request.name,
@@ -174,6 +191,23 @@ export function createChannelMonitorCustomRequestConfig(
     balance: toAPIMetric(config.balance, config.balanceReuseRatioRequest),
     balance_reuse_ratio_request: config.balanceReuseRatioRequest,
     variable_requests: config.variableRequests.map(toAPIVariableRequest),
+    actions: config.actions.map((action) => ({
+      id: action.id,
+      name: action.name.trim(),
+      enabled: action.enabled,
+      metric: action.metric,
+      operator: action.operator,
+      threshold: action.threshold,
+      timezone: action.timezone.trim(),
+      start_time: action.startTime,
+      end_time: action.endTime,
+      daily_limit: action.dailyLimit,
+      cooldown_minutes: action.cooldownMinutes,
+      base_url: action.baseUrl.trim(),
+      request: toAPIRequest(action.request),
+      success_path: action.successPath.trim(),
+      success_value: action.successValue,
+    })),
   }
 }
 
@@ -208,5 +242,29 @@ export function createChannelMonitorVariableRequest(
     request: createCustomRequestFormValue(undefined),
     responseType: 'json',
     variables: [{ name: '', value: '', hasValue: false, valuePath: '' }],
+  }
+}
+
+export function createChannelMonitorCustomAction(): UpstreamConfigFormValues['customConfig']['actions'][number] {
+  return {
+    id: crypto.randomUUID(),
+    name: '余额不足时重置',
+    enabled: false,
+    metric: 'balance',
+    operator: 'lt',
+    threshold: 1,
+    timezone: 'Asia/Shanghai',
+    startTime: '00:05',
+    endTime: '23:00',
+    dailyLimit: 1,
+    cooldownMinutes: 60,
+    baseUrl: '',
+    request: {
+      ...createCustomRequestFormValue(undefined),
+      method: 'POST',
+      path: '/api/reset',
+    },
+    successPath: '',
+    successValue: '',
   }
 }

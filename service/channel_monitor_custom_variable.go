@@ -177,7 +177,11 @@ func validateChannelMonitorCustomTemplates(config ChannelMonitorCustomUpstreamCo
 			names[variable.Name] = variable.Value
 		}
 	}
-	for _, metric := range []ChannelMonitorCustomMetricConfig{config.Ratio, config.Balance} {
+	metrics := []ChannelMonitorCustomMetricConfig{config.Ratio, config.Balance}
+	for _, action := range config.Actions {
+		metrics = append(metrics, ChannelMonitorCustomMetricConfig{Request: &action.Request})
+	}
+	for _, metric := range metrics {
 		if metric.Request == nil {
 			continue
 		}

@@ -48,7 +48,11 @@ import {
   type UpstreamConfigFormValues,
 } from '../lib/schema'
 
-type CustomMetricName = 'ratio' | 'balance' | `variableRequests.${number}`
+type CustomMetricName =
+  | 'ratio'
+  | 'balance'
+  | `variableRequests.${number}`
+  | `actions.${number}`
 type CustomKeyValueArrayName =
   | `customConfig.${CustomMetricName}.request.query`
   | `customConfig.${CustomMetricName}.request.headers`

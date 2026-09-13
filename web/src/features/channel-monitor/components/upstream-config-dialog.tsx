@@ -100,6 +100,7 @@ import type {
   NewAPIGroupRatioResult,
 } from '../types'
 import { ChannelMonitorCostConversionFields } from './channel-monitor-cost-conversion-fields'
+import { ChannelMonitorCustomActionFields } from './channel-monitor-custom-action-fields'
 import { ChannelMonitorCustomUpstreamFields } from './channel-monitor-custom-upstream-fields'
 import { ChannelMonitorCustomVariableFields } from './channel-monitor-custom-variable-fields'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
@@ -899,6 +900,12 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                     onFetch={handleFetchVariable}
                   />
                   <ChannelMonitorCustomUpstreamFields form={form} />
+                  <ChannelMonitorCustomActionFields
+                    form={form}
+                    disabled={pending}
+                    states={savedUpstream?.custom_action_states}
+                    stateError={savedUpstream?.custom_action_state_error}
+                  />
                 </>
               ) : null}
 

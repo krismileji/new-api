@@ -37,6 +37,7 @@ export type CustomRequestPrefix =
   | 'customConfig.ratio.request'
   | 'customConfig.balance.request'
   | `customConfig.variableRequests.${number}.request`
+  | `customConfig.actions.${number}.request`
 
 type ChannelMonitorCustomRequestFieldsProps = {
   form: UseFormReturn<UpstreamConfigFormValues>

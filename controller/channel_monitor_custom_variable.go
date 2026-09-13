@@ -53,6 +53,7 @@ func FetchChannelMonitorCustomVariable(c *gin.Context) {
 	request.CustomConfig.Ratio = service.ChannelMonitorCustomMetricConfig{Source: service.ChannelMonitorCustomSourceFixed, FixedValue: &ratio}
 	request.CustomConfig.Balance = service.ChannelMonitorCustomMetricConfig{Source: service.ChannelMonitorCustomSourceFixed, FixedValue: &balance}
 	request.CustomConfig.BalanceReuseRatioRequest = false
+	request.CustomConfig.Actions = nil
 	config, err := resolveChannelMonitorUpstreamRequest(channel, request.channelMonitorUpstreamRequest, false)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})

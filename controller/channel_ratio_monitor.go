@@ -62,23 +62,25 @@ type channelMonitorUpstreamRequest struct {
 }
 
 type channelMonitorUpstreamConfig struct {
-	Type                        string                                      `json:"type"`
-	BaseURL                     string                                      `json:"base_url"`
-	Group                       string                                      `json:"group"`
-	AuthType                    string                                      `json:"auth_type"`
-	UserId                      int                                         `json:"user_id"`
-	HasAccessToken              bool                                        `json:"has_access_token"`
-	HasRefreshToken             bool                                        `json:"has_refresh_token"`
-	Account                     string                                      `json:"account"`
-	HasPassword                 bool                                        `json:"has_password"`
-	SingleChannelAction         string                                      `json:"single_channel_action"`
-	MultipleChannelsAction      string                                      `json:"multiple_channels_action"`
-	BalanceWarningThreshold     *float64                                    `json:"balance_warning_threshold"`
-	BalanceAutoDisableThreshold *float64                                    `json:"balance_auto_disable_threshold"`
-	RatioSyncEnabled            bool                                        `json:"ratio_sync_enabled"`
-	BalanceSyncEnabled          bool                                        `json:"balance_sync_enabled"`
-	CostConversion              service.ChannelMonitorCostConversion        `json:"cost_conversion"`
-	CustomConfig                *service.ChannelMonitorCustomUpstreamConfig `json:"custom_config,omitempty"`
+	Type                        string                                           `json:"type"`
+	BaseURL                     string                                           `json:"base_url"`
+	Group                       string                                           `json:"group"`
+	AuthType                    string                                           `json:"auth_type"`
+	UserId                      int                                              `json:"user_id"`
+	HasAccessToken              bool                                             `json:"has_access_token"`
+	HasRefreshToken             bool                                             `json:"has_refresh_token"`
+	Account                     string                                           `json:"account"`
+	HasPassword                 bool                                             `json:"has_password"`
+	SingleChannelAction         string                                           `json:"single_channel_action"`
+	MultipleChannelsAction      string                                           `json:"multiple_channels_action"`
+	BalanceWarningThreshold     *float64                                         `json:"balance_warning_threshold"`
+	BalanceAutoDisableThreshold *float64                                         `json:"balance_auto_disable_threshold"`
+	RatioSyncEnabled            bool                                             `json:"ratio_sync_enabled"`
+	BalanceSyncEnabled          bool                                             `json:"balance_sync_enabled"`
+	CostConversion              service.ChannelMonitorCostConversion             `json:"cost_conversion"`
+	CustomConfig                *service.ChannelMonitorCustomUpstreamConfig      `json:"custom_config,omitempty"`
+	CustomActionStates          map[string]model.ChannelMonitorCustomActionState `json:"custom_action_states,omitempty"`
+	CustomActionStateError      string                                           `json:"custom_action_state_error,omitempty"`
 }
 
 type channelMonitorItem struct {
@@ -134,11 +136,20 @@ func channelMonitorUpstreamFromModel(monitor model.ChannelRatioMonitor) *channel
 		costConversion = service.ChannelMonitorCostConversion{Mode: service.ChannelMonitorCostConversionNone}
 	}
 	var customConfig *service.ChannelMonitorCustomUpstreamConfig
+	var customActionStates map[string]model.ChannelMonitorCustomActionState
+	var customActionStateError string
 	if monitor.UpstreamType == service.CustomUpstreamType {
 		parsed, parseErr := service.ParseChannelMonitorCustomUpstreamConfig(monitor.CustomUpstreamConfig)
 		if parseErr == nil {
 			sanitized := service.SanitizeChannelMonitorCustomUpstreamConfig(parsed)
 			customConfig = &sanitized
+			if len(parsed.Actions) > 0 {
+				var stateErr error
+				customActionStates, stateErr = model.GetChannelMonitorCustomActionStates(monitor.ChannelId)
+				if stateErr != nil {
+					customActionStateError = "无法读取自定义接口执行记录"
+				}
+			}
 		}
 	}
 	authType := monitor.UpstreamAuthType
@@ -163,6 +174,8 @@ func channelMonitorUpstreamFromModel(monitor model.ChannelRatioMonitor) *channel
 		BalanceSyncEnabled:          !monitor.UpstreamBalanceSyncDisabled,
 		CostConversion:              costConversion,
 		CustomConfig:                customConfig,
+		CustomActionStates:          customActionStates,
+		CustomActionStateError:      customActionStateError,
 	}
 }
 
@@ -1472,6 +1485,9 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 		}
 		outcome.BalanceRecorded = result.Balance.Amount != nil
 		outcome.BalanceEvaluation = balanceEvaluation
+		if result.Balance.Amount != nil && result.Balance.Error == "" {
+			runChannelMonitorCustomActions(ctx, monitor, "balance", *result.Balance.Amount, proxyURL, requestTimeout)
+		}
 	}
 	if fetchErr != nil {
 		return outcome, fetchErr
@@ -1500,6 +1516,7 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 	outcome.Monitor = updatedMonitor
 	outcome.Created = created
 	outcome.Changed = changed
+	runChannelMonitorCustomActions(ctx, monitor, "ratio", result.Ratio, proxyURL, requestTimeout)
 	return outcome, nil
 }
 
@@ -1578,6 +1595,7 @@ func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor mo
 	if !applied {
 		return result, evaluation, model.ErrChannelRatioMonitorConfigChanged
 	}
+	runChannelMonitorCustomActions(ctx, monitor, "balance", *result.Amount, proxyURL, requestTimeout)
 	return result, evaluation, nil
 }
 
