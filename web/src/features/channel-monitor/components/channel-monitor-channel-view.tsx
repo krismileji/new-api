@@ -217,16 +217,6 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
   if (!props.channel.upstream) {
     return <span className='text-muted-foreground'>-</span>
   }
-  if (!props.channel.upstream.balance_sync_enabled) {
-    return (
-      <span
-        className='text-muted-foreground text-xs whitespace-nowrap'
-        title='余额同步已关闭'
-      >
-        余额同步已关闭
-      </span>
-    )
-  }
   if (props.channel.upstream_balance == null) {
     if (props.channel.last_balance_error) {
       return (
@@ -245,8 +235,10 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
   if (props.channel.last_balance_error) {
     titleParts.push(`最近更新失败：${props.channel.last_balance_error}`)
   }
-  const warningThreshold =
-    props.channel.upstream?.balance_warning_threshold ?? null
+  const balanceSyncEnabled = props.channel.upstream.balance_sync_enabled
+  const warningThreshold = balanceSyncEnabled
+    ? props.channel.upstream.balance_warning_threshold
+    : null
   const balanceWarning =
     warningThreshold != null &&
     props.channel.upstream_balance < warningThreshold
@@ -264,6 +256,7 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
         <span
           className={cn(
             'font-mono font-semibold',
+            !balanceSyncEnabled && 'text-muted-foreground',
             balanceWarning && 'text-destructive'
           )}
         >
@@ -355,14 +348,8 @@ export function ChannelMonitorChannelView(
             const channelStatusLabel = `渠道状态：${getChannelMonitorStatusLabel(channel.status)}`
             const refreshesMetricsTogether =
               channel.upstream?.type === 'custom' &&
-              channel.upstream.ratio_sync_enabled &&
-              channel.upstream.balance_sync_enabled &&
               channel.upstream.custom_config?.balance_reuse_ratio_request ===
                 true
-            const refreshingMetricsTogether =
-              refreshesMetricsTogether &&
-              (props.fetchingBalanceChannelId === channel.id ||
-                props.fetchingRatioChannelId === channel.id)
             let statusActionIcon = <Power className='size-4' />
             if (props.updatingStatusChannelId === channel.id) {
               statusActionIcon = <Loader2 className='size-4 animate-spin' />
@@ -414,7 +401,7 @@ export function ChannelMonitorChannelView(
                 </TableCell>
                 <TableCell className='min-w-[224px] whitespace-normal'>
                   <div className='grid w-max grid-cols-[24px_max-content] items-start gap-x-0.5'>
-                    {channel.upstream?.balance_sync_enabled ? (
+                    {channel.upstream ? (
                       <ChannelActionButton
                         label='更新上游余额'
                         icon={Refresh01Icon}
@@ -425,7 +412,9 @@ export function ChannelMonitorChannelView(
                         }
                         loading={
                           props.fetchingBalanceChannelId === channel.id ||
-                          refreshingMetricsTogether
+                          (refreshesMetricsTogether &&
+                            channel.upstream.balance_sync_enabled &&
+                            props.fetchingRatioChannelId === channel.id)
                         }
                         className='shrink-0'
                         size='icon-xs'
@@ -437,8 +426,7 @@ export function ChannelMonitorChannelView(
                         channel={channel}
                         onOpenCostHistory={props.onOpenCostHistory}
                       />
-                      {channel.upstream?.balance_sync_enabled &&
-                      channel.upstream_balance != null ? (
+                      {channel.upstream && channel.upstream_balance != null ? (
                         <ChannelMonitorUpdateMeta
                           timestamp={channel.last_balance_time}
                         />
@@ -448,7 +436,7 @@ export function ChannelMonitorChannelView(
                 </TableCell>
                 <TableCell className='whitespace-normal'>
                   <div className='grid w-max grid-cols-[24px_max-content] items-start gap-x-0.5'>
-                    {channel.upstream?.ratio_sync_enabled ? (
+                    {channel.upstream ? (
                       <ChannelActionButton
                         label='更新上游倍率'
                         icon={Refresh01Icon}
@@ -459,7 +447,9 @@ export function ChannelMonitorChannelView(
                         }
                         loading={
                           props.fetchingRatioChannelId === channel.id ||
-                          refreshingMetricsTogether
+                          (refreshesMetricsTogether &&
+                            channel.upstream.ratio_sync_enabled &&
+                            props.fetchingBalanceChannelId === channel.id)
                         }
                         className='shrink-0'
                         size='icon-xs'

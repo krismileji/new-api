@@ -72,6 +72,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { cn } from '@/lib/utils'
 
 import {
   applyChannelMonitorUpstreamGroup,
@@ -920,7 +921,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                       <div className='flex min-w-0 flex-col gap-1'>
                         <FormLabel>倍率同步</FormLabel>
                         <FormDescription>
-                          关闭后，定时任务和渠道列表不再获取上游倍率
+                          关闭后暂停自动获取上游倍率，仍可在渠道列表手动刷新
                         </FormDescription>
                       </div>
                       <FormControl>
@@ -941,7 +942,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                       <div className='flex min-w-0 flex-col gap-1'>
                         <FormLabel>余额同步</FormLabel>
                         <FormDescription>
-                          关闭后，定时任务和渠道列表不再获取上游余额
+                          关闭后暂停自动获取上游余额，仍可在渠道列表手动刷新
                         </FormDescription>
                       </div>
                       <FormControl>
@@ -961,7 +962,11 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                   control={form.control}
                   name='balanceWarningThreshold'
                   render={({ field }) => (
-                    <FormItem>
+                    <FormItem
+                      className={cn(
+                        !balanceSyncEnabled && 'text-muted-foreground'
+                      )}
+                    >
                       <FormLabel>余额预警值</FormLabel>
                       <FormControl>
                         <Input
@@ -982,9 +987,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                         />
                       </FormControl>
                       <FormDescription>
-                        {balanceSyncEnabled
-                          ? '定时更新余额低于此值时标红；开启邮件通知后首次进入低余额状态会发送预警，余额恢复后可再次预警'
-                          : '余额同步已关闭，不会请求上游余额或触发余额预警'}
+                        开启余额同步后，定时更新余额低于此值时标红；开启邮件通知后首次进入低余额状态会发送预警，余额恢复后可再次预警
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -994,7 +997,11 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                   control={form.control}
                   name='balanceAutoDisableThreshold'
                   render={({ field }) => (
-                    <FormItem>
+                    <FormItem
+                      className={cn(
+                        !balanceSyncEnabled && 'text-muted-foreground'
+                      )}
+                    >
                       <FormLabel>余额自动禁用阈值</FormLabel>
                       <FormControl>
                         <Input
@@ -1015,9 +1022,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                         />
                       </FormControl>
                       <FormDescription>
-                        {balanceSyncEnabled
-                          ? '余额更新成功后，启用中的渠道余额低于此值会被自动禁用；余额恢复后不会自动启用'
-                          : '余额同步已关闭，不会触发余额自动禁用'}
+                        开启余额同步后，余额更新成功且低于此值会自动禁用启用中的渠道；余额恢复后不会自动启用
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

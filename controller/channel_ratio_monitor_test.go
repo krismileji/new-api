@@ -3699,40 +3699,125 @@ func TestManualSharedUpstreamRequestRefreshesRatioAndBalance(t *testing.T) {
 	}
 }
 
-func TestManualUpstreamRefreshSkipsDisabledCapabilities(t *testing.T) {
-	db := setupChannelMonitorControllerTestDB(t)
-	var upstreamRequests atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		upstreamRequests.Add(1)
-		http.Error(w, "unsupported", http.StatusNotFound)
-	}))
-	defer server.Close()
+func TestManualUpstreamRefreshAllowsPausedSync(t *testing.T) {
+	tests := []struct {
+		name            string
+		ratioRefresh    bool
+		sharedRequest   bool
+		ratioDisabled   bool
+		balanceDisabled bool
+		upstreamFailure bool
+	}{
+		{name: "paused ratio", ratioRefresh: true, ratioDisabled: true, balanceDisabled: true},
+		{name: "paused balance", ratioDisabled: true, balanceDisabled: true},
+		{name: "shared paused ratio", ratioRefresh: true, sharedRequest: true, ratioDisabled: true, balanceDisabled: true},
+		{name: "shared paused balance", sharedRequest: true, ratioDisabled: true, balanceDisabled: true},
+		{name: "shared paused ratio with active balance", ratioRefresh: true, sharedRequest: true, ratioDisabled: true},
+		{name: "shared paused balance with active ratio", sharedRequest: true, balanceDisabled: true},
+		{name: "paused ratio upstream failure", ratioRefresh: true, ratioDisabled: true, balanceDisabled: true, upstreamFailure: true},
+		{name: "paused balance upstream failure", ratioDisabled: true, balanceDisabled: true, upstreamFailure: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			db := setupChannelMonitorControllerTestDB(t)
+			useChannelMonitorOptionMap(t, map[string]string{})
+			disableChannelMonitorSSRFProtection(t)
+			var upstreamRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				upstreamRequests.Add(1)
+				if test.upstreamFailure {
+					http.Error(w, "upstream unavailable", http.StatusBadGateway)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/metrics":
+					_, _ = w.Write([]byte(`{"data":{"ratio":1.25,"balance":3.5}}`))
+				case "/api/user/self/groups":
+					_, _ = w.Write([]byte(`{"success":true,"data":{"vip":{"ratio":1.25}}}`))
+				case "/api/user/self":
+					_, _ = w.Write([]byte(`{"success":true,"data":{"quota":1750000}}`))
+				case "/api/status":
+					_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":500000}}`))
+				default:
+					assert.Fail(t, "unexpected upstream request", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer server.Close()
 
-	require.NoError(t, db.Create(&model.Channel{
-		Id: 24, Name: "custom upstream", Key: "secret", Status: common.ChannelStatusEnabled,
-	}).Error)
-	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
-		ChannelId:                   24,
-		UpstreamType:                service.NewAPIUpstreamType,
-		UpstreamBaseURL:             server.URL,
-		UpstreamGroup:               "vip",
-		UpstreamAuthType:            service.NewAPIUpstreamAuthPublic,
-		UpstreamRatioSyncDisabled:   true,
-		UpstreamBalanceSyncDisabled: true,
-	}).Error)
+			require.NoError(t, db.Create(&model.Channel{
+				Id: 24, Name: "paused sync", Key: "secret", Status: common.ChannelStatusEnabled,
+			}).Error)
+			balance := 99.0
+			threshold := 10.0
+			monitor := model.ChannelRatioMonitor{
+				ChannelId: 24, Ratio: 1, UpstreamBalance: &balance, UpstreamRevision: 7,
+				UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL,
+				UpstreamGroup: "vip", UpstreamAuthType: service.NewAPIUpstreamAuthUser,
+				UpstreamUserId: 42, UpstreamAccessToken: "test-token",
+				UpstreamRatioSyncDisabled: test.ratioDisabled, UpstreamBalanceSyncDisabled: test.balanceDisabled,
+				BalanceAutoDisableThreshold: &threshold,
+			}
+			if test.sharedRequest {
+				monitor.UpstreamType = service.CustomUpstreamType
+				monitor.UpstreamAuthType = service.CustomUpstreamAuthType
+				monitor.CustomUpstreamConfig = `{"version":1,"ratio":{"source":"http","request":{"method":"GET","path":"/metrics","body_type":"none"},"result":{"response_type":"json","value_path":"data.ratio","multiplier":1}},"balance":{"source":"http","result":{"response_type":"json","value_path":"data.balance","multiplier":1}},"balance_reuse_ratio_request":true}`
+			}
+			require.NoError(t, db.Create(&monitor).Error)
 
-	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, "/api/channel_monitor/channel/24/upstream/fetch", nil)
-	ctx.Params = gin.Params{{Key: "id", Value: "24"}}
-	FetchChannelMonitorUpstreamRatio(ctx)
-	require.Equal(t, http.StatusOK, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), "该渠道已关闭上游倍率同步")
+			path := "/api/channel_monitor/channel/24/upstream/balance/fetch"
+			handler := FetchChannelMonitorUpstreamBalance
+			if test.ratioRefresh {
+				path, handler = "/api/channel_monitor/channel/24/upstream/fetch", FetchChannelMonitorUpstreamRatio
+			}
+			ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, path, nil)
+			ctx.Params = gin.Params{{Key: "id", Value: "24"}}
+			handler(ctx)
+			require.Equal(t, http.StatusOK, recorder.Code)
+			var response struct {
+				Success bool   `json:"success"`
+				Message string `json:"message"`
+			}
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			require.Equal(t, !test.upstreamFailure, response.Success, response.Message)
+			assert.Positive(t, upstreamRequests.Load())
+			if test.sharedRequest {
+				assert.EqualValues(t, 1, upstreamRequests.Load())
+			}
 
-	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodPost, "/api/channel_monitor/channel/24/upstream/balance/fetch", nil)
-	ctx.Params = gin.Params{{Key: "id", Value: "24"}}
-	FetchChannelMonitorUpstreamBalance(ctx)
-	require.Equal(t, http.StatusOK, recorder.Code)
-	assert.Contains(t, recorder.Body.String(), "该渠道已关闭上游余额同步")
-	assert.Zero(t, upstreamRequests.Load())
+			stored, err := model.GetChannelRatioMonitor(24)
+			require.NoError(t, err)
+			assert.Equal(t, test.ratioDisabled, stored.UpstreamRatioSyncDisabled)
+			assert.Equal(t, test.balanceDisabled, stored.UpstreamBalanceSyncDisabled)
+			assert.Equal(t, monitor.UpstreamRevision, stored.UpstreamRevision)
+			wantRatio, wantBalance := 1.0, 99.0
+			if !test.upstreamFailure {
+				if test.ratioRefresh || (test.sharedRequest && !test.ratioDisabled) {
+					wantRatio = 1.25
+					assert.NotZero(t, stored.LastFetchTime)
+				}
+				if !test.ratioRefresh || (test.sharedRequest && !test.balanceDisabled) {
+					wantBalance = 3.5
+					assert.NotZero(t, stored.LastBalanceTime)
+				}
+			} else if test.ratioRefresh {
+				assert.NotEmpty(t, stored.LastFetchError)
+			} else {
+				assert.NotEmpty(t, stored.LastBalanceError)
+			}
+			assert.Equal(t, wantRatio, stored.Ratio)
+			require.NotNil(t, stored.UpstreamBalance)
+			assert.Equal(t, wantBalance, *stored.UpstreamBalance)
+			channel, err := model.GetChannelById(24, true)
+			require.NoError(t, err)
+			wantStatus := common.ChannelStatusEnabled
+			if !test.balanceDisabled && wantBalance < threshold {
+				wantStatus = common.ChannelStatusAutoDisabled
+			}
+			assert.Equal(t, wantStatus, channel.Status)
+		})
+	}
 }
 
 func TestResolveChannelMonitorUpstreamRequestDoesNotReuseCredentialsAcrossHosts(t *testing.T) {

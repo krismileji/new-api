@@ -1610,7 +1610,7 @@ func autoDisableChannelMonitorAtEffectiveBalance(
 	effectiveBalance float64,
 	estimatedConsumption float64,
 ) (bool, error) {
-	if monitor.BalanceAutoDisableThreshold == nil || channel == nil ||
+	if monitor.UpstreamBalanceSyncDisabled || monitor.BalanceAutoDisableThreshold == nil || channel == nil ||
 		channel.Id != monitor.ChannelId || channel.Status != common.ChannelStatusEnabled {
 		return false, nil
 	}
@@ -1680,12 +1680,11 @@ func FetchChannelMonitorUpstreamRatio(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if monitor.UpstreamRatioSyncDisabled {
-		common.ApiErrorMsg(c, "该渠道已关闭上游倍率同步")
-		return
-	}
+	// Manual refresh bypasses the schedule flag only for this request.
+	fetchMonitor := monitor
+	fetchMonitor.UpstreamRatioSyncDisabled = false
 	operatorId, operatorUsername := getChannelMonitorOperator(c)
-	outcome, err := fetchAndRecordChannelMonitorUpstreamRatio(c.Request.Context(), monitor, channel.GetKeys(), channel.GetSetting().Proxy, getChannelMonitorSettings().upstreamRequestTimeout(), false, operatorId, operatorUsername)
+	outcome, err := fetchAndRecordChannelMonitorUpstreamRatio(c.Request.Context(), fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, getChannelMonitorSettings().upstreamRequestTimeout(), false, operatorId, operatorUsername)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -1754,10 +1753,9 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if monitor.UpstreamBalanceSyncDisabled {
-		common.ApiErrorMsg(c, "该渠道已关闭上游余额同步")
-		return
-	}
+	// Preserve saved sync and policy settings while fetching a balance on demand.
+	fetchMonitor := monitor
+	fetchMonitor.UpstreamBalanceSyncDisabled = false
 
 	sharedRequest, err := channelMonitorSharesRatioBalanceRequest(monitor)
 	if err != nil {
@@ -1772,7 +1770,7 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 		operatorId, operatorUsername := getChannelMonitorOperator(c)
 		outcome, fetchErr := fetchAndRecordChannelMonitorUpstreamRatio(
 			c.Request.Context(),
-			monitor,
+			fetchMonitor,
 			channel.GetKeys(),
 			channel.GetSetting().Proxy,
 			requestTimeout,
@@ -1789,7 +1787,7 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 		monitor = outcome.Monitor
 		service.NotifyChannelModelDetectionOverviewChanged()
 	} else {
-		result, balanceEvaluation, err = fetchAndRecordChannelMonitorUpstreamBalance(c.Request.Context(), monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
+		result, balanceEvaluation, err = fetchAndRecordChannelMonitorUpstreamBalance(c.Request.Context(), fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
 		if err != nil {
 			common.ApiError(c, err)
 			return
