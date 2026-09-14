@@ -83,6 +83,7 @@ const settings = {
   auto_update_retry_delay_seconds: 0,
   upstream_request_timeout_seconds: 45,
   auto_update_consecutive_failure_limit: 3,
+  sync_failure_alert_threshold: 7,
   auto_disable_on_update_failure: false,
   auto_enable_on_cost_ratio_recovery: false,
   auto_enable_on_balance_recovery: false,

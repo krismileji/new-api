@@ -18,9 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { useForm } from 'react-hook-form'
-import { describe, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
 import { Form } from '@/components/ui/form'
 
@@ -32,6 +34,7 @@ import type {
 import { ChannelMonitorProbeResponseFields } from '../channel-monitor-probe-response-fields'
 import {
   ChannelMonitorConsecutiveFailureLimitField,
+  ChannelMonitorSyncFailureAlertThresholdField,
   ChannelMonitorConcurrencyWaitField,
   ChannelMonitorRetryDelayField,
   ChannelMonitorRetentionFields,
@@ -75,13 +78,24 @@ function CostRetentionFieldFixture() {
   )
 }
 
-function ConsecutiveFailureLimitFieldFixture() {
+function ConsecutiveFailureLimitFieldFixture(props: { limit: number }) {
   const form = useForm<ChannelMonitorSettingsFormValues>({
-    defaultValues: { autoUpdateConsecutiveFailureLimit: 3 },
+    defaultValues: { autoUpdateConsecutiveFailureLimit: props.limit },
   })
   return (
     <Form {...form}>
       <ChannelMonitorConsecutiveFailureLimitField form={form} />
+    </Form>
+  )
+}
+
+function SyncFailureAlertThresholdFieldFixture() {
+  const form = useForm<ChannelMonitorSettingsFormValues>({
+    defaultValues: { syncFailureAlertThreshold: 7 },
+  })
+  return (
+    <Form {...form}>
+      <ChannelMonitorSyncFailureAlertThresholdField form={form} />
     </Form>
   )
 }
@@ -294,14 +308,33 @@ function SmartScheduleGroupPolicyFieldsFixture(props: {
 }
 
 describe('channel monitor settings dialog', () => {
-  test('shows the configured consecutive failure stop limit', () => {
-    const markup = renderToStaticMarkup(<ConsecutiveFailureLimitFieldFixture />)
+  test('shows and edits the independent sync failure alert threshold', async () => {
+    render(<SyncFailureAlertThresholdFieldFixture />)
 
-    assert.ok(markup.includes('连续失败停止次数'))
-    assert.match(markup, /type="number"[^>]*min="1"[^>]*max="100"/)
-    assert.match(markup, /value="3"/)
-    assert.ok(markup.includes('aria-label="查看“连续失败停止次数”说明"'))
+    const input = screen.getByRole('spinbutton', { name: '同步失败告警次数' })
+    expect(input).toHaveValue(7)
+    expect(input).toHaveAttribute('min', '1')
+    expect(input).toHaveAttribute('max', '100')
+    const user = userEvent.setup()
+    await user.clear(input)
+    await user.type(input, '3')
+    expect(input).toHaveValue(3)
   })
+
+  test.each([0, 3])(
+    'shows consecutive failure limit %i and allows zero to disable automatic stopping',
+    (limit) => {
+      render(<ConsecutiveFailureLimitFieldFixture limit={limit} />)
+
+      const input = screen.getByRole('spinbutton')
+      expect(input).toHaveValue(limit)
+      expect(input).toHaveAttribute('min', '0')
+      expect(input).toHaveAttribute('max', '100')
+      expect(
+        screen.getByRole('button', { name: '查看“连续失败停止次数”说明' })
+      ).toBeVisible()
+    }
+  )
 
   test('shows the configured upstream request timeout for ratio and balance updates', () => {
     const markup = renderToStaticMarkup(<UpstreamRequestTimeoutFieldFixture />)

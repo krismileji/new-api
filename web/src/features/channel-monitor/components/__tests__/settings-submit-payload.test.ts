@@ -70,6 +70,7 @@ const formValues = {
   channelConcurrencyWaitSeconds: 8,
   upstreamRequestTimeoutSeconds: 45,
   autoUpdateConsecutiveFailureLimit: 3,
+  syncFailureAlertThreshold: 7,
   autoDisableOnUpdateFailure: true,
   autoEnableOnCostRatioRecovery: true,
   autoEnableOnBalanceRecovery: false,
@@ -424,10 +425,12 @@ describe('channel monitor settings submit payload', () => {
       'smart_schedule_probe_task_retention_days',
       'smart_schedule_task_retention_days',
       'status_probe_history_retention_days',
+      'sync_failure_alert_threshold',
       'task_retention_days',
       'upstream_request_timeout_seconds',
     ])
     assert.equal(payload.upstream_request_timeout_seconds, 45)
+    assert.equal(payload.sync_failure_alert_threshold, 7)
     assert.equal(payload.auto_update_retry_delay_seconds, 6)
     assert.equal(payload.channel_concurrency_wait_seconds, 8)
     assert.equal(payload.execution_detail_retention_days, 14)

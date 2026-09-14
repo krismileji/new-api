@@ -71,7 +71,6 @@ import {
   MAX_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES,
   MAX_SMART_SCHEDULE_REALTIME_SAMPLE_LIMIT,
   MAX_SMART_SCHEDULE_WINDOW_MINUTES,
-  MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   MIN_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
   MIN_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE,
   MIN_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS,
@@ -606,8 +605,24 @@ describe('channel monitor settings schema', () => {
         false
       )
     }
+    assert.equal(schema.parse(baseSettings).syncFailureAlertThreshold, 10)
+    for (const syncFailureAlertThreshold of [1, 3, 100]) {
+      assert.equal(
+        schema.parse({ ...baseSettings, syncFailureAlertThreshold })
+          .syncFailureAlertThreshold,
+        syncFailureAlertThreshold
+      )
+    }
+    for (const syncFailureAlertThreshold of [0, -1, 1.5, 101]) {
+      assert.equal(
+        schema.safeParse({ ...baseSettings, syncFailureAlertThreshold })
+          .success,
+        false
+      )
+    }
     for (const autoUpdateConsecutiveFailureLimit of [
-      MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
+      0,
+      1,
       MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
     ]) {
       assert.equal(
@@ -619,7 +634,7 @@ describe('channel monitor settings schema', () => {
       )
     }
     for (const autoUpdateConsecutiveFailureLimit of [
-      MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT - 1,
+      -1,
       1.5,
       MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT + 1,
     ]) {

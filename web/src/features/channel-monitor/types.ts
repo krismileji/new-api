@@ -756,6 +756,7 @@ export type ChannelMonitorSettings = {
   channel_concurrency_wait_seconds?: number
   upstream_request_timeout_seconds?: number
   auto_update_consecutive_failure_limit: number
+  sync_failure_alert_threshold?: number
   auto_disable_on_update_failure: boolean
   auto_enable_on_cost_ratio_recovery: boolean
   auto_enable_on_balance_recovery: boolean

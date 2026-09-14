@@ -52,7 +52,8 @@
 | `ChannelMonitorAutoUpdateIntervalMinutes` | `auto_update_interval_minutes` | `0` | `0..525600`，`0` 关闭定时更新 |
 | `ChannelMonitorAutoUpdateRetryCount` | `auto_update_retry_count` | `3` | `0..10` |
 | `ChannelMonitorAutoUpdateRetryDelaySeconds` | `auto_update_retry_delay_seconds` | `0` | `0..600` |
-| `ChannelMonitorAutoUpdateConsecutiveFailureLimit` | `auto_update_consecutive_failure_limit` | `10` | `1..100` |
+| `ChannelMonitorAutoUpdateConsecutiveFailureLimit` | `auto_update_consecutive_failure_limit` | `10` | `0..100`；`0` 表示不因连续失败停止自动更新 |
+| `ChannelMonitorSyncFailureAlertThreshold` | `sync_failure_alert_threshold` | `10` | `1..100`；同步失败邮件的连续失败告警次数，若更早停止更新则在停止时提前告警 |
 | `ChannelMonitorAutoDisableOnUpdateFailure` | `auto_disable_on_update_failure` | `false` | 倍率或余额最终失败后系统禁用 |
 | `ChannelMonitorAutoEnableOnCostRatioRecovery` | `auto_enable_on_cost_ratio_recovery` | `false` | 只恢复因成本倍率禁用的渠道 |
 | `ChannelMonitorAutoEnableOnBalanceRecovery` | `auto_enable_on_balance_recovery` | `false` | 只恢复因余额禁用的渠道 |

@@ -209,17 +209,18 @@ func channelRatioMonitorFailureAlertState(monitor model.ChannelRatioMonitor, fai
 	}
 }
 
+func channelRatioMonitorFailureLimitReached(failureCount int, failureLimit int) bool {
+	return failureLimit > 0 && failureCount >= failureLimit
+}
+
 func channelRatioMonitorFailureAlertReady(monitor model.ChannelRatioMonitor, failureType string, failureLimit int) bool {
 	failureCount, notified, _, active := channelRatioMonitorFailureAlertState(monitor, failureType)
-	return active && failureCount >= failureLimit && !notified
+	return active && channelRatioMonitorFailureLimitReached(failureCount, failureLimit) && !notified
 }
 
 func channelRatioMonitorStoppedSyncFailure(monitor model.ChannelRatioMonitor, failureLimit int) (string, error) {
-	if failureLimit <= 0 {
-		return "", nil
-	}
 	if !monitor.UpstreamRatioSyncDisabled &&
-		monitor.ConsecutiveFailures >= failureLimit {
+		channelRatioMonitorFailureLimitReached(monitor.ConsecutiveFailures, failureLimit) {
 		message := strings.TrimSpace(monitor.LastFetchError)
 		if message == "" {
 			message = "上游倍率获取失败"
@@ -227,7 +228,7 @@ func channelRatioMonitorStoppedSyncFailure(monitor model.ChannelRatioMonitor, fa
 		return model.ChannelRatioFailureAlertRatio, errors.New(message)
 	}
 	if !monitor.UpstreamBalanceSyncDisabled &&
-		monitor.BalanceConsecutiveFailures >= failureLimit {
+		channelRatioMonitorFailureLimitReached(monitor.BalanceConsecutiveFailures, failureLimit) {
 		message := strings.TrimSpace(monitor.LastBalanceError)
 		if message == "" {
 			message = "上游余额获取失败"
@@ -247,7 +248,7 @@ func appendReadyChannelRatioMonitorFailureNotification(
 	failure error,
 ) (ready bool, truncated bool) {
 	failureCount, notified, storedFailure, active := channelRatioMonitorFailureAlertState(monitor, failureType)
-	if !active || failureCount < failureLimit || notified {
+	if !active || !channelRatioMonitorFailureLimitReached(failureCount, failureLimit) || notified {
 		return false, false
 	}
 	if failure == nil {
@@ -437,6 +438,11 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 	}
 	settings := getChannelMonitorSettings()
 	requestTimeout := settings.upstreamRequestTimeout()
+	failureAlertLimit := settings.SyncFailureAlertThreshold
+	if settings.AutoUpdateConsecutiveFailureLimit > 0 && settings.AutoUpdateConsecutiveFailureLimit < failureAlertLimit {
+		// 提前停止后不会再累积失败次数，因此停止时至少告警一次。
+		failureAlertLimit = settings.AutoUpdateConsecutiveFailureLimit
+	}
 	emailChanges := make([]channelRatioMonitorEmailChange, 0)
 	balanceWarnings := make([]channelRatioMonitorBalanceWarning, 0)
 	disabledChannels := make([]channelRatioMonitorDisabledChannel, 0)
@@ -587,9 +593,9 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				return
 			}
 			ratioAutoFetchEnabled := !monitor.UpstreamRatioSyncDisabled &&
-				monitor.ConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit
+				!channelRatioMonitorFailureLimitReached(monitor.ConsecutiveFailures, settings.AutoUpdateConsecutiveFailureLimit)
 			balanceAutoFetchEnabled := !monitor.UpstreamBalanceSyncDisabled &&
-				monitor.BalanceConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit
+				!channelRatioMonitorFailureLimitReached(monitor.BalanceConsecutiveFailures, settings.AutoUpdateConsecutiveFailureLimit)
 			stoppedSyncFailureType, stoppedSyncFailure := channelRatioMonitorStoppedSyncFailure(
 				monitor,
 				settings.AutoUpdateConsecutiveFailureLimit,
@@ -597,10 +603,10 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			pendingChannelName := ""
 			pendingChannelRemark := ""
 			pendingRatioFailure := !ratioAutoFetchEnabled && channelRatioMonitorFailureAlertReady(
-				monitor, model.ChannelRatioFailureAlertRatio, settings.AutoUpdateConsecutiveFailureLimit,
+				monitor, model.ChannelRatioFailureAlertRatio, failureAlertLimit,
 			)
 			pendingBalanceFailure := !balanceAutoFetchEnabled && channelRatioMonitorFailureAlertReady(
-				monitor, model.ChannelRatioFailureAlertBalance, settings.AutoUpdateConsecutiveFailureLimit,
+				monitor, model.ChannelRatioFailureAlertBalance, failureAlertLimit,
 			)
 			if pendingRatioFailure || pendingBalanceFailure || (!ratioAutoFetchEnabled && !balanceAutoFetchEnabled) {
 				if pendingChannel, lookupErr := model.GetChannelById(monitor.ChannelId, true); lookupErr == nil {
@@ -614,7 +620,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				stateMu.Lock()
 				_, truncated := appendReadyChannelRatioMonitorFailureNotification(
 					&failureNotifications, monitor, pendingChannelName, pendingChannelRemark, model.ChannelRatioFailureAlertRatio,
-					settings.AutoUpdateConsecutiveFailureLimit, nil,
+					failureAlertLimit, nil,
 				)
 				failureNotificationsTruncated = failureNotificationsTruncated || truncated
 				stateMu.Unlock()
@@ -623,7 +629,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				stateMu.Lock()
 				_, truncated := appendReadyChannelRatioMonitorFailureNotification(
 					&failureNotifications, monitor, pendingChannelName, pendingChannelRemark, model.ChannelRatioFailureAlertBalance,
-					settings.AutoUpdateConsecutiveFailureLimit, nil,
+					failureAlertLimit, nil,
 				)
 				failureNotificationsTruncated = failureNotificationsTruncated || truncated
 				stateMu.Unlock()
@@ -672,7 +678,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						stateMu.Lock()
 						_, truncated := appendReadyChannelRatioMonitorFailureNotification(
 							&failureNotifications, latestMonitor, "", "", model.ChannelRatioFailureAlertRatio,
-							settings.AutoUpdateConsecutiveFailureLimit, err,
+							failureAlertLimit, err,
 						)
 						failureNotificationsTruncated = failureNotificationsTruncated || truncated
 						stateMu.Unlock()
@@ -739,7 +745,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 							err = nil
 							break
 						}
-						if monitor.ConsecutiveFailures >= settings.AutoUpdateConsecutiveFailureLimit {
+						if channelRatioMonitorFailureLimitReached(monitor.ConsecutiveFailures, settings.AutoUpdateConsecutiveFailureLimit) {
 							break
 						}
 					} else {
@@ -748,7 +754,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 							err = nil
 							break
 						}
-						if monitor.BalanceConsecutiveFailures >= settings.AutoUpdateConsecutiveFailureLimit {
+						if channelRatioMonitorFailureLimitReached(monitor.BalanceConsecutiveFailures, settings.AutoUpdateConsecutiveFailureLimit) {
 							break
 						}
 					}
@@ -762,7 +768,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				balanceFetchFailure = nil
 				if fetchRatio {
 					fetchMonitor := monitor
-					if fetchMonitor.BalanceConsecutiveFailures >= settings.AutoUpdateConsecutiveFailureLimit {
+					if channelRatioMonitorFailureLimitReached(fetchMonitor.BalanceConsecutiveFailures, settings.AutoUpdateConsecutiveFailureLimit) {
 						fetchMonitor.UpstreamBalanceSyncDisabled = true
 					}
 					outcome, err = fetchAndRecordChannelMonitorUpstreamRatio(ctx, fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout, true, 0, "系统自动更新")
@@ -919,7 +925,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						stateMu.Lock()
 						_, truncated := appendReadyChannelRatioMonitorFailureNotification(
 							&failureNotifications, latestMonitor, channel.Name, channelRemark,
-							failureType, settings.AutoUpdateConsecutiveFailureLimit, failureErr,
+							failureType, failureAlertLimit, failureErr,
 						)
 						failureNotificationsTruncated = failureNotificationsTruncated || truncated
 						stateMu.Unlock()
@@ -989,7 +995,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 							channel.Name,
 							channelRemark,
 							model.ChannelRatioFailureAlertBalance,
-							settings.AutoUpdateConsecutiveFailureLimit,
+							failureAlertLimit,
 							balanceFetchFailure,
 						)
 						failureNotificationsTruncated = failureNotificationsTruncated || truncated
@@ -1068,7 +1074,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						costRatio = outcome.Result.CostRatio
 						costRatioAvailable = validateChannelMonitorRatio(&costRatio)
 					} else if monitor.UpdatedTime > 0 &&
-						(monitor.UpstreamRatioSyncDisabled || monitor.ConsecutiveFailures < settings.AutoUpdateConsecutiveFailureLimit) {
+						(monitor.UpstreamRatioSyncDisabled || !channelRatioMonitorFailureLimitReached(monitor.ConsecutiveFailures, settings.AutoUpdateConsecutiveFailureLimit)) {
 						storedCostRatio, _, conversionErr := channelMonitorCostRatioFromModel(monitor, monitor.Ratio)
 						if conversionErr != nil {
 							logger.LogWarn(ctx, fmt.Sprintf(

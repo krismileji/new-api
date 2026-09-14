@@ -28,6 +28,7 @@ const (
 	channelMonitorChannelConcurrencyWaitSecondsOption          = "ChannelMonitorChannelConcurrencyWaitSeconds"
 	channelMonitorUpstreamRequestTimeoutOption                 = "ChannelMonitorUpstreamRequestTimeoutSeconds"
 	channelMonitorAutoUpdateConsecutiveFailureLimitOption      = "ChannelMonitorAutoUpdateConsecutiveFailureLimit"
+	channelMonitorSyncFailureAlertThresholdOption              = "ChannelMonitorSyncFailureAlertThreshold"
 	channelMonitorAutoDisableOnUpdateFailureOption             = "ChannelMonitorAutoDisableOnUpdateFailure"
 	channelMonitorAutoEnableOnCostRatioRecoveryOption          = "ChannelMonitorAutoEnableOnCostRatioRecovery"
 	channelMonitorAutoEnableOnBalanceRecoveryOption            = "ChannelMonitorAutoEnableOnBalanceRecovery"
@@ -99,8 +100,10 @@ const (
 	maxChannelMonitorChannelConcurrencyWaitSeconds             = 600
 	minChannelMonitorUpstreamRequestTimeoutSeconds             = 1
 	maxChannelMonitorUpstreamRequestTimeoutSeconds             = 600
-	minChannelMonitorAutoUpdateConsecutiveFailureLimit         = 1
+	minChannelMonitorAutoUpdateConsecutiveFailureLimit         = 0
 	maxChannelMonitorAutoUpdateConsecutiveFailureLimit         = 100
+	minChannelMonitorSyncFailureAlertThreshold                 = 1
+	maxChannelMonitorSyncFailureAlertThreshold                 = 100
 	minChannelMonitorCostRetentionDays                         = 1
 	maxChannelMonitorCostRetentionDays                         = 3650
 	maxChannelMonitorStatusProbeHistoryRetentionDays           = 90
@@ -132,6 +135,7 @@ const (
 	defaultChannelMonitorChannelConcurrencyWaitSeconds         = 1
 	defaultChannelMonitorUpstreamRequestTimeoutSeconds         = 30
 	defaultChannelMonitorAutoUpdateConsecutiveFailureLimit     = 10
+	defaultChannelMonitorSyncFailureAlertThreshold             = 10
 	defaultChannelMonitorCostRetentionDays                     = 30
 	defaultChannelMonitorRouteMetricRetentionDays              = 30
 	defaultChannelMonitorDurationBucketRetentionDays           = 30
@@ -198,6 +202,7 @@ type channelMonitorSettings struct {
 	ChannelConcurrencyWaitSeconds         int                        `json:"channel_concurrency_wait_seconds"`
 	UpstreamRequestTimeoutSeconds         int                        `json:"upstream_request_timeout_seconds"`
 	AutoUpdateConsecutiveFailureLimit     int                        `json:"auto_update_consecutive_failure_limit"`
+	SyncFailureAlertThreshold             int                        `json:"sync_failure_alert_threshold"`
 	AutoDisableOnUpdateFailure            bool                       `json:"auto_disable_on_update_failure"`
 	AutoEnableOnCostRatioRecovery         bool                       `json:"auto_enable_on_cost_ratio_recovery"`
 	AutoEnableOnBalanceRecovery           bool                       `json:"auto_enable_on_balance_recovery"`
@@ -263,6 +268,7 @@ type channelMonitorSettingsUpdateRequest struct {
 	ChannelConcurrencyWaitSeconds         *int                        `json:"channel_concurrency_wait_seconds"`
 	UpstreamRequestTimeoutSeconds         *int                        `json:"upstream_request_timeout_seconds"`
 	AutoUpdateConsecutiveFailureLimit     *int                        `json:"auto_update_consecutive_failure_limit"`
+	SyncFailureAlertThreshold             *int                        `json:"sync_failure_alert_threshold"`
 	AutoDisableOnUpdateFailure            *bool                       `json:"auto_disable_on_update_failure"`
 	AutoEnableOnCostRatioRecovery         *bool                       `json:"auto_enable_on_cost_ratio_recovery"`
 	AutoEnableOnBalanceRecovery           *bool                       `json:"auto_enable_on_balance_recovery"`
@@ -341,6 +347,7 @@ func loadChannelMonitorSettings(ctx context.Context) (channelMonitorSettings, er
 		channelMonitorChannelConcurrencyWaitSecondsOption,
 		channelMonitorUpstreamRequestTimeoutOption,
 		channelMonitorAutoUpdateConsecutiveFailureLimitOption,
+		channelMonitorSyncFailureAlertThresholdOption,
 		channelMonitorAutoDisableOnUpdateFailureOption,
 		channelMonitorAutoEnableOnCostRatioRecoveryOption,
 		channelMonitorAutoEnableOnBalanceRecoveryOption,
@@ -415,6 +422,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	rawChannelConcurrencyWaitSeconds := options[channelMonitorChannelConcurrencyWaitSecondsOption]
 	rawUpstreamRequestTimeout := options[channelMonitorUpstreamRequestTimeoutOption]
 	rawConsecutiveFailureLimit := options[channelMonitorAutoUpdateConsecutiveFailureLimitOption]
+	rawSyncFailureAlertThreshold := options[channelMonitorSyncFailureAlertThresholdOption]
 	rawAutoDisableOnUpdateFailure := options[channelMonitorAutoDisableOnUpdateFailureOption]
 	rawAutoEnableOnCostRatioRecovery := options[channelMonitorAutoEnableOnCostRatioRecoveryOption]
 	rawAutoEnableOnBalanceRecovery := options[channelMonitorAutoEnableOnBalanceRecoveryOption]
@@ -483,6 +491,11 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	if err != nil || consecutiveFailureLimit < minChannelMonitorAutoUpdateConsecutiveFailureLimit ||
 		consecutiveFailureLimit > maxChannelMonitorAutoUpdateConsecutiveFailureLimit {
 		consecutiveFailureLimit = defaultChannelMonitorAutoUpdateConsecutiveFailureLimit
+	}
+	syncFailureAlertThreshold, err := strconv.Atoi(rawSyncFailureAlertThreshold)
+	if err != nil || syncFailureAlertThreshold < minChannelMonitorSyncFailureAlertThreshold ||
+		syncFailureAlertThreshold > maxChannelMonitorSyncFailureAlertThreshold {
+		syncFailureAlertThreshold = defaultChannelMonitorSyncFailureAlertThreshold
 	}
 	autoDisableOnUpdateFailure, err := strconv.ParseBool(rawAutoDisableOnUpdateFailure)
 	if err != nil {
@@ -626,6 +639,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		ChannelConcurrencyWaitSeconds:         channelConcurrencyWaitSeconds,
 		UpstreamRequestTimeoutSeconds:         upstreamRequestTimeoutSeconds,
 		AutoUpdateConsecutiveFailureLimit:     consecutiveFailureLimit,
+		SyncFailureAlertThreshold:             syncFailureAlertThreshold,
 		AutoDisableOnUpdateFailure:            autoDisableOnUpdateFailure,
 		AutoEnableOnCostRatioRecovery:         autoEnableOnCostRatioRecovery,
 		AutoEnableOnBalanceRecovery:           autoEnableOnBalanceRecovery,
@@ -963,6 +977,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.ChannelConcurrencyWaitSeconds == nil &&
 		request.UpstreamRequestTimeoutSeconds == nil &&
 		request.AutoUpdateConsecutiveFailureLimit == nil &&
+		request.SyncFailureAlertThreshold == nil &&
 		request.AutoDisableOnUpdateFailure == nil &&
 		request.AutoEnableOnCostRatioRecovery == nil &&
 		request.AutoEnableOnBalanceRecovery == nil &&
@@ -1137,13 +1152,25 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 			*request.AutoUpdateConsecutiveFailureLimit > maxChannelMonitorAutoUpdateConsecutiveFailureLimit) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "连续失败停止次数必须在 1 到 100 次之间",
+			"message": "连续失败停止次数必须在 0 到 100 次之间，0 表示不自动停止",
 		})
 		return
 	}
 	if request.AutoUpdateConsecutiveFailureLimit != nil {
 		settings.AutoUpdateConsecutiveFailureLimit = *request.AutoUpdateConsecutiveFailureLimit
 		values[channelMonitorAutoUpdateConsecutiveFailureLimitOption] = strconv.Itoa(settings.AutoUpdateConsecutiveFailureLimit)
+	}
+	if request.SyncFailureAlertThreshold != nil {
+		if *request.SyncFailureAlertThreshold < minChannelMonitorSyncFailureAlertThreshold ||
+			*request.SyncFailureAlertThreshold > maxChannelMonitorSyncFailureAlertThreshold {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "同步失败告警次数必须在 1 到 100 次之间",
+			})
+			return
+		}
+		settings.SyncFailureAlertThreshold = *request.SyncFailureAlertThreshold
+		values[channelMonitorSyncFailureAlertThresholdOption] = strconv.Itoa(settings.SyncFailureAlertThreshold)
 	}
 	if request.AutoDisableOnUpdateFailure != nil {
 		settings.AutoDisableOnUpdateFailure = *request.AutoDisableOnUpdateFailure
@@ -1683,6 +1710,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"channel_concurrency_wait_seconds":           settings.ChannelConcurrencyWaitSeconds,
 		"upstream_request_timeout_seconds":           settings.UpstreamRequestTimeoutSeconds,
 		"auto_update_consecutive_failure_limit":      settings.AutoUpdateConsecutiveFailureLimit,
+		"sync_failure_alert_threshold":               settings.SyncFailureAlertThreshold,
 		"auto_disable_on_update_failure":             settings.AutoDisableOnUpdateFailure,
 		"auto_enable_on_cost_ratio_recovery":         settings.AutoEnableOnCostRatioRecovery,
 		"auto_enable_on_balance_recovery":            settings.AutoEnableOnBalanceRecovery,

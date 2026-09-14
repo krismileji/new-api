@@ -87,6 +87,7 @@ import {
 import {
   createChannelMonitorSettingsSchema,
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
+  DEFAULT_SYNC_FAILURE_ALERT_THRESHOLD,
   DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS,
   DEFAULT_CHANNEL_CONCURRENCY_WAIT_SECONDS,
   DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
@@ -100,6 +101,7 @@ import {
   DEFAULT_PROBE_RESPONSE_TEXT,
   DEFAULT_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
   MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
+  MAX_SYNC_FAILURE_ALERT_THRESHOLD,
   MAX_AUTO_UPDATE_INTERVAL_MINUTES,
   MAX_AUTO_UPDATE_RETRY_COUNT,
   MAX_AUTO_UPDATE_RETRY_DELAY_SECONDS,
@@ -132,6 +134,7 @@ import {
   MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS as MIN_CHANNEL_MONITOR_MODEL_UPDATE_TASK_RETENTION_DAYS,
   MIN_CHANNEL_MONITOR_MODEL_DETECTION_RETENTION_DAYS,
   MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
+  MIN_SYNC_FAILURE_ALERT_THRESHOLD,
   MIN_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   type ChannelMonitorSettingsFormValues,
 } from '../lib/schema'
@@ -532,7 +535,7 @@ export function ChannelMonitorConsecutiveFailureLimitField(props: {
             <FormLabel>连续失败停止次数</FormLabel>
             <ChannelMonitorFieldInfo
               label='连续失败停止次数'
-              description='倍率和余额分别连续失败达到该次数后停止自动更新；手动更新成功后恢复。'
+              description='0 表示不因连续失败停止自动更新，邮件由同步失败告警次数控制。大于 0 时，倍率和余额分别连续失败达到该次数后停止，手动更新成功后恢复。需要停止时可在渠道设置中关闭对应同步。'
             />
           </div>
           <FormControl>
@@ -550,6 +553,50 @@ export function ChannelMonitorConsecutiveFailureLimitField(props: {
                 ref={field.ref}
                 aria-invalid={Boolean(
                   props.form.formState.errors.autoUpdateConsecutiveFailureLimit
+                )}
+              />
+              <InputGroupAddon align='inline-end'>次</InputGroupAddon>
+            </InputGroup>
+          </FormControl>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  )
+}
+
+export function ChannelMonitorSyncFailureAlertThresholdField(props: {
+  form: UseFormReturn<ChannelMonitorSettingsFormValues>
+}) {
+  return (
+    <FormField
+      control={props.form.control}
+      name='syncFailureAlertThreshold'
+      render={({ field }) => (
+        <FormItem>
+          <div className='flex items-center gap-1'>
+            <FormLabel>同步失败告警次数</FormLabel>
+            <ChannelMonitorFieldInfo
+              label='同步失败告警次数'
+              description='启用同步失败邮件时，倍率和余额分别连续失败达到该次数后通知一次；若更早达到停止次数，则在停止时提前通知。持续失败不重复通知，成功恢复后可再次告警；邮件发送失败会继续重试。'
+            />
+          </div>
+          <FormControl>
+            <InputGroup className='ring-inset'>
+              <InputGroupInput
+                type='number'
+                min={MIN_SYNC_FAILURE_ALERT_THRESHOLD}
+                max={MAX_SYNC_FAILURE_ALERT_THRESHOLD}
+                step={1}
+                inputMode='numeric'
+                aria-label='同步失败告警次数'
+                value={field.value}
+                onBlur={field.onBlur}
+                onChange={field.onChange}
+                name={field.name}
+                ref={field.ref}
+                aria-invalid={Boolean(
+                  props.form.formState.errors.syncFailureAlertThreshold
                 )}
               />
               <InputGroupAddon align='inline-end'>次</InputGroupAddon>
@@ -757,6 +804,9 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       autoUpdateConsecutiveFailureLimit:
         props.settings.auto_update_consecutive_failure_limit ??
         DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
+      syncFailureAlertThreshold:
+        props.settings.sync_failure_alert_threshold ??
+        DEFAULT_SYNC_FAILURE_ALERT_THRESHOLD,
       autoDisableOnUpdateFailure:
         props.settings.auto_disable_on_update_failure ?? false,
       autoEnableOnCostRatioRecovery:
@@ -1124,6 +1174,9 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                       <ChannelMonitorConcurrencyWaitField form={form} />
                       <ChannelMonitorUpstreamRequestTimeoutField form={form} />
                       <ChannelMonitorConsecutiveFailureLimitField form={form} />
+                      <ChannelMonitorSyncFailureAlertThresholdField
+                        form={form}
+                      />
                     </div>
                   </section>
 

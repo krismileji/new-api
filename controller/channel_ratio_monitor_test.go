@@ -411,6 +411,17 @@ func TestChannelMonitorSettingsDefaultAndTaskInterval(t *testing.T) {
 			wantTaskInterval:   30 * time.Minute,
 		},
 		{
+			name: "zero failure limit disables automatic stopping",
+			values: map[string]string{
+				channelMonitorAutoUpdateConsecutiveFailureLimitOption: "0",
+			},
+			wantRetryCount:     defaultChannelMonitorAutoUpdateRetryCount,
+			wantRetryDelay:     defaultChannelMonitorAutoUpdateRetryDelaySeconds,
+			wantRequestTimeout: defaultChannelMonitorUpstreamRequestTimeoutSeconds,
+			wantFailureLimit:   0,
+			wantTaskInterval:   time.Minute,
+		},
+		{
 			name: "invalid values use safe defaults",
 			values: map[string]string{
 				channelMonitorAutoUpdateIntervalOption:                "525601",
@@ -1108,7 +1119,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{"channel_concurrency_wait_seconds": maxChannelMonitorChannelConcurrencyWaitSeconds + 1},
 		{"upstream_request_timeout_seconds": minChannelMonitorUpstreamRequestTimeoutSeconds - 1},
 		{"upstream_request_timeout_seconds": maxChannelMonitorUpstreamRequestTimeoutSeconds + 1},
-		{"auto_update_consecutive_failure_limit": 0},
+		{"auto_update_consecutive_failure_limit": -1},
 		{"auto_update_consecutive_failure_limit": maxChannelMonitorAutoUpdateConsecutiveFailureLimit + 1},
 		{"cost_retention_days": minChannelMonitorCostRetentionDays - 1},
 		{"cost_retention_days": maxChannelMonitorCostRetentionDays + 1},
