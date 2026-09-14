@@ -46,7 +46,7 @@ type ChannelRatioMonitor struct {
 	UpstreamBalance             *float64 `json:"upstream_balance"`
 	LastBalanceTime             int64    `json:"last_balance_time" gorm:"bigint"`
 	LastBalanceCostNanoCNY      *int64   `json:"-" gorm:"bigint"`
-	BalancePendingConsumption   float64  `json:"-"`
+	BalancePendingConsumption   float64  `json:"-"` // Signed local consumption minus observed upstream debits.
 	LastBalanceError            string   `json:"last_balance_error" gorm:"type:varchar(255)"`
 	BalanceConsecutiveFailures  int      `json:"balance_consecutive_failures"`
 	BalanceFailureAlertNotified bool     `json:"-"`
@@ -96,7 +96,9 @@ type ChannelRatioUpstreamOptions struct {
 }
 
 // ChannelRatioMonitorBalanceEstimateState is the persisted state needed to
-// carry local consumption forward until the upstream balance reflects it.
+// reconcile local consumption with upstream debits in either arrival order.
+// PendingConsumption may be negative when upstream debits arrive first; only
+// its positive portion may reduce the effective balance used by policies.
 type ChannelRatioMonitorBalanceEstimateState struct {
 	CostBaseline       ChannelDailyCostBaseline
 	PendingConsumption float64
@@ -587,8 +589,7 @@ func recordChannelRatioMonitorBalance(
 	}
 	if balance != nil && estimateState != nil {
 		if estimateState.CostBaseline.Timestamp <= 0 || estimateState.CostBaseline.CostNanoCNY < 0 ||
-			math.IsNaN(estimateState.PendingConsumption) || math.IsInf(estimateState.PendingConsumption, 0) ||
-			estimateState.PendingConsumption < 0 {
+			math.IsNaN(estimateState.PendingConsumption) || math.IsInf(estimateState.PendingConsumption, 0) {
 			return false, errors.New("余额消费估算状态无效")
 		}
 	}

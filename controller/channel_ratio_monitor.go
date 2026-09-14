@@ -1317,10 +1317,10 @@ func evaluateChannelMonitorBalance(ctx context.Context, monitor model.ChannelRat
 		return evaluation, nil
 	}
 
-	// Carry local cost forward while the provider keeps returning a stale
-	// balance; a downward provider update settles the portion it has reflected.
+	// Reconcile both arrival orders. A negative offset means the provider has
+	// already debited spending that has not reached the local ledger yet.
 	pendingConsumption := monitor.BalancePendingConsumption
-	if math.IsNaN(pendingConsumption) || math.IsInf(pendingConsumption, 0) || pendingConsumption < 0 {
+	if math.IsNaN(pendingConsumption) || math.IsInf(pendingConsumption, 0) {
 		return evaluation, errors.New("已保存的余额消费估算无效")
 	}
 	if deltaNanoCNY > 0 {
@@ -1344,8 +1344,8 @@ func evaluateChannelMonitorBalance(ctx context.Context, monitor model.ChannelRat
 	}
 	if monitor.UpstreamBalance != nil && !math.IsNaN(*monitor.UpstreamBalance) && !math.IsInf(*monitor.UpstreamBalance, 0) && balance < *monitor.UpstreamBalance {
 		pendingConsumption -= *monitor.UpstreamBalance - balance
-		if pendingConsumption < 0 {
-			pendingConsumption = 0
+		if math.IsNaN(pendingConsumption) || math.IsInf(pendingConsumption, 0) {
+			return evaluation, errors.New("余额消费对账差额无效")
 		}
 	}
 	evaluation.EstimateState.PendingConsumption = pendingConsumption

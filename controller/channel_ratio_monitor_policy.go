@@ -30,6 +30,7 @@ type channelMonitorPolicyInput struct {
 	UpstreamRevision                 int64
 	CostRatio                        float64
 	BalanceBelowAutoDisableThreshold bool
+	BalanceUnavailable               bool
 	SingleChannelAction              string
 	MultipleChannelsAction           string
 }

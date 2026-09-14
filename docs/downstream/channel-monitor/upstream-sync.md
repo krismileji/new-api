@@ -69,6 +69,10 @@ Sub2API 配置要求手动 Token 必填，Refresh Token 可选。首次配置时
 - 余额低于自动禁用阈值时，把启用渠道改为系统自动禁用，并记录明确的禁用原因。
 - 保存固定余额的自定义上游时也立即执行自动禁用判断。
 
+禁用比较使用严格小于，余额等于阈值时保持启用。配置预警值和禁用阈值后，余额低于预警值时还会扣除尚未被上游余额反映的本地消费估算。对账同时保留“上游先扣款、本地稍后入账”的差额，后续本地入账先抵扣该差额，避免同一笔支出重复扣算；该差额只用于余额估算，不修改用户钱包或实际计费。
+
+Sub2API 账号和 Token 认证的余额响应必须包含有效的 `balance` 数字。字段缺失、`balance: null` 或 `data: null` 都记录为获取失败并保留原余额；明确返回 `0` 时才按零余额执行策略。
+
 自动恢复只处理由渠道监控自身原因禁用的渠道，不会覆盖人工禁用或其他系统禁用原因。
 
 渠道健康检查启用“成功后重新启用”时，也会先校验当前渠道监控条件，校验使用最近一次有效监控记录，不在健康检查中重复请求上游：已开启余额同步并设置自动禁用阈值时，余额不得低于阈值；已开启倍率同步并配置禁用渠道策略时，成本倍率必须满足所属分组倍率要求。相关监控数据缺失、仍处于更新失败状态或条件不满足时，健康检查不会自动启用渠道；人工禁用始终不会被覆盖。
@@ -78,6 +82,8 @@ Sub2API 配置要求手动 Token 必填，Refresh Token 可选。首次配置时
 倍率更新任务可设置 `0` 到 `525600` 分钟的间隔，`0` 表示关闭。每个失败渠道默认最多重试 `3` 次，可配置 `0` 到 `10` 次；每次重试前默认等待 `0` 秒（可配置 `0` 到 `600` 秒），`0` 表示立即重试。Sub2API 认证失败不会做无意义的重复认证请求。倍率或余额分别连续失败默认达到 `10` 次后停止自动更新，停止次数可设为 `0` 到 `100`。`0` 表示不因连续失败停止自动更新，之前因达到次数而停止的同步会在下一轮自动更新中继续尝试；每轮仍遵循重试次数和等待时间。需要停止的渠道可在渠道设置中手动关闭倍率或余额同步。
 
 可选的失败自动禁用会在倍率或余额更新最终失败后系统禁用渠道。后续成功更新且余额未低于自动禁用阈值时，可以恢复由该失败原因禁用的渠道。
+
+New API / Sub2API 在倍率成功、余额失败时保留成功倍率，并只重试余额。余额重试耗尽后仍执行失败自动禁用，即使连续失败停止次数设为 `0`；认证失败不做无效重试。启用余额同步且设置禁用阈值时，缺少有效余额的本轮结果不能用于成本倍率恢复启用。余额触发的禁用也会纳入“渠道自动禁用”邮件，并包含渠道、备注和阈值原因。
 
 “成本倍率恢复后自动启用”只恢复先前因成本倍率高于分组倍率而自动禁用、且当前所有关联分组都满足严格小于条件的渠道。余额自动禁用渠道的恢复需要单独开启“余额恢复后自动启用”，并要求余额恢复且成本倍率按分组系数换算后小于或等于全部所属分组倍率；两种恢复都不会覆盖其他禁用原因。
 
@@ -102,3 +108,40 @@ $env:MONITOR_ALERT_POSTGRES_DSN = 'postgres://postgres:alert-test-only@127.0.0.1
 倍率和余额通知回归覆盖配置为 `3` 次、停止次数为 `0` 或 `20` 时的通知发送、持续失败去重、邮件失败重试及恢复后的再次通知。前端四个相关测试文件共 `44` 个用例通过，类型检查、涉及文件 lint、前端构建与根模块构建通过。格式检查仅剩设置弹窗原有的两处 `TabsTrigger` 换行差异。
 
 所有改动均位于下游文件，未修改 `upstream/main` 已有文件。
+
+## 余额保护修复验证（2026-09-15）
+
+使用 Go 1.26.5，`TestChannelMonitorBalanceSafetyDatabaseMatrix` 在真实 SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24 上全部通过。覆盖上游与本地两种记账顺序、差额重新读取和失败后保留、实际后续消费触发渠道及 Ability 禁用、缺失/空/零余额、余额失败阻止倍率恢复及恢复后的启用、部分失败重试和开关、人工禁用保护、认证失败停止重试、重试期间配置变更、禁用邮件及去重。
+
+本次沿用现有有符号浮点列 `balance_pending_consumption` 保存对账差额，没有表结构、迁移、数据库依赖或独立日志库路径变更。仅修改下游文件，未修改 `upstream/main` 已有文件。
+
+隔离测试容器的创建命令如下。测试密码仅用于临时数据库，端口由 Docker 分配，通过 `docker port` 读取：
+
+```powershell
+docker run -d --name codex-balance-mysql-20260915 -e MYSQL_ROOT_PASSWORD=balance-test-only -e MYSQL_DATABASE=new_api_monitor_balance_test -p 127.0.0.1::3306 mysql:5.7.44
+docker run -d --name codex-balance-postgres-20260915 -e POSTGRES_PASSWORD=balance-test-only -e POSTGRES_DB=new_api_monitor_balance_test -p 127.0.0.1::5432 postgres:9.6
+docker exec -e MYSQL_PWD=balance-test-only codex-balance-mysql-20260915 mysql -uroot -e 'ALTER DATABASE new_api_monitor_balance_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
+
+$env:MONITOR_BALANCE_MYSQL_DSN = 'root:balance-test-only@tcp(127.0.0.1:63564)/new_api_monitor_balance_test?parseTime=true&charset=utf8mb4'
+$env:MONITOR_BALANCE_POSTGRES_DSN = 'postgres://postgres:balance-test-only@127.0.0.1:63569/new_api_monitor_balance_test?sslmode=disable'
+& 'D:/Go/sdk/go1.26.5/bin/go.exe' test ./controller -run '^TestChannelMonitorBalanceSafetyDatabaseMatrix$' -count=1 -v -timeout=180s
+```
+
+其他验证命令：
+
+```powershell
+& 'D:/Go/sdk/go1.26.5/bin/go.exe' test ./controller ./service -run 'Test(AutoDisableChannelMonitorForLowBalance|RecordChannelMonitorBalanceUpdate|FetchChannelMonitorUpstream|ManualSharedUpstreamRequest|SaveChannelMonitorCustomFixedBalance|ChannelMonitorAllowsHealthCheckAutoEnable|RunChannelRatioMonitorTask|CostRatioRecovery|FetchSub2API|ChannelMonitorCustom.*|FetchNewAPI)' -count=1 -timeout=180s
+& 'D:/Go/sdk/go1.26.5/bin/go.exe' test ./controller ./model ./service -count=1 -timeout=300s
+& 'D:/Go/sdk/go1.26.5/bin/go.exe' build ./...
+```
+
+相关回归、model 全包测试和根模块构建通过。controller / service 全包测试有以下 8 个既有失败；使用 Go overlay 恢复本次修改文件为基线 `9c0574450`、排除新增测试后，全包对照复现了相同失败，本次不修改这些无关路径：
+
+- `TestGetChannelMonitorRecoveryBeforeBackgroundCheck`
+- `TestProtectChannelSmartScheduleRuntimeFailureIgnoresMinimumSamples`
+- `TestProtectChannelSmartScheduleRuntimeFailureDoesNotRecountPersistedErrors`
+- `TestRunChannelSmartSchedulePersistsExecutionTimeScoreDetails`
+- `TestPlanChannelSmartScheduleUsesHysteresisAndForceReset`
+- `TestRunChannelSmartScheduleManualPrimaryAllowsStabilityDegrade`
+- `TestUpdateChannelMonitorSettingsValidatesAndPersists`
+- `TestUpdateGroupedChannelAddressValidatesMembersAndAdvancesRevision`

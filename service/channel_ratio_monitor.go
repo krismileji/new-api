@@ -116,6 +116,8 @@ type ChannelMonitorUpstreamBalanceResult struct {
 	Endpoint string                            `json:"endpoint,omitempty"`
 	Error    string                            `json:"error,omitempty"`
 	Debug    *ChannelMonitorCustomRequestDebug `json:"debug,omitempty"`
+	// Keep typed authentication errors available to the monitor's retry policy.
+	FetchError error `json:"-"`
 }
 
 type ChannelMonitorUpstreamGroup struct {
@@ -313,6 +315,7 @@ func FetchChannelMonitorUpstreamGroupRatio(ctx context.Context, config ChannelMo
 		result, err = ratioResult.result, ratioResult.err
 		if balanceResult.err != nil {
 			result.Balance.Error = balanceResult.err.Error()
+			result.Balance.FetchError = balanceResult.err
 		} else {
 			result.Balance = balanceResult.result
 		}
@@ -982,7 +985,7 @@ type sub2APIKeyUpdateRequest struct {
 }
 
 type sub2APIUserProfile struct {
-	Balance float64 `json:"balance"`
+	Balance *float64 `json:"balance"`
 }
 
 type sub2APIKeyBillingResponse struct {
@@ -1091,7 +1094,8 @@ func fetchSub2APIGroupRatio(ctx context.Context, client *http.Client, config Sub
 		balanceResult := <-balanceResultCh
 		result, err := ratioResult.result, ratioResult.err
 		if balanceResult.err != nil {
-			result.Balance.Error = redactUpstreamGroupRatioSecrets(balanceResult.err, keys...).Error()
+			result.Balance.FetchError = redactUpstreamGroupRatioSecrets(balanceResult.err, keys...)
+			result.Balance.Error = result.Balance.FetchError.Error()
 		} else {
 			result.Balance = balanceResult.result
 		}
@@ -1334,6 +1338,7 @@ func fetchSub2APIUpstreamGroups(ctx context.Context, client *http.Client, config
 				return result, balanceErr
 			}
 			result.Balance.Error = balanceErr.Error()
+			result.Balance.FetchError = balanceErr
 		} else {
 			result.Balance = balance
 		}
@@ -1494,10 +1499,10 @@ func fetchSub2APIProfileBalance(ctx context.Context, client *http.Client, baseUR
 		return ChannelMonitorUpstreamBalanceResult{}, err
 	}
 	var profile sub2APIUserProfile
-	if err := common.Unmarshal(profileData, &profile); err != nil || math.IsNaN(profile.Balance) || math.IsInf(profile.Balance, 0) {
+	if err := common.Unmarshal(profileData, &profile); err != nil || profile.Balance == nil || math.IsNaN(*profile.Balance) || math.IsInf(*profile.Balance, 0) {
 		return ChannelMonitorUpstreamBalanceResult{}, errors.New("Sub2API 用户余额响应格式无效")
 	}
-	amount := profile.Balance
+	amount := *profile.Balance
 	return ChannelMonitorUpstreamBalanceResult{
 		Amount:   &amount,
 		Endpoint: "/api/v1/user/profile",

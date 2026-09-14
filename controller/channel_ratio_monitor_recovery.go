@@ -113,7 +113,7 @@ func autoEnableChannelsAfterCostRatioRecovery(
 			continue
 		}
 		input, exists := policyInputs[channel.Id]
-		if !exists || input.BalanceBelowAutoDisableThreshold {
+		if !exists || input.BalanceUnavailable || input.BalanceBelowAutoDisableThreshold {
 			continue
 		}
 		currentChannel, err := model.GetChannelById(channel.Id, true)
@@ -175,7 +175,7 @@ func autoEnableChannelsAfterBalanceRecovery(
 			continue
 		}
 		input, exists := recoveryInputs[channel.Id]
-		if !exists || input.BalanceBelowAutoDisableThreshold {
+		if !exists || input.BalanceUnavailable || input.BalanceBelowAutoDisableThreshold {
 			continue
 		}
 		currentChannel, err := model.GetChannelById(channel.Id, true)

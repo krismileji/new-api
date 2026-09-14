@@ -699,6 +699,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			}
 
 			var outcome channelMonitorFetchOutcome
+			previousRatio := monitor.Ratio
 			var recordedBalance *float64
 			var balanceEvaluation *channelMonitorBalanceEvaluation
 			var effectiveBalanceForRecovery *float64
@@ -738,8 +739,12 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						err = fmt.Errorf("重试前重新读取上游配置失败: %w", refreshErr)
 						break
 					}
+					if refreshedMonitor.UpstreamRevision != monitor.UpstreamRevision {
+						err = model.ErrChannelRatioMonitorConfigChanged
+						break
+					}
 					monitor = refreshedMonitor
-					if fetchRatio {
+					if fetchRatio && !ratioUpdated {
 						if monitor.UpstreamRatioSyncDisabled {
 							syncSkipped = true
 							err = nil
@@ -764,9 +769,10 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 					stateMu.Unlock()
 				}
 
-				ratioUpdated = false
+				recordedBalance = nil
+				balanceEvaluation = nil
 				balanceFetchFailure = nil
-				if fetchRatio {
+				if fetchRatio && !ratioUpdated {
 					fetchMonitor := monitor
 					if channelRatioMonitorFailureLimitReached(fetchMonitor.BalanceConsecutiveFailures, settings.AutoUpdateConsecutiveFailureLimit) {
 						fetchMonitor.UpstreamBalanceSyncDisabled = true
@@ -776,7 +782,10 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 					if balanceError := strings.TrimSpace(outcome.Result.Balance.Error); balanceError != "" &&
 						(fetchMonitor.UpstreamType != service.NewAPIUpstreamType ||
 							fetchMonitor.UpstreamAuthType == service.NewAPIUpstreamAuthUser) {
-						balanceFetchFailure = errors.New(balanceError)
+						balanceFetchFailure = outcome.Result.Balance.FetchError
+						if balanceFetchFailure == nil {
+							balanceFetchFailure = errors.New(balanceError)
+						}
 					}
 					if outcome.BalanceRecorded && outcome.Result.Balance.Amount != nil {
 						balance := *outcome.Result.Balance.Amount
@@ -786,23 +795,38 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				} else {
 					var balanceResult service.ChannelMonitorUpstreamBalanceResult
 					var fetchedEvaluation *channelMonitorBalanceEvaluation
-					balanceResult, fetchedEvaluation, err = fetchAndRecordChannelMonitorUpstreamBalance(ctx, monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
-					if balanceResult.Amount != nil {
+					var balanceErr error
+					balanceResult, fetchedEvaluation, balanceErr = fetchAndRecordChannelMonitorUpstreamBalance(ctx, monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
+					if fetchRatio {
+						// Keep a successful ratio while retrying only its failed balance request.
+						balanceFetchFailure = balanceErr
+						if errors.Is(balanceErr, model.ErrChannelRatioMonitorConfigChanged) {
+							err = balanceErr
+						}
+					} else {
+						err = balanceErr
+					}
+					if balanceErr == nil && balanceResult.Amount != nil {
 						balance := *balanceResult.Amount
 						recordedBalance = &balance
 						balanceEvaluation = fetchedEvaluation
 					}
 				}
-				if err == nil ||
+				attemptErr := err
+				if attemptErr == nil {
+					attemptErr = balanceFetchFailure
+				}
+				if attemptErr == nil ||
 					attempt == settings.AutoUpdateRetryCount ||
-					errors.Is(err, service.ErrChannelMonitorUpstreamAuthentication) {
+					errors.Is(attemptErr, service.ErrChannelMonitorUpstreamAuthentication) ||
+					errors.Is(attemptErr, model.ErrChannelRatioMonitorConfigChanged) {
 					break
 				}
 				logger.LogWarn(ctx, fmt.Sprintf(
 					"channel ratio monitor: channel_id=%d attempt=%d failed: %v",
 					monitor.ChannelId,
 					attempt+1,
-					err,
+					attemptErr,
 				))
 			}
 			if syncSkipped {
@@ -875,6 +899,13 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 					stateMu.Lock()
 					summary.ChannelsDisabled++
 					channelStatusChanged = true
+					disabledChannels = append(disabledChannels, channelRatioMonitorDisabledChannel{
+						ChannelId:     channel.Id,
+						ChannelName:   channel.Name,
+						ChannelRemark: channelRemark,
+						Reason: fmt.Sprintf("上游余额 %g，估算余额 %g，低于自动禁用阈值 %g",
+							balance, effectiveBalance, *monitor.BalanceAutoDisableThreshold),
+					})
 					stateMu.Unlock()
 				}
 				if balanceWarning &&
@@ -931,33 +962,6 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						stateMu.Unlock()
 					}
 				}
-				if settings.AutoDisableOnUpdateFailure && channel.Status == common.ChannelStatusEnabled {
-					disabled, revisionCurrent, _, disableErr := model.UpdateChannelMonitorStatusIfSnapshotRevision(
-						channel.Id,
-						monitor.UpstreamRevision,
-						model.CaptureChannelMonitorStatus(channel),
-						common.ChannelStatusAutoDisabled,
-						channelMonitorUpdateFailureDisableReason,
-					)
-					if disableErr != nil {
-						logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d automatic disable failed: %v", channel.Id, disableErr))
-					}
-					if !revisionCurrent {
-						disabled = false
-					}
-					if disabled {
-						stateMu.Lock()
-						summary.ChannelsDisabled++
-						channelStatusChanged = true
-						disabledChannels = append(disabledChannels, channelRatioMonitorDisabledChannel{
-							ChannelId:     channel.Id,
-							ChannelName:   channel.Name,
-							ChannelRemark: channelRemark,
-							Reason:        "上游倍率或余额更新失败",
-						})
-						stateMu.Unlock()
-					}
-				}
 				logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d update failed: %v", monitor.ChannelId, failureErr))
 				if stoppedSyncOnly {
 					stateMu.Lock()
@@ -979,7 +983,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						balanceFetchFailure,
 					)
 				}
-				if retriesUsed > 0 {
+				if retriesUsed > 0 && balanceFetchFailure == nil {
 					summary.RecoveredAfterRetry++
 				}
 				stateMu.Unlock()
@@ -1002,7 +1006,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						stateMu.Unlock()
 					}
 				}
-				syncRecovered := (monitor.UpstreamRatioSyncDisabled || ratioUpdated) &&
+				syncRecovered := balanceFetchFailure == nil && (monitor.UpstreamRatioSyncDisabled || ratioUpdated) &&
 					(monitor.UpstreamBalanceSyncDisabled || recordedBalance != nil)
 				if syncRecovered && channelMonitorUpdateFailureRecovered(monitor, channel, effectiveBalanceForRecovery) {
 					recoveryChannel, recoveryErr := model.GetChannelById(channel.Id, true)
@@ -1038,8 +1042,10 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						UpstreamRevision:                 monitor.UpstreamRevision,
 						CostRatio:                        outcome.Result.CostRatio,
 						BalanceBelowAutoDisableThreshold: balanceBelowAutoDisableThreshold,
-						SingleChannelAction:              monitor.SingleChannelAction,
-						MultipleChannelsAction:           monitor.MultipleChannelsAction,
+						BalanceUnavailable: !monitor.UpstreamBalanceSyncDisabled &&
+							monitor.BalanceAutoDisableThreshold != nil && (recordedBalance == nil || balanceFetchFailure != nil),
+						SingleChannelAction:    monitor.SingleChannelAction,
+						MultipleChannelsAction: monitor.MultipleChannelsAction,
 					}
 					if outcome.Changed {
 						summary.Changed++
@@ -1047,9 +1053,9 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 							ChannelId:     channel.Id,
 							ChannelName:   channel.Name,
 							ChannelRemark: channelRemark,
-							OldRatio:      monitor.Ratio,
+							OldRatio:      previousRatio,
 							NewRatio:      outcome.Result.Ratio,
-							OldCostRatio:  monitor.Ratio * outcome.Result.ConversionFactor,
+							OldCostRatio:  previousRatio * outcome.Result.ConversionFactor,
 							NewCostRatio:  outcome.Result.CostRatio,
 						})
 						emailChanges = append(emailChanges, channelRatioMonitorEmailChange{
@@ -1058,10 +1064,10 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 							ChannelRemark:    channelRemark,
 							UpstreamType:     monitor.UpstreamType,
 							UpstreamGroup:    monitor.UpstreamGroup,
-							OldRatio:         monitor.Ratio,
+							OldRatio:         previousRatio,
 							NewRatio:         outcome.Result.Ratio,
 							ConversionFactor: outcome.Result.ConversionFactor,
-							OldCostRatio:     monitor.Ratio * outcome.Result.ConversionFactor,
+							OldCostRatio:     previousRatio * outcome.Result.ConversionFactor,
 							NewCostRatio:     outcome.Result.CostRatio,
 						})
 					}
@@ -1096,6 +1102,31 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						}
 						stateMu.Unlock()
 					}
+				}
+			}
+			if settings.AutoDisableOnUpdateFailure && (updateFailed || balanceFetchFailure != nil) &&
+				channel.Status == common.ChannelStatusEnabled {
+				disabled, revisionCurrent, _, disableErr := model.UpdateChannelMonitorStatusIfSnapshotRevision(
+					channel.Id,
+					monitor.UpstreamRevision,
+					model.CaptureChannelMonitorStatus(channel),
+					common.ChannelStatusAutoDisabled,
+					channelMonitorUpdateFailureDisableReason,
+				)
+				if disableErr != nil {
+					logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d automatic disable failed: %v", channel.Id, disableErr))
+				}
+				if disabled && revisionCurrent {
+					stateMu.Lock()
+					summary.ChannelsDisabled++
+					channelStatusChanged = true
+					disabledChannels = append(disabledChannels, channelRatioMonitorDisabledChannel{
+						ChannelId:     channel.Id,
+						ChannelName:   channel.Name,
+						ChannelRemark: channelRemark,
+						Reason:        "上游倍率或余额更新失败",
+					})
+					stateMu.Unlock()
 				}
 			}
 			reportChannelProgress()
