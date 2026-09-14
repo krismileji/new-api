@@ -43,6 +43,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 
+import { useChannelMonitorVariableGroups } from '../api-variable-groups'
 import {
   MAX_CUSTOM_UPSTREAM_ENTRIES,
   type UpstreamConfigFormValues,
@@ -96,11 +97,53 @@ function ChannelMonitorCustomKeyValueRow(
     control: props.form.control,
     name: 'customConfig.variableRequests',
   })
-  const availableRequests = requests.filter((request) =>
-    request.variables.some((variable) =>
-      /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(variable.name)
-    )
+  const variableGroupId = useWatch({
+    control: props.form.control,
+    name: 'customConfig.variableGroupId',
+  })
+  const loadSharedVariables =
+    props.allowVariables === true &&
+    (Boolean(variableGroupId) || requests.length === 0)
+  const groups = useChannelMonitorVariableGroups(loadSharedVariables)
+  const sharedSources = (groups.data ?? []).filter(
+    (group) => !variableGroupId || group.id === variableGroupId
   )
+  const variableSources =
+    !variableGroupId && requests.length > 0
+      ? [{ id: 0, name: '', variable_requests: requests }]
+      : sharedSources
+  const availableRequests = variableSources.flatMap((group) =>
+    group.variable_requests
+      .map((request) => ({
+        id: `${group.id}:${request.id}`,
+        groupId: group.id,
+        label: group.id ? `${group.name} · ${request.name}` : request.name,
+        variables: request.variables.filter((variable) =>
+          /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(variable.name)
+        ),
+      }))
+      .filter((request) => request.variables.length > 0)
+  )
+  const isLoadingVariables =
+    loadSharedVariables &&
+    (groups.isPending || (groups.isError && groups.isFetching))
+  const variableLoadFailed =
+    loadSharedVariables && groups.isError && !groups.isFetching
+  let variableNotice = ''
+  if (isLoadingVariables) {
+    variableNotice = '正在加载共享变量…'
+  } else if (
+    variableGroupId &&
+    groups.isSuccess &&
+    sharedSources.length === 0
+  ) {
+    variableNotice = '引用的共享配置不存在，请重新选择'
+  } else if (!variableLoadFailed && availableRequests.length === 0) {
+    variableNotice =
+      variableGroupId || requests.length > 0
+        ? '当前配置没有可用变量，请先添加有效的变量名'
+        : '暂无可用变量，请先在「共享请求与变量」中创建配置'
+  }
   let placeholder = hasValue === true ? '已配置，留空保持不变' : '值'
   if (usesVariable) placeholder = 'Bearer {{token}}'
 
@@ -183,10 +226,10 @@ function ChannelMonitorCustomKeyValueRow(
             checked={usesVariable === true}
             disabled={props.disabled}
             onCheckedChange={(checked) => {
-              const name =
-                availableRequests[0]?.variables.find((variable) =>
-                  /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(variable.name)
-                )?.name || 'token'
+              let name = 'token'
+              if (variableGroupId || requests.length > 0) {
+                name = availableRequests[0]?.variables[0]?.name || name
+              }
               props.form.setValue(
                 fieldName(`${props.name}.${props.index}.valueTemplate`),
                 checked ? `{{${name}}}` : undefined,
@@ -207,28 +250,72 @@ function ChannelMonitorCustomKeyValueRow(
                   type='button'
                   variant='ghost'
                   size='sm'
-                  disabled={props.disabled || availableRequests.length === 0}
+                  disabled={props.disabled}
                 />
               }
             >
               插入变量
             </DropdownMenuTrigger>
-            <DropdownMenuContent align='start'>
-              {availableRequests.map((request) => (
-                <DropdownMenuGroup key={request.id}>
-                  <DropdownMenuLabel>{request.name}</DropdownMenuLabel>
-                  {request.variables
-                    .filter((variable) =>
-                      /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(variable.name)
-                    )
-                    .map((variable) => (
+            <DropdownMenuContent
+              align='start'
+              className='w-80 max-w-[calc(100vw-2rem)]'
+            >
+              {variableNotice && (
+                <p
+                  role='status'
+                  className='text-muted-foreground px-2 py-1.5 text-sm'
+                >
+                  {variableNotice}
+                </p>
+              )}
+              {variableLoadFailed && (
+                <DropdownMenuItem
+                  onSelect={(event) => {
+                    event.preventDefault()
+                    void groups.refetch()
+                  }}
+                >
+                  加载失败，点击重试
+                </DropdownMenuItem>
+              )}
+              {!variableNotice &&
+                !variableLoadFailed &&
+                !variableGroupId &&
+                requests.length === 0 && (
+                  <p className='text-muted-foreground px-2 py-1.5 text-xs'>
+                    选择变量后将引用其共享配置；同一渠道只引用一份配置。
+                  </p>
+                )}
+              {!variableNotice &&
+                !variableLoadFailed &&
+                availableRequests.map((request) => (
+                  <DropdownMenuGroup key={request.id}>
+                    <DropdownMenuLabel className='break-all whitespace-normal'>
+                      {request.label}
+                    </DropdownMenuLabel>
+                    {request.variables.map((variable) => (
                       <DropdownMenuItem
                         key={variable.name}
                         onClick={() => {
-                          const template =
-                            typeof valueTemplate === 'string'
-                              ? valueTemplate
-                              : ''
+                          if (
+                            request.groupId &&
+                            request.groupId !== variableGroupId
+                          ) {
+                            props.form.setValue(
+                              'customConfig.variableGroupId',
+                              request.groupId,
+                              { shouldDirty: true, shouldValidate: true }
+                            )
+                          }
+                          const currentValue = props.form.getValues(
+                            fieldName(`${props.name}.${props.index}.value`)
+                          )
+                          let template = ''
+                          if (typeof valueTemplate === 'string') {
+                            template = valueTemplate
+                          } else if (typeof currentValue === 'string') {
+                            template = currentValue
+                          }
                           props.form.setValue(
                             fieldName(
                               `${props.name}.${props.index}.valueTemplate`
@@ -241,8 +328,8 @@ function ChannelMonitorCustomKeyValueRow(
                         <code>{`{{${variable.name}}}`}</code>
                       </DropdownMenuItem>
                     ))}
-                </DropdownMenuGroup>
-              ))}
+                  </DropdownMenuGroup>
+                ))}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>

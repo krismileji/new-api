@@ -16,6 +16,10 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 	)
 	{
 		registerChannelModelDetectionRoutes(monitorRoute)
+		monitorRoute.GET("/variable_groups", controller.ListChannelMonitorVariableGroups)
+		monitorRoute.PUT("/variable_groups", controller.SaveChannelMonitorVariableGroup)
+		monitorRoute.DELETE("/variable_groups/:id", controller.DeleteChannelMonitorVariableGroup)
+		monitorRoute.POST("/variable_groups/fetch", controller.FetchChannelMonitorVariableGroupDraft)
 		monitorRoute.GET("/", controller.GetChannelMonitorOverview)
 		monitorRoute.GET("/health", controller.GetChannelMonitorRecovery)
 		monitorRoute.GET("/diagnostics", controller.GetChannelMonitorDiagnostics)

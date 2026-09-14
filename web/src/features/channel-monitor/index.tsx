@@ -110,6 +110,7 @@ import {
 } from './components/channel-monitor-settings-dialog'
 import { ChannelMonitorSmartScheduleBoard } from './components/channel-monitor-smart-schedule-board'
 import { ChannelMonitorTodaySuccessCard } from './components/channel-monitor-today-success-card'
+import { ChannelMonitorVariableGroupsDialog } from './components/channel-monitor-variable-groups-dialog'
 import { ChannelMonitorViewTabs } from './components/channel-monitor-view-tabs'
 import { ChannelRatioHistoryDialog } from './components/channel-ratio-history-dialog'
 import { EditChannelConcurrencyLimitDialog } from './components/edit-channel-concurrency-limit-dialog'
@@ -396,6 +397,7 @@ export function ChannelMonitor() {
   )
   const [performanceModelFilter, setPerformanceModelFilter] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [variableGroupsOpen, setVariableGroupsOpen] = useState(false)
   const [groupMonitorSettingsOpen, setGroupMonitorSettingsOpen] =
     useState(false)
   const [smartScheduleSettingsMounted, setSmartScheduleSettingsMounted] =
@@ -1657,6 +1659,12 @@ export function ChannelMonitor() {
               />
               <TooltipContent>{autoUpdateLabel}</TooltipContent>
             </Tooltip>
+            <Button
+              variant='outline'
+              onClick={() => setVariableGroupsOpen(true)}
+            >
+              共享请求与变量
+            </Button>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1806,6 +1814,11 @@ export function ChannelMonitor() {
           onOpenChange={(open) => {
             if (!open) setSyncingGroup(null)
           }}
+        />
+      )}
+      {variableGroupsOpen && (
+        <ChannelMonitorVariableGroupsDialog
+          onOpenChange={setVariableGroupsOpen}
         />
       )}
       {settingsOpen && (

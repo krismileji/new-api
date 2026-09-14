@@ -197,6 +197,11 @@ func prepareChannelMonitorCustomActionRequest(ctx context.Context, client *http.
 		return action.Request, err
 	}
 	session := channelMonitorCustomVariableSession{config: config, savedRaw: current.CustomUpstreamConfig, credentialID: monitor.ChannelId, revision: monitor.UpstreamRevision, refreshed: make(map[string]bool)}
+	releaseShared, err := session.loadShared(ctx)
+	if err != nil {
+		return action.Request, err
+	}
+	defer releaseShared()
 	metricConfig := config
 	metricConfig.Ratio = ChannelMonitorCustomMetricConfig{Source: ChannelMonitorCustomSourceHTTP, Request: &action.Request}
 	names := channelMonitorCustomVariableDependencies(metricConfig, true, false)

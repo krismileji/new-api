@@ -148,6 +148,7 @@ export function createChannelMonitorCustomFormConfig(
     ratio: createCustomMetricFormValue(config?.ratio, 1, 'data.ratio'),
     balance: createCustomMetricFormValue(config?.balance, 0, 'data.balance'),
     balanceReuseRatioRequest: config?.balance_reuse_ratio_request ?? false,
+    variableGroupId: config?.variable_group_id ?? 0,
     actions: (config?.actions ?? []).map((action) => ({
       id: action.id,
       name: action.name,
@@ -190,7 +191,10 @@ export function createChannelMonitorCustomRequestConfig(
     ratio: toAPIMetric(config.ratio, false),
     balance: toAPIMetric(config.balance, config.balanceReuseRatioRequest),
     balance_reuse_ratio_request: config.balanceReuseRatioRequest,
-    variable_requests: config.variableRequests.map(toAPIVariableRequest),
+    variable_group_id: config.variableGroupId || undefined,
+    variable_requests: config.variableGroupId
+      ? []
+      : config.variableRequests.map(toAPIVariableRequest),
     actions: config.actions.map((action) => ({
       id: action.id,
       name: action.name.trim(),

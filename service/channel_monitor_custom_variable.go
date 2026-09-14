@@ -200,7 +200,7 @@ func validateChannelMonitorCustomTemplates(config ChannelMonitorCustomUpstreamCo
 					return errors.New("变量模板格式无效，请使用 {{变量名}}")
 				}
 				for _, match := range matches {
-					if _, exists := names[match[1]]; !exists {
+					if _, exists := names[match[1]]; !exists && config.VariableGroupID == 0 {
 						return fmt.Errorf("变量 %s 未配置独立请求", match[1])
 					}
 				}

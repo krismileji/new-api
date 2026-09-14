@@ -104,6 +104,7 @@ import { ChannelMonitorCustomActionFields } from './channel-monitor-custom-actio
 import { ChannelMonitorCustomUpstreamFields } from './channel-monitor-custom-upstream-fields'
 import { ChannelMonitorCustomVariableFields } from './channel-monitor-custom-variable-fields'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
+import { ChannelMonitorVariableGroupFields } from './channel-monitor-variable-group-fields'
 import { EditChannelRatioDialog } from './edit-channel-ratio-dialog'
 
 type UpstreamConfigDialogProps = {
@@ -638,6 +639,15 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     setUpstreamVersion(null)
     versionMutation.mutate({ channelId: props.channel.id, baseUrl: value })
   }
+  const variableGroupId = useWatch({
+    control: form.control,
+    name: 'customConfig.variableGroupId',
+  })
+  const variableRequestCount = useWatch({
+    control: form.control,
+    name: 'customConfig.variableRequests',
+    compute: (requests) => requests.length,
+  })
   const handleFetchVariable = async (requestId: string) => {
     const index = form
       .getValues('customConfig.variableRequests')
@@ -889,16 +899,24 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
 
               {isCustom ? (
                 <>
-                  <ChannelMonitorCustomVariableFields
+                  <ChannelMonitorVariableGroupFields
                     form={form}
-                    pending={pending}
-                    fetchingRequestId={
-                      variableMutation.isPending
-                        ? variableMutation.variables.requestId
-                        : undefined
-                    }
-                    onFetch={handleFetchVariable}
+                    channelId={props.channel.id}
+                    channelName={props.channel.name}
+                    disabled={pending}
                   />
+                  {!variableGroupId && variableRequestCount > 0 ? (
+                    <ChannelMonitorCustomVariableFields
+                      form={form}
+                      pending={pending}
+                      fetchingRequestId={
+                        variableMutation.isPending
+                          ? variableMutation.variables.requestId
+                          : undefined
+                      }
+                      onFetch={handleFetchVariable}
+                    />
+                  ) : null}
                   <ChannelMonitorCustomUpstreamFields form={form} />
                   <ChannelMonitorCustomActionFields
                     form={form}

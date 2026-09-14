@@ -56,6 +56,7 @@ type channelMonitorCustomVariableSession struct {
 	credentialID int
 	revision     int64
 	refreshed    map[string]bool
+	shared       *model.ChannelMonitorVariableGroup
 }
 
 func (session *channelMonitorCustomVariableSession) refresh(ctx context.Context, client *http.Client, baseURL string, names map[string]bool, afterFailure bool) (bool, error) {
@@ -81,7 +82,13 @@ func (session *channelMonitorCustomVariableSession) refresh(ctx context.Context,
 			continue
 		}
 		session.refreshed[request.ID] = true
-		variables, err := fetchChannelMonitorCustomVariables(ctx, client, baseURL, request)
+		var variables []ChannelMonitorCustomVariable
+		var err error
+		if session.shared != nil {
+			variables, err = session.fetchSharedVariables(ctx, request)
+		} else {
+			variables, err = fetchChannelMonitorCustomVariables(ctx, client, baseURL, request)
+		}
 		if err != nil {
 			return refreshed, err
 		}
@@ -90,14 +97,26 @@ func (session *channelMonitorCustomVariableSession) refresh(ctx context.Context,
 		updated.VariableRequests[index].Variables = variables
 		// A request's mappings are saved together only after every extraction
 		// succeeded. Other requests keep their own values and refresh policies.
-		raw, err := MarshalChannelMonitorCustomUpstreamConfig(updated)
+		persisted := updated
+		if session.shared != nil {
+			persisted = channelMonitorVariableGroupConfig(updated.VariableRequests)
+		}
+		raw, err := MarshalChannelMonitorCustomUpstreamConfig(persisted)
 		if err != nil {
 			return refreshed, err
 		}
 		if session.credentialID > 0 {
-			if err := model.UpdateChannelMonitorCustomVariableConfig(ctx, session.credentialID, session.revision, session.savedRaw, raw); err != nil {
+			if session.shared != nil {
+				err = model.RefreshChannelMonitorVariableGroup(ctx, *session.shared, raw)
+			} else {
+				err = model.UpdateChannelMonitorCustomVariableConfig(ctx, session.credentialID, session.revision, session.savedRaw, raw)
+			}
+			if err != nil {
 				return refreshed, err
 			}
+		}
+		if session.shared != nil {
+			session.shared.Config = raw
 		}
 		session.config, session.savedRaw = updated, raw
 		refreshed = true
@@ -143,6 +162,11 @@ func withChannelMonitorCustomVariables[T any](ctx context.Context, client *http.
 			return zero, err
 		}
 	}
+	releaseShared, err := session.loadShared(ctx)
+	if err != nil {
+		return zero, err
+	}
+	defer releaseShared()
 	if _, err := session.refresh(ctx, client, config.BaseURL, names, false); err != nil {
 		return zero, err
 	}

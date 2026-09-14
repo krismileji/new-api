@@ -32,6 +32,7 @@ afterEach(() => {
 })
 
 function renderCustomVariableDialog(channel = customVariableChannel()) {
+  vi.spyOn(api, 'get').mockResolvedValue({ data: { success: true, data: [] } })
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })

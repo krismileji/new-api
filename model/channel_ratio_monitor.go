@@ -89,6 +89,7 @@ type ChannelRatioUpstreamOptions struct {
 	BalanceSyncEnabled          bool
 	CostConversion              string
 	CustomUpstreamConfig        string
+	VariableGroupRevision       int64
 	UpstreamAccount             string
 	UpstreamPassword            string
 	UpstreamRefreshToken        string
@@ -302,6 +303,9 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 	defer channelStatusLock.Unlock()
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockChannelMonitorVariableGroupReference(tx, upstreamType, options.CustomUpstreamConfig, options.VariableGroupRevision); err != nil {
+			return err
+		}
 		economicRevision, err := lockChannelMonitorEconomicRevisionTx(tx)
 		if err != nil {
 			return err

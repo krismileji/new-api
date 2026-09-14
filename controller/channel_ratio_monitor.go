@@ -476,6 +476,9 @@ func resolveChannelMonitorUpstreamRequest(channel *model.Channel, request channe
 				return service.ChannelMonitorUpstreamConfig{}, errors.New("自定义上游配置不能为空")
 			}
 			config.CustomConfig = *existingConfig
+			if err := service.ValidateChannelMonitorVariableGroup(context.Background(), &config.CustomConfig); err != nil {
+				return service.ChannelMonitorUpstreamConfig{}, err
+			}
 			return config, nil
 		}
 		customConfig, normalizeErr := service.NormalizeChannelMonitorCustomUpstreamConfigWithExisting(*request.CustomConfig, existingConfig)
@@ -483,6 +486,9 @@ func resolveChannelMonitorUpstreamRequest(channel *model.Channel, request channe
 			return service.ChannelMonitorUpstreamConfig{}, normalizeErr
 		}
 		config.CustomConfig = customConfig
+		if err := service.ValidateChannelMonitorVariableGroup(context.Background(), &config.CustomConfig); err != nil {
+			return service.ChannelMonitorUpstreamConfig{}, err
+		}
 		return config, nil
 	default:
 		return service.ChannelMonitorUpstreamConfig{}, errors.New("上游类型无效")
@@ -1066,6 +1072,7 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 			BalanceSyncEnabled:          balanceSyncEnabled,
 			CostConversion:              costConversion,
 			CustomUpstreamConfig:        customConfig,
+			VariableGroupRevision:       config.CustomConfig.VariableGroupRevision,
 			UpstreamAccount:             config.Account,
 			UpstreamPassword:            config.Password,
 			UpstreamRefreshToken:        config.RefreshToken,

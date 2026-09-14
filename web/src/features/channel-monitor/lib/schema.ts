@@ -1594,6 +1594,7 @@ const customUpstreamConfigSchema = z.object({
     )
     .max(8, '触发规则不能超过 8 条')
     .default([]),
+  variableGroupId: z.number().int().min(0).optional(),
   variableRequests: z
     .array(
       z.object({
@@ -2100,7 +2101,8 @@ export function createUpstreamConfigSchema(
               const matches = [...entry.valueTemplate.matchAll(placeholder)]
               if (
                 matches.length === 0 ||
-                matches.some((match) => !variableNames.has(match[1])) ||
+                (!values.customConfig.variableGroupId &&
+                  matches.some((match) => !variableNames.has(match[1]))) ||
                 /[{}]/.test(entry.valueTemplate.replace(placeholder, ''))
               ) {
                 context.addIssue({

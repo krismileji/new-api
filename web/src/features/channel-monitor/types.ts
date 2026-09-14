@@ -123,6 +123,7 @@ export type ChannelMonitorCustomUpstreamConfig = {
   balance_reuse_ratio_request: boolean
   variable_requests?: ChannelMonitorCustomVariableRequest[]
   variable_request?: ChannelMonitorCustomLegacyVariableRequest
+  variable_group_id?: number
   actions?: ChannelMonitorCustomAction[]
 }
 

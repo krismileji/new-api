@@ -443,6 +443,7 @@ func migrateDB() error {
 		&SystemTask{},
 		&SystemTaskLock{},
 		&ChannelRatioMonitor{},
+		&ChannelMonitorVariableGroup{},
 		&ChannelSmartScheduleRouteState{},
 		&ChannelLogicalSmartScheduleRouteState{},
 		&ChannelLogicalSmartScheduleSampleState{},

@@ -88,6 +88,8 @@ type ChannelMonitorCustomUpstreamConfig struct {
 	BalanceReuseRatioRequest bool                                       `json:"balance_reuse_ratio_request,omitempty"`
 	VariableRequests         []ChannelMonitorCustomVariableRequest      `json:"variable_requests,omitempty"`
 	VariableRequest          *ChannelMonitorCustomLegacyVariableRequest `json:"variable_request,omitempty"`
+	VariableGroupID          int                                        `json:"variable_group_id,omitempty"`
+	VariableGroupRevision    int64                                      `json:"-"`
 	Actions                  []ChannelMonitorCustomAction               `json:"actions,omitempty"`
 }
 
@@ -232,6 +234,9 @@ func normalizeChannelMonitorCustomUpstreamConfig(config ChannelMonitorCustomUpst
 	if err != nil {
 		return ChannelMonitorCustomUpstreamConfig{}, err
 	}
+	if config.VariableGroupID < 0 || (config.VariableGroupID > 0 && len(variableRequests) > 0) {
+		return ChannelMonitorCustomUpstreamConfig{}, errors.New("请选择共享请求与变量，或使用渠道独立配置，不能同时配置")
+	}
 	actions, err := normalizeChannelMonitorCustomActions(config.Actions, existing)
 	if err != nil {
 		return ChannelMonitorCustomUpstreamConfig{}, err
@@ -242,6 +247,7 @@ func normalizeChannelMonitorCustomUpstreamConfig(config ChannelMonitorCustomUpst
 		Balance:                  balance,
 		BalanceReuseRatioRequest: config.BalanceReuseRatioRequest,
 		VariableRequests:         variableRequests,
+		VariableGroupID:          config.VariableGroupID,
 		Actions:                  actions,
 	}
 	if err := validateChannelMonitorCustomTemplates(normalized); err != nil {
