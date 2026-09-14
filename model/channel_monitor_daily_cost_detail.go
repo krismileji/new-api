@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 
@@ -89,6 +90,10 @@ func addChannelMonitorDailyCostDetail(tx *gorm.DB, delta ChannelDailyCostDelta) 
 	if err != nil {
 		return err
 	}
+	return addChannelMonitorDailyCostDetailRecord(tx, detail)
+}
+
+func addChannelMonitorDailyCostDetailRecord(tx *gorm.DB, detail ChannelMonitorDailyCostDetail) error {
 	keyWhere := "day_start = ? AND channel_id = ? AND user_id = ? AND api_key_id = ? AND api_key_key = ? AND model_key = ? AND source_kind = ?"
 	keyArgs := []any{detail.DayStart, detail.ChannelId, detail.UserId, detail.APIKeyId, detail.APIKeyKey, detail.ModelKey, detail.SourceKind}
 	update := func() (bool, error) {
@@ -124,7 +129,7 @@ func addChannelMonitorDailyCostDetail(tx *gorm.DB, delta ChannelDailyCostDelta) 
 		return err
 	}
 	if !updated {
-		return errors.New("成本明细写入失败或累计超过 int64 范围")
+		return fmt.Errorf("%w: 成本明细写入失败或累计超过 int64 范围", ErrChannelDailyCostLedgerOverflow)
 	}
 	return nil
 }

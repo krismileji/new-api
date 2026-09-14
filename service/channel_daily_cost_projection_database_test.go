@@ -97,6 +97,10 @@ func TestChannelDailyCostStreamProjectionDatabaseMatrix(t *testing.T) {
 				setCM07ChannelDailyCostReliableStats(previousStats)
 			})
 			verifyChannelDailyCostStreamProjection(t, db, client)
+			// Drain the earlier projection fixtures, then exercise the same small
+			// batch and partial-overflow contract on each real database engine.
+			require.NoError(t, FlushChannelDailyCostOutbox(context.Background()))
+			verifyChannelDailyCostRecoveryBatch(t, db)
 		})
 	}
 }

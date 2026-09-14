@@ -25,6 +25,9 @@ const (
 	channelDailyCostRedisFieldPayload = "payload"
 
 	channelDailyCostOutboxBatchSize          = 256
+	channelDailyCostLedgerBatchSize          = 64
+	channelDailyCostLedgerTimeout            = 10 * time.Second
+	channelDailyCostRecoveryBudget           = 45 * time.Second
 	channelDailyCostOutboxPublishTimeout     = 250 * time.Millisecond
 	channelDailyCostOutboxDBFallbackTimeout  = 750 * time.Millisecond
 	channelDailyCostOutboxDBOperationTimeout = 3 * time.Second
@@ -104,9 +107,22 @@ type ChannelDailyCostReliableStats struct {
 	OutboxRetryCount int64 `json:"outbox_retry_count"`
 }
 
+type channelDailyCostOutboxBatchResult struct {
+	Claimed      int
+	Applied      int64
+	Released     int64
+	RetryAt      time.Time
+	FailureStage string
+	ClaimTime    time.Duration
+	ApplyTime    time.Duration
+	ReleaseTime  time.Duration
+	Dimensions   model.ChannelDailyCostBatchDimensions
+}
+
 var (
-	channelDailyCostReliableOutboxActive atomic.Bool
-	channelDailyCostReliableStatsState   struct {
+	channelDailyCostReliableOutboxActive  atomic.Bool
+	channelDailyCostOutboxStatsObservedAt atomic.Int64
+	channelDailyCostReliableStatsState    struct {
 		streamPublished  atomic.Int64
 		dbFallbackStored atomic.Int64
 		publishFailed    atomic.Int64
@@ -473,20 +489,65 @@ func (runtime *ChannelDailyCostOutboxRuntime) runDBRecovery(ctx context.Context)
 	defer ticker.Stop()
 	nextStatsRefresh := time.Time{}
 	nextCleanup := time.Time{}
+	lastFailureLog := time.Time{}
+	lastFailureStage := ""
 	for {
 		runtime.lastDBRecoveryAt.Store(time.Now().Unix())
 		batchCutoff := time.Now()
-		for ctx.Err() == nil {
-			count, err := applyChannelDailyCostOutboxBatch(ctx, runtime.consumerName, time.Now().Unix(), batchCutoff.Unix(), batchCutoff.Unix())
+		roundDeadline := batchCutoff.Add(channelDailyCostRecoveryBudget)
+		roundCtx, roundCancel := context.WithDeadline(ctx, roundDeadline)
+		// Reserve enough time for claim, one bounded apply (including overflow
+		// fallback), and release. Waiting for a retry uses this same round budget.
+		batchBudget := 2*channelDailyCostOutboxDBOperationTimeout + channelDailyCostLedgerTimeout
+		claimRetryDelay := time.Second
+		var summary channelDailyCostOutboxBatchResult
+		for roundCtx.Err() == nil && time.Until(roundDeadline) >= batchBudget {
+			now := time.Now().Unix()
+			result, err := applyChannelDailyCostOutboxBatch(roundCtx, runtime.consumerName, now, now, batchCutoff.Unix())
+			summary.Claimed += result.Claimed
+			summary.Applied += result.Applied
+			summary.Released += result.Released
+			summary.ClaimTime += result.ClaimTime
+			summary.ApplyTime += result.ApplyTime
+			summary.ReleaseTime += result.ReleaseTime
+			summary.Dimensions.Channels += result.Dimensions.Channels
+			summary.Dimensions.APIKeys += result.Dimensions.APIKeys
+			summary.Dimensions.Details += result.Dimensions.Details
+			summary.RetryAt = result.RetryAt
 			if err != nil {
-				if ctx.Err() == nil {
-					logger.LogWarn(ctx, fmt.Sprintf("渠道成本 outbox 恢复失败，将自动重试: %v", err))
+				if ctx.Err() == nil && (result.FailureStage != lastFailureStage || time.Since(lastFailureLog) >= 30*time.Second) {
+					logger.LogWarn(ctx, "渠道成本 outbox 恢复失败，将自动重试: stage=%s claimed=%d applied=%d released=%d claim_ms=%d apply_ms=%d release_ms=%d retry_at=%s error=%v",
+						result.FailureStage, result.Claimed, result.Applied, result.Released, result.ClaimTime.Milliseconds(), result.ApplyTime.Milliseconds(), result.ReleaseTime.Milliseconds(), result.RetryAt.Format(time.RFC3339), err)
+					lastFailureLog, lastFailureStage = time.Now(), result.FailureStage
 				}
+				retryAt := result.RetryAt
+				if result.FailureStage == "领取" {
+					retryAt = time.Now().Add(claimRetryDelay)
+					claimRetryDelay = min(2*claimRetryDelay, 30*time.Second)
+				}
+				// A failed release did not persist next_attempt_at. Leave its rows
+				// to the existing lease-expiry recovery instead of guessing a retry.
+				if retryAt.IsZero() || retryAt.Add(batchBudget).After(roundDeadline) {
+					break
+				}
+				timer := time.NewTimer(max(0, time.Until(retryAt)))
+				select {
+				case <-roundCtx.Done():
+					timer.Stop()
+				case <-timer.C:
+				}
+				continue
+			}
+			claimRetryDelay = time.Second
+			if result.Claimed == 0 {
 				break
 			}
-			if count == 0 || time.Since(batchCutoff) >= 45*time.Second {
-				break
-			}
+		}
+		roundCancel()
+		if summary.Claimed > 0 {
+			stats := GetChannelDailyCostReliableStats()
+			logger.LogInfo(ctx, fmt.Sprintf("渠道成本 outbox 本轮处理: claimed=%d applied=%d released=%d channel_dimensions=%d key_dimensions=%d detail_dimensions=%d claim_ms=%d apply_ms=%d release_ms=%d elapsed_ms=%d pending_estimate=%d oldest_pending_cached=%d stats_observed_at=%d",
+				summary.Claimed, summary.Applied, summary.Released, summary.Dimensions.Channels, summary.Dimensions.APIKeys, summary.Dimensions.Details, summary.ClaimTime.Milliseconds(), summary.ApplyTime.Milliseconds(), summary.ReleaseTime.Milliseconds(), time.Since(batchCutoff).Milliseconds(), stats.OutboxPending, stats.OutboxOldestAt, channelDailyCostOutboxStatsObservedAt.Load()))
 		}
 		now := time.Now()
 		if !now.Before(nextStatsRefresh) {
@@ -528,35 +589,65 @@ func recoverChannelDailyCostOutboxBatchReadyBefore(ctx context.Context, owner st
 	return err
 }
 
-func applyChannelDailyCostOutboxBatch(ctx context.Context, owner string, now int64, readyBefore int64, createdBefore ...int64) (int, error) {
+func applyChannelDailyCostOutboxBatch(ctx context.Context, owner string, now int64, readyBefore int64, createdBefore ...int64) (channelDailyCostOutboxBatchResult, error) {
+	var result channelDailyCostOutboxBatchResult
+	started := time.Now()
 	opCtx, cancel := context.WithTimeout(ctx, channelDailyCostOutboxDBOperationTimeout)
-	claimed, err := model.ClaimChannelDailyCostOutboxEvents(opCtx, owner, now, readyBefore, channelDailyCostOutboxLeaseDuration, channelDailyCostOutboxBatchSize, createdBefore...)
+	claimed, err := model.ClaimChannelDailyCostOutboxEvents(opCtx, owner, now, readyBefore, channelDailyCostOutboxLeaseDuration, channelDailyCostLedgerBatchSize, createdBefore...)
 	cancel()
+	result.ClaimTime = time.Since(started)
 	if err != nil || len(claimed) == 0 {
-		return 0, err
+		result.FailureStage = "领取"
+		return result, err
 	}
+	result.Claimed = len(claimed)
 	ids := make([]int64, 0, len(claimed))
 	maxAttempt := int64(1)
+	leaseDeadline := time.Unix(claimed[0].LeaseUntil, 0)
 	for _, event := range claimed {
 		ids = append(ids, event.Id)
 		maxAttempt = max(maxAttempt, event.AttemptCount)
+		if deadline := time.Unix(event.LeaseUntil, 0); deadline.Before(leaseDeadline) {
+			leaseDeadline = deadline
+		}
 	}
-	applyCtx, applyCancel := context.WithTimeout(context.WithoutCancel(ctx), channelDailyCostOutboxDBOperationTimeout)
-	appliedCount, err := model.ApplyClaimedChannelDailyCostOutboxEventsWithResult(applyCtx, owner, ids, time.Now().Unix())
-	applyCancel()
+	started = time.Now()
+	applyDeadline := started.Add(channelDailyCostLedgerTimeout)
+	if deadline := leaseDeadline.Add(-channelDailyCostOutboxDBOperationTimeout); deadline.Before(applyDeadline) {
+		applyDeadline = deadline
+	}
+	if deadline, ok := ctx.Deadline(); ok && deadline.Add(-channelDailyCostOutboxDBOperationTimeout).Before(applyDeadline) {
+		applyDeadline = deadline.Add(-channelDailyCostOutboxDBOperationTimeout)
+	}
+	applyCtx, applyCancel := context.WithDeadline(context.WithoutCancel(ctx), applyDeadline)
+	defer applyCancel()
+	appliedCount, err := model.ApplyClaimedChannelDailyCostOutboxEventsWithResult(applyCtx, owner, ids, time.Now().Unix(), &result.Dimensions)
+	result.ApplyTime = time.Since(started)
 	if err == nil {
+		result.Applied = appliedCount
 		channelDailyCostReliableStatsState.ledgerApplied.Add(appliedCount)
 		decrementChannelDailyCostOutboxPending(appliedCount)
-		return len(claimed), nil
+		return result, nil
 	}
+	result.FailureStage = "记账"
 	failedIDs := ids
 	if errors.Is(err, model.ErrChannelDailyCostLedgerOverflow) && len(claimed) > 1 {
 		failedIDs = make([]int64, 0, len(claimed))
 		appliedCount := int64(0)
 		for index, event := range claimed {
-			applyCtx, applyCancel = context.WithTimeout(context.WithoutCancel(ctx), channelDailyCostOutboxDBOperationTimeout)
-			applied, applyErr := model.ApplyClaimedChannelDailyCostOutboxEventsWithResult(applyCtx, owner, []int64{event.Id}, time.Now().Unix())
-			applyCancel()
+			if ctx.Err() != nil || applyCtx.Err() != nil {
+				err = applyCtx.Err()
+				if ctx.Err() != nil {
+					err = ctx.Err()
+				}
+				for _, remaining := range claimed[index:] {
+					failedIDs = append(failedIDs, remaining.Id)
+				}
+				break
+			}
+			started = time.Now()
+			applied, applyErr := model.ApplyClaimedChannelDailyCostOutboxEventsWithResult(applyCtx, owner, []int64{event.Id}, time.Now().Unix(), &result.Dimensions)
+			result.ApplyTime += time.Since(started)
 			if applyErr == nil {
 				appliedCount += applied
 				continue
@@ -572,11 +663,13 @@ func applyChannelDailyCostOutboxBatch(ctx context.Context, owner string, now int
 			break
 		}
 		if appliedCount > 0 {
+			result.Applied += appliedCount
 			channelDailyCostReliableStatsState.ledgerApplied.Add(appliedCount)
 			decrementChannelDailyCostOutboxPending(appliedCount)
 		}
 		if len(failedIDs) == 0 {
-			return len(claimed), nil
+			result.FailureStage = ""
+			return result, nil
 		}
 		maxAttempt = 1
 		failed := make(map[int64]struct{}, len(failedIDs))
@@ -591,20 +684,33 @@ func applyChannelDailyCostOutboxBatch(ctx context.Context, owner string, now int
 	}
 	retryDelay := time.Second * time.Duration(1<<min(maxAttempt-1, int64(8)))
 	retryDelay = min(retryDelay, channelDailyCostOutboxMaximumRetryDelay)
-	failCtx, failCancel := context.WithTimeout(context.Background(), channelDailyCostOutboxDBOperationTimeout)
-	released, failErr := model.FailClaimedChannelDailyCostOutboxEventsWithResult(failCtx, owner, failedIDs, time.Now().Add(retryDelay).Unix(), err)
+	nextAttemptAt := time.Now().Add(retryDelay).Unix()
+	started = time.Now()
+	releaseDeadline := time.Now().Add(channelDailyCostOutboxDBOperationTimeout)
+	if leaseDeadline.Before(releaseDeadline) {
+		releaseDeadline = leaseDeadline
+	}
+	if deadline, ok := ctx.Deadline(); ok && deadline.Before(releaseDeadline) {
+		releaseDeadline = deadline
+	}
+	failCtx, failCancel := context.WithDeadline(context.WithoutCancel(ctx), releaseDeadline)
+	released, failErr := model.FailClaimedChannelDailyCostOutboxEventsWithResult(failCtx, owner, failedIDs, nextAttemptAt, err)
 	failCancel()
+	result.ReleaseTime = time.Since(started)
 	if failErr != nil {
+		result.FailureStage = "释放租约"
 		channelDailyCostReliableStatsState.ledgerFailed.Add(int64(len(failedIDs)))
-		return 0, fmt.Errorf("应用 outbox 失败: %v；释放租约失败: %w", err, failErr)
+		return result, fmt.Errorf("应用 outbox 失败: %v；释放租约失败: %w", err, failErr)
 	}
 	if released == 0 {
 		// Another worker finalized or took over every failed row while this
 		// worker was applying. Do not report a false failure or retry it.
-		return len(claimed), nil
+		return result, nil
 	}
+	result.Released = released
+	result.RetryAt = time.Unix(nextAttemptAt, 0)
 	channelDailyCostReliableStatsState.ledgerFailed.Add(released)
-	return 0, err
+	return result, err
 }
 
 func FlushChannelDailyCostOutbox(ctx context.Context) error {
@@ -656,6 +762,7 @@ func refreshChannelDailyCostOutboxStats(ctx context.Context) {
 	channelDailyCostReliableStatsState.outboxPending.Store(stats.PendingCount)
 	channelDailyCostReliableStatsState.outboxOldestAt.Store(stats.OldestPending)
 	channelDailyCostReliableStatsState.outboxRetryCount.Store(stats.RetryCount)
+	channelDailyCostOutboxStatsObservedAt.Store(time.Now().Unix())
 }
 
 func channelDailyCostReliablePendingCount() int64 {

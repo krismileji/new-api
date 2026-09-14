@@ -215,7 +215,7 @@ func ApplyClaimedChannelDailyCostOutboxEvents(ctx context.Context, owner string,
 // owned by owner and reports how many were finalized. A zero count is a valid
 // result when another worker took over the lease between claim and finalize;
 // callers must not count that as a second ledger application.
-func ApplyClaimedChannelDailyCostOutboxEventsWithResult(ctx context.Context, owner string, ids []int64, processedAt int64) (int64, error) {
+func ApplyClaimedChannelDailyCostOutboxEventsWithResult(ctx context.Context, owner string, ids []int64, processedAt int64, dimensions ...*ChannelDailyCostBatchDimensions) (int64, error) {
 	if DB == nil {
 		return 0, errors.New("channel daily cost outbox database is unavailable")
 	}
@@ -230,6 +230,10 @@ func ApplyClaimedChannelDailyCostOutboxEventsWithResult(ctx context.Context, own
 		return 0, errors.New("channel daily cost outbox processed timestamp must be positive")
 	}
 	var applied int64
+	var batchDimensions *ChannelDailyCostBatchDimensions
+	if len(dimensions) > 0 {
+		batchDimensions = dimensions[0]
+	}
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var rows []ChannelDailyCostOutbox
 		if err := lockForUpdate(tx).
@@ -246,7 +250,7 @@ func ApplyClaimedChannelDailyCostOutboxEventsWithResult(ctx context.Context, own
 			deltas = append(deltas, row.channelDailyCostDelta())
 			rowIDs = append(rowIDs, row.Id)
 		}
-		if err := addChannelDailyCostBatch(tx, deltas); err != nil {
+		if err := addChannelDailyCostBatch(tx, deltas, batchDimensions); err != nil {
 			return err
 		}
 		updated := tx.Model(&ChannelDailyCostOutbox{}).
@@ -268,7 +272,10 @@ func ApplyClaimedChannelDailyCostOutboxEventsWithResult(ctx context.Context, own
 		applied = updated.RowsAffected
 		return nil
 	})
-	return applied, err
+	if err != nil {
+		return 0, err
+	}
+	return applied, nil
 }
 
 func FailClaimedChannelDailyCostOutboxEvents(ctx context.Context, owner string, ids []int64, nextAttemptAt int64, failure error) error {

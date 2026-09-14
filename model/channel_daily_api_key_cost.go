@@ -1,6 +1,7 @@
 package model
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -60,6 +61,14 @@ type ChannelDailyCostDelta struct {
 	UserAttribution       string
 	ModelName             string
 	SourceKind            string
+}
+
+// ChannelDailyCostBatchDimensions reports attempted aggregate writes, including
+// transactions that roll back. It must not be used as a committed event count.
+type ChannelDailyCostBatchDimensions struct {
+	Channels int
+	APIKeys  int
+	Details  int
 }
 
 // ValidateChannelDailyCostDelta checks the ledger invariants without mutating
@@ -160,7 +169,7 @@ func AddChannelDailyCostBatch(ctx context.Context, deltas []ChannelDailyCostDelt
 		return errors.New("channel daily cost database is unavailable")
 	}
 	return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := addChannelDailyCostBatch(tx, deltas); err != nil {
+		if err := addChannelDailyCostBatch(tx, deltas, nil); err != nil {
 			return err
 		}
 		for _, delta := range deltas {
@@ -172,7 +181,7 @@ func AddChannelDailyCostBatch(ctx context.Context, deltas []ChannelDailyCostDelt
 	})
 }
 
-func addChannelDailyCostBatch(tx *gorm.DB, deltas []ChannelDailyCostDelta) error {
+func addChannelDailyCostBatch(tx *gorm.DB, deltas []ChannelDailyCostDelta, dimensions *ChannelDailyCostBatchDimensions) error {
 	if tx == nil {
 		return errors.New("channel daily cost database is unavailable")
 	}
@@ -233,24 +242,98 @@ func addChannelDailyCostBatch(tx *gorm.DB, deltas []ChannelDailyCostDelta) error
 		return normalized[i].OccurredAt < normalized[j].OccurredAt
 	})
 
+	type apiKeyDayKey struct {
+		channelDayKey
+		Fingerprint string
+	}
+	keyPositions := make(map[apiKeyDayKey]int)
+	keyTotals := make([]ChannelDailyAPIKeyCost, 0, len(normalized))
+	for _, delta := range normalized {
+		if delta.KeyFingerprint == "" {
+			continue
+		}
+		key := apiKeyDayKey{channelDayKey{delta.ChannelId, ChannelDailyCostDayStart(delta.OccurredAt)}, delta.KeyFingerprint}
+		index, exists := keyPositions[key]
+		if !exists {
+			index = len(keyTotals)
+			keyPositions[key] = index
+			keyTotals = append(keyTotals, ChannelDailyAPIKeyCost{
+				ChannelId: delta.ChannelId, DayStart: key.DayStart, KeyFingerprint: delta.KeyFingerprint, CreatedAt: delta.OccurredAt,
+			})
+		}
+		total := &keyTotals[index]
+		if total.CostNanoCNY > math.MaxInt64-delta.CostNanoCNY || total.SettledCount > math.MaxInt64-delta.SettledDelta || total.UnresolvedCount > math.MaxInt64-delta.UnresolvedDelta {
+			return fmt.Errorf("%w: Key 成本批次累计超过 int64 范围", ErrChannelDailyCostLedgerOverflow)
+		}
+		total.CostNanoCNY += delta.CostNanoCNY
+		total.SettledCount += delta.SettledDelta
+		total.UnresolvedCount += delta.UnresolvedDelta
+		total.APIKeyId, total.APIKeyName, total.KeyDisplay = delta.APIKeyId, delta.APIKeyName, delta.KeyDisplay
+		total.UpdatedAt = delta.OccurredAt
+	}
+	// Normalize before grouping: blank source/attribution values have existing
+	// defaults, and names are trimmed before deriving their dimension keys.
+	type detailKey struct {
+		DayStart   int64
+		ChannelId  int
+		UserId     int
+		APIKeyId   int
+		APIKeyKey  string
+		ModelKey   string
+		SourceKind string
+	}
+	detailPositions := make(map[detailKey]int)
+	var detailTotals []ChannelMonitorDailyCostDetail
+	if tx.Migrator().HasTable(&ChannelMonitorDailyCostDetail{}) {
+		for _, delta := range normalized {
+			detail, err := normalizeChannelMonitorDailyCostDetail(delta)
+			if err != nil {
+				return err
+			}
+			key := detailKey{detail.DayStart, detail.ChannelId, detail.UserId, detail.APIKeyId, detail.APIKeyKey, detail.ModelKey, detail.SourceKind}
+			index, exists := detailPositions[key]
+			if !exists {
+				detailPositions[key] = len(detailTotals)
+				detailTotals = append(detailTotals, detail)
+				continue
+			}
+			total := &detailTotals[index]
+			if total.CostNanoCNY > math.MaxInt64-detail.CostNanoCNY || total.ProbeCostNanoCNY > math.MaxInt64-detail.ProbeCostNanoCNY || total.GroupProbeCostNanoCNY > math.MaxInt64-detail.GroupProbeCostNanoCNY || total.SettledCount > math.MaxInt64-detail.SettledCount || total.UnresolvedCount > math.MaxInt64-detail.UnresolvedCount {
+				return fmt.Errorf("%w: 监控成本明细批次累计超过 int64 范围", ErrChannelDailyCostLedgerOverflow)
+			}
+			total.CostNanoCNY += detail.CostNanoCNY
+			total.ProbeCostNanoCNY += detail.ProbeCostNanoCNY
+			total.GroupProbeCostNanoCNY += detail.GroupProbeCostNanoCNY
+			total.SettledCount += detail.SettledCount
+			total.UnresolvedCount += detail.UnresolvedCount
+			total.APIKeyName, total.UserAttribution, total.ModelName = detail.APIKeyName, detail.UserAttribution, detail.ModelName
+			total.UpdatedAt = detail.UpdatedAt
+		}
+	}
+	sort.Slice(detailTotals, func(i, j int) bool {
+		a, b := detailTotals[i], detailTotals[j]
+		return cmp.Or(cmp.Compare(a.ChannelId, b.ChannelId), cmp.Compare(a.DayStart, b.DayStart),
+			cmp.Compare(a.UserId, b.UserId), cmp.Compare(a.APIKeyId, b.APIKeyId), cmp.Compare(a.APIKeyKey, b.APIKeyKey),
+			cmp.Compare(a.ModelKey, b.ModelKey), cmp.Compare(a.SourceKind, b.SourceKind)) < 0
+	})
+	if dimensions != nil {
+		dimensions.Channels += len(orderedChannelTotals)
+		dimensions.APIKeys += len(keyTotals)
+		dimensions.Details += len(detailTotals)
+	}
 	for _, total := range orderedChannelTotals {
 		if err := addChannelDailyCost(tx, total.ChannelId, total.OccurredAt, total.CostNanoCNY, total.ProbeCostNanoCNY, total.GroupProbeCostNanoCNY, total.SettledDelta, total.UnresolvedDelta); err != nil {
 			return err
 		}
 	}
-	for _, delta := range normalized {
-		if delta.KeyFingerprint == "" {
-			continue
-		}
-		if err := addChannelDailyAPIKeyCost(tx, delta.ChannelId, delta.OccurredAt, delta.CostNanoCNY, delta.SettledDelta, delta.UnresolvedDelta, delta.APIKeyId, delta.APIKeyName, delta.KeyFingerprint, delta.KeyDisplay); err != nil {
+	for _, total := range keyTotals {
+		if err := addChannelDailyAPIKeyCostRecord(tx, total); err != nil {
 			return err
 		}
 	}
-	if tx.Migrator().HasTable(&ChannelMonitorDailyCostDetail{}) {
-		for _, delta := range normalized {
-			if err := addChannelMonitorDailyCostDetail(tx, delta); err != nil {
-				return err
-			}
+	for _, total := range detailTotals {
+		if err := addChannelMonitorDailyCostDetailRecord(tx, total); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -316,16 +399,6 @@ func normalizeChannelDailyCostDelta(delta *ChannelDailyCostDelta) error {
 }
 
 func addChannelDailyAPIKeyCost(tx *gorm.DB, channelId int, occurredAt int64, costNanoCNY int64, settledDelta int64, unresolvedDelta int64, apiKeyId int, apiKeyName string, keyFingerprint string, keyDisplay string) error {
-	if channelId <= 0 {
-		return errors.New("channel id must be positive")
-	}
-	if costNanoCNY < 0 {
-		return errors.New("daily API key cost must not be negative")
-	}
-	if settledDelta < 0 || unresolvedDelta < 0 || (settledDelta == 0 && unresolvedDelta == 0) {
-		return errors.New("daily API key cost event count must be positive")
-	}
-
 	record := ChannelDailyAPIKeyCost{
 		ChannelId:       channelId,
 		DayStart:        ChannelDailyCostDayStart(occurredAt),
@@ -339,6 +412,20 @@ func addChannelDailyAPIKeyCost(tx *gorm.DB, channelId int, occurredAt int64, cos
 		CreatedAt:       occurredAt,
 		UpdatedAt:       occurredAt,
 	}
+	return addChannelDailyAPIKeyCostRecord(tx, record)
+}
+
+func addChannelDailyAPIKeyCostRecord(tx *gorm.DB, record ChannelDailyAPIKeyCost) error {
+	if record.ChannelId <= 0 {
+		return errors.New("channel id must be positive")
+	}
+	if record.CostNanoCNY < 0 {
+		return errors.New("daily API key cost must not be negative")
+	}
+	if record.SettledCount < 0 || record.UnresolvedCount < 0 || (record.SettledCount == 0 && record.UnresolvedCount == 0) {
+		return errors.New("daily API key cost event count must be positive")
+	}
+	costNanoCNY, settledDelta, unresolvedDelta := record.CostNanoCNY, record.SettledCount, record.UnresolvedCount
 	updated, err := updateChannelDailyAPIKeyCostIfWithinBounds(
 		tx, record, costNanoCNY, settledDelta, unresolvedDelta,
 	)
@@ -349,7 +436,7 @@ func addChannelDailyAPIKeyCost(tx *gorm.DB, channelId int, occurredAt int64, cos
 	var existingId int64
 	err = tx.Model(&ChannelDailyAPIKeyCost{}).
 		Select("id").
-		Where("channel_id = ? AND day_start = ? AND key_fingerprint = ?", channelId, record.DayStart, keyFingerprint).
+		Where("channel_id = ? AND day_start = ? AND key_fingerprint = ?", record.ChannelId, record.DayStart, record.KeyFingerprint).
 		Take(&existingId).Error
 	if err == nil {
 		return fmt.Errorf("%w: 渠道 API Key 日成本累计超过 int64 范围", ErrChannelDailyCostLedgerOverflow)
@@ -378,7 +465,7 @@ func addChannelDailyAPIKeyCost(tx *gorm.DB, channelId int, occurredAt int64, cos
 	}
 	err = tx.Model(&ChannelDailyAPIKeyCost{}).
 		Select("id").
-		Where("channel_id = ? AND day_start = ? AND key_fingerprint = ?", channelId, record.DayStart, keyFingerprint).
+		Where("channel_id = ? AND day_start = ? AND key_fingerprint = ?", record.ChannelId, record.DayStart, record.KeyFingerprint).
 		Take(&existingId).Error
 	if err == nil {
 		return fmt.Errorf("%w: 渠道 API Key 日成本累计超过 int64 范围", ErrChannelDailyCostLedgerOverflow)
