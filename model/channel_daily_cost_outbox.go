@@ -28,7 +28,7 @@ type ChannelDailyCostOutbox struct {
 	Id                    int64  `gorm:"primaryKey"`
 	EventId               string `gorm:"size:64;not null;uniqueIndex"`
 	ChannelId             int    `gorm:"not null;index:idx_channel_daily_cost_outbox_pending,priority:2"`
-	OccurredAt            int64  `gorm:"not null"`
+	OccurredAt            int64  `gorm:"not null;index:idx_channel_daily_cost_outbox_projection_time,priority:2"`
 	CostNanoCNY           int64  `gorm:"not null"`
 	ProbeCostNanoCNY      int64  `gorm:"not null"`
 	GroupProbeCostNanoCNY int64  `gorm:"not null"`
@@ -46,7 +46,7 @@ type ChannelDailyCostOutbox struct {
 	// replacements share ProjectionEventId and use Id as their ordered version.
 	ProjectionEventId         string `gorm:"size:128;not null;default:''"`
 	ModelDetectionCostNanoCNY int64  `gorm:"not null;default:0"`
-	RedisProjectedAt          int64  `gorm:"not null;default:0;index:idx_channel_daily_cost_outbox_projection"`
+	RedisProjectedAt          int64  `gorm:"not null;default:0;index:idx_channel_daily_cost_outbox_projection;index:idx_channel_daily_cost_outbox_projection_time,priority:1"`
 	AttemptCount              int64  `gorm:"not null"`
 	NextAttemptAt             int64  `gorm:"not null;index:idx_channel_daily_cost_outbox_pending,priority:3"`
 	LeaseOwner                string `gorm:"size:128;not null;index"`
