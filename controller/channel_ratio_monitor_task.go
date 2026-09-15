@@ -705,6 +705,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			var effectiveBalanceForRecovery *float64
 			var balanceFetchFailure error
 			balanceBelowAutoDisableThreshold := false
+			balanceEstimateIncomplete := false
 			ratioUpdated := false
 			syncSkipped := false
 			retriesUsed := 0
@@ -863,6 +864,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				if balanceEvaluation != nil {
 					effectiveBalance = balanceEvaluation.EffectiveBalance
 					estimatedConsumption = balanceEvaluation.EstimatedConsumption
+					balanceEstimateIncomplete = !balanceEvaluation.Complete
 				}
 				effectiveBalanceForRecovery = &effectiveBalance
 				balanceBelowAutoDisableThreshold = monitor.BalanceAutoDisableThreshold != nil &&
@@ -887,6 +889,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 					balance,
 					effectiveBalance,
 					estimatedConsumption,
+					balanceEvaluation,
 				)
 				if disableErr != nil {
 					if err == nil {
@@ -903,8 +906,9 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						ChannelId:     channel.Id,
 						ChannelName:   channel.Name,
 						ChannelRemark: channelRemark,
-						Reason: fmt.Sprintf("上游余额 %g，估算余额 %g，低于自动禁用阈值 %g",
-							balance, effectiveBalance, *monitor.BalanceAutoDisableThreshold),
+						Reason: "上游余额 " + formatChannelMonitorBalanceAmount(balance) + "，估算余额 " +
+							formatChannelMonitorBalanceAmount(effectiveBalance) + "，低于自动禁用阈值 " +
+							formatChannelMonitorBalanceAmount(*monitor.BalanceAutoDisableThreshold),
 					})
 					stateMu.Unlock()
 				}
@@ -1008,7 +1012,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 				}
 				syncRecovered := balanceFetchFailure == nil && (monitor.UpstreamRatioSyncDisabled || ratioUpdated) &&
 					(monitor.UpstreamBalanceSyncDisabled || recordedBalance != nil)
-				if syncRecovered && channelMonitorUpdateFailureRecovered(monitor, channel, effectiveBalanceForRecovery) {
+				if syncRecovered && !balanceEstimateIncomplete && channelMonitorUpdateFailureRecovered(monitor, channel, effectiveBalanceForRecovery) {
 					recoveryChannel, recoveryErr := model.GetChannelById(channel.Id, true)
 					if recoveryErr != nil {
 						logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d recovery status lookup failed: %v", channel.Id, recoveryErr))
@@ -1043,7 +1047,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						CostRatio:                        outcome.Result.CostRatio,
 						BalanceBelowAutoDisableThreshold: balanceBelowAutoDisableThreshold,
 						BalanceUnavailable: !monitor.UpstreamBalanceSyncDisabled &&
-							monitor.BalanceAutoDisableThreshold != nil && (recordedBalance == nil || balanceFetchFailure != nil),
+							monitor.BalanceAutoDisableThreshold != nil && (recordedBalance == nil || balanceFetchFailure != nil || balanceEstimateIncomplete),
 						SingleChannelAction:    monitor.SingleChannelAction,
 						MultipleChannelsAction: monitor.MultipleChannelsAction,
 					}
@@ -1099,6 +1103,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 							UpstreamRevision:                 monitor.UpstreamRevision,
 							CostRatio:                        costRatio,
 							BalanceBelowAutoDisableThreshold: balanceBelowAutoDisableThreshold,
+							BalanceUnavailable:               balanceEstimateIncomplete,
 						}
 						stateMu.Unlock()
 					}

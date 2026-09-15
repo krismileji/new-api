@@ -34,6 +34,7 @@ func TestChannelMonitorBalanceSafetyDatabaseMatrix(t *testing.T) {
 				name string
 				run  func(*testing.T, *gorm.DB)
 			}{
+				{"snapshot_schema_upgrade", verifyChannelMonitorBalanceSnapshotUpgrade},
 				{"settlement_order", verifyChannelMonitorBalanceSettlementOrder},
 				{"missing_balance", verifyChannelMonitorMissingSub2APIBalance},
 				{"failed_balance_recovery", verifyChannelMonitorFailedBalanceRecovery},
@@ -115,75 +116,6 @@ func setupChannelMonitorBalanceSafetyDB(t *testing.T, engine string) *gorm.DB {
 	require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
 	t.Logf("database=%s version=%s", engine, version)
 	return db
-}
-
-func verifyChannelMonitorBalanceSettlementOrder(t *testing.T, db *gorm.DB) {
-	warning, threshold := 20.0, 7.0
-	// Conversion is deliberately non-unit: 4 CNY of local cost is 2 upstream units.
-	conversion, err := service.MarshalChannelMonitorCostConversion(service.ChannelMonitorCostConversion{
-		Mode: service.ChannelMonitorCostConversionRecharge, PaidCNY: 2, CreditedUSD: 1,
-	})
-	require.NoError(t, err)
-	for index, providerFirst := range []bool{true, false} {
-		t.Run(fmt.Sprintf("provider_first_%t", providerFirst), func(t *testing.T) {
-			id := index + 1
-			channel := model.Channel{Id: id, Name: "余额对账", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled}
-			require.NoError(t, db.Create(&channel).Error)
-			require.NoError(t, db.Create(&model.Ability{Group: "vip", Model: "model-a", ChannelId: id, Enabled: true}).Error)
-			initialBalance, baseline := 10.0, int64(0)
-			monitor := model.ChannelRatioMonitor{
-				ChannelId: id, UpstreamRevision: 1, UpstreamBalance: &initialBalance,
-				LastBalanceTime: common.GetTimestamp(), LastBalanceCostNanoCNY: &baseline,
-				BalanceWarningThreshold: &warning, BalanceAutoDisableThreshold: &threshold,
-				CostConversion: conversion,
-			}
-			require.NoError(t, db.Create(&monitor).Error)
-			observedBalance := 8.0
-			if !providerFirst {
-				require.NoError(t, model.AddChannelDailyCost(t.Context(), id, common.GetTimestamp(), 4*model.ChannelDailyCostNanoPerCNY, 1, 0))
-				observedBalance = initialBalance
-			}
-			first, applied, err := recordChannelMonitorBalanceUpdate(t.Context(), monitor, &observedBalance, "")
-			require.NoError(t, err)
-			require.True(t, applied)
-			require.NotNil(t, first)
-			assert.Equal(t, 8.0, first.EffectiveBalance)
-			monitor, err = model.GetChannelRatioMonitor(id)
-			require.NoError(t, err)
-			if providerFirst {
-				// Reload and preserve the upstream debit through a failed refresh too.
-				assert.Equal(t, -2.0, monitor.BalancePendingConsumption)
-				require.NoError(t, model.RecordChannelRatioMonitorBalance(id, nil, "上游超时"))
-				monitor, err = model.GetChannelRatioMonitor(id)
-				require.NoError(t, err)
-				assert.Equal(t, -2.0, monitor.BalancePendingConsumption)
-				require.NoError(t, model.AddChannelDailyCost(t.Context(), id, common.GetTimestamp(), 4*model.ChannelDailyCostNanoPerCNY, 1, 0))
-			}
-			observedBalance = 8
-			second, applied, err := recordChannelMonitorBalanceUpdate(t.Context(), monitor, &observedBalance, "")
-			require.NoError(t, err)
-			require.True(t, applied)
-			require.NotNil(t, second)
-			assert.Equal(t, 8.0, second.EffectiveBalance)
-			assert.Zero(t, second.EstimatedConsumption)
-			disabled, err := autoDisableChannelMonitorAtEffectiveBalance(monitor, &channel, observedBalance, second.EffectiveBalance, second.EstimatedConsumption)
-			require.NoError(t, err)
-			assert.False(t, disabled, "同一笔支出不能因为记账顺序不同重复扣算")
-			// Later unreflected spending must still trigger the configured threshold.
-			monitor, err = model.GetChannelRatioMonitor(id)
-			require.NoError(t, err)
-			require.NoError(t, model.AddChannelDailyCost(t.Context(), id, common.GetTimestamp(), 4*model.ChannelDailyCostNanoPerCNY, 1, 0))
-			disabled, err = autoDisableChannelMonitorForLowBalanceWithContext(t.Context(), monitor, &channel, observedBalance)
-			require.NoError(t, err)
-			assert.True(t, disabled)
-			stored, err := model.GetChannelById(id, true)
-			require.NoError(t, err)
-			assert.Equal(t, common.ChannelStatusAutoDisabled, stored.Status)
-			var ability model.Ability
-			require.NoError(t, db.First(&ability, "channel_id = ?", id).Error)
-			assert.False(t, ability.Enabled)
-		})
-	}
 }
 
 func verifyChannelMonitorMissingSub2APIBalance(t *testing.T, db *gorm.DB) {

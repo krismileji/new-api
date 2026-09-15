@@ -253,6 +253,7 @@ func channelConcurrencySaturatedError(channelID int, status service.ChannelConcu
 
 func relayWithChannelConcurrency(c *gin.Context, info *relaycommon.RelayInfo, relayFormat types.RelayFormat, lease *service.ChannelConcurrencyLease) *types.NewAPIError {
 	defer lease.Release()
+	service.PrepareChannelBalanceAttempt(c, info)
 	resetRelayAttemptResponseState(c)
 	var apiErr *types.NewAPIError
 	switch relayFormat {

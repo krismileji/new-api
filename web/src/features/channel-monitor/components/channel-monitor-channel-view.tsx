@@ -62,6 +62,7 @@ import type {
   ChannelMonitorSuccessSummary,
   ChannelMonitorSmartScheduleRoute,
 } from '../types'
+import { ChannelMonitorBalanceCell } from './channel-monitor-balance-cell'
 import { ChannelMonitorPerformanceDetailButton } from './channel-monitor-performance-detail-button'
 import {
   ChannelMonitorFirstTokenValue,
@@ -132,11 +133,6 @@ type ChannelMonitorUpdateMetaProps = {
   timestamp: number
   className?: string
 }
-
-const upstreamBalanceFormatter = new Intl.NumberFormat(undefined, {
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 4,
-})
 
 function ChannelMonitorUpdateMeta(props: ChannelMonitorUpdateMetaProps) {
   if (props.timestamp <= 0) {
@@ -231,45 +227,14 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
     return <span className='text-muted-foreground text-xs'>暂无</span>
   }
 
-  const titleParts: string[] = []
-  if (props.channel.last_balance_error) {
-    titleParts.push(`最近更新失败：${props.channel.last_balance_error}`)
-  }
-  const balanceSyncEnabled = props.channel.upstream.balance_sync_enabled
-  const warningThreshold = balanceSyncEnabled
-    ? props.channel.upstream.balance_warning_threshold
-    : null
-  const balanceWarning =
-    warningThreshold != null &&
-    props.channel.upstream_balance < warningThreshold
-  if (warningThreshold != null) {
-    titleParts.push(
-      `余额预警值：${upstreamBalanceFormatter.format(warningThreshold)}`
-    )
-  }
   return (
-    <div
-      className='flex flex-col items-start gap-0.5 whitespace-nowrap'
-      title={titleParts.join('；')}
-    >
-      <div className='flex items-center gap-1.5'>
-        <span
-          className={cn(
-            'font-mono font-semibold',
-            !balanceSyncEnabled && 'text-muted-foreground',
-            balanceWarning && 'text-destructive'
-          )}
-        >
-          {upstreamBalanceFormatter.format(props.channel.upstream_balance)}
-        </span>
-        {balanceWarning ? (
-          <Badge variant='destructive'>低于预警值</Badge>
-        ) : null}
-      </div>
-      {props.channel.last_balance_error ? (
-        <span className='text-warning text-xs'>更新失败</span>
-      ) : null}
-    </div>
+    <ChannelMonitorBalanceCell
+      balance={props.channel.upstream_balance}
+      enabled={props.channel.upstream.balance_sync_enabled}
+      warning={props.channel.upstream.balance_warning_threshold}
+      error={props.channel.last_balance_error}
+      estimate={props.channel.balance_estimate}
+    />
   )
 }
 

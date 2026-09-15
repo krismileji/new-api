@@ -32,17 +32,19 @@ const (
 )
 
 type channelDailyCostSnapshot struct {
-	ChannelId       int
-	CostRatioCNY    float64
-	QuotaPerUnit    float64
-	Configured      bool
-	APIKeyId        int
-	APIKeyName      string
-	KeyFingerprint  string
-	KeyDisplay      string
-	UserId          int
-	UserAttribution string
-	ModelName       string
+	ChannelId        int
+	CostRatioCNY     float64
+	QuotaPerUnit     float64
+	Configured       bool
+	APIKeyId         int
+	APIKeyName       string
+	KeyFingerprint   string
+	KeyDisplay       string
+	UserId           int
+	UserAttribution  string
+	ModelName        string
+	ConversionFactor float64
+	BalanceConfig    ChannelBalanceConfig
 }
 
 type channelDailyCostSnapshotCacheEntry struct {
@@ -59,6 +61,7 @@ type channelDailyCostAttemptState struct {
 	Recording          bool
 	Recorded           bool
 	SettledCostNanoCNY *int64
+	Balance            *channelBalanceAttempt
 }
 
 var (
@@ -87,6 +90,7 @@ func BeginChannelDailyCostAttempt(ctx *gin.Context, channelId int) {
 		return
 	}
 	ctx.Set(channelDailyCostAttemptContextKey, &channelDailyCostAttemptState{ChannelId: channelId, CostEventId: common.GetUUID()})
+	ctx.Set(channelBalanceRelayInfoContextKey, (*relaycommon.RelayInfo)(nil))
 }
 
 // MarkChannelDailyCostRequestDispatched marks the exact boundary where a
@@ -107,6 +111,7 @@ func MarkChannelDailyCostRequestDispatched(ctx *gin.Context) {
 	state.mu.Lock()
 	state.Dispatched = true
 	state.mu.Unlock()
+	startChannelBalanceAttempt(ctx, state)
 	if ctx.GetBool("channel_test") {
 		ctx.Set("channel_test_request_dispatched", true)
 	}
@@ -261,6 +266,9 @@ func getChannelDailyCostSnapshot(channelId int) (channelDailyCostSnapshot, error
 		if err != nil {
 			return snapshot, err
 		}
+		if monitor.UpstreamType != "" {
+			snapshot.BalanceConfig = ChannelBalanceConfigForMonitor(monitor)
+		}
 		if monitor.UpdatedTime <= 0 {
 			storeChannelDailyCostSnapshot(channelId, version, loadVersion, snapshot)
 			return snapshot, nil
@@ -273,16 +281,20 @@ func getChannelDailyCostSnapshot(channelId int) (channelDailyCostSnapshot, error
 		if math.IsNaN(snapshot.QuotaPerUnit) || math.IsInf(snapshot.QuotaPerUnit, 0) || snapshot.QuotaPerUnit <= 0 {
 			return snapshot, errors.New("额度单位配置无效")
 		}
-		costRatio, _, err := CalculateChannelMonitorCostRatio(monitor.Ratio, conversion)
+		costRatio, factor, err := CalculateChannelMonitorCostRatio(monitor.Ratio, conversion)
 		if err != nil {
 			return snapshot, err
 		}
 		snapshot.CostRatioCNY = costRatio
+		snapshot.ConversionFactor = factor
 		snapshot.Configured = true
 		storeChannelDailyCostSnapshot(channelId, version, loadVersion, snapshot)
 		return snapshot, nil
 	})
 	if err != nil {
+		if snapshot, ok := value.(channelDailyCostSnapshot); ok {
+			return snapshot, err
+		}
 		return channelDailyCostSnapshot{
 			ChannelId:    channelId,
 			QuotaPerUnit: common.QuotaPerUnit,
@@ -479,6 +491,7 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 		logger.LogError(ctx, fmt.Sprintf("渠道 #%d 每日成本事件无效: %v", snapshot.ChannelId, err))
 		return false
 	}
+	finishChannelBalanceAttempt(ctx, snapshot, delta.EventId, costNanoCNY, settledDelta > 0)
 	var persisted bool
 	if isProbe {
 		persisted = writeChannelDailyCostSynchronously(delta)
@@ -539,6 +552,19 @@ func recordTextChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		if tieredResult == nil {
 			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 			return
+		}
+		// A completion in a different pricing tier must not train the average
+		// for the tier selected when this request started.
+		if tieredResult.CrossedTier {
+			if value, exists := ctx.Get(channelDailyCostAttemptContextKey); exists {
+				if state, ok := value.(*channelDailyCostAttemptState); ok && state != nil {
+					state.mu.Lock()
+					if state.Balance != nil {
+						state.Balance.SampleEligible = false
+					}
+					state.mu.Unlock()
+				}
+			}
 		}
 		if tieredSnapshot := relayInfo.TieredBillingSnapshot; tieredSnapshot != nil {
 			quotaPerUnit = tieredSnapshot.QuotaPerUnit
@@ -733,6 +759,7 @@ func RecordTaskChannelDailyCost(ctx *gin.Context, channelId int, occurredAt int6
 		return 0, false, err
 	}
 	setChannelDailyCostAttemptSettledCost(ctx, snapshot.ChannelId, storedCost)
+	finishChannelBalanceTaskAttempt(ctx, snapshot)
 	markChannelDailyCostAttemptRecorded(ctx, snapshot.ChannelId)
 	return storedCost, true, nil
 }

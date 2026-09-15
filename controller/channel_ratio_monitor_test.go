@@ -3348,132 +3348,11 @@ func TestAutoDisableChannelMonitorForLowBalanceIgnoresStaleThreshold(t *testing.
 	assert.Equal(t, common.ChannelStatusEnabled, storedChannel.Status)
 }
 
-func TestAutoDisableChannelMonitorForLowBalanceIncludesRecentLocalCostWhenBelowWarning(t *testing.T) {
-	db := setupChannelMonitorControllerTestDB(t)
-	channel := model.Channel{Id: 26, Name: "balance estimate", Status: common.ChannelStatusEnabled}
-	require.NoError(t, db.Create(&channel).Error)
-	warningThreshold := 10.0
-	autoDisableThreshold := 4.0
-	costConversion, err := service.MarshalChannelMonitorCostConversion(service.ChannelMonitorCostConversion{
-		Mode:        service.ChannelMonitorCostConversionRecharge,
-		PaidCNY:     2,
-		CreditedUSD: 1,
-	})
-	require.NoError(t, err)
-	now := common.GetTimestamp()
-	lastBalanceTime := now - 60
-	lastBalanceCostNanoCNY := int64(100) * model.ChannelDailyCostNanoPerCNY
-	require.NoError(t, model.AddChannelDailyCost(context.Background(), 26, now-120, lastBalanceCostNanoCNY, 1, 0))
-	require.NoError(t, model.AddChannelDailyCost(context.Background(), 26, now-1, 4*model.ChannelDailyCostNanoPerCNY, 1, 0))
-	monitor := model.ChannelRatioMonitor{
-		ChannelId:                   26,
-		UpstreamRevision:            1,
-		LastBalanceTime:             lastBalanceTime,
-		LastBalanceCostNanoCNY:      &lastBalanceCostNanoCNY,
-		BalanceWarningThreshold:     &warningThreshold,
-		BalanceAutoDisableThreshold: &autoDisableThreshold,
-		CostConversion:              costConversion,
-	}
-	require.NoError(t, db.Create(&monitor).Error)
 
-	changed, err := autoDisableChannelMonitorForLowBalanceWithContext(context.Background(), monitor, &channel, 5)
-	require.NoError(t, err)
-	assert.True(t, changed)
 
-	storedChannel, err := model.GetChannelById(26, true)
-	require.NoError(t, err)
-	assert.Equal(t, common.ChannelStatusAutoDisabled, storedChannel.Status)
-	assert.Contains(t, storedChannel.GetOtherInfo()["status_reason"], "本地消费估算 2，估算余额 3")
-}
 
-func TestAutoDisableChannelMonitorForLowBalanceDoesNotEstimateAboveWarning(t *testing.T) {
-	db := setupChannelMonitorControllerTestDB(t)
-	channel := model.Channel{Id: 27, Name: "balance warning", Status: common.ChannelStatusEnabled}
-	require.NoError(t, db.Create(&channel).Error)
-	warningThreshold := 4.0
-	autoDisableThreshold := 4.0
-	costConversion, err := service.MarshalChannelMonitorCostConversion(service.ChannelMonitorCostConversion{
-		Mode:        service.ChannelMonitorCostConversionRecharge,
-		PaidCNY:     2,
-		CreditedUSD: 1,
-	})
-	require.NoError(t, err)
-	now := common.GetTimestamp()
-	lastBalanceCostNanoCNY := int64(0)
-	require.NoError(t, model.AddChannelDailyCost(context.Background(), 27, now-1, 4*model.ChannelDailyCostNanoPerCNY, 1, 0))
-	monitor := model.ChannelRatioMonitor{
-		ChannelId:                   27,
-		UpstreamRevision:            1,
-		LastBalanceTime:             now - 60,
-		LastBalanceCostNanoCNY:      &lastBalanceCostNanoCNY,
-		BalanceWarningThreshold:     &warningThreshold,
-		BalanceAutoDisableThreshold: &autoDisableThreshold,
-		CostConversion:              costConversion,
-	}
-	require.NoError(t, db.Create(&monitor).Error)
 
-	changed, err := autoDisableChannelMonitorForLowBalanceWithContext(context.Background(), monitor, &channel, 5)
-	require.NoError(t, err)
-	assert.False(t, changed)
 
-	storedChannel, err := model.GetChannelById(27, true)
-	require.NoError(t, err)
-	assert.Equal(t, common.ChannelStatusEnabled, storedChannel.Status)
-}
-
-func TestRecordChannelMonitorBalanceUpdateCarriesPendingConsumptionUntilUpstreamReflectsIt(t *testing.T) {
-	db := setupChannelMonitorControllerTestDB(t)
-	warningThreshold := 100.0
-	autoDisableThreshold := 4.0
-	now := common.GetTimestamp()
-	baselineCostNanoCNY := int64(20) * model.ChannelDailyCostNanoPerCNY
-	previousBalance := 50.0
-	require.NoError(t, model.AddChannelDailyCost(context.Background(), 28, now-120, baselineCostNanoCNY, 1, 0))
-	monitor := model.ChannelRatioMonitor{
-		ChannelId:                   28,
-		UpstreamRevision:            1,
-		UpstreamBalance:             &previousBalance,
-		LastBalanceTime:             now - 60,
-		LastBalanceCostNanoCNY:      &baselineCostNanoCNY,
-		BalanceWarningThreshold:     &warningThreshold,
-		BalanceAutoDisableThreshold: &autoDisableThreshold,
-	}
-	require.NoError(t, db.Create(&monitor).Error)
-
-	require.NoError(t, model.AddChannelDailyCost(context.Background(), 28, now-1, 3*model.ChannelDailyCostNanoPerCNY, 1, 0))
-	unchangedBalance := 50.0
-	evaluation, applied, err := recordChannelMonitorBalanceUpdate(context.Background(), monitor, &unchangedBalance, "")
-	require.NoError(t, err)
-	require.True(t, applied)
-	require.NotNil(t, evaluation)
-	assert.InDelta(t, 3, evaluation.EstimatedConsumption, 1e-9)
-	assert.InDelta(t, 47, evaluation.EffectiveBalance, 1e-9)
-
-	monitor, err = model.GetChannelRatioMonitor(28)
-	require.NoError(t, err)
-	assert.InDelta(t, 3, monitor.BalancePendingConsumption, 1e-9)
-	require.NoError(t, model.AddChannelDailyCost(context.Background(), 28, now, 2*model.ChannelDailyCostNanoPerCNY, 1, 0))
-	evaluation, applied, err = recordChannelMonitorBalanceUpdate(context.Background(), monitor, &unchangedBalance, "")
-	require.NoError(t, err)
-	require.True(t, applied)
-	require.NotNil(t, evaluation)
-	assert.InDelta(t, 5, evaluation.EstimatedConsumption, 1e-9)
-	assert.InDelta(t, 45, evaluation.EffectiveBalance, 1e-9)
-
-	monitor, err = model.GetChannelRatioMonitor(28)
-	require.NoError(t, err)
-	reflectedBalance := 45.0
-	evaluation, applied, err = recordChannelMonitorBalanceUpdate(context.Background(), monitor, &reflectedBalance, "")
-	require.NoError(t, err)
-	require.True(t, applied)
-	require.NotNil(t, evaluation)
-	assert.Zero(t, evaluation.EstimatedConsumption)
-	assert.InDelta(t, reflectedBalance, evaluation.EffectiveBalance, 1e-9)
-
-	monitor, err = model.GetChannelRatioMonitor(28)
-	require.NoError(t, err)
-	assert.Zero(t, monitor.BalancePendingConsumption)
-}
 
 func TestFetchChannelMonitorUpstreamBalanceRecordsSnapshotAndAutoDisables(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
@@ -3530,9 +3409,6 @@ func TestFetchChannelMonitorUpstreamBalanceRecordsSnapshotAndAutoDisables(t *tes
 	require.NotNil(t, monitor.UpstreamBalance)
 	assert.InDelta(t, 3.5, *monitor.UpstreamBalance, 1e-9)
 	assert.NotZero(t, monitor.LastBalanceTime)
-	require.NotNil(t, monitor.LastBalanceCostNanoCNY)
-	assert.Zero(t, *monitor.LastBalanceCostNanoCNY)
-	assert.Zero(t, monitor.BalancePendingConsumption)
 	assert.Empty(t, monitor.LastBalanceError)
 	channel, err := model.GetChannelById(23, true)
 	require.NoError(t, err)

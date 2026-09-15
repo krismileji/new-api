@@ -30,6 +30,9 @@ func applyChannelDailyCostOutboxProjection(ctx context.Context, client *redis.Cl
 	if err := projectChannelDailyCostOutboxRows(ctx, client, rows); err != nil {
 		return err
 	}
+	if err := reconcileChannelBalanceCostEvents(ctx, client, rows); err != nil {
+		return err
+	}
 	return model.MarkChannelDailyCostProjectionsApplied(ctx, ids, time.Now().Unix())
 }
 

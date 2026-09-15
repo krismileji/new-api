@@ -43,6 +43,7 @@ export type ChannelMonitorItem = {
   last_fetch_time: number
   consecutive_failures: number
   upstream_balance: number | null
+  balance_estimate?: ChannelMonitorBalanceEstimate
   last_balance_time: number
   last_balance_error: string
   today_cost_cny: number
@@ -54,6 +55,26 @@ export type ChannelMonitorItem = {
   concurrency_active: number
   current_rpm: number
   upstream: ChannelMonitorUpstreamConfig | null
+}
+
+export type ChannelMonitorBalanceEstimate = {
+  available: boolean
+  complete: boolean
+  upstream_balance: number
+  estimated_balance: number
+  completed_consumption: number
+  in_flight_consumption: number
+  uncertain_consumption: number
+  in_flight_count: number
+  average_count: number
+  budget_count: number
+  unknown_count: number
+  synced_at: number
+  last_sample_count: number
+  last_estimate_model: string
+  last_estimate_amount: number
+  last_estimate_source: '' | 'average' | 'budget' | 'unknown'
+  reason?: string
 }
 
 export type ChannelMonitorConcurrencyStatus = {
