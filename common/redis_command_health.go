@@ -31,6 +31,12 @@ func (health *redisCommandHealth) observe(err error, now time.Time) {
 		}
 		return
 	}
+	// Idempotent XGROUP CREATE can report an existing consumer group. This
+	// must not renew a failure window; a successful command confirms recovery.
+	var reply redis.Error
+	if errors.As(err, &reply) && strings.HasPrefix(reply.Error(), "BUSYGROUP ") {
+		return
+	}
 	health.lastFailure = now
 	if errors.Is(err, context.DeadlineExceeded) {
 		health.deadline = true
