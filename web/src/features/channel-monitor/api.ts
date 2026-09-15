@@ -22,6 +22,7 @@ import type {
   ChannelMonitorApplyGroupResult,
   ChannelMonitorApiResponse,
   ChannelMonitorConcurrencyOverview,
+  ChannelMonitorCustomActionState,
   ChannelMonitorCostOverview,
   ChannelMonitorEmailNotificationType,
   ChannelMonitorEmailPreview,
@@ -821,6 +822,25 @@ export async function fetchChannelMonitorUpstreamBalance(channelId: number) {
   >(
     `/api/channel_monitor/channel/${channelId}/upstream/balance/fetch`,
     undefined,
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function resetChannelMonitorCustomActionAttempts(request: {
+  channelId: number
+  actionId: string
+  state: ChannelMonitorCustomActionState
+}) {
+  const response = await api.post<
+    ChannelMonitorApiResponse<ChannelMonitorCustomActionState>
+  >(
+    `/api/channel_monitor/channel/${request.channelId}/upstream/actions/${encodeURIComponent(request.actionId)}/reset-count`,
+    {
+      day: request.state.day,
+      attempts: request.state.attempts,
+      last_attempt: request.state.last_attempt,
+    },
     channelMonitorRequestConfig()
   )
   return ensureChannelMonitorSuccess(response.data)

@@ -1267,15 +1267,22 @@ func TestChannelMonitorUpstreamConfig(c *gin.Context) {
 }
 
 type channelMonitorFetchOutcome struct {
-	Result            service.NewAPIGroupRatioResult
-	Monitor           model.ChannelRatioMonitor
-	Created           bool
-	Changed           bool
-	BalanceRecorded   bool
-	BalanceEvaluation *channelMonitorBalanceEvaluation
+	Result                service.NewAPIGroupRatioResult
+	Monitor               model.ChannelRatioMonitor
+	Created               bool
+	Changed               bool
+	BalanceRecorded       bool
+	BalanceEvaluation     *channelMonitorBalanceEvaluation
+	RatioRecorded         bool
+	CustomActionSucceeded bool
 }
 
-func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor model.ChannelRatioMonitor, channelKeys []string, proxyURL string, requestTimeout time.Duration, includeSeparateBalance bool, operatorId int, operatorUsername string) (outcome channelMonitorFetchOutcome, err error) {
+type channelMonitorRefreshOptions struct {
+	IncludeSeparateBalance bool
+	SkipCustomActions      bool
+}
+
+func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor model.ChannelRatioMonitor, channelKeys []string, proxyURL string, requestTimeout time.Duration, options channelMonitorRefreshOptions, operatorId int, operatorUsername string) (outcome channelMonitorFetchOutcome, err error) {
 	if monitor.UpstreamType != service.NewAPIUpstreamType && monitor.UpstreamType != service.Sub2APIUpstreamType && monitor.UpstreamType != service.CustomUpstreamType {
 		return outcome, errors.New("请先保存上游配置")
 	}
@@ -1283,7 +1290,7 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 		return outcome, errors.New("该渠道已关闭上游倍率同步")
 	}
 	defer func() {
-		if err == nil {
+		if err == nil || outcome.CustomActionSucceeded {
 			return
 		}
 		applied, statusErr := model.RecordChannelRatioMonitorFetchFailureIfRevision(
@@ -1325,7 +1332,7 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 		return outcome, err
 	}
 	customConfig := service.ChannelMonitorCustomUpstreamConfig{}
-	fetchBalance := includeSeparateBalance
+	fetchBalance := options.IncludeSeparateBalance
 	if monitor.UpstreamType == service.CustomUpstreamType {
 		customConfig, err = service.ParseChannelMonitorCustomUpstreamConfig(monitor.CustomUpstreamConfig)
 		if err != nil {
@@ -1376,7 +1383,9 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 		outcome.BalanceRecorded = result.Balance.Amount != nil
 		outcome.BalanceEvaluation = balanceEvaluation
 		if result.Balance.Amount != nil && result.Balance.Error == "" {
-			runChannelMonitorCustomActions(ctx, monitor, "balance", *result.Balance.Amount, proxyURL, requestTimeout)
+			if runChannelMonitorCustomActions(ctx, monitor, "balance", *result.Balance.Amount, proxyURL, requestTimeout, options) {
+				return refreshChannelMonitorAfterCustomAction(ctx, monitor, channelKeys, proxyURL, requestTimeout, operatorId, operatorUsername)
+			}
 		}
 	}
 	if fetchErr != nil {
@@ -1409,7 +1418,13 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 	outcome.Monitor = updatedMonitor
 	outcome.Created = created
 	outcome.Changed = changed
-	runChannelMonitorCustomActions(ctx, monitor, "ratio", result.Ratio, proxyURL, requestTimeout)
+	outcome.RatioRecorded = true
+	if runChannelMonitorCustomActions(ctx, monitor, "ratio", result.Ratio, proxyURL, requestTimeout, options) {
+		refreshed, refreshErr := refreshChannelMonitorAfterCustomAction(ctx, monitor, channelKeys, proxyURL, requestTimeout, operatorId, operatorUsername)
+		refreshed.Created = refreshed.Created || created
+		refreshed.Changed = refreshed.RatioRecorded && refreshed.Result.Ratio != monitor.Ratio
+		return refreshed, refreshErr
+	}
 	return outcome, nil
 }
 
@@ -1424,19 +1439,19 @@ func channelMonitorSharesRatioBalanceRequest(monitor model.ChannelRatioMonitor) 
 	return config.BalanceReuseRatioRequest, nil
 }
 
-func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor model.ChannelRatioMonitor, channelKeys []string, proxyURL string, requestTimeout time.Duration) (result service.ChannelMonitorUpstreamBalanceResult, evaluation *channelMonitorBalanceEvaluation, err error) {
+func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor model.ChannelRatioMonitor, channelKeys []string, proxyURL string, requestTimeout time.Duration, options channelMonitorRefreshOptions) (outcome channelMonitorFetchOutcome, err error) {
 	if monitor.UpstreamType != service.NewAPIUpstreamType && monitor.UpstreamType != service.Sub2APIUpstreamType && monitor.UpstreamType != service.CustomUpstreamType {
-		return result, nil, errors.New("请先保存上游配置")
+		return outcome, errors.New("请先保存上游配置")
 	}
 	if monitor.UpstreamBalanceSyncDisabled {
-		return result, nil, errors.New("该渠道已关闭上游余额同步")
+		return outcome, errors.New("该渠道已关闭上游余额同步")
 	}
 
 	customConfig := service.ChannelMonitorCustomUpstreamConfig{}
 	if monitor.UpstreamType == service.CustomUpstreamType {
 		customConfig, err = service.ParseChannelMonitorCustomUpstreamConfig(monitor.CustomUpstreamConfig)
 		if err != nil {
-			return result, nil, err
+			return outcome, err
 		}
 	}
 	balanceSync, _ := service.BeginChannelBalanceSync(ctx, monitor)
@@ -1460,6 +1475,7 @@ func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor mo
 			CustomConfig:                 customConfig,
 		},
 	)
+	outcome.Result.Balance = result
 	if fetchErr == nil && result.Amount == nil {
 		fetchErr = errors.New("上游未返回余额")
 	}
@@ -1476,7 +1492,7 @@ func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor mo
 		} else if !applied {
 			fetchErr = model.ErrChannelRatioMonitorConfigChanged
 		}
-		return result, nil, fetchErr
+		return outcome, fetchErr
 	}
 	evaluation, applied, recordErr := recordChannelMonitorBalanceUpdate(
 		ctx,
@@ -1486,13 +1502,17 @@ func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor mo
 		balanceSync,
 	)
 	if recordErr != nil {
-		return result, evaluation, recordErr
+		return outcome, recordErr
 	}
 	if !applied {
-		return result, evaluation, model.ErrChannelRatioMonitorConfigChanged
+		return outcome, model.ErrChannelRatioMonitorConfigChanged
 	}
-	runChannelMonitorCustomActions(ctx, monitor, "balance", *result.Amount, proxyURL, requestTimeout)
-	return result, evaluation, nil
+	outcome.BalanceRecorded = true
+	outcome.BalanceEvaluation = evaluation
+	if runChannelMonitorCustomActions(ctx, monitor, "balance", *result.Amount, proxyURL, requestTimeout, options) {
+		return refreshChannelMonitorAfterCustomAction(ctx, monitor, channelKeys, proxyURL, requestTimeout, 0, "触发接口成功后刷新")
+	}
+	return outcome, nil
 }
 
 func autoDisableChannelMonitorForLowBalance(monitor model.ChannelRatioMonitor, channel *model.Channel, balance float64) (bool, error) {
@@ -1609,7 +1629,7 @@ func FetchChannelMonitorUpstreamRatio(c *gin.Context) {
 	fetchMonitor := monitor
 	fetchMonitor.UpstreamRatioSyncDisabled = false
 	operatorId, operatorUsername := getChannelMonitorOperator(c)
-	outcome, err := fetchAndRecordChannelMonitorUpstreamRatio(c.Request.Context(), fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, getChannelMonitorSettings().upstreamRequestTimeout(), false, operatorId, operatorUsername)
+	outcome, err := fetchAndRecordChannelMonitorUpstreamRatio(c.Request.Context(), fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, getChannelMonitorSettings().upstreamRequestTimeout(), channelMonitorRefreshOptions{}, operatorId, operatorUsername)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -1701,7 +1721,7 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 			channel.GetKeys(),
 			channel.GetSetting().Proxy,
 			requestTimeout,
-			false,
+			channelMonitorRefreshOptions{},
 			operatorId,
 			operatorUsername,
 		)
@@ -1714,10 +1734,16 @@ func FetchChannelMonitorUpstreamBalance(c *gin.Context) {
 		monitor = outcome.Monitor
 		service.NotifyChannelModelDetectionOverviewChanged()
 	} else {
-		result, balanceEvaluation, err = fetchAndRecordChannelMonitorUpstreamBalance(c.Request.Context(), fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
-		if err != nil {
-			common.ApiError(c, err)
+		outcome, fetchErr := fetchAndRecordChannelMonitorUpstreamBalance(c.Request.Context(), fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout, channelMonitorRefreshOptions{})
+		if fetchErr != nil {
+			common.ApiError(c, fetchErr)
 			return
+		}
+		result, balanceEvaluation = outcome.Result.Balance, outcome.BalanceEvaluation
+		ratioRefreshed = outcome.RatioRecorded
+		if ratioRefreshed {
+			monitor = outcome.Monitor
+			service.NotifyChannelModelDetectionOverviewChanged()
 		}
 	}
 	if result.Amount == nil {

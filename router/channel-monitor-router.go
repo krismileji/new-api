@@ -66,6 +66,7 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 		monitorRoute.POST("/channel/:id/upstream/groups", controller.ListChannelMonitorUpstreamGroups)
 		monitorRoute.POST("/channel/:id/upstream/version", controller.FetchChannelMonitorSub2APIUpstreamVersion)
 		monitorRoute.POST("/channel/:id/upstream/test", controller.TestChannelMonitorUpstreamConfig)
+		monitorRoute.POST("/channel/:id/upstream/actions/:action_id/reset-count", controller.ResetChannelMonitorCustomActionAttempts)
 		monitorRoute.POST("/channel/:id/upstream/variable/fetch", controller.FetchChannelMonitorCustomVariable)
 		monitorRoute.POST("/channel/:id/upstream/fetch", controller.FetchChannelMonitorUpstreamRatio)
 		monitorRoute.POST("/channel/:id/upstream/balance/fetch", controller.FetchChannelMonitorUpstreamBalance)

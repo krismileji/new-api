@@ -39,7 +39,11 @@ import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
 import { createChannelMonitorCustomAction } from '../lib/custom-upstream'
 import type { UpstreamConfigFormValues } from '../lib/schema'
-import type { ChannelMonitorCustomActionState } from '../types'
+import type {
+  ChannelMonitorCustomAction,
+  ChannelMonitorCustomActionState,
+} from '../types'
+import { ChannelMonitorCustomActionQuota } from './channel-monitor-custom-action-quota'
 import { ChannelMonitorCustomRequestFields } from './channel-monitor-custom-request-fields'
 
 type ActionFieldsProps = {
@@ -47,6 +51,11 @@ type ActionFieldsProps = {
   disabled: boolean
   states?: Record<string, ChannelMonitorCustomActionState>
   stateError?: string
+  savedActions?: ChannelMonitorCustomAction[]
+  onReset: (
+    actionId: string,
+    state: ChannelMonitorCustomActionState
+  ) => Promise<void>
 }
 
 export function ChannelMonitorCustomActionFields(props: ActionFieldsProps) {
@@ -74,6 +83,11 @@ export function ChannelMonitorCustomActionFields(props: ActionFieldsProps) {
             disabled={props.disabled}
             index={index}
             state={props.states?.[action.id]}
+            stateError={props.stateError}
+            savedAction={props.savedActions?.find(
+              (saved) => saved.id === action.id
+            )}
+            onReset={props.onReset}
             onRemove={() => actions.remove(index)}
           />
         ))}
@@ -96,6 +110,9 @@ type CustomActionRuleProps = {
   disabled: boolean
   index: number
   state?: ChannelMonitorCustomActionState
+  stateError?: string
+  savedAction?: ChannelMonitorCustomAction
+  onReset: ActionFieldsProps['onReset']
   onRemove: () => void
 }
 
@@ -289,6 +306,16 @@ function CustomActionRule(props: CustomActionRuleProps) {
                   />
                 </FormControl>
                 <FormMessage />
+                {key === 'dailyLimit' && (
+                  <ChannelMonitorCustomActionQuota
+                    savedAction={props.savedAction}
+                    state={props.state}
+                    stateError={props.stateError}
+                    dailyLimit={Number(field.value)}
+                    disabled={props.disabled}
+                    onReset={props.onReset}
+                  />
+                )}
               </FormItem>
             )}
           />
@@ -361,7 +388,7 @@ function CustomActionRule(props: CustomActionRuleProps) {
           )}
         />
       </FieldGroup>
-      {props.state ? (
+      {props.state && props.state.last_attempt > 0 ? (
         <div role='status' className='bg-muted rounded-md p-3 text-sm'>
           <p>{props.state.message}</p>
           <p className='text-muted-foreground mt-1'>
@@ -369,8 +396,7 @@ function CustomActionRule(props: CustomActionRuleProps) {
             {new Date(props.state.last_attempt * 1000).toLocaleString(
               'zh-CN'
             )}{' '}
-            · 指标值 {props.state.last_value} · {props.state.day} 已调用{' '}
-            {props.state.attempts} 次
+            · 指标值 {props.state.last_value}
           </p>
           {props.state.triggered ? (
             <p className='mt-1'>等待指标恢复到触发条件外后重新检测。</p>

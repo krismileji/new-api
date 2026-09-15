@@ -79,6 +79,7 @@ import {
   fetchChannelMonitorCustomVariable,
   fetchChannelMonitorSub2APIUpstreamVersion,
   listChannelMonitorUpstreamGroups,
+  resetChannelMonitorCustomActionAttempts,
   saveChannelMonitorUpstreamConfig,
   testChannelMonitorUpstreamConfig,
 } from '../api'
@@ -93,6 +94,7 @@ import {
 import { createChannelMonitorUpstreamRequest } from '../lib/upstream-request'
 import type {
   ChannelMonitorItem,
+  ChannelMonitorCustomActionState,
   ChannelMonitorCostConversion,
   ChannelMonitorPolicyAction,
   ChannelMonitorUpstreamGroup,
@@ -155,6 +157,14 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   const [ratioEditorOpen, setRatioEditorOpen] = useState(false)
   const [upstreamVersion, setUpstreamVersion] = useState<string | null>(null)
   const savedUpstream = props.channel.upstream
+  const [resetActionStates, setResetActionStates] = useState<{
+    source: typeof savedUpstream
+    states: Record<string, ChannelMonitorCustomActionState>
+  }>()
+  const actionStates =
+    resetActionStates?.source === savedUpstream
+      ? resetActionStates?.states
+      : savedUpstream?.custom_action_states
   const savedCostConversion: ChannelMonitorCostConversion =
     savedUpstream?.cost_conversion ?? { mode: 'none' }
   const initialGroup = savedUpstream?.group || ''
@@ -368,6 +378,19 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
       toast.success('上游配置已保存')
       queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
       props.onOpenChange(false)
+    },
+  })
+  const resetActionMutation = useMutation({
+    mutationFn: resetChannelMonitorCustomActionAttempts,
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
+    },
+    onSuccess: (response, variables) => {
+      setResetActionStates({
+        source: savedUpstream,
+        states: { ...actionStates, [variables.actionId]: response.data },
+      })
+      toast.success('今日调用次数已重置')
     },
   })
   const testMutation = useMutation({
@@ -666,6 +689,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   }
   const pending =
     saveMutation.isPending ||
+    resetActionMutation.isPending ||
     testMutation.isPending ||
     groupsMutation.isPending ||
     applyGroupMutation.isPending ||
@@ -921,8 +945,16 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                   <ChannelMonitorCustomActionFields
                     form={form}
                     disabled={pending}
-                    states={savedUpstream?.custom_action_states}
+                    states={actionStates}
                     stateError={savedUpstream?.custom_action_state_error}
+                    savedActions={savedUpstream?.custom_config?.actions}
+                    onReset={async (actionId, state) => {
+                      await resetActionMutation.mutateAsync({
+                        channelId: props.channel.id,
+                        actionId,
+                        state,
+                      })
+                    }}
                   />
                 </>
               ) : null}

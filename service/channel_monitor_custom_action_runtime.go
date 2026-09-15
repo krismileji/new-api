@@ -13,25 +13,31 @@ import (
 )
 
 // RunChannelMonitorCustomActions is called only after a saved metric refresh.
-// Draft tests and configuration saves never invoke an action.
-func RunChannelMonitorCustomActions(ctx context.Context, monitor model.ChannelRatioMonitor, metric string, value float64, proxy string, timeout time.Duration) error {
+// Draft tests and configuration saves never invoke an action. When execution is
+// disabled, refreshed samples can rearm rules without sending another request.
+// A success invalidates this sample, so the caller must refresh before any more actions.
+func RunChannelMonitorCustomActions(ctx context.Context, monitor model.ChannelRatioMonitor, metric string, value float64, proxy string, timeout time.Duration, allowExecution bool) (bool, error) {
 	if monitor.UpstreamType != CustomUpstreamType {
-		return nil
+		return false, nil
 	}
 	config, err := ParseChannelMonitorCustomUpstreamConfig(monitor.CustomUpstreamConfig)
 	if err != nil || len(config.Actions) == 0 {
-		return err
+		return false, err
 	}
 	var failures []error
 	for _, action := range config.Actions {
 		if !action.Enabled || action.Metric != metric {
 			continue
 		}
-		if err := runChannelMonitorCustomAction(ctx, monitor, action, value, proxy, timeout, time.Now); err != nil {
+		succeeded, err := runChannelMonitorCustomAction(ctx, monitor, action, value, proxy, timeout, allowExecution, time.Now)
+		if err != nil {
 			failures = append(failures, fmt.Errorf("规则 %s: %w", action.Name, err))
 		}
+		if succeeded {
+			return true, errors.Join(failures...)
+		}
 	}
-	return errors.Join(failures...)
+	return false, errors.Join(failures...)
 }
 
 func channelMonitorCustomActionSampleCurrent(monitor model.ChannelRatioMonitor, metric string, value float64) bool {
@@ -41,11 +47,11 @@ func channelMonitorCustomActionSampleCurrent(monitor model.ChannelRatioMonitor, 
 	return !monitor.UpstreamRatioSyncDisabled && monitor.LastFetchStatus == model.ChannelRatioFetchStatusSucceeded && monitor.Ratio == value
 }
 
-func runChannelMonitorCustomAction(ctx context.Context, monitor model.ChannelRatioMonitor, action ChannelMonitorCustomAction, value float64, proxy string, timeout time.Duration, now func() time.Time) error {
+func runChannelMonitorCustomAction(ctx context.Context, monitor model.ChannelRatioMonitor, action ChannelMonitorCustomAction, value float64, proxy string, timeout time.Duration, allowExecution bool, now func() time.Time) (bool, error) {
 	claimed := false
 	attemptID, err := model.GenerateSystemTaskID()
 	if err != nil {
-		return err
+		return false, err
 	}
 	err = model.UpdateChannelMonitorCustomActionState(ctx, monitor.ChannelId, &monitor.UpstreamRevision, func(current model.ChannelRatioMonitor, states map[string]model.ChannelMonitorCustomActionState) (bool, error) {
 		if !channelMonitorCustomActionSampleCurrent(current, action.Metric, value) {
@@ -59,6 +65,9 @@ func runChannelMonitorCustomAction(ctx context.Context, monitor model.ChannelRat
 			state.Triggered = false
 			states[action.ID] = state
 			return true, nil
+		}
+		if !allowExecution {
+			return false, nil
 		}
 		timestamp := now()
 		day, _, allowed := action.executionWindow(timestamp)
@@ -79,7 +88,7 @@ func runChannelMonitorCustomAction(ctx context.Context, monitor model.ChannelRat
 		return true, nil
 	})
 	if err != nil || !claimed {
-		return err
+		return false, err
 	}
 
 	executionErr := executeChannelMonitorCustomAction(ctx, monitor, action, value, proxy, timeout, now)
@@ -100,7 +109,7 @@ func runChannelMonitorCustomAction(ctx context.Context, monitor model.ChannelRat
 		states[action.ID] = state
 		return true, nil
 	})
-	return errors.Join(executionErr, finishErr)
+	return executionErr == nil, errors.Join(executionErr, finishErr)
 }
 
 func executeChannelMonitorCustomAction(ctx context.Context, monitor model.ChannelRatioMonitor, action ChannelMonitorCustomAction, value float64, proxy string, timeout time.Duration, now func() time.Time) error {

@@ -707,6 +707,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			balanceBelowAutoDisableThreshold := false
 			balanceEstimateIncomplete := false
 			ratioUpdated := false
+			refreshOptions := channelMonitorRefreshOptions{IncludeSeparateBalance: true}
 			syncSkipped := false
 			retriesUsed := 0
 			for attempt := 0; attempt <= settings.AutoUpdateRetryCount; attempt++ {
@@ -778,8 +779,12 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 					if channelRatioMonitorFailureLimitReached(fetchMonitor.BalanceConsecutiveFailures, settings.AutoUpdateConsecutiveFailureLimit) {
 						fetchMonitor.UpstreamBalanceSyncDisabled = true
 					}
-					outcome, err = fetchAndRecordChannelMonitorUpstreamRatio(ctx, fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout, true, 0, "系统自动更新")
-					ratioUpdated = err == nil
+					outcome, err = fetchAndRecordChannelMonitorUpstreamRatio(ctx, fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout, refreshOptions, 0, "系统自动更新")
+					ratioUpdated = outcome.RatioRecorded
+					if outcome.CustomActionSucceeded {
+						refreshOptions.SkipCustomActions = true
+						recordedBalance, balanceEvaluation = nil, nil
+					}
 					if balanceError := strings.TrimSpace(outcome.Result.Balance.Error); balanceError != "" &&
 						(fetchMonitor.UpstreamType != service.NewAPIUpstreamType ||
 							fetchMonitor.UpstreamAuthType == service.NewAPIUpstreamAuthUser) {
@@ -794,11 +799,15 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 						balanceEvaluation = outcome.BalanceEvaluation
 					}
 				} else {
-					var balanceResult service.ChannelMonitorUpstreamBalanceResult
-					var fetchedEvaluation *channelMonitorBalanceEvaluation
-					var balanceErr error
-					balanceResult, fetchedEvaluation, balanceErr = fetchAndRecordChannelMonitorUpstreamBalance(ctx, monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout)
-					if fetchRatio {
+					balanceOutcome, balanceErr := fetchAndRecordChannelMonitorUpstreamBalance(ctx, monitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout, refreshOptions)
+					if balanceOutcome.CustomActionSucceeded {
+						refreshOptions.SkipCustomActions = true
+						recordedBalance, balanceEvaluation = nil, nil
+						outcome = balanceOutcome
+						ratioUpdated = outcome.RatioRecorded
+						fetchRatio = !monitor.UpstreamRatioSyncDisabled
+					}
+					if fetchRatio && !balanceOutcome.CustomActionSucceeded {
 						// Keep a successful ratio while retrying only its failed balance request.
 						balanceFetchFailure = balanceErr
 						if errors.Is(balanceErr, model.ErrChannelRatioMonitorConfigChanged) {
@@ -807,10 +816,10 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 					} else {
 						err = balanceErr
 					}
-					if balanceErr == nil && balanceResult.Amount != nil {
-						balance := *balanceResult.Amount
+					if balanceOutcome.BalanceRecorded && balanceOutcome.Result.Balance.Amount != nil {
+						balance := *balanceOutcome.Result.Balance.Amount
 						recordedBalance = &balance
-						balanceEvaluation = fetchedEvaluation
+						balanceEvaluation = balanceOutcome.BalanceEvaluation
 					}
 				}
 				attemptErr := err
