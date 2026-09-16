@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/tidwall/gjson"
 	"golang.org/x/net/http/httpguts"
 )
 
@@ -455,7 +454,12 @@ func normalizeChannelMonitorCustomResult(result ChannelMonitorCustomResultConfig
 	result.ValuePath = strings.TrimSpace(result.ValuePath)
 	if result.ResponseType == ChannelMonitorCustomResponseJSON {
 		if result.ValuePath == "" || len(result.ValuePath) > maxChannelMonitorCustomResultPath {
-			return ChannelMonitorCustomResultConfig{}, errors.New("JSON 取值路径不能为空且不能超过 512 个字符")
+			return ChannelMonitorCustomResultConfig{}, errors.New("JSON 取值路径或表达式不能为空且不能超过 512 个字符")
+		}
+		if strings.HasPrefix(result.ValuePath, "=") {
+			if _, err := parseChannelMonitorCustomExpression(result.ValuePath); err != nil {
+				return ChannelMonitorCustomResultConfig{}, err
+			}
 		}
 	} else if result.ResponseType == ChannelMonitorCustomResponseText {
 		result.ValuePath = ""
@@ -743,28 +747,20 @@ func requestChannelMonitorCustomUpstream(ctx context.Context, client *http.Clien
 }
 
 func extractChannelMonitorCustomValue(body []byte, config ChannelMonitorCustomResultConfig) (float64, error) {
-	var rawValue string
+	var value float64
+	var err error
 	if config.ResponseType == ChannelMonitorCustomResponseJSON {
 		var decoded any
 		if err := common.Unmarshal(body, &decoded); err != nil {
 			return 0, errors.New("接口响应不是有效 JSON")
 		}
-		value := gjson.GetBytes(body, config.ValuePath)
-		if !value.Exists() || value.Type == gjson.Null {
-			return 0, fmt.Errorf("结果路径 %q 不存在", config.ValuePath)
-		}
-		switch value.Type {
-		case gjson.Number:
-			rawValue = value.Raw
-		case gjson.String:
-			rawValue = value.String()
-		default:
-			return 0, fmt.Errorf("结果路径 %q 的值不是数字", config.ValuePath)
+		value, err = extractChannelMonitorCustomJSONValue(body, config.ValuePath)
+		if err != nil {
+			return 0, err
 		}
 	} else {
-		rawValue = strings.TrimSpace(string(body))
+		value, err = strconv.ParseFloat(strings.TrimSpace(string(body)), 64)
 	}
-	value, err := strconv.ParseFloat(strings.TrimSpace(rawValue), 64)
 	if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
 		return 0, errors.New("接口提取结果不是有效数字")
 	}

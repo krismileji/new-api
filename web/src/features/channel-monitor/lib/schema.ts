@@ -1528,7 +1528,10 @@ const customRequestSchema = z.object({
 
 const customResultSchema = z.object({
   responseType: z.enum(['json', 'text']),
-  valuePath: z.string().trim().max(512, 'JSON 取值路径不能超过 512 个字符'),
+  valuePath: z
+    .string()
+    .trim()
+    .max(512, 'JSON 取值路径或表达式不能超过 512 个字符'),
   multiplier: z.coerce
     .number()
     .finite('结果乘数必须是有效数字')
@@ -1813,7 +1816,7 @@ function validateCustomMetric(
     context.addIssue({
       code: 'custom',
       path: [...pathPrefix, 'result', 'valuePath'],
-      message: '请输入 JSON 取值路径',
+      message: '请输入 JSON 取值路径或表达式',
     })
   }
   if (metric.result.multiplier <= 0) {

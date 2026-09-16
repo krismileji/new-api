@@ -75,7 +75,7 @@ function CustomRequestFields(props: CustomRequestFieldsProps) {
         />
       ) : null}
 
-      <div className='grid min-w-0 gap-4 sm:grid-cols-[10rem_minmax(0,1fr)_10rem]'>
+      <div className='grid min-w-0 items-start gap-4 sm:grid-cols-[10rem_minmax(0,1fr)_10rem]'>
         <FormField
           control={props.form.control}
           name={`${prefix}.result.responseType`}
@@ -111,10 +111,10 @@ function CustomRequestFields(props: CustomRequestFieldsProps) {
           name={`${prefix}.result.valuePath`}
           render={({ field }) => (
             <FormItem>
-              <FormLabel>JSON 取值路径</FormLabel>
+              <FormLabel>JSON 取值路径 / 表达式</FormLabel>
               <FormControl>
                 <Input
-                  placeholder='data.ratio'
+                  placeholder={`data.${props.metric}`}
                   disabled={responseType === 'text'}
                   value={field.value}
                   onBlur={field.onBlur}
@@ -123,6 +123,19 @@ function CustomRequestFields(props: CustomRequestFieldsProps) {
                   ref={field.ref}
                 />
               </FormControl>
+              <FormDescription className='min-w-0 break-words'>
+                {responseType === 'text' ? (
+                  '文本响应直接取数字，再乘结果乘数。'
+                ) : (
+                  <>
+                    直接填写路径，或以 = 开头计算；用 json("路径") 取值，支持
+                    +、-、*、/ 和括号，计算后再乘结果乘数。
+                    <code className='mt-1 block break-all'>
+                      =json("data.total") - json("data.used")
+                    </code>
+                  </>
+                )}
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -133,9 +146,9 @@ function CustomRequestFields(props: CustomRequestFieldsProps) {
           render={({ field }) => (
             <FormItem>
               <FormLabel>结果乘数</FormLabel>
-              <FormControl>
-                <InputGroup className='ring-inset'>
-                  <InputGroupAddon>×</InputGroupAddon>
+              <InputGroup className='ring-inset'>
+                <InputGroupAddon>×</InputGroupAddon>
+                <FormControl data-slot='input-group-control'>
                   <InputGroupInput
                     type='number'
                     min={0}
@@ -148,8 +161,8 @@ function CustomRequestFields(props: CustomRequestFieldsProps) {
                     name={field.name}
                     ref={field.ref}
                   />
-                </InputGroup>
-              </FormControl>
+                </FormControl>
+              </InputGroup>
               <FormMessage />
             </FormItem>
           )}
@@ -279,7 +292,7 @@ export function ChannelMonitorCustomUpstreamFields(
               <div className='flex min-w-0 flex-col gap-1'>
                 <FormLabel>余额复用倍率接口</FormLabel>
                 <FormDescription>
-                  只发送一次请求，余额使用独立的取值路径和结果乘数。
+                  只发送一次请求，余额使用独立的取值路径或表达式和结果乘数。
                 </FormDescription>
               </div>
               <FormControl>
