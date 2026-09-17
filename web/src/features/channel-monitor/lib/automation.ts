@@ -69,6 +69,8 @@ export function upstreamAutomationPayload(
 ): UpstreamAutomation {
   return {
     ...task,
+    // Form validation does not replace the raw strings returned by getValues().
+    ...automationMetadataSchema.parse(task),
     base_url: values.baseUrl,
     custom_config: createChannelMonitorCustomRequestConfig(values.customConfig),
   }

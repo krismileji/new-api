@@ -30,6 +30,7 @@ import {
   createChannelMonitorCustomAction,
   createChannelMonitorCustomFormConfig,
   createChannelMonitorCustomRequestConfig,
+  createChannelMonitorVariableRequest,
 } from '../../lib/custom-upstream'
 import UpstreamAutomationsDialog from '../upstream-automations-dialog'
 
@@ -87,6 +88,10 @@ describe('独立上游自动任务', () => {
       'https://upstream.example'
     )
     await user.click(screen.getByRole('switch', { name: '启用独立任务' }))
+    await user.clear(screen.getByLabelText('检查间隔（分钟）'))
+    await user.type(screen.getByLabelText('检查间隔（分钟）'), '1')
+    await user.clear(screen.getByLabelText('请求超时（秒）'))
+    await user.type(screen.getByLabelText('请求超时（秒）'), '30')
     await user.click(screen.getByRole('button', { name: '添加触发规则' }))
     const rule = screen.getByRole('group', { name: '触发规则 余额不足时重置' })
     await user.click(within(rule).getByRole('switch', { name: '启用规则' }))
@@ -102,10 +107,60 @@ describe('独立上游自动任务', () => {
     expect(put.mock.calls[0][1]).toMatchObject({
       name: '独立账户',
       enabled: true,
+      interval_minutes: 1,
+      request_timeout: 30,
       channel_ids: [],
       custom_config: { actions: [{ trigger_mode: 'edge' }] },
     })
   })
+
+  test.each(['保存任务', '测试获取指标', '请求并回填变量'])(
+    '编辑检查间隔和超时后%s提交整数',
+    async (button) => {
+      const task = taskFixture()
+      const config = createChannelMonitorCustomFormConfig(task.custom_config)
+      const request = createChannelMonitorVariableRequest('login', '登录请求')
+      request.request.path = '/login'
+      request.variables = [
+        { name: 'token', valuePath: 'token', value: '', hasValue: false },
+      ]
+      config.variableRequests = [request]
+      task.custom_config = createChannelMonitorCustomRequestConfig(config)
+      vi.spyOn(api, 'get').mockImplementation(async (path) => ({
+        data: {
+          success: true,
+          data: path === '/api/channel_monitor/automations' ? [task] : [],
+        },
+      }))
+      const put = vi
+        .spyOn(api, 'put')
+        .mockResolvedValue({ data: { success: true, data: task } })
+      const post = vi.spyOn(api, 'post').mockImplementation(async (path) => ({
+        data: {
+          success: true,
+          data: String(path).endsWith('/variable/fetch')
+            ? [{ name: 'token', value: 'test-token' }]
+            : { ratio: 1, balance: { amount: 100 } },
+        },
+      }))
+      const user = userEvent.setup()
+      renderDialog()
+      await user.click(await screen.findByRole('button', { name: '编辑任务' }))
+      await user.clear(screen.getByLabelText('检查间隔（分钟）'))
+      await user.type(screen.getByLabelText('检查间隔（分钟）'), '1')
+      await user.clear(screen.getByLabelText('请求超时（秒）'))
+      await user.type(screen.getByLabelText('请求超时（秒）'), '45')
+      await user.click(screen.getByRole('button', { name: button }))
+      const mutation = button === '保存任务' ? put : post
+      await waitFor(() => expect(mutation).toHaveBeenCalled())
+      expect(mutation.mock.calls[0][1]).toMatchObject({
+        id: task.id,
+        revision: task.revision,
+        interval_minutes: 1,
+        request_timeout: 45,
+      })
+    }
+  )
 
   test('查询失败显示错误并可重试恢复列表', async () => {
     const get = vi

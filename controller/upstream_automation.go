@@ -37,7 +37,7 @@ func ListUpstreamAutomations(c *gin.Context) {
 func SaveUpstreamAutomation(c *gin.Context) {
 	var input service.UpstreamAutomationConfig
 	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10), &input); err != nil {
-		common.ApiErrorMsg(c, "自动任务配置无效或过大")
+		common.ApiErrorMsg(c, upstreamAutomationConfigDecodeMessage(err))
 		return
 	}
 	view, err := service.SaveUpstreamAutomation(c.Request.Context(), input)
@@ -120,7 +120,7 @@ func ResetUpstreamAutomationAttempts(c *gin.Context) {
 func TestUpstreamAutomation(c *gin.Context) {
 	var input service.UpstreamAutomationConfig
 	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10), &input); err != nil {
-		common.ApiErrorMsg(c, "任务配置无效或过大")
+		common.ApiErrorMsg(c, upstreamAutomationConfigDecodeMessage(err))
 		return
 	}
 	config, err := service.PrepareUpstreamAutomationDraft(c.Request.Context(), input)
@@ -142,7 +142,7 @@ func FetchUpstreamAutomationDraftVariables(c *gin.Context) {
 		RequestID string `json:"request_id"`
 	}
 	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10), &input); err != nil {
-		common.ApiErrorMsg(c, "任务配置无效或过大")
+		common.ApiErrorMsg(c, upstreamAutomationConfigDecodeMessage(err))
 		return
 	}
 	variables, err := service.FetchUpstreamAutomationDraftVariables(c.Request.Context(), input.UpstreamAutomationConfig, input.RequestID)
