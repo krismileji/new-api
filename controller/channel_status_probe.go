@@ -85,6 +85,7 @@ type channelStatusProbeModelResponse struct {
 }
 
 type channelStatusProbeChannelResponse struct {
+	AutoProbeDisabled  bool                              `json:"auto_probe_disabled"`
 	Id                 int                               `json:"id"`
 	Name               string                            `json:"name"`
 	Type               int                               `json:"type"`
@@ -837,7 +838,8 @@ func buildChannelStatusProbeOverview(
 			running = configResponse.RunningRunId != "" && configByChannel[channel.Id].LeaseUntil > now
 		}
 		items = append(items, channelStatusProbeChannelResponse{
-			Id: channel.Id, Name: channel.Name, Type: channel.Type, ChannelStatus: channel.Status,
+			AutoProbeDisabled: monitorByChannel[channel.Id].AutoProbeDisabled,
+			Id:                channel.Id, Name: channel.Name, Type: channel.Type, ChannelStatus: channel.Status,
 			Remark: remark, Groups: channelGroups, CostRatio: costRatio, SupportedModels: supportedModels,
 			AllowsCustomModel: allowsCustomModel, Config: configResponse, HealthStatus: health,
 			Running: running, Latest: latest, AvgFirstTokenMs: avgFirstTokenMs, AvgTPS: avgTPS,

@@ -232,6 +232,7 @@ func deduplicateChannelStatusProbeClaimsByIdentity(
 }
 
 func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatusProbeClaim) error {
+	parent = service.WithChannelProbeTrigger(parent, claim.Trigger)
 	ctx, cancel := context.WithCancel(parent)
 	if claim.DeadlineAt > 0 {
 		cancel()
@@ -310,6 +311,11 @@ func runChannelStatusProbeClaim(parent context.Context, claim model.ChannelStatu
 		outcome, selectErr := executeChannelStatusProbeModelWithMemberFailover(
 			snapshot, memberChannels, modelName, nil,
 			func(selectedChannel *model.Channel) channelStatusProbeOutcome {
+				if policyErr := service.CheckChannelProbeAllowed(ctx, selectedChannel.Id); policyErr != nil {
+					outcome := channelProbePolicySkippedOutcome(policyErr)
+					outcome.ActualChannelId = selectedChannel.Id
+					return outcome
+				}
 				if testUserErr != nil {
 					now := common.GetTimestamp()
 					return channelStatusProbeOutcome{
@@ -442,7 +448,7 @@ func executeChannelStatusProbeModelWithMemberFailover(
 	for {
 		selected, err := selectChannelStatusProbeMemberForModel(snapshot, memberChannels, modelName, excluded, rng)
 		if err != nil {
-			if errors.Is(err, service.ErrLogicalChannelSelectionNoAvailableMembers) && lastBusy.ErrorCode == "channel_busy" {
+			if errors.Is(err, service.ErrLogicalChannelSelectionNoAvailableMembers) && (lastBusy.ErrorCode == "channel_busy" || channelProbePolicyOutcomeSkipped(lastBusy)) {
 				return lastBusy, nil
 			}
 			return channelStatusProbeOutcome{}, err
@@ -451,7 +457,7 @@ func executeChannelStatusProbeModelWithMemberFailover(
 		if outcome.ActualChannelId <= 0 {
 			outcome.ActualChannelId = selected.Id
 		}
-		if outcome.ErrorCode != "channel_busy" {
+		if outcome.ErrorCode != "channel_busy" && !channelProbePolicyOutcomeSkipped(outcome) {
 			return outcome, nil
 		}
 		lastBusy = outcome
@@ -509,6 +515,9 @@ func executeChannelStatusProbeModelWithEndpoint(
 		}
 	}
 	probeCtx := withChannelStatusProbeTestContext(ctx)
+	if err := service.CheckChannelProbeAllowed(probeCtx, channel.Id); err != nil {
+		return channelProbePolicySkippedOutcome(err)
+	}
 	lease, acquired, _, err := service.AcquireChannelConcurrency(probeCtx, channel.Id)
 	if err != nil {
 		return channelStatusProbeOutcome{
@@ -523,6 +532,10 @@ func executeChannelStatusProbeModelWithEndpoint(
 		}
 	}
 	probeResult := testChannel(probeCtx, channel, testUserId, modelName, endpointType, true)
+	if service.IsChannelProbePolicySkip(probeResult.localErr) {
+		lease.Release()
+		return channelProbePolicySkippedOutcome(probeResult.localErr)
+	}
 	settledCostNanoCNY := service.ChannelDailyCostAttemptSettledCost(probeResult.context, channel.Id)
 	lease.Release()
 	if probeResult.context != nil && probeResult.context.GetBool(model.ChannelMonitorStatusProbeLogKey) &&

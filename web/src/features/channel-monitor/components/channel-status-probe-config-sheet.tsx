@@ -173,7 +173,11 @@ export function ChannelStatusProbeConfigSheet(
             render={({ field }) => (
               <FormItem className='grid grid-cols-[1fr_auto] items-center gap-x-4 rounded-lg border px-3 py-2.5'>
                 <div>
-                  <FormLabel>启用周期探测</FormLabel>
+                  <FormLabel>
+                    {props.channel.auto_probe_disabled
+                      ? '启用周期监测（业务采样）'
+                      : '启用周期探测'}
+                  </FormLabel>
                   <FormDescription>
                     关闭后仍保留配置和历史，也可以手动立即检测
                   </FormDescription>
@@ -183,7 +187,11 @@ export function ChannelStatusProbeConfigSheet(
                     checked={field.value}
                     onCheckedChange={field.onChange}
                     disabled={mutation.isPending}
-                    aria-label='启用周期探测'
+                    aria-label={
+                      props.channel.auto_probe_disabled
+                        ? '启用周期监测（业务采样）'
+                        : '启用周期探测'
+                    }
                   />
                 </FormControl>
                 <FormMessage className='col-span-2' />

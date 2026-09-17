@@ -18,6 +18,7 @@ import (
 
 func closeChannelModelDetectionLogicalGroupTestDB(t *testing.T, db *gorm.DB) {
 	t.Helper()
+	require.NoError(t, db.AutoMigrate(&model.ChannelRatioMonitor{}))
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() {

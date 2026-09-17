@@ -23,6 +23,7 @@ func setupChannelModelDetectionSchedulerTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&model.Channel{},
+		&model.ChannelRatioMonitor{},
 		&model.ChannelModelDetectionGlobalConfig{},
 		&model.ChannelModelDetectionConfig{},
 		&model.ChannelModelDetectionTarget{},

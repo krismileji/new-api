@@ -29,6 +29,7 @@ const (
 	ChannelMonitorEventSourceSmartProbe     ChannelMonitorEventSource = "smart_probe"
 	ChannelMonitorEventSourceManualTest     ChannelMonitorEventSource = "manual_test"
 	ChannelMonitorEventSourceModelDetection ChannelMonitorEventSource = "model_detection"
+	ChannelMonitorEventSourceLocalResponse  ChannelMonitorEventSource = "local_response"
 )
 
 type ChannelMonitorEventOutcome string
@@ -60,12 +61,14 @@ const (
 // projections. Optional scalar measurements use pointers so an explicit zero
 // remains distinguishable from an absent measurement.
 type ChannelMonitorEvent struct {
-	EventId       string `json:"event_id"`
-	EventSequence uint64 `json:"event_sequence"`
-	SchemaVersion int    `json:"schema_version"`
-	OccurredAt    int64  `json:"occurred_at"`
-	CreatedAt     int64  `json:"created_at"`
-	ProcessedAt   int64  `json:"processed_at,omitempty"`
+	EventId            string                 `json:"event_id"`
+	EventSequence      uint64                 `json:"event_sequence"`
+	SchemaVersion      int                    `json:"schema_version"`
+	OccurredAt         int64                  `json:"occurred_at"`
+	CreatedAt          int64                  `json:"created_at"`
+	ProcessedAt        int64                  `json:"processed_at,omitempty"`
+	PassiveConfigReady bool                   `json:"passive_config_ready,omitempty"`
+	PassiveTargets     []ChannelPassiveTarget `json:"passive_targets,omitempty"`
 
 	ChannelId       int                                `json:"channel_id"`
 	UserId          int                                `json:"user_id,omitempty"`
@@ -186,6 +189,12 @@ func (event ChannelMonitorEvent) Validate() error {
 	if !event.Source.valid() {
 		return fmt.Errorf("渠道监控事件来源无效: %s", event.Source)
 	}
+	if len(event.PassiveTargets) > 128 {
+		return errors.New("业务周期监测事件目标数量超限")
+	}
+	if event.Source == ChannelMonitorEventSourceLocalResponse && (event.RequestDispatched || event.SchedulingEligible || event.RuntimeProtectionEligible || event.SettledCostNanoCNY != 0 || event.UnresolvedCostNanoCNY != 0) {
+		return errors.New("本地响应不能产生上游请求、费用或健康样本")
+	}
 	if !event.Outcome.valid() {
 		return fmt.Errorf("渠道监控事件结果无效: %s", event.Outcome)
 	}
@@ -255,6 +264,7 @@ func (event ChannelMonitorEvent) Marshal() ([]byte, error) {
 // Clone freezes pointer-backed optional measurements before an event crosses
 // the asynchronous queue boundary.
 func (event ChannelMonitorEvent) Clone() ChannelMonitorEvent {
+	event.PassiveTargets = append([]ChannelPassiveTarget(nil), event.PassiveTargets...)
 	if event.StatusCode != nil {
 		value := *event.StatusCode
 		event.StatusCode = &value
@@ -315,7 +325,8 @@ func (source ChannelMonitorEventSource) valid() bool {
 		ChannelMonitorEventSourceGroupProbe,
 		ChannelMonitorEventSourceSmartProbe,
 		ChannelMonitorEventSourceManualTest,
-		ChannelMonitorEventSourceModelDetection:
+		ChannelMonitorEventSourceModelDetection,
+		ChannelMonitorEventSourceLocalResponse:
 		return true
 	default:
 		return false

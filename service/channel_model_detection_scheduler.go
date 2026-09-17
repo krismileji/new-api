@@ -703,6 +703,38 @@ func createChannelModelDetectionScheduledRuns(tx *gorm.DB, global model.ChannelM
 				return nil, err
 			}
 		}
+		if run.Trigger == model.ChannelModelDetectionTriggerScheduled {
+			if run.LogicalRevision > 0 {
+				members, err := run.LogicalMemberSnapshot()
+				if err != nil {
+					return nil, err
+				}
+				allowed := make([]model.ChannelModelDetectionMemberSnapshot, 0, len(members))
+				for _, member := range members {
+					policy, err := model.GetChannelProbePolicyWithDB(tx.Statement.Context, tx, member.ChannelID)
+					if err != nil {
+						return nil, err
+					}
+					if !policy.AutoProbeDisabled {
+						allowed = append(allowed, member)
+					}
+				}
+				if len(allowed) == 0 {
+					continue
+				}
+				if err := run.SetLogicalMemberSnapshot(allowed); err != nil {
+					return nil, err
+				}
+			} else {
+				policy, err := model.GetChannelProbePolicyWithDB(tx.Statement.Context, tx, ownerID)
+				if err != nil {
+					return nil, err
+				}
+				if policy.AutoProbeDisabled {
+					continue
+				}
+			}
+		}
 		created, err := model.CreateChannelModelDetectionRun(tx, &run)
 		if err != nil {
 			return nil, err

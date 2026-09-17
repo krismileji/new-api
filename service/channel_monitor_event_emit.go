@@ -44,6 +44,9 @@ func EmitChannelMonitorSuccessEvent(
 	}
 	performanceTiming := BuildChannelMonitorPerformanceTiming(ctx, relayInfo, outputTokens, now)
 	source := channelMonitorEventSource(ctx)
+	if source == model.ChannelMonitorEventSourceLocalResponse {
+		return ChannelMonitorEventPublishStatusInvalid
+	}
 	if relayInfo.IsChannelTest && source != model.ChannelMonitorEventSourceModelDetection {
 		return ChannelMonitorEventPublishStatusInvalid
 	}
@@ -201,6 +204,9 @@ func channelMonitorEventSchedulingEligible(
 	ctx *gin.Context,
 	source model.ChannelMonitorEventSource,
 ) bool {
+	if source == model.ChannelMonitorEventSourceLocalResponse {
+		return false
+	}
 	if source == model.ChannelMonitorEventSourceBusiness || source == model.ChannelMonitorEventSourceSmartProbe {
 		return true
 	}
@@ -208,6 +214,9 @@ func channelMonitorEventSchedulingEligible(
 }
 
 func channelMonitorEventSource(ctx *gin.Context) model.ChannelMonitorEventSource {
+	if ctx != nil && ctx.GetBool(ChannelLocalResponseContextKey) {
+		return model.ChannelMonitorEventSourceLocalResponse
+	}
 	if channelModelDetectionTransportStateFromContext(ctx) != nil {
 		return model.ChannelMonitorEventSourceModelDetection
 	}

@@ -59,6 +59,8 @@ type channelGroupMonitorConfigRequest struct {
 }
 
 type channelGroupMonitorItemResponse struct {
+	Passive            *channelGroupPassiveResponse        `json:"passive,omitempty"`
+	PassiveMembers     bool                                `json:"passive_members,omitempty"`
 	Group              string                              `json:"group"`
 	Category           string                              `json:"category,omitempty"`
 	Initial            string                              `json:"initial"`
@@ -104,6 +106,8 @@ type channelGroupMonitorBucketResponse struct {
 // pricingGroupMonitorItemResponse is the public subset of monitor state.
 // Administrative configuration and diagnostic fields remain on the admin API only.
 type pricingGroupMonitorItemResponse struct {
+	Passive            *channelGroupPassiveResponse        `json:"passive,omitempty"`
+	PassiveMembers     bool                                `json:"passive_members,omitempty"`
 	Group              string                              `json:"group"`
 	Category           string                              `json:"category,omitempty"`
 	Initial            string                              `json:"initial"`
@@ -581,6 +585,7 @@ func buildChannelGroupMonitorItems(
 		}
 		items = append(items, item)
 	}
+	applyChannelGroupPassiveOverview(ctx, items)
 	return items, nil
 }
 
@@ -850,6 +855,7 @@ func GetPricingGroupMonitor(c *gin.Context) {
 			status = channelGroupMonitorHealthUnavailable
 		}
 		publicItems = append(publicItems, pricingGroupMonitorItemResponse{
+			Passive: item.Passive, PassiveMembers: item.PassiveMembers,
 			Group:              item.Group,
 			Category:           item.Category,
 			Initial:            item.Initial,

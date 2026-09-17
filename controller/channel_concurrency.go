@@ -140,6 +140,9 @@ func acquireRelayChannelConcurrency(
 	waitDeadline := time.Now().Add(waitDuration)
 	for {
 		if channel != nil {
+			if handled, localErr := tryChannelSmallInputResponse(c, info, channel.Id); handled || localErr != nil {
+				return channel, nil, localErr
+			}
 			lease, acquired, status, err := service.AcquireChannelConcurrency(c.Request.Context(), channel.Id)
 			if err != nil {
 				return nil, nil, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())

@@ -41,6 +41,7 @@ var (
 // ChannelModelDetectorTokenSpec is the immutable binding requested by a
 // worker. The store always generates the nonce itself.
 type ChannelModelDetectorTokenSpec struct {
+	Trigger          string
 	RunID            string
 	TargetID         int64
 	ExecutionID      int64
@@ -60,6 +61,7 @@ type ChannelModelDetectorTokenSpec struct {
 // not embedded in the bearer token, so a holder cannot inspect or alter the
 // selected channel, target, or upstream model.
 type ChannelModelDetectorTokenClaims struct {
+	Trigger          string                                      `json:"-"`
 	RunID            string                                      `json:"run_id"`
 	TargetID         int64                                       `json:"target_id"`
 	ExecutionID      int64                                       `json:"execution_id"`
@@ -184,6 +186,7 @@ func (store *ChannelModelDetectorTokenStore) Issue(spec ChannelModelDetectorToke
 	}
 	nonce := base64.RawURLEncoding.EncodeToString(nonceBytes)
 	claims := ChannelModelDetectorTokenClaims{
+		Trigger:          normalizedSpec.Trigger,
 		RunID:            normalizedSpec.RunID,
 		TargetID:         normalizedSpec.TargetID,
 		ExecutionID:      normalizedSpec.ExecutionID,

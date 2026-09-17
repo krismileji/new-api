@@ -187,6 +187,12 @@ func channelModelDetectionAttemptSelection(ctx context.Context, authorization Ch
 				reason = "model_unsupported"
 			}
 		}
+		if available && claims.Trigger == model.ChannelModelDetectionTriggerScheduled {
+			if err := CheckChannelProbeAllowed(WithChannelProbeTrigger(ctx, claims.Trigger), channel.Id); err != nil {
+				available = false
+				reason = "auto_probe_disabled"
+			}
+		}
 		if available {
 			if monitor, ok := monitorByChannel[member.ChannelID]; ok && !monitor.UpstreamBalanceSyncDisabled && monitor.BalanceAutoDisableThreshold != nil && monitor.UpstreamBalance != nil {
 				threshold := *monitor.BalanceAutoDisableThreshold
@@ -280,6 +286,9 @@ func (relay *ChannelModelDetectorRelay) Execute(ctx context.Context, request Cha
 	if detectorRequestID == "" || len(detectorRequestID) > 256 {
 		return ChannelModelDetectorRelayResult{}, ErrChannelModelDetectorRelayInvalidRequest
 	}
+	if err := relay.tokens.CheckProbePolicy(ctx, request.BearerToken); err != nil {
+		return ChannelModelDetectorRelayResult{}, err
+	}
 	authorization, err := relay.tokens.AuthorizeAttempt(request.BearerToken, requestedModel, detectorRequestID)
 	if err != nil {
 		return ChannelModelDetectorRelayResult{}, err
@@ -301,6 +310,9 @@ func (relay *ChannelModelDetectorRelay) Execute(ctx context.Context, request Cha
 	selectedChannelID := authorization.Claims.ChannelID
 	var lease channelModelDetectorConcurrencyLease
 	if authorization.Claims.LogicalRevision <= 0 {
+		if err := CheckChannelProbeAllowed(WithChannelProbeTrigger(ctx, authorization.Claims.Trigger), selectedChannelID); err != nil {
+			return ChannelModelDetectorRelayResult{Authorization: authorization}, err
+		}
 		var acquired bool
 		lease, acquired, _, err = relay.acquireConcurrency(ctx, selectedChannelID)
 		if err != nil {

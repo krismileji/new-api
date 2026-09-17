@@ -154,6 +154,8 @@ func writeChannelModelDetectorRelayExecutionError(c *gin.Context, err error) {
 		statusCode = http.StatusTooManyRequests
 	case errors.Is(err, service.ErrChannelModelDetectorRelayUnavailable):
 		statusCode, message = http.StatusServiceUnavailable, "模型检测固定渠道暂不可用"
+	case service.IsChannelProbePolicySkip(err):
+		statusCode, message = http.StatusForbidden, "渠道已禁止自动探测或探测策略暂不可用"
 	}
 	writeChannelModelDetectorRelayError(c, statusCode, message)
 }

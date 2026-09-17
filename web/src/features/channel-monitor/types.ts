@@ -17,6 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 export type ChannelMonitorItem = {
+  auto_probe_disabled?: boolean
+  small_input_response_enabled?: boolean
+  probe_policy_revision?: number
   id: number
   name: string
   type: number
@@ -1540,6 +1543,7 @@ export type ChannelStatusProbeModelStatus = {
 }
 
 export type ChannelStatusProbeChannel = {
+  auto_probe_disabled?: boolean
   id: number
   name: string
   type: number
@@ -1615,6 +1619,15 @@ export type ChannelMonitorApiResponse<T> = {
   message: string
   data: T
   code?: string
+}
+
+export type ChannelProbePolicy = {
+  auto_probe_disabled: boolean
+  small_input_response_enabled: boolean
+  small_input_threshold_tokens: number
+  small_input_response_text: string
+  probe_policy_revision: number
+  probe_policy_updated_at: number
 }
 
 export type GroupMonitorItem = {

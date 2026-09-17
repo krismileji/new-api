@@ -60,6 +60,10 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 	if err := db.WithContext(ctx).Where("run_id = ?", execution.RunID).First(&run).Error; err != nil {
 		return result, ErrChannelModelDetectorFixedChannelUnavailable
 	}
+	ctx = service.WithChannelProbeTrigger(ctx, run.Trigger)
+	if err := service.CheckChannelProbeAllowedWithDB(ctx, db, execution.ChannelID); err != nil {
+		return result, err
+	}
 	if run.LogicalChannelID > 0 && run.LogicalRevision > 0 {
 		members, snapshotErr := run.LogicalMemberSnapshot()
 		if snapshotErr != nil {
@@ -266,6 +270,9 @@ func (executor *ChannelModelDetectorFixedExecutor) ExecuteChannelModelDetectorAt
 			}
 			return result, types.NewError(err, types.ErrorCodeChannelParamOverrideInvalid)
 		}
+	}
+	if err := service.CheckChannelProbeAllowedWithDB(ctx, db, execution.ChannelID); err != nil {
+		return result, err
 	}
 	requestBody, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 	if err != nil {

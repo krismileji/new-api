@@ -445,6 +445,7 @@ func migrateDB() error {
 		&SystemTask{},
 		&SystemTaskLock{},
 		&ChannelRatioMonitor{},
+		&ChannelLocalResponseRefund{},
 		&ChannelMonitorVariableGroup{},
 		&ChannelSmartScheduleRouteState{},
 		&ChannelLogicalSmartScheduleRouteState{},

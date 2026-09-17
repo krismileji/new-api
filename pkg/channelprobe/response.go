@@ -431,6 +431,9 @@ func serveChannelProbeResponse(
 				},
 			},
 		}
+		if config.Truncated {
+			response.Choices[0].FinishReason = "length"
+		}
 		data, err := common.Marshal(response)
 		if err == nil {
 			c.Data(http.StatusOK, "application/json; charset=utf-8", data)
@@ -579,6 +582,7 @@ func writeChannelProbeResponsesStream(c *gin.Context, response *channelProbeResp
 	inProgressResponse.CompletedAt = nil
 	inProgressResponse.Output = []channelProbeResponsesStreamOutput{}
 	inProgressResponse.Usage = nil
+	inProgressResponse.IncompleteDetails = nil
 	emptyPart := channelProbeResponsesStreamOutputContent{
 		Type:        "output_text",
 		Text:        "",
@@ -636,7 +640,7 @@ func writeChannelProbeResponsesStream(c *gin.Context, response *channelProbeResp
 			OutputIndex:    &outputIndex,
 			Item:           &completedOutput,
 		},
-		{Type: "response.completed", SequenceNumber: 8, Response: response},
+		{Type: "response." + response.Status, SequenceNumber: 8, Response: response},
 	}
 	for _, event := range events {
 		data, err := common.Marshal(event)
@@ -670,7 +674,11 @@ func writeChannelProbeChatStream(
 			},
 		}},
 	}
-	stop := helper.GenerateStopResponse(responseID, createdAt, request.Model, "stop")
+	finishReason := "stop"
+	if config.Truncated {
+		finishReason = "length"
+	}
+	stop := helper.GenerateStopResponse(responseID, createdAt, request.Model, finishReason)
 	for _, chunk := range []*dto.ChatCompletionsStreamResponse{start, content, stop} {
 		if helper.ObjectData(c, chunk) != nil {
 			return

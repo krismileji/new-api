@@ -73,6 +73,7 @@ func TestChannelTestUsageLogFollowsProbeResponseSetting(t *testing.T) {
 		Models:  "gpt-3.5-turbo",
 		Group:   "default",
 	}
+	require.NoError(t, db.Create(channel).Error)
 
 	tests := []struct {
 		name            string
@@ -194,6 +195,7 @@ func TestChannelTestUsageLogFollowsProbeResponseSetting(t *testing.T) {
 			Name: "health check failure", Status: common.ChannelStatusEnabled,
 			BaseURL: common.GetPointer(failedUpstream.URL), Models: "gpt-3.5-turbo", Group: "default",
 		}
+		require.NoError(t, db.Create(failedChannel).Error)
 
 		summary := testChannelForHealthCheck(context.Background(), failedChannel, user.Id, false, 10_000)
 

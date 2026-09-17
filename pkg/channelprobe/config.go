@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 )
 
 const (
@@ -33,11 +34,11 @@ const (
 	DefaultOutputTokens     = 14
 
 	MaxMatchInputLength   = 4_096
-	MaxResponseTextLength = 16_384
+	MaxResponseTextLength = constant.ChannelProbeMaxResponseTextLength
 	MaxAllowedIPsLength   = 4_096
 	MaxAllowedIPCount     = 64
 	MaxDelayMs            = 600_000
-	MaxTokenCount         = 1_000_000
+	MaxTokenCount         = constant.ChannelProbeMaxInputTokens
 )
 
 type ResponseConfig struct {
@@ -51,6 +52,7 @@ type ResponseConfig struct {
 	CacheWriteTokens int
 	CachedTokens     int
 	OutputTokens     int
+	Truncated        bool
 }
 
 func DefaultResponseConfig() ResponseConfig {

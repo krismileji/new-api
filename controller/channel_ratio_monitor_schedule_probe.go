@@ -28,6 +28,7 @@ type channelSmartScheduleProbeTestOptions struct {
 type channelSmartScheduleProbeTestContextKey struct{}
 
 func withChannelSmartScheduleProbeTestContext(ctx context.Context, group string) context.Context {
+	ctx = service.WithChannelProbeTrigger(ctx, model.ChannelStatusProbeTriggerScheduled)
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -509,7 +510,8 @@ func runChannelSmartScheduleProbeOnce(
 			if eligibilityErr != nil {
 				return result, eligibilityErr
 			}
-			if eligible && channelSmartScheduleSupportsTextProbe(currentChannel, currentRoute.Model) {
+			if eligible && channelSmartScheduleSupportsTextProbe(currentChannel, currentRoute.Model) &&
+				service.CheckChannelProbeAllowed(service.WithChannelProbeTrigger(ctx, model.ChannelStatusProbeTriggerScheduled), currentRoute.ChannelId) == nil {
 				eligibleByChannel[currentRoute.ChannelId] = eligibleProbeMember{
 					route: currentRoute, channel: currentChannel,
 				}

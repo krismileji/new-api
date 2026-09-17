@@ -128,6 +128,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := service.CheckChannelProbeAllowed(ctx, channel.Id); err != nil {
+		return testResult{localErr: err}
+	}
 	tik := time.Now()
 	var unsupportedTestChannelTypes = []int{
 		constant.ChannelTypeMidjourney,
@@ -539,6 +542,9 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 
+	if err := service.CheckChannelProbeAllowed(ctx, channel.Id); err != nil {
+		return testResult{context: c, localErr: err}
+	}
 	requestBody := bytes.NewBuffer(jsonData)
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
 	service.BeginChannelDailyCostAttempt(c, channel.Id)
@@ -1154,9 +1160,16 @@ type channelTestSummary struct {
 
 func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, testUserID int, allowDisable bool, disableThreshold int64) channelTestSummary {
 	summary := channelTestSummary{}
+	ctx = channelHealthTestTrigger(ctx)
+	if service.CheckChannelProbeAllowed(ctx, channel.Id) != nil {
+		return summary
+	}
 	isChannelEnabled := channel.Status == common.ChannelStatusEnabled
 	tik := time.Now()
 	result := testChannel(withChannelHealthCheckTestContext(ctx), channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel))
+	if service.IsChannelProbePolicySkip(result.localErr) {
+		return summary
+	}
 	milliseconds := time.Since(tik).Milliseconds()
 	if ctx.Err() != nil {
 		if result.localErr != nil || result.newAPIError != nil {
@@ -1380,8 +1393,9 @@ func selectChannelsForAutomaticTest(channels []*model.Channel, mode string) []*m
 // rejected so the caller does not mistake a scheduled run for this manual one.
 func TestAllChannels(c *gin.Context) {
 	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeChannelTest, channelTestTaskPayload{
-		Mode:   operation_setting.ChannelTestModeScheduledAll,
-		Notify: true,
+		Trigger: model.ChannelStatusProbeTriggerManual,
+		Mode:    operation_setting.ChannelTestModeScheduledAll,
+		Notify:  true,
 	})
 	if err != nil {
 		common.ApiError(c, err)

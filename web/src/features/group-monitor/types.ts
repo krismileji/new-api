@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { ChannelPassivePeriod } from '@/features/channel-monitor/types-passive'
+
 export type ChannelGroupMonitorDisplayUnit = 'minute' | 'hour' | 'day'
 
 export type ChannelGroupMonitorStatus =
@@ -88,6 +90,13 @@ export type ChannelGroupMonitorSettings = {
 }
 
 export type ChannelGroupMonitorItem = {
+  passive?: {
+    source: 'redis_business'
+    scope: 'group_final'
+    interval_seconds: number
+    period: ChannelPassivePeriod
+  }
+  passive_members?: boolean
   group: string
   category?: string
   initial: string
@@ -104,6 +113,8 @@ export type ChannelGroupMonitorItem = {
 
 export type PricingGroupMonitorItem = Pick<
   ChannelGroupMonitorItem,
+  | 'passive'
+  | 'passive_members'
   | 'group'
   | 'category'
   | 'initial'

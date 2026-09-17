@@ -198,6 +198,9 @@ func (aggregator *ChannelMonitorRedisLogicalAggregator) HandleChannelMonitorEven
 	if err := aggregator.sharedProjection.HandleChannelMonitorEvents(ctx, events); err != nil {
 		return err
 	}
+	if err := projectChannelPassiveEvents(ctx, aggregator.client, events, time.Now().Unix()); err != nil {
+		return err
+	}
 
 	eligibleEvents := make([]model.ChannelMonitorEvent, 0, len(events))
 	seenEventIDs := make(map[string]struct{}, len(events))

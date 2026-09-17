@@ -41,6 +41,7 @@ import {
   ChannelMonitorStatusWindowDetails,
   type ChannelMonitorStatusWindowPresentation,
 } from '@/features/channel-monitor/components/channel-monitor-status-window'
+import { ChannelPassivePeriodMetrics } from '@/features/channel-monitor/components/channel-passive-monitor-panel'
 import { formatMonitorRatio } from '@/features/channel-monitor/lib/format'
 import { formatChannelMonitorStatusWindowRange } from '@/features/channel-monitor/lib/status-window'
 import { formatTimestampToDate } from '@/lib/format'
@@ -446,7 +447,7 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                                 presentation.dot
                               )}
                             />
-                            {presentation.label}
+                            {item.passive ? '业务周期监测' : presentation.label}
                           </Badge>
                         </div>
 
@@ -502,6 +503,26 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                           ) : null}
                         </dl>
                         <div className='col-span-3 min-w-0 lg:col-span-1'>
+                          {item.passive && (
+                            <div className='mb-3'>
+                              <p className='mb-2 text-xs'>
+                                Redis 业务数据 · 每{' '}
+                                {item.passive.interval_seconds} 秒 ·
+                                最终请求成功率
+                              </p>
+                              <ChannelPassivePeriodMetrics
+                                period={item.passive.period}
+                              />
+                              <p className='text-muted-foreground mt-3 text-xs'>
+                                下方为实际探测历史，手动检测结果保留在此。
+                              </p>
+                            </div>
+                          )}
+                          {!item.passive && item.passive_members && (
+                            <p className='mb-2 text-xs'>
+                              含禁自动探测成员，成员业务周期数据请查看渠道监控；下方为实际探测结果。
+                            </p>
+                          )}
                           <div className='text-muted-foreground mb-1.5 flex items-center justify-between gap-2 text-[11px] lg:hidden'>
                             <span>
                               近 {props.result.display_value}{' '}

@@ -50,6 +50,7 @@ type channelMonitorEventWriter struct {
 	cancelRun    context.CancelFunc
 	stopCh       chan struct{}
 	doneCh       chan struct{}
+	passiveDone  chan struct{}
 	stopOnce     sync.Once
 	runOnce      sync.Once
 	workerWg     sync.WaitGroup
@@ -109,6 +110,7 @@ func StartChannelMonitorEventWriter() (*channelMonitorEventWriter, error) {
 			OverflowPublishTimeout: channelMonitorEventWriterOverflowTimeout,
 		},
 	)
+	writer.passiveDone = make(chan struct{})
 	channelMonitorEventWriterState.Lock()
 	previous := channelMonitorEventWriterState.writer
 	channelMonitorEventWriterState.writer = writer
@@ -117,6 +119,10 @@ func StartChannelMonitorEventWriter() (*channelMonitorEventWriter, error) {
 		_ = previous.Stop(context.Background())
 	}
 	writer.startOutbox()
+	go func() {
+		defer close(writer.passiveDone)
+		runChannelPassiveMonitor(writer.runCtx)
+	}()
 	go writer.run()
 	return writer, nil
 }
@@ -259,6 +265,7 @@ func newChannelMonitorEventWriter(
 // visible to callers so they can be counted without reintroducing a fallback.
 func EnqueueChannelMonitorEvent(event model.ChannelMonitorEvent) (ChannelMonitorEventPublishStatus, error) {
 	event = event.Clone()
+	captureChannelPassiveTargets(&event)
 	payload, err := event.Marshal()
 	if err != nil {
 		channelMonitorEventPublisherStatsState.invalidEvents.Add(1)
@@ -320,6 +327,9 @@ func (writer *channelMonitorEventWriter) run() {
 		}
 		writer.workerWg.Wait()
 		writer.cancelRun()
+		if writer.passiveDone != nil {
+			<-writer.passiveDone
+		}
 		close(writer.doneCh)
 	})
 }

@@ -475,8 +475,13 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
           </div>
           <div className='mt-1 flex min-w-0 items-center gap-2'>
             <Badge variant={presentation.badge} className='px-1.5'>
-              {presentation.label}
+              {props.channel.auto_probe_disabled
+                ? '实际检测记录'
+                : presentation.label}
             </Badge>
+            {props.channel.auto_probe_disabled && (
+              <Badge variant='outline'>自动监测使用业务采样</Badge>
+            )}
             {props.channel.running && <Badge variant='outline'>检测中</Badge>}
             {!props.channel.running && config?.manual_request_id && (
               <Badge variant='outline'>排队中</Badge>
@@ -500,16 +505,15 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
                     size='icon-sm'
                     disabled={props.actionPending}
                     onClick={() => props.onToggleEnabled(props.channel)}
-                    aria-label={
-                      config.enabled ? '暂停周期探测' : '恢复周期探测'
-                    }
+                    aria-label={`${config.enabled ? '暂停' : '恢复'}${props.channel.auto_probe_disabled ? '周期监测' : '周期探测'}`}
                   />
                 }
               >
                 <HugeiconsIcon icon={config.enabled ? PauseIcon : PlayIcon} />
               </TooltipTrigger>
               <TooltipContent>
-                {config.enabled ? '暂停周期探测' : '恢复周期探测'}
+                {config.enabled ? '暂停' : '恢复'}
+                {props.channel.auto_probe_disabled ? '周期监测' : '周期探测'}
               </TooltipContent>
             </Tooltip>
           )}
@@ -656,7 +660,9 @@ export const ChannelStatusProbeCard = memo(function ChannelStatusProbeCard(
             displayValue={displayValue}
             displayUnit={displayUnit}
             displayRangeLabel={displayRangeLabelValue}
-            automaticProbeEnabled={Boolean(config?.enabled)}
+            automaticProbeEnabled={Boolean(
+              config?.enabled && !props.channel.auto_probe_disabled
+            )}
           />
         </div>
       </CardContent>

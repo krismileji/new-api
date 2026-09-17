@@ -259,7 +259,8 @@ func (runtime *channelModelDetectionRuntime) issueCredential(ctx context.Context
 		return "", "", service.ErrChannelModelDetectorRelayUnavailable
 	}
 	credential, err := runtime.tokens.Issue(service.ChannelModelDetectorTokenSpec{
-		RunID: run.RunId, TargetID: execution.TargetId, ExecutionID: execution.Id,
+		Trigger: run.Trigger,
+		RunID:   run.RunId, TargetID: execution.TargetId, ExecutionID: execution.Id,
 		ChannelID: execution.ChannelId, RequestModel: execution.RequestModel,
 		LogicalChannelID: run.LogicalChannelID, LogicalRevision: run.LogicalRevision,
 		LogicalMembers: logicalMembers,

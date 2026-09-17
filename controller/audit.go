@@ -55,6 +55,7 @@ var auditContentTemplates = map[string]string{
 // channelMonitorAuditContentTemplates 是自定义渠道监控功能的固定中文日志模板。
 // 该页面仅供内部使用，不跟随系统语言切换。
 var channelMonitorAuditContentTemplates = map[string]string{
+	"channel.probe_policy_update":                            "修改渠道 ${channel_label} 探测策略",
 	"channel.status_update":                                  "已将渠道 ${channel_label} 的状态更新为 ${status}",
 	"channel.status_update_batch":                            "已将 ${count} 个渠道的状态更新为 ${status}",
 	"channel.status_changed":                                 "已${status_label}渠道 ${channel_label}",

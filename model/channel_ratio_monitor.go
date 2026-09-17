@@ -70,6 +70,12 @@ type ChannelRatioMonitor struct {
 	ConcurrencyLimit            int      `json:"concurrency_limit"`
 	RPMLimit                    int      `json:"rpm_limit"`
 	ConcurrencyRevision         int64    `json:"-" gorm:"bigint"`
+	AutoProbeDisabled           bool     `json:"auto_probe_disabled"`
+	SmallInputResponseEnabled   bool     `json:"small_input_response_enabled"`
+	SmallInputThresholdTokens   int      `json:"small_input_threshold_tokens"`
+	SmallInputResponseText      string   `json:"small_input_response_text" gorm:"type:text"`
+	ProbePolicyRevision         int64    `json:"probe_policy_revision" gorm:"bigint"`
+	ProbePolicyUpdatedAt        int64    `json:"probe_policy_updated_at" gorm:"bigint"`
 }
 
 type ChannelConcurrencyConfig struct {
@@ -160,7 +166,7 @@ func GetChannelRatioMonitorsForStatusProbeOverview(ctx context.Context, db *gorm
 	if channelIDs != nil && len(channelIDs) == 0 {
 		return []ChannelRatioMonitor{}, nil
 	}
-	query := queryDB.Select("channel_id", "ratio", "remark", "updated_time", "cost_conversion")
+	query := queryDB.Select("channel_id", "ratio", "remark", "updated_time", "cost_conversion", "auto_probe_disabled")
 	if channelIDs != nil {
 		query = query.Where("channel_id IN ?", channelIDs)
 	}

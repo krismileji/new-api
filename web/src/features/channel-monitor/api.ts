@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { api, type ApiRequestConfig } from '@/lib/api'
 
 import type {
+  ChannelProbePolicy,
   ChannelMonitorApplyGroupResult,
   ChannelMonitorApiResponse,
   ChannelMonitorConcurrencyOverview,
@@ -86,6 +87,26 @@ function ensureChannelMonitorSuccess<T>(
     throw new Error(response.message || '渠道监控请求失败')
   }
   return response
+}
+
+export async function getChannelProbePolicy(channelId: number) {
+  const response = await api.get<ChannelMonitorApiResponse<ChannelProbePolicy>>(
+    `/api/channel_monitor/channel/${channelId}/probe-policy`,
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data).data
+}
+
+export async function updateChannelProbePolicy(request: {
+  channelId: number
+  policy: ChannelProbePolicy
+}) {
+  const response = await api.put<ChannelMonitorApiResponse<ChannelProbePolicy>>(
+    `/api/channel_monitor/channel/${request.channelId}/probe-policy`,
+    request.policy,
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data).data
 }
 
 function channelMonitorAnalyticsParams(request: ChannelMonitorAnalyticsQuery) {

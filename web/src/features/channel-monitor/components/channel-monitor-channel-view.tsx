@@ -96,6 +96,7 @@ type ChannelMonitorChannelViewProps = {
   onToggleStatus: (channel: ChannelMonitorItem) => void
   onTestConnection: (channel: ChannelMonitorItem) => void
   onEditConcurrency: (channel: ChannelMonitorItem) => void
+  onEditProbePolicy?: (channel: ChannelMonitorItem) => void
   onEditGroups: (channel: ChannelMonitorItem) => void
   onConfigureUpstream: (channel: ChannelMonitorItem) => void
   onViewHistory: (channel: ChannelMonitorItem) => void
@@ -343,6 +344,14 @@ export function ChannelMonitorChannelView(
                       <span className='font-medium' title={channel.name}>
                         {channel.name}
                       </span>
+                      {channel.auto_probe_disabled && (
+                        <span className='text-muted-foreground text-xs'>
+                          自动探测已禁用
+                          {channel.small_input_response_enabled
+                            ? ' · 小输入本地响应'
+                            : ''}
+                        </span>
+                      )}
                       {!channelEnabled && (
                         <ChannelMonitorStatusBadge
                           status={channel.status}
@@ -581,6 +590,13 @@ export function ChannelMonitorChannelView(
                       icon={GaugeIcon}
                       onClick={() => props.onEditConcurrency(channel)}
                     />
+                    {props.onEditProbePolicy && (
+                      <ChannelActionButton
+                        label='探测策略'
+                        icon={Settings02Icon}
+                        onClick={() => props.onEditProbePolicy?.(channel)}
+                      />
+                    )}
                     <ChannelActionButton
                       label='更改关联分组'
                       icon={Layers01Icon}

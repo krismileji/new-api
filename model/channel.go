@@ -548,6 +548,11 @@ func (channel *Channel) GetStatusCodeMapping() string {
 }
 
 func (channel *Channel) Insert() error {
+	return channel.InsertWithTransactionHook(nil)
+}
+
+// InsertWithTransactionHook keeps downstream dependent records atomic with creation.
+func (channel *Channel) InsertWithTransactionHook(hook func(*gorm.DB) error) error {
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
 
@@ -557,6 +562,11 @@ func (channel *Channel) Insert() error {
 		}
 		if err := channel.AddAbilities(tx); err != nil {
 			return err
+		}
+		if hook != nil {
+			if err := hook(tx); err != nil {
+				return err
+			}
 		}
 		return reapplyChannelSmartScheduleRoutePrimariesTx(
 			tx,

@@ -49,7 +49,9 @@ func (channelTestHandler) Interval() time.Duration {
 	return time.Duration(minutes * float64(time.Minute))
 }
 
-func (channelTestHandler) NewPayload() any { return nil }
+func (channelTestHandler) NewPayload() any {
+	return channelTestTaskPayload{Trigger: model.ChannelStatusProbeTriggerScheduled}
+}
 
 // channelTestTaskPayload controls one channel_test run. A nil/empty payload is a
 // scheduled run, which uses the configured monitor ChannelTestMode and does not
@@ -57,8 +59,9 @@ func (channelTestHandler) NewPayload() any { return nil }
 // Notify=true to reproduce the legacy manual behavior (test every channel and
 // notify root on completion).
 type channelTestTaskPayload struct {
-	Mode   string `json:"mode,omitempty"`
-	Notify bool   `json:"notify,omitempty"`
+	Trigger string `json:"trigger,omitempty"`
+	Mode    string `json:"mode,omitempty"`
+	Notify  bool   `json:"notify,omitempty"`
 }
 
 func (channelTestHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
@@ -67,6 +70,15 @@ func (channelTestHandler) Run(ctx context.Context, task *model.SystemTask, runne
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
 		return
 	}
+	trigger := payload.Trigger
+	// Compatibility for already queued manual tasks created before trigger existed.
+	if trigger == "" && payload.Mode == operation_setting.ChannelTestModeScheduledAll && payload.Notify {
+		trigger = model.ChannelStatusProbeTriggerManual
+	}
+	if trigger != model.ChannelStatusProbeTriggerManual {
+		trigger = model.ChannelStatusProbeTriggerScheduled
+	}
+	ctx = service.WithChannelProbeTrigger(ctx, trigger)
 	summary, err := runChannelTestTask(ctx, payload.Mode, payload.Notify, service.NewSystemTaskProgressReporter(task, runnerID))
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)

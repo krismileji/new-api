@@ -161,6 +161,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 	}
 
+	if handled, localErr := tryChannelSmallInputResponse(c, relayInfo, common.GetContextKeyInt(c, constant.ContextKeyChannelId)); handled || localErr != nil {
+		newAPIError = localErr
+		return
+	}
+
 	tokens, err := service.EstimateRequestToken(c, meta, relayInfo)
 	if err != nil {
 		newAPIError = types.NewError(err, types.ErrorCodeCountTokenFailed)
@@ -286,6 +291,11 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		channel, concurrencyLease, concurrencyErr := acquireRelayChannelConcurrency(c, relayInfo, retryParam, retryRouting, channel, true)
+		if c.GetBool(service.ChannelLocalResponseContextKey) {
+			newAPIError = nil
+			relayInfo.LastError = nil
+			return
+		}
 		if concurrencyErr != nil {
 			finalRetryLogPending = false
 			finalRetryChannelError = nil

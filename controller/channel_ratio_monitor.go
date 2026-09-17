@@ -84,44 +84,47 @@ type channelMonitorUpstreamConfig struct {
 }
 
 type channelMonitorItem struct {
-	Id                       int                             `json:"id"`
-	Name                     string                          `json:"name"`
-	Type                     int                             `json:"type"`
-	Status                   int                             `json:"status"`
-	StatusReason             string                          `json:"status_reason"`
-	Priority                 int64                           `json:"priority"`
-	Weight                   int                             `json:"weight"`
-	BaseURL                  string                          `json:"base_url"`
-	Models                   string                          `json:"models"`
-	TestModel                *string                         `json:"test_model"`
-	Groups                   []string                        `json:"groups"`
-	Ratio                    *float64                        `json:"ratio"`
-	PreviousRatio            *float64                        `json:"previous_ratio"`
-	CostRatio                *float64                        `json:"cost_ratio"`
-	PreviousCostRatio        *float64                        `json:"previous_cost_ratio"`
-	ConversionFactor         *float64                        `json:"conversion_factor"`
-	Remark                   string                          `json:"remark"`
-	ChannelRemark            string                          `json:"channel_remark"`
-	UpdatedTime              int64                           `json:"updated_time"`
-	UpdatedBy                int                             `json:"updated_by"`
-	UpdatedByUsername        string                          `json:"updated_by_username"`
-	LastFetchStatus          string                          `json:"last_fetch_status"`
-	LastFetchError           string                          `json:"last_fetch_error"`
-	LastFetchTime            int64                           `json:"last_fetch_time"`
-	ConsecutiveFailures      int                             `json:"consecutive_failures"`
-	UpstreamBalance          *float64                        `json:"upstream_balance"`
-	BalanceEstimate          *service.ChannelBalanceEstimate `json:"balance_estimate,omitempty"`
-	LastBalanceTime          int64                           `json:"last_balance_time"`
-	LastBalanceError         string                          `json:"last_balance_error"`
-	TodayCostCNY             float64                         `json:"today_cost_cny"`
-	TodayCostConfigured      bool                            `json:"today_cost_configured"`
-	TodayCostComplete        bool                            `json:"today_cost_complete"`
-	TodayCostUnresolvedCount int64                           `json:"today_cost_unresolved_count"`
-	ConcurrencyLimit         int                             `json:"concurrency_limit"`
-	RPMLimit                 int                             `json:"rpm_limit"`
-	ConcurrencyActive        int                             `json:"concurrency_active"`
-	CurrentRPM               int                             `json:"current_rpm"`
-	Upstream                 *channelMonitorUpstreamConfig   `json:"upstream"`
+	AutoProbeDisabled         bool                            `json:"auto_probe_disabled"`
+	SmallInputResponseEnabled bool                            `json:"small_input_response_enabled"`
+	ProbePolicyRevision       int64                           `json:"probe_policy_revision"`
+	Id                        int                             `json:"id"`
+	Name                      string                          `json:"name"`
+	Type                      int                             `json:"type"`
+	Status                    int                             `json:"status"`
+	StatusReason              string                          `json:"status_reason"`
+	Priority                  int64                           `json:"priority"`
+	Weight                    int                             `json:"weight"`
+	BaseURL                   string                          `json:"base_url"`
+	Models                    string                          `json:"models"`
+	TestModel                 *string                         `json:"test_model"`
+	Groups                    []string                        `json:"groups"`
+	Ratio                     *float64                        `json:"ratio"`
+	PreviousRatio             *float64                        `json:"previous_ratio"`
+	CostRatio                 *float64                        `json:"cost_ratio"`
+	PreviousCostRatio         *float64                        `json:"previous_cost_ratio"`
+	ConversionFactor          *float64                        `json:"conversion_factor"`
+	Remark                    string                          `json:"remark"`
+	ChannelRemark             string                          `json:"channel_remark"`
+	UpdatedTime               int64                           `json:"updated_time"`
+	UpdatedBy                 int                             `json:"updated_by"`
+	UpdatedByUsername         string                          `json:"updated_by_username"`
+	LastFetchStatus           string                          `json:"last_fetch_status"`
+	LastFetchError            string                          `json:"last_fetch_error"`
+	LastFetchTime             int64                           `json:"last_fetch_time"`
+	ConsecutiveFailures       int                             `json:"consecutive_failures"`
+	UpstreamBalance           *float64                        `json:"upstream_balance"`
+	BalanceEstimate           *service.ChannelBalanceEstimate `json:"balance_estimate,omitempty"`
+	LastBalanceTime           int64                           `json:"last_balance_time"`
+	LastBalanceError          string                          `json:"last_balance_error"`
+	TodayCostCNY              float64                         `json:"today_cost_cny"`
+	TodayCostConfigured       bool                            `json:"today_cost_configured"`
+	TodayCostComplete         bool                            `json:"today_cost_complete"`
+	TodayCostUnresolvedCount  int64                           `json:"today_cost_unresolved_count"`
+	ConcurrencyLimit          int                             `json:"concurrency_limit"`
+	RPMLimit                  int                             `json:"rpm_limit"`
+	ConcurrencyActive         int                             `json:"concurrency_active"`
+	CurrentRPM                int                             `json:"current_rpm"`
+	Upstream                  *channelMonitorUpstreamConfig   `json:"upstream"`
 }
 
 func validateChannelMonitorRatio(ratio *float64) bool {
@@ -628,6 +631,9 @@ func GetChannelMonitorOverview(c *gin.Context) {
 			item.TodayCostUnresolvedCount = cost.UnresolvedCount
 		}
 		if monitor, exists := monitorByChannel[channel.Id]; exists {
+			item.AutoProbeDisabled = monitor.AutoProbeDisabled
+			item.SmallInputResponseEnabled = monitor.SmallInputResponseEnabled
+			item.ProbePolicyRevision = monitor.ProbePolicyRevision
 			item.ConcurrencyLimit = monitor.ConcurrencyLimit
 			item.RPMLimit = monitor.RPMLimit
 			if channelMonitorCostTrackingConfigured(monitor) {

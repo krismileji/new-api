@@ -322,6 +322,7 @@ func runChannelGroupMonitorGroup(
 	testUserErr error,
 ) error {
 	now := common.GetTimestamp()
+	ctx = service.WithChannelProbeTrigger(ctx, claim.Trigger)
 	execution := model.ChannelGroupMonitorExecution{
 		RunId: claim.RunId, GroupName: group.GroupName, ConfigRevision: claim.Config.Revision,
 		Trigger: claim.Trigger, ProbeModel: group.ProbeModel, StartedAt: now, FinishedAt: now, CreatedAt: now,
@@ -337,6 +338,20 @@ func runChannelGroupMonitorGroup(
 		execution.ErrorMessage = "探测模型已失效，本轮未发送请求"
 		_, saveErr := model.SaveChannelGroupMonitorExecution(&execution)
 		return saveErr
+	}
+	if claim.Trigger == model.ChannelGroupMonitorTriggerScheduled {
+		passive, policyErr := channelGroupUsesOnlyPassiveMonitoring(ctx, group.GroupName, group.ProbeModel)
+		if passive || policyErr != nil {
+			execution.Result = model.ChannelGroupMonitorResultSkipped
+			execution.ErrorCode = "auto_probe_disabled"
+			execution.ErrorMessage = "全部渠道已禁止自动探测，按配置周期使用 Redis 业务数据"
+			if policyErr != nil {
+				execution.ErrorCode = "probe_policy_unavailable"
+				execution.ErrorMessage = "无法读取渠道探测策略，本轮跳过"
+			}
+			_, saveErr := model.SaveChannelGroupMonitorExecution(&execution)
+			return saveErr
+		}
 	}
 	if testUserErr != nil {
 		execution.Result = model.ChannelGroupMonitorResultLocalFailure
@@ -434,7 +449,11 @@ func runChannelGroupMonitorGroup(
 		// A saturated channel is a same-round routing condition. It must not
 		// consume an ordinary retry, but another channel should be attempted when
 		// one is available, just as the normal relay path does.
-		if outcome.Result == model.ChannelStatusProbeResultSkipped && outcome.ErrorCode == "channel_busy" {
+		if outcome.Result == model.ChannelStatusProbeResultSkipped && (outcome.ErrorCode == "channel_busy" || channelProbePolicyOutcomeSkipped(outcome)) {
+			if channelProbePolicyOutcomeSkipped(outcome) {
+				attemptNumber--
+				attemptedChannelIds = attemptedChannelIds[:len(attemptedChannelIds)-1]
+			}
 			retryRouting.exclude(channel.Id)
 			selected, _, selectionErr := retryRouting.selectChannelCurrentRound(retryParam)
 			if selectionErr != nil {
@@ -445,6 +464,9 @@ func runChannelGroupMonitorGroup(
 				break
 			}
 			if selected == nil {
+				if channelProbePolicyOutcomeSkipped(outcome) {
+					break
+				}
 				execution.Result = model.ChannelGroupMonitorResultUnavailable
 				execution.ErrorCode = "no_available_route"
 				execution.ErrorMessage = "当前没有可分配的探测路由"
