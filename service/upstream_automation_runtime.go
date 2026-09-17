@@ -204,8 +204,9 @@ func RunUpstreamAutomation(ctx context.Context, id string, force bool, now func(
 	}
 	if refreshChannels != nil && len(config.ChannelIDs) > 0 && (ratio != nil || balance != nil) {
 		if err := refreshChannels(runContext, config); err != nil {
-			status, message = "channel_refresh_failed", "上游检查完成，关联渠道刷新未完成："+err.Error()
-			return view, err
+			// Channel recovery has its own safety gates. A linked refresh must
+			// not overwrite the action outcome or back off independent checks.
+			message += "；关联渠道刷新提示：" + err.Error() + "（自动任务仍按原间隔检查）"
 		}
 	}
 	return view, nil

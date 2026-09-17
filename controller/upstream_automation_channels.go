@@ -51,7 +51,7 @@ func refreshUpstreamAutomationChannels(ctx context.Context, config service.Upstr
 			complete = outcome.BalanceEvaluation.Complete
 		}
 		if !complete {
-			failures = append(failures, fmt.Errorf("渠道 %d 余额预估尚不完整", id))
+			failures = append(failures, fmt.Errorf("渠道 %d 余额预估尚不完整，暂不自动恢复", id))
 			continue
 		}
 		if _, err := autoDisableChannelMonitorForLowBalanceWithContext(ctx, monitor, channel, *outcome.Result.Balance.Amount); err != nil {
