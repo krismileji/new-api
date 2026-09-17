@@ -28,6 +28,8 @@ type ChannelMonitorRecovery struct {
 	QuarantineCount        int64    `json:"quarantine_count"`
 	CostDeadLetterCount    int64    `json:"cost_dead_letter_count"`
 	CostPublishFailedCount int64    `json:"cost_publish_failed_count"`
+
+	Diagnostics *ChannelMonitorRecoveryDiagnostics `json:"diagnostics,omitempty"`
 }
 
 type channelMonitorRecoveryInput struct {
@@ -62,6 +64,7 @@ type channelMonitorRecoveryState struct {
 
 func deriveChannelMonitorRecovery(input channelMonitorRecoveryInput, previous channelMonitorRecoveryState) channelMonitorRecoveryState {
 	raw := input.Realtime
+	diagnostics := deriveChannelMonitorRecoveryDiagnostics(input, previous.Snapshot)
 	reasons := append([]string{}, input.ExtraReasons...)
 	gaps := append([]string{}, previous.Snapshot.DataGapReasons...)
 	gaps = append(gaps, input.DataGapReasons...)
@@ -71,6 +74,12 @@ func deriveChannelMonitorRecovery(input channelMonitorRecoveryInput, previous ch
 			gaps = append(gaps, reason)
 		case ChannelMonitorRedisDegradedReasonEventBacklog, ChannelMonitorRedisDegradedReasonCostStreamBacklog:
 			// Small in-flight batches are normal. Persistent backlog is assessed below.
+		case ChannelMonitorRedisDegradedReasonPoolCongested:
+			// Repeated short peaks must not accumulate into a five-minute
+			// incident while no individual pool stays congested for a minute.
+			if diagnostics.PoolCongestionConfirmed {
+				reasons = append(reasons, reason)
+			}
 		default:
 			reasons = append(reasons, reason)
 		}
@@ -159,6 +168,7 @@ func deriveChannelMonitorRecovery(input channelMonitorRecoveryInput, previous ch
 		RecoveredAt: previous.Snapshot.RecoveredAt, DataGapReasons: normalizeChannelMonitorHealthReasons(gaps),
 		QuarantineCount: quarantined, CostDeadLetterCount: costDeadLetters,
 		CostPublishFailedCount: max(0, raw.CostPublishFailedCount),
+		Diagnostics:            diagnostics,
 	}
 	state := channelMonitorRecoveryState{
 		Health: base, Snapshot: snapshot, HealthySince: previous.HealthySince,

@@ -11,10 +11,10 @@ import (
 // BuildChannelMonitorHealthNotificationEmail is shared by delivery and preview.
 // Redis availability alone does not establish that monitoring is healthy.
 func BuildChannelMonitorHealthNotificationEmail(status string, reasons []string, dropped int64, observedAt time.Time) (string, string) {
-	return buildChannelMonitorHealthEmail(status, reasons, dropped, observedAt, "", "")
+	return buildChannelMonitorHealthEmail(status, reasons, dropped, observedAt, "", "", nil)
 }
 
-func buildChannelMonitorHealthEmail(status string, reasons []string, dropped int64, observedAt time.Time, action, nodeID string) (string, string) {
+func buildChannelMonitorHealthEmail(status string, reasons []string, dropped int64, observedAt time.Time, action, nodeID string, recovery *ChannelMonitorRecovery) (string, string) {
 	labels := make([]string, 0, len(reasons))
 	checkTargets := make([]string, 0, len(reasons))
 	unknownCodes := make([]string, 0)
@@ -66,6 +66,9 @@ func buildChannelMonitorHealthEmail(status string, reasons []string, dropped int
 	}
 	if len(unknownCodes) > 0 {
 		fmt.Fprintf(&content, `<p>未分类异常代码：<code style="word-break:break-all">%s</code></p>`, html.EscapeString(strings.Join(unknownCodes, "、")))
+	}
+	if recovery != nil {
+		writeChannelMonitorRecoveryDiagnostics(&content, *recovery, observedAt.Location())
 	}
 	fmt.Fprintf(&content, `<p style="color:#4b5563">时间：%s`, html.EscapeString(observedAt.Format("2006-01-02 15:04:05 UTC-07:00")))
 	if nodeID != "" {

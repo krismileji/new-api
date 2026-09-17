@@ -531,10 +531,12 @@ func redisClientPoolStats(role RedisClientRole, client *redis.Client, poolSize i
 		stats.CommandLatencyTotalMicros = metrics.commandLatencyTotalMicros.Load()
 		stats.CommandLatencyMaxMicros = metrics.commandLatencyMaxMicros.Load()
 	}
-	if stats.PoolCongested {
-		stats.DegradedReason = RedisClientPoolDegradedReasonPoolCongested
-	} else if metrics != nil {
+	if metrics != nil {
 		stats.DegradedReason = metrics.health.degradedReason()
+	}
+	// A busy pool must not hide an actual timeout behind a capacity warning.
+	if stats.DegradedReason == "" && stats.PoolCongested {
+		stats.DegradedReason = RedisClientPoolDegradedReasonPoolCongested
 	}
 	return stats
 }

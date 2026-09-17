@@ -38,18 +38,22 @@ func channelMonitorRecoveryNoticeKind(snapshot ChannelMonitorRecovery, state cha
 	}
 	if snapshot.Status != ChannelMonitorHealthHealthy {
 		if snapshot.Status == ChannelMonitorHealthDegraded && !state.Alerted && (snapshot.RecoveryStatus == "retrying" || snapshot.RecoveryStatus == "recovering") {
-			// A short queue delay has an automatic recovery path. Notify only if
-			// it persists until manual_required, or another actionable fault joins it.
-			automaticBacklog := len(snapshot.DegradedReasons) > 0
+			// Short queue delays and momentary pool saturation can recover
+			// automatically. Actual failures and sustained congestion still alert.
+			automaticRecovery := len(snapshot.DegradedReasons) > 0
 			for _, reason := range snapshot.DegradedReasons {
 				switch reason {
 				case ChannelMonitorRedisDegradedReasonEventBacklog, ChannelMonitorRedisDegradedReasonCostStreamBacklog,
 					ChannelMonitorRedisDegradedReasonCostOutboxBacklog, "cost_projection_pending":
+				case ChannelMonitorRedisDegradedReasonPoolCongested:
+					if snapshot.Diagnostics != nil && snapshot.Diagnostics.PoolCongestionConfirmed {
+						automaticRecovery = false
+					}
 				default:
-					automaticBacklog = false
+					automaticRecovery = false
 				}
 			}
-			if automaticBacklog {
+			if automaticRecovery {
 				return ""
 			}
 		}
@@ -232,7 +236,7 @@ func BuildChannelMonitorRecoveryEmail(snapshot ChannelMonitorRecovery, kind stri
 		if kind == "gap" {
 			reasons = snapshot.DataGapReasons
 		}
-		return buildChannelMonitorHealthEmail(string(snapshot.Status), reasons, snapshot.DroppedSampleCount, observedAt, snapshot.Message+"。"+snapshot.Action, snapshot.NodeID)
+		return buildChannelMonitorHealthEmail(string(snapshot.Status), reasons, snapshot.DroppedSampleCount, observedAt, snapshot.Message+"。"+snapshot.Action, snapshot.NodeID, &snapshot)
 	}
 	message := "相关监控链路已连续正常，后台事件处理已恢复。"
 	if len(snapshot.DataGapReasons) > 0 {

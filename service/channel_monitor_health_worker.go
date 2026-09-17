@@ -30,6 +30,11 @@ func GetChannelMonitorRecovery() ChannelMonitorRecovery {
 	channelMonitorHealthWorkerState.RUnlock()
 	snapshot.DegradedReasons = append([]string{}, snapshot.DegradedReasons...)
 	snapshot.DataGapReasons = append([]string{}, snapshot.DataGapReasons...)
+	if snapshot.Diagnostics != nil {
+		diagnostics := *snapshot.Diagnostics
+		diagnostics.RedisPools = append([]ChannelMonitorRecoveryRedisPool{}, diagnostics.RedisPools...)
+		snapshot.Diagnostics = &diagnostics
+	}
 	if snapshot.CheckedAt == 0 || time.Now().Unix()-snapshot.CheckedAt > channelMonitorRecoveryStaleSeconds {
 		snapshot.Status = ChannelMonitorHealthUnavailable
 		snapshot.RecoveryStatus = "checking"
@@ -73,6 +78,7 @@ func (runtime *ChannelDailyCostOutboxRuntime) runHealthMonitor(ctx context.Conte
 						// Local counters restart with the process; historical gaps do not.
 						stored.Dropped, stored.PublishFailed, stored.CostLedgerApplied = 0, 0, 0
 						stored.HealthySince = 0
+						stored.Snapshot.Diagnostics = nil
 						if previous.Snapshot.CheckedAt > stored.Snapshot.CheckedAt {
 							previous.Snapshot.DataGapReasons = normalizeChannelMonitorHealthReasons(append(previous.Snapshot.DataGapReasons, stored.Snapshot.DataGapReasons...))
 						} else {
