@@ -21,6 +21,28 @@ func loadUpstreamAutomationVariableSession(ctx context.Context, id string, revis
 	if config.Revision != revision {
 		return session, errors.New("任务配置已变化")
 	}
+	if config.AccountID > 0 {
+		account, err := model.GetChannelMonitorUpstreamAccount(ctx, config.AccountID)
+		if err != nil {
+			return session, err
+		}
+		settings, err := account.MonitorSettings()
+		if err != nil {
+			return session, err
+		}
+		if settings.UpstreamType == CustomUpstreamType {
+			custom, err := ParseChannelMonitorCustomUpstreamConfig(settings.CustomUpstreamConfig)
+			if err != nil {
+				return session, err
+			}
+			session = channelMonitorCustomVariableSession{config: custom, savedRaw: settings.CustomUpstreamConfig, account: &account, revision: revision, refreshed: make(map[string]bool)}
+			return session, nil
+		}
+		config, err = ResolveUpstreamAccountAutomation(ctx, config)
+		if err != nil {
+			return session, err
+		}
+	}
 	raw, err := MarshalChannelMonitorCustomUpstreamConfig(config.CustomConfig)
 	session = channelMonitorCustomVariableSession{config: config.CustomConfig, savedRaw: raw, automationID: id, revision: revision, refreshed: make(map[string]bool)}
 	return session, err

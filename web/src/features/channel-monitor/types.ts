@@ -103,7 +103,7 @@ export type ChannelMonitorUpstreamAuthType =
   | 'refresh_token'
   | 'custom'
 
-export type ChannelMonitorCustomSource = 'fixed' | 'http'
+export type ChannelMonitorCustomSource = 'fixed' | 'http' | 'account'
 export type ChannelMonitorCustomBodyType = 'none' | 'json' | 'form'
 export type ChannelMonitorCustomResponseType = 'json' | 'text'
 
@@ -135,6 +135,7 @@ export type ChannelMonitorCustomResultConfig = {
 
 export type ChannelMonitorCustomMetricConfig = {
   source: ChannelMonitorCustomSource
+  account_id?: number
   fixed_value?: number
   request?: ChannelMonitorCustomRequestConfig
   result?: ChannelMonitorCustomResultConfig
@@ -226,6 +227,7 @@ export type ChannelMonitorCostConversion =
     }
 
 export type ChannelMonitorUpstreamConfig = {
+  upstream_account_id?: number
   type: ChannelMonitorUpstreamType
   base_url: string
   group: string
@@ -248,6 +250,7 @@ export type ChannelMonitorUpstreamConfig = {
 }
 
 export type ChannelMonitorUpstreamRequest = {
+  account_revision?: number
   type: ChannelMonitorUpstreamType
   base_url: string
   group: string

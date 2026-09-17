@@ -1540,7 +1540,8 @@ const customResultSchema = z.object({
 })
 
 const customMetricSchema = z.object({
-  source: z.enum(['fixed', 'http']),
+  source: z.enum(['fixed', 'http', 'account']),
+  accountId: z.coerce.number().int().min(0).optional(),
   fixedValue: z.coerce.number().finite('固定值必须是有效数字'),
   request: customRequestSchema,
   result: customResultSchema,
@@ -1787,6 +1788,16 @@ function validateCustomMetric(
   context: z.RefinementCtx
 ) {
   const pathPrefix = ['customConfig', metricName]
+  if (metric.source === 'account') {
+    if (metricName !== 'balance' || !metric.accountId) {
+      context.addIssue({
+        code: 'custom',
+        path: [...pathPrefix, 'accountId'],
+        message: '请选择上游余额账户',
+      })
+    }
+    return
+  }
   if (metric.source === 'fixed') {
     if (metricName === 'ratio') {
       if (metric.fixedValue < 0 || metric.fixedValue > MAX_MONITOR_RATIO) {
@@ -1909,7 +1920,10 @@ export function createUpstreamConfigSchema(
       customConfig: customUpstreamConfigSchema,
     })
     .superRefine((values, context) => {
-      if (values.costConversionMode === 'recharge') {
+      const accountBalance =
+        values.upstreamType === 'custom' &&
+        values.customConfig.balance.source === 'account'
+      if (!accountBalance && values.costConversionMode === 'recharge') {
         if (values.rechargePaidCny <= 0) {
           context.addIssue({
             code: 'custom',
@@ -1933,7 +1947,7 @@ export function createUpstreamConfigSchema(
           })
         }
       }
-      if (values.costConversionMode === 'subscription') {
+      if (!accountBalance && values.costConversionMode === 'subscription') {
         if (values.subscriptionPriceCny <= 0) {
           context.addIssue({
             code: 'custom',

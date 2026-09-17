@@ -33,8 +33,31 @@ func PrepareChannelBalanceAttempt(ctx *gin.Context, info *relaycommon.RelayInfo)
 }
 
 func startChannelBalanceAttempt(ctx *gin.Context, state *channelDailyCostAttemptState) {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if state.Balance != nil {
+		return
+	}
 	value, _ := ctx.Get(channelDailyCostSnapshotContextKey)
 	snapshot, _ := value.(channelDailyCostSnapshot)
+	// Read the channel locator from the primary before a new reservation. Other
+	// nodes may still have a pricing snapshot cached when an account is rebound.
+	// In-flight attempts retain the captured locator and never take this path again.
+	if client := common.RedisMonitorWriteClient(); common.RedisEnabled && client != nil {
+		readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), channelBalanceOperationTimeout)
+		encoded, readErr := client.Get(readCtx, fmt.Sprintf("channel_balance:{%d}:config", state.ChannelId)).Result()
+		cancel()
+		var current ChannelBalanceConfig
+		if readErr == nil && common.UnmarshalJsonStr(encoded, &current) == nil && current.ChannelID == state.ChannelId &&
+			(current.AccountID != snapshot.BalanceConfig.AccountID || (current.AccountID > 0 && current.Revision != snapshot.BalanceConfig.Revision)) {
+			snapshot.BalanceConfig = current
+			snapshot.ChannelId = state.ChannelId
+			if current.AccountID > 0 {
+				snapshot.CostRatioCNY, snapshot.ConversionFactor, snapshot.Configured = current.CostRatioCNY, current.ConversionFactor, current.PriceConfigured
+			}
+			ctx.Set(channelDailyCostSnapshotContextKey, snapshot)
+		}
+	}
 	if snapshot.ChannelId != state.ChannelId || snapshot.BalanceConfig.Account == "" {
 		// A missing price snapshot still needs an unknown reservation. Read the
 		// monitor's cached identity only; never load SQL for an estimate.
@@ -52,11 +75,6 @@ func startChannelBalanceAttempt(ctx *gin.Context, state *channelDailyCostAttempt
 		ctx.Set(channelDailyCostSnapshotContextKey, snapshot)
 	}
 	if !snapshot.BalanceConfig.Enabled {
-		return
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if state.Balance != nil {
 		return
 	}
 	attempt := &channelBalanceAttempt{Config: snapshot.BalanceConfig, ConversionFactor: snapshot.ConversionFactor}

@@ -83,7 +83,11 @@ export function createChannelMonitorUpstreamRequest(
     balance_auto_disable_threshold: values.balanceAutoDisableThreshold,
     ratio_sync_enabled: values.ratioSyncEnabled,
     balance_sync_enabled: values.balanceSyncEnabled,
-    cost_conversion: costConversion,
+    cost_conversion:
+      values.upstreamType === 'custom' &&
+      values.customConfig.balance.source === 'account'
+        ? { mode: 'none' }
+        : costConversion,
     custom_config:
       values.upstreamType === 'custom'
         ? createChannelMonitorCustomRequestConfig(values.customConfig)

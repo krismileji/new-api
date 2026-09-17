@@ -77,6 +77,8 @@ export function upstreamAutomationPayload(
 }
 
 export const automationMetadataSchema = z.object({
+  account_id: z.coerce.number().int().min(0).optional(),
+  ratio_channel_id: z.coerce.number().int().min(0).optional(),
   name: z
     .string()
     .trim()

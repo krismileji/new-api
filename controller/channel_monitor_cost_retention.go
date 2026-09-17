@@ -497,6 +497,7 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		[]string{
 			model.SystemTaskTypeChannelRatioMonitor,
 			upstreamAutomationTaskType,
+			upstreamAccountBalanceTaskType,
 			model.SystemTaskTypeChannelModelDetection,
 			model.SystemTaskTypeChannelTest,
 			model.SystemTaskTypeModelUpdate,
@@ -507,6 +508,7 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		map[string]int64{
 			model.SystemTaskTypeChannelRatioMonitor:   ratioMonitorTaskCutoff,
 			upstreamAutomationTaskType:                ratioMonitorTaskCutoff,
+			upstreamAccountBalanceTaskType:            ratioMonitorTaskCutoff,
 			model.SystemTaskTypeChannelModelDetection: modelDetectionTaskCutoff,
 			model.SystemTaskTypeChannelTest:           channelTestTaskCutoff,
 			model.SystemTaskTypeModelUpdate:           modelUpdateTaskCutoff,

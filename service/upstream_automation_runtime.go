@@ -29,7 +29,7 @@ func RunUpstreamAutomation(ctx context.Context, id string, force bool, now func(
 			return err
 		}
 		timestamp := now().Unix()
-		if !config.Enabled || state.LeaseUntil > timestamp || (!force && state.NextCheck > timestamp) {
+		if config.MergedInto != "" || !config.Enabled || state.LeaseUntil > timestamp || (!force && state.NextCheck > timestamp) {
 			return ErrUpstreamAutomationNotDue
 		}
 		state.LeaseID, state.LeaseUntil = leaseID, timestamp+300
@@ -84,6 +84,33 @@ func RunUpstreamAutomation(ctx context.Context, id string, force bool, now func(
 		runErr = errors.Join(runErr, readErr)
 	}()
 
+	if config.AccountID > 0 {
+		config, err = ResolveUpstreamAccountAutomation(runContext, config)
+		if err != nil {
+			return view, err
+		}
+		locked, lockErr := model.AcquireUpstreamAccountLease(runContext, config.AccountID, config.AccountRevision, leaseID, time.Now().Add(5*time.Minute).Unix())
+		if lockErr != nil {
+			return view, lockErr
+		}
+		if !locked {
+			return view, ErrUpstreamAutomationNotDue
+		}
+		config.AccountLeaseID = leaseID
+		defer func() {
+			finish, done := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+			defer done()
+			_ = model.ReleaseUpstreamAccountLease(finish, config.AccountID, leaseID)
+		}()
+	} else {
+		for _, channelID := range config.ChannelIDs {
+			monitor, readErr := model.GetChannelRatioMonitorWithContext(runContext, channelID)
+			if readErr == nil && monitor.UpstreamAccountID > 0 &&
+				(config.CustomConfig.Balance.Source != ChannelMonitorCustomSourceAccount || config.CustomConfig.Balance.AccountID != monitor.UpstreamAccountID) {
+				return view, errors.New("关联渠道已使用共享账户，请先在账户管理中合并此任务")
+			}
+		}
+	}
 	ratio, balance, err := fetchUpstreamAutomationMetrics(runContext, config)
 	if err != nil {
 		status, message = "fetch_failed", "指标查询失败，将退避后继续检查："+err.Error()
@@ -220,7 +247,11 @@ func fetchUpstreamAutomationMetrics(ctx context.Context, config UpstreamAutomati
 			wantBalance = wantBalance || action.Metric == "balance"
 		}
 	}
+	if config.AccountID > 0 {
+		return fetchUpstreamAccountAutomationMetrics(ctx, config, wantRatio, wantBalance)
+	}
 	request := ChannelMonitorUpstreamConfig{
+		AccountID: config.AccountID, AccountRevision: config.AccountRevision,
 		Type: CustomUpstreamType, BaseURL: config.BaseURL, Proxy: config.Proxy,
 		AutomationID: config.ID, Revision: config.Revision, CustomConfig: config.CustomConfig,
 		RequestTimeout: time.Duration(config.RequestTimeout) * time.Second, SkipBalance: !wantBalance,
@@ -286,6 +317,12 @@ func executeUpstreamAutomationAction(ctx context.Context, config UpstreamAutomat
 		baseURL = action.BaseURL
 	}
 	request := *resolved.Ratio.Request
+	if config.AccountID > 0 && (action.BaseURL == "" || action.BaseURL == config.BaseURL) {
+		request, err = authorizeUpstreamAccountAction(requestContext, client, config, request)
+		if err != nil {
+			return false, errors.New("准备账户认证失败，未调用接口")
+		}
+	}
 	request.HideResponse = true
 	response, err := requestChannelMonitorCustomUpstream(requestContext, actionClient, baseURL, request, false)
 	if err != nil {

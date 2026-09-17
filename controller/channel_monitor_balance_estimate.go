@@ -37,7 +37,7 @@ func evaluateChannelMonitorBalance(ctx context.Context, monitor model.ChannelRat
 		return evaluation, nil
 	}
 	estimate, err := service.GetChannelBalanceEstimate(ctx, service.ChannelBalanceConfigForMonitor(monitor))
-	if err != nil || !estimate.Available || estimate.Revision != monitor.UpstreamRevision || math.Abs(estimate.UpstreamBalance-balance) > 0.000001 {
+	if err != nil || !estimate.Available || estimate.Revision != service.ChannelBalanceConfigForMonitor(monitor).Revision || math.Abs(estimate.UpstreamBalance-balance) > 0.000001 {
 		evaluation.Complete = false
 		return evaluation, service.ErrChannelBalanceUnavailable
 	}
@@ -108,7 +108,7 @@ func recordChannelMonitorBalanceUpdate(ctx context.Context, monitor model.Channe
 		if !coverage && sync.IdleCoverage {
 			// Unresolved balance reservations can outlive the transport. Check
 			// actual request leases on both sides of the query, not that backlog.
-			coverage = service.ChannelBalanceHasIdleRequestCoverage(ctx, monitor.ChannelId)
+			coverage = service.ChannelBalanceConfigHasIdleRequestCoverage(ctx, sync.Config)
 		}
 		_, err = service.CommitChannelBalanceSync(ctx, sync, *balance, coverage)
 	}
@@ -130,13 +130,34 @@ func recordChannelMonitorBalanceUpdate(ctx context.Context, monitor model.Channe
 }
 
 func applyChannelBalanceRealtimePolicy(ctx context.Context, config service.ChannelBalanceConfig, expected service.ChannelBalanceEstimate) (bool, error) {
+	if config.AccountID > 0 {
+		members, err := model.GetUpstreamAccountMonitors(ctx, config.AccountID)
+		if err != nil {
+			return false, err
+		}
+		for _, member := range members {
+			if member.UpstreamBalanceSyncDisabled || member.BalanceAutoDisableThreshold == nil {
+				continue
+			}
+			memberConfig := service.ChannelBalanceConfigForMonitor(member)
+			handled, err := applyChannelBalancePolicyToChannel(ctx, memberConfig, expected)
+			if err != nil || !handled {
+				return false, err
+			}
+		}
+		return true, nil
+	}
+	return applyChannelBalancePolicyToChannel(ctx, config, expected)
+}
+
+func applyChannelBalancePolicyToChannel(ctx context.Context, config service.ChannelBalanceConfig, expected service.ChannelBalanceEstimate) (bool, error) {
 	estimate, err := service.GetChannelBalanceEstimate(ctx, config)
 	if err != nil || !estimate.Available || estimate.Revision != config.Revision || estimate.Decision == "unknown" ||
 		estimate.Epoch != expected.Epoch || estimate.Decision != expected.Decision {
 		return false, err
 	}
 	monitor, err := model.GetChannelRatioMonitorWithContext(ctx, config.ChannelID)
-	if err != nil || monitor.UpstreamRevision != config.Revision || monitor.UpstreamBalanceSyncDisabled {
+	if err != nil || monitor.UpstreamAccountID != config.AccountID || service.ChannelBalanceConfigForMonitor(monitor).Revision != config.Revision || monitor.UpstreamBalanceSyncDisabled {
 		return false, err
 	}
 	channel, err := model.GetChannelById(config.ChannelID, true)
@@ -148,10 +169,11 @@ func applyChannelBalanceRealtimePolicy(ctx context.Context, config service.Chann
 		return false, err
 	}
 	changed := false
-	if estimate.Decision == "low" {
+	if monitor.BalanceAutoDisableThreshold != nil && evaluation.EffectiveBalance < *monitor.BalanceAutoDisableThreshold {
 		changed, err = autoDisableChannelMonitorAtEffectiveBalance(monitor, channel, estimate.UpstreamBalance,
 			evaluation.EffectiveBalance, evaluation.EstimatedConsumption, &evaluation)
-	} else if evaluation.Complete && channelMonitorAutoDisabledForLowBalance(channel) {
+	} else if evaluation.Complete && monitor.BalanceAutoDisableThreshold != nil && evaluation.EffectiveBalance >= *monitor.BalanceAutoDisableThreshold && channelMonitorAutoDisabledForLowBalance(channel) &&
+		(config.AccountID == 0 || (getChannelMonitorSettings().AutoEnableOnBalanceRecovery && monitor.UpdatedTime > 0)) {
 		var allowed bool
 		allowed, err = channelMonitorAllowsHealthCheckAutoEnable(channel.Id)
 		if err == nil && allowed {

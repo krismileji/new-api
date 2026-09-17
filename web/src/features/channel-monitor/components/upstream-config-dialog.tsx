@@ -83,6 +83,7 @@ import {
   testChannelMonitorUpstreamConfig,
 } from '../api'
 import { listUpstreamAutomations } from '../api-automations'
+import type { UpstreamAccount } from '../api-upstream-accounts'
 import { createChannelMonitorCustomFormConfig } from '../lib/custom-upstream'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import { formatMonitorRatio } from '../lib/format'
@@ -108,6 +109,8 @@ import { ChannelMonitorVariableGroupFields } from './channel-monitor-variable-gr
 import { EditChannelRatioDialog } from './edit-channel-ratio-dialog'
 
 type UpstreamConfigDialogProps = {
+  onManageAccounts?: () => void
+  account?: UpstreamAccount
   channel: ChannelMonitorItem
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -154,10 +157,15 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     useState<ChannelMonitorUpstreamAuthType | null>(null)
   const [ratioEditorOpen, setRatioEditorOpen] = useState(false)
   const [upstreamVersion, setUpstreamVersion] = useState<string | null>(null)
-  const savedUpstream = props.channel.upstream
+  const savedUpstream = props.account?.upstream ?? props.channel.upstream
+  const sharedReadOnly = Boolean(
+    props.channel.upstream?.upstream_account_id &&
+    props.channel.upstream.custom_config?.balance.source !== 'account' &&
+    !props.account
+  )
   const savedCostConversion: ChannelMonitorCostConversion =
     savedUpstream?.cost_conversion ?? { mode: 'none' }
-  const initialGroup = savedUpstream?.group || ''
+  const initialGroup = props.channel.upstream?.group || ''
   const [upstreamGroups, setUpstreamGroups] = useState<
     ChannelMonitorUpstreamGroup[]
   >([])
@@ -180,10 +188,10 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     resolver: zodResolver(schema) as Resolver<UpstreamConfigFormValues>,
     defaultValues: {
       upstreamType: savedUpstream?.type || 'new_api',
-      baseUrl: props.channel.upstream?.base_url || props.channel.base_url,
+      baseUrl: savedUpstream?.base_url || props.channel.base_url,
       group: initialGroup,
-      authType: props.channel.upstream?.auth_type || 'public',
-      userId: props.channel.upstream?.user_id || 0,
+      authType: savedUpstream?.auth_type || 'public',
+      userId: savedUpstream?.user_id || 0,
       accessToken: '',
       refreshToken: '',
       account: savedUpstream?.account || '',
@@ -227,6 +235,12 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     },
   })
   const upstreamType = useWatch({ control: form.control, name: 'upstreamType' })
+  const balanceSource = useWatch({
+    control: form.control,
+    name: 'customConfig.balance.source',
+  })
+  const usesAccountBalance =
+    upstreamType === 'custom' && balanceSource === 'account'
   const baseUrl = useWatch({ control: form.control, name: 'baseUrl' })
   const authType = useWatch({ control: form.control, name: 'authType' })
   const accessToken = useWatch({ control: form.control, name: 'accessToken' })
@@ -509,6 +523,7 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   })
 
   const requireGroup = (values: UpstreamConfigFormValues) => {
+    if (props.account) return true
     if (values.upstreamType === 'custom') return true
     if (values.group.trim()) return true
     form.setError('group', {
@@ -547,7 +562,10 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     }
     saveMutation.mutate({
       channelId: props.channel.id,
-      config: createChannelMonitorUpstreamRequest(values),
+      config: {
+        ...createChannelMonitorUpstreamRequest(values),
+        account_revision: props.account?.revision,
+      },
     })
   })
   const handleTest = form.handleSubmit((values) => {
@@ -705,222 +723,257 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
         )}
       >
         <DialogHeader className='shrink-0 pr-10'>
-          <DialogTitle>上游配置与策略</DialogTitle>
+          <DialogTitle>
+            {props.account ? '编辑账户共享配置' : '上游配置与策略'}
+          </DialogTitle>
           <DialogDescription>
-            {props.channel.name} · ID {props.channel.id}
+            {props.account
+              ? `${props.account.name} · 影响 ${props.account.channel_ids.length} 个渠道；各渠道倍率和策略保持原值`
+              : `${props.channel.name} · ID ${props.channel.id}`}
           </DialogDescription>
         </DialogHeader>
         <div className='min-h-0 min-w-0 flex-1 [scrollbar-gutter:stable] overflow-x-hidden overflow-y-auto overscroll-contain pr-2'>
           <Form {...form}>
             <form className='flex min-w-0 flex-col gap-5' onSubmit={handleSave}>
-              <FormField
-                control={form.control}
-                name='upstreamType'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>上游类型</FormLabel>
-                    <FormControl>
-                      <ToggleGroup
-                        value={[field.value]}
-                        onValueChange={(values) => {
-                          const nextValue = values.find(
-                            (value) => value !== field.value
-                          )
-                          if (
-                            nextValue !== 'new_api' &&
-                            nextValue !== 'sub2api' &&
-                            nextValue !== 'custom'
-                          ) {
-                            return
-                          }
-                          field.onChange(nextValue)
-                          let nextAuthType: UpstreamConfigFormValues['authType'] =
-                            'public'
-                          if (nextValue === 'sub2api') {
-                            nextAuthType = 'api_key'
-                          } else if (nextValue === 'custom') {
-                            nextAuthType = 'custom'
-                          }
-                          form.setValue('authType', nextAuthType, {
-                            shouldValidate: true,
-                          })
-                          form.setValue('accessToken', '')
-                          form.setValue('refreshToken', '')
-                          form.setValue('account', '')
-                          form.setValue('password', '')
-                          setUpstreamGroups([])
-                          setTestResult(null)
-                          setTestedAuthType(null)
-                          setUpstreamVersion(null)
-                        }}
-                        variant='outline'
-                        spacing={2}
-                        className='grid w-full grid-cols-3'
+              {sharedReadOnly ? (
+                <Alert>
+                  <AlertDescription>
+                    余额、认证和换算由共享账户 #
+                    {savedUpstream?.upstream_account_id}{' '}
+                    管理。此处仅保存渠道倍率、分组和渠道策略。
+                    {props.onManageAccounts ? (
+                      <Button
+                        type='button'
+                        variant='link'
+                        onClick={props.onManageAccounts}
                       >
-                        <ToggleGroupItem value='new_api' className='w-full'>
-                          New API
-                        </ToggleGroupItem>
-                        <ToggleGroupItem value='sub2api' className='w-full'>
-                          Sub2API
-                        </ToggleGroupItem>
-                        <ToggleGroupItem value='custom' className='w-full'>
-                          自定义
-                        </ToggleGroupItem>
-                      </ToggleGroup>
-                    </FormControl>
-                    <FormDescription>{upstreamTypeDescription}</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name='baseUrl'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>
-                      {isCustom ? '接口基础地址' : '面板地址'}
-                    </FormLabel>
-                    <FormControl>
-                      <Input
-                        type='url'
-                        placeholder='https://api.example.com'
-                        autoComplete='url'
-                        value={field.value}
-                        onBlur={field.onBlur}
-                        onChange={(event) => {
-                          field.onChange(event)
-                          setUpstreamGroups([])
-                          setTestResult(null)
-                          setTestedAuthType(null)
-                          setUpstreamVersion(null)
-                        }}
-                        name={field.name}
-                        ref={field.ref}
-                      />
-                    </FormControl>
-                    <FormDescription>
-                      {isCustom
-                        ? '倍率和余额接口路径会拼接到该地址，渠道代理同样生效'
-                        : '填写面板根地址，末尾的 /v1 会自动移除'}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                        管理上游账户
+                      </Button>
+                    ) : null}
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              <fieldset disabled={sharedReadOnly || Boolean(props.account)}>
+                <FormField
+                  control={form.control}
+                  name='upstreamType'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>上游类型</FormLabel>
+                      <FormControl>
+                        <ToggleGroup
+                          value={[field.value]}
+                          onValueChange={(values) => {
+                            const nextValue = values.find(
+                              (value) => value !== field.value
+                            )
+                            if (
+                              nextValue !== 'new_api' &&
+                              nextValue !== 'sub2api' &&
+                              nextValue !== 'custom'
+                            ) {
+                              return
+                            }
+                            field.onChange(nextValue)
+                            let nextAuthType: UpstreamConfigFormValues['authType'] =
+                              'public'
+                            if (nextValue === 'sub2api') {
+                              nextAuthType = 'api_key'
+                            } else if (nextValue === 'custom') {
+                              nextAuthType = 'custom'
+                            }
+                            form.setValue('authType', nextAuthType, {
+                              shouldValidate: true,
+                            })
+                            form.setValue('accessToken', '')
+                            form.setValue('refreshToken', '')
+                            form.setValue('account', '')
+                            form.setValue('password', '')
+                            setUpstreamGroups([])
+                            setTestResult(null)
+                            setTestedAuthType(null)
+                            setUpstreamVersion(null)
+                          }}
+                          variant='outline'
+                          spacing={2}
+                          className='grid w-full grid-cols-3'
+                        >
+                          <ToggleGroupItem value='new_api' className='w-full'>
+                            New API
+                          </ToggleGroupItem>
+                          <ToggleGroupItem value='sub2api' className='w-full'>
+                            Sub2API
+                          </ToggleGroupItem>
+                          <ToggleGroupItem value='custom' className='w-full'>
+                            自定义
+                          </ToggleGroupItem>
+                        </ToggleGroup>
+                      </FormControl>
+                      <FormDescription>
+                        {upstreamTypeDescription}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </fieldset>
+              <fieldset disabled={sharedReadOnly} className='min-w-0'>
+                <FormField
+                  control={form.control}
+                  name='baseUrl'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>
+                        {isCustom ? '接口基础地址' : '面板地址'}
+                      </FormLabel>
+                      <FormControl>
+                        <Input
+                          type='url'
+                          placeholder='https://api.example.com'
+                          autoComplete='url'
+                          value={field.value}
+                          onBlur={field.onBlur}
+                          onChange={(event) => {
+                            field.onChange(event)
+                            setUpstreamGroups([])
+                            setTestResult(null)
+                            setTestedAuthType(null)
+                            setUpstreamVersion(null)
+                          }}
+                          name={field.name}
+                          ref={field.ref}
+                        />
+                      </FormControl>
+                      <FormDescription>
+                        {isCustom
+                          ? '倍率和余额接口路径会拼接到该地址，渠道代理同样生效'
+                          : '填写面板根地址，末尾的 /v1 会自动移除'}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </fieldset>
 
-              <FormField
-                control={form.control}
-                name='group'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>上游分组</FormLabel>
-                    <Combobox
-                      items={upstreamGroupItems}
-                      value={field.value}
-                      inputValue={groupInputValue}
-                      open={groupComboboxOpen}
-                      onOpenChange={(open) => {
-                        setGroupComboboxOpen(open)
-                        setGroupInputValue(open ? '' : field.value)
-                      }}
-                      onInputValueChange={setGroupInputValue}
-                      onValueChange={(value) => {
-                        if (value === null) return
-                        field.onChange(value)
-                        setGroupInputValue(value)
-                      }}
-                    >
-                      <div className='flex flex-wrap gap-2'>
-                        <FormControl>
-                          <ComboboxInput
-                            className='min-w-0 flex-1 basis-48'
-                            placeholder='选择或输入上游分组'
-                            maxLength={64}
-                            onBlur={() => {
-                              const customGroup = groupInputValue.trim()
-                              if (customGroup) {
-                                field.onChange(customGroup)
-                                setGroupInputValue(customGroup)
-                              } else {
-                                setGroupInputValue(field.value)
-                              }
-                              field.onBlur()
-                            }}
-                          />
-                        </FormControl>
-                        {!isCustom ? (
-                          <>
-                            <Button
-                              type='button'
-                              variant='outline'
-                              onClick={handleLoadGroups}
-                              disabled={pending || !canLoadGroups}
-                            >
-                              {groupsMutation.isPending ? (
-                                <Spinner data-icon='inline-start' />
-                              ) : (
-                                <HugeiconsIcon
-                                  icon={Refresh01Icon}
-                                  data-icon='inline-start'
-                                />
-                              )}
-                              获取分组
-                            </Button>
-                            <Button
-                              type='button'
-                              variant='secondary'
-                              onClick={handleApplyGroup}
-                              disabled={pending || !canApplyGroup}
-                            >
-                              {applyGroupMutation.isPending ? (
-                                <Spinner data-icon='inline-start' />
-                              ) : (
-                                <HugeiconsIcon
-                                  icon={Tick02Icon}
-                                  data-icon='inline-start'
-                                />
-                              )}
-                              应用分组
-                            </Button>
-                          </>
-                        ) : null}
-                      </div>
-                      <ComboboxContent>
-                        <ComboboxList>
-                          <ComboboxCollection>
-                            {(groupName: string) => {
-                              const group = upstreamGroupByName.get(groupName)
-                              return (
-                                <ComboboxItem key={groupName} value={groupName}>
-                                  <span className='flex min-w-0 flex-1 items-center justify-between gap-3'>
-                                    <span className='truncate'>
-                                      {group
-                                        ? group.name
-                                        : `使用“${groupName}”`}
-                                    </span>
-                                    {group && (
-                                      <span className='text-muted-foreground shrink-0 font-mono text-xs'>
-                                        × {formatMonitorRatio(group.ratio)}
+              {!props.account ? (
+                <FormField
+                  control={form.control}
+                  name='group'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>上游分组</FormLabel>
+                      <Combobox
+                        items={upstreamGroupItems}
+                        value={field.value}
+                        inputValue={groupInputValue}
+                        open={groupComboboxOpen}
+                        onOpenChange={(open) => {
+                          setGroupComboboxOpen(open)
+                          setGroupInputValue(open ? '' : field.value)
+                        }}
+                        onInputValueChange={setGroupInputValue}
+                        onValueChange={(value) => {
+                          if (value === null) return
+                          field.onChange(value)
+                          setGroupInputValue(value)
+                        }}
+                      >
+                        <div className='flex flex-wrap gap-2'>
+                          <FormControl>
+                            <ComboboxInput
+                              className='min-w-0 flex-1 basis-48'
+                              placeholder='选择或输入上游分组'
+                              maxLength={64}
+                              onBlur={() => {
+                                const customGroup = groupInputValue.trim()
+                                if (customGroup) {
+                                  field.onChange(customGroup)
+                                  setGroupInputValue(customGroup)
+                                } else {
+                                  setGroupInputValue(field.value)
+                                }
+                                field.onBlur()
+                              }}
+                            />
+                          </FormControl>
+                          {!isCustom ? (
+                            <>
+                              <Button
+                                type='button'
+                                variant='outline'
+                                onClick={handleLoadGroups}
+                                disabled={pending || !canLoadGroups}
+                              >
+                                {groupsMutation.isPending ? (
+                                  <Spinner data-icon='inline-start' />
+                                ) : (
+                                  <HugeiconsIcon
+                                    icon={Refresh01Icon}
+                                    data-icon='inline-start'
+                                  />
+                                )}
+                                获取分组
+                              </Button>
+                              <Button
+                                type='button'
+                                variant='secondary'
+                                onClick={handleApplyGroup}
+                                disabled={pending || !canApplyGroup}
+                              >
+                                {applyGroupMutation.isPending ? (
+                                  <Spinner data-icon='inline-start' />
+                                ) : (
+                                  <HugeiconsIcon
+                                    icon={Tick02Icon}
+                                    data-icon='inline-start'
+                                  />
+                                )}
+                                应用分组
+                              </Button>
+                            </>
+                          ) : null}
+                        </div>
+                        <ComboboxContent>
+                          <ComboboxList>
+                            <ComboboxCollection>
+                              {(groupName: string) => {
+                                const group = upstreamGroupByName.get(groupName)
+                                return (
+                                  <ComboboxItem
+                                    key={groupName}
+                                    value={groupName}
+                                  >
+                                    <span className='flex min-w-0 flex-1 items-center justify-between gap-3'>
+                                      <span className='truncate'>
+                                        {group
+                                          ? group.name
+                                          : `使用“${groupName}”`}
                                       </span>
-                                    )}
-                                  </span>
-                                </ComboboxItem>
-                              )
-                            }}
-                          </ComboboxCollection>
-                        </ComboboxList>
-                        <ComboboxEmpty>没有可选分组，可直接输入</ComboboxEmpty>
-                      </ComboboxContent>
-                    </Combobox>
-                    <FormDescription>
-                      {groupSourceDescription}
-                      {!isCustom ? `；${applyGroupDescription}` : ''}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+                                      {group && (
+                                        <span className='text-muted-foreground shrink-0 font-mono text-xs'>
+                                          × {formatMonitorRatio(group.ratio)}
+                                        </span>
+                                      )}
+                                    </span>
+                                  </ComboboxItem>
+                                )
+                              }}
+                            </ComboboxCollection>
+                          </ComboboxList>
+                          <ComboboxEmpty>
+                            没有可选分组，可直接输入
+                          </ComboboxEmpty>
+                        </ComboboxContent>
+                      </Combobox>
+                      <FormDescription>
+                        {groupSourceDescription}
+                        {!isCustom ? `；${applyGroupDescription}` : ''}
+                      </FormDescription>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              ) : null}
 
               {isCustom ? (
                 <>
@@ -928,9 +981,11 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                     form={form}
                     channelId={props.channel.id}
                     channelName={props.channel.name}
-                    disabled={pending}
+                    disabled={pending || sharedReadOnly}
                   />
-                  {!variableGroupId && variableRequestCount > 0 ? (
+                  {!sharedReadOnly &&
+                  !variableGroupId &&
+                  variableRequestCount > 0 ? (
                     <ChannelMonitorCustomVariableFields
                       form={form}
                       pending={pending}
@@ -942,646 +997,697 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                       onFetch={handleFetchVariable}
                     />
                   ) : null}
-                  <ChannelMonitorCustomUpstreamFields form={form} />
+                  <ChannelMonitorCustomUpstreamFields
+                    form={form}
+                    hideBalance={sharedReadOnly}
+                    hideRatio={Boolean(props.account)}
+                    allowAccountBalance={!props.account}
+                  />
                   <p className='text-muted-foreground text-sm'>
                     条件触发接口已移至渠道监控首页的“上游自动任务”。旧规则会自动迁移，独立运行，不受渠道启停影响。
                   </p>
                 </>
               ) : null}
 
-              <ChannelMonitorCostConversionFields
-                form={form}
-                upstreamRatio={testResult?.ratio ?? props.channel.ratio}
-                onEditRatio={() => {
-                  setTestResult(null)
-                  setRatioEditorOpen(true)
-                }}
-                editRatioDisabled={pending}
-              />
-
-              <div className='grid min-w-0 gap-4 sm:grid-cols-2'>
-                <FormField
-                  control={form.control}
-                  name='ratioSyncEnabled'
-                  render={({ field }) => (
-                    <FormItem className='flex items-center justify-between gap-4 rounded-lg border p-3'>
-                      <div className='flex min-w-0 flex-col gap-1'>
-                        <FormLabel>倍率同步</FormLabel>
-                        <FormDescription>
-                          关闭后暂停自动获取上游倍率，仍可在渠道列表手动刷新
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                          aria-label='开启上游倍率同步'
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name='balanceSyncEnabled'
-                  render={({ field }) => (
-                    <FormItem className='flex items-center justify-between gap-4 rounded-lg border p-3'>
-                      <div className='flex min-w-0 flex-col gap-1'>
-                        <FormLabel>余额同步</FormLabel>
-                        <FormDescription>
-                          关闭后暂停自动获取上游余额，仍可在渠道列表手动刷新
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={field.value}
-                          onCheckedChange={field.onChange}
-                          aria-label='开启上游余额同步'
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              <div className='grid min-w-0 gap-4 sm:grid-cols-2'>
-                <FormField
-                  control={form.control}
-                  name='balanceWarningThreshold'
-                  render={({ field }) => (
-                    <FormItem
-                      className={cn(
-                        !balanceSyncEnabled && 'text-muted-foreground'
-                      )}
-                    >
-                      <FormLabel>余额预警值</FormLabel>
-                      <FormControl>
-                        <Input
-                          type='number'
-                          min={0}
-                          max={MAX_BALANCE_THRESHOLD}
-                          step='any'
-                          placeholder='留空关闭余额预警'
-                          disabled={!balanceSyncEnabled}
-                          value={field.value ?? ''}
-                          onBlur={field.onBlur}
-                          onChange={(event) => {
-                            const value = event.target.value
-                            field.onChange(value === '' ? null : Number(value))
-                          }}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        开启余额同步后，定时更新余额低于此值时标红；开启邮件通知后首次进入低余额状态会发送预警，余额恢复后可再次预警
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name='balanceAutoDisableThreshold'
-                  render={({ field }) => (
-                    <FormItem
-                      className={cn(
-                        !balanceSyncEnabled && 'text-muted-foreground'
-                      )}
-                    >
-                      <FormLabel>余额自动禁用阈值</FormLabel>
-                      <FormControl>
-                        <Input
-                          type='number'
-                          min={0}
-                          max={MAX_BALANCE_THRESHOLD}
-                          step='any'
-                          placeholder='留空关闭余额自动禁用'
-                          disabled={!balanceSyncEnabled}
-                          value={field.value ?? ''}
-                          onBlur={field.onBlur}
-                          onChange={(event) => {
-                            const value = event.target.value
-                            field.onChange(value === '' ? null : Number(value))
-                          }}
-                          name={field.name}
-                          ref={field.ref}
-                        />
-                      </FormControl>
-                      <FormDescription>
-                        开启余额同步后，余额更新成功且低于此值会自动禁用启用中的渠道；余额恢复后不会自动启用
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              <div className='grid min-w-0 gap-4 sm:grid-cols-2'>
-                <FormField
-                  control={form.control}
-                  name='singleChannelAction'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>仅剩此渠道时</FormLabel>
-                      <Select
-                        items={SINGLE_CHANNEL_ACTION_OPTIONS}
-                        value={field.value}
-                        onValueChange={(value) =>
-                          value !== null && field.onChange(value)
-                        }
-                      >
-                        <FormControl>
-                          <SelectTrigger className='w-full'>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent alignItemWithTrigger={false}>
-                          <SelectGroup>
-                            {SINGLE_CHANNEL_ACTION_OPTIONS.map((option) => (
-                              <SelectItem
-                                key={option.value}
-                                value={option.value}
-                              >
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                      <FormDescription>
-                        目标倍率高于当前分组倍率时执行
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-                <FormField
-                  control={form.control}
-                  name='multipleChannelsAction'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>存在多个渠道时</FormLabel>
-                      <Select
-                        items={MULTIPLE_CHANNELS_ACTION_OPTIONS}
-                        value={field.value}
-                        onValueChange={(value) =>
-                          value !== null && field.onChange(value)
-                        }
-                      >
-                        <FormControl>
-                          <SelectTrigger className='w-full'>
-                            <SelectValue />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent alignItemWithTrigger={false}>
-                          <SelectGroup>
-                            {MULTIPLE_CHANNELS_ACTION_OPTIONS.map((option) => (
-                              <SelectItem
-                                key={option.value}
-                                value={option.value}
-                              >
-                                {option.label}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
-                      <FormDescription>
-                        {
-                          MULTIPLE_CHANNELS_ACTION_DESCRIPTIONS[
-                            multipleChannelsAction
-                          ]
-                        }
-                      </FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              </div>
-
-              {upstreamType === 'new_api' ? (
-                <FormField
-                  control={form.control}
-                  name='authType'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>认证方式</FormLabel>
-                      <FormControl>
-                        <ToggleGroup
-                          value={[field.value]}
-                          onValueChange={(values) => {
-                            const nextValue = values.find(
-                              (value) => value !== field.value
-                            )
-                            if (
-                              nextValue === 'public' ||
-                              nextValue === 'user'
-                            ) {
-                              field.onChange(nextValue)
-                              form.setValue('accessToken', '')
-                              setUpstreamGroups([])
-                              setTestResult(null)
-                              setTestedAuthType(null)
-                            }
-                          }}
-                          variant='outline'
-                          spacing={2}
-                          className='grid w-full grid-cols-2'
-                        >
-                          <ToggleGroupItem value='public' className='w-full'>
-                            公开接口
-                          </ToggleGroupItem>
-                          <ToggleGroupItem value='user' className='w-full'>
-                            用户认证
-                          </ToggleGroupItem>
-                        </ToggleGroup>
-                      </FormControl>
-                      <FormDescription>{authDescription}</FormDescription>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+              {!usesAccountBalance ? (
+                <fieldset disabled={sharedReadOnly} className='min-w-0'>
+                  <ChannelMonitorCostConversionFields
+                    form={form}
+                    upstreamRatio={testResult?.ratio ?? props.channel.ratio}
+                    onEditRatio={() => {
+                      setTestResult(null)
+                      setRatioEditorOpen(true)
+                    }}
+                    editRatioDisabled={pending || Boolean(props.account)}
+                  />
+                </fieldset>
               ) : null}
 
-              {isSub2API ? (
-                <FormField
-                  control={form.control}
-                  name='authType'
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>认证方式</FormLabel>
-                      <FormControl>
-                        <ToggleGroup
-                          value={[field.value]}
-                          onValueChange={(values) => {
-                            const nextValue = values.find(
-                              (value) => value !== field.value
-                            )
-                            if (
-                              nextValue !== 'api_key' &&
-                              nextValue !== 'account' &&
-                              nextValue !== 'token'
-                            ) {
-                              return
-                            }
-                            field.onChange(nextValue)
-                            form.setValue('password', '')
-                            setUpstreamGroups([])
-                            setTestResult(null)
-                            setTestedAuthType(null)
-                            setUpstreamVersion(null)
-                          }}
-                          variant='outline'
-                          spacing={2}
-                          className='grid w-full grid-cols-3'
-                        >
-                          <ToggleGroupItem value='api_key' className='w-full'>
-                            API Key（新版）
-                          </ToggleGroupItem>
-                          <ToggleGroupItem value='account' className='w-full'>
-                            账号密码
-                          </ToggleGroupItem>
-                          <ToggleGroupItem value='token' className='w-full'>
-                            Token 认证
-                          </ToggleGroupItem>
-                        </ToggleGroup>
-                      </FormControl>
-                      <FormDescription>
-                        {sub2APIAuthDescription}
-                      </FormDescription>
-                      <div className='flex flex-wrap items-center gap-2'>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          size='sm'
-                          onClick={handleFetchVersion}
-                          disabled={pending || !baseUrl.trim()}
-                        >
-                          {versionMutation.isPending ? (
-                            <Spinner data-icon='inline-start' />
-                          ) : (
-                            <HugeiconsIcon
-                              icon={Refresh01Icon}
-                              data-icon='inline-start'
-                            />
-                          )}
-                          获取上游版本
-                        </Button>
-                        {usesSub2APITokenCredential ? (
-                          <Button
-                            type='button'
-                            variant='outline'
-                            size='sm'
-                            onClick={handleOpenSub2APILogin}
-                            disabled={pending || !baseUrl.trim()}
-                          >
-                            <HugeiconsIcon
-                              icon={LinkSquare01Icon}
-                              data-icon='inline-start'
-                            />
-                            打开上游登录
-                          </Button>
-                        ) : null}
-                        {upstreamVersion ? (
-                          <span className='text-muted-foreground text-sm'>
-                            当前版本：{upstreamVersion}
-                          </span>
-                        ) : null}
-                      </div>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
-              ) : null}
-
-              {needsUserAuthentication ? (
-                <div className='grid min-w-0 gap-4 sm:grid-cols-[8rem_minmax(0,1fr)]'>
+              <div className='grid min-w-0 gap-4 sm:grid-cols-2'>
+                {!props.account ? (
                   <FormField
                     control={form.control}
-                    name='userId'
+                    name='ratioSyncEnabled'
                     render={({ field }) => (
-                      <FormItem className='min-w-0'>
-                        <FormLabel>上游用户 ID</FormLabel>
+                      <FormItem className='flex items-center justify-between gap-4 rounded-lg border p-3'>
+                        <div className='flex min-w-0 flex-col gap-1'>
+                          <FormLabel>倍率同步</FormLabel>
+                          <FormDescription>
+                            关闭后暂停自动获取上游倍率，仍可在渠道列表手动刷新
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            aria-label='开启上游倍率同步'
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                ) : null}
+                <fieldset disabled={sharedReadOnly} className='min-w-0'>
+                  <FormField
+                    control={form.control}
+                    name='balanceSyncEnabled'
+                    render={({ field }) => (
+                      <FormItem className='flex items-center justify-between gap-4 rounded-lg border p-3'>
+                        <div className='flex min-w-0 flex-col gap-1'>
+                          <FormLabel>余额同步</FormLabel>
+                          <FormDescription>
+                            关闭后暂停自动获取上游余额，仍可在渠道列表手动刷新
+                          </FormDescription>
+                        </div>
+                        <FormControl>
+                          <Switch
+                            checked={field.value}
+                            onCheckedChange={field.onChange}
+                            aria-label='开启上游余额同步'
+                          />
+                        </FormControl>
+                      </FormItem>
+                    )}
+                  />
+                </fieldset>
+              </div>
+
+              <div className='grid min-w-0 gap-4 sm:grid-cols-2'>
+                <fieldset disabled={sharedReadOnly} className='min-w-0'>
+                  <FormField
+                    control={form.control}
+                    name='balanceWarningThreshold'
+                    render={({ field }) => (
+                      <FormItem
+                        className={cn(
+                          !balanceSyncEnabled && 'text-muted-foreground'
+                        )}
+                      >
+                        <FormLabel>余额预警值</FormLabel>
                         <FormControl>
                           <Input
                             type='number'
-                            min={1}
-                            step={1}
-                            value={field.value}
+                            min={0}
+                            max={MAX_BALANCE_THRESHOLD}
+                            step='any'
+                            placeholder='留空关闭余额预警'
+                            disabled={!balanceSyncEnabled}
+                            value={field.value ?? ''}
                             onBlur={field.onBlur}
-                            onChange={field.onChange}
+                            onChange={(event) => {
+                              const value = event.target.value
+                              field.onChange(
+                                value === '' ? null : Number(value)
+                              )
+                            }}
                             name={field.name}
                             ref={field.ref}
                           />
                         </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name='accessToken'
-                    render={({ field }) => (
-                      <FormItem className='min-w-0'>
-                        <FormLabel>管理面板访问令牌</FormLabel>
-                        <FormControl>
-                          <PasswordInput
-                            className='w-full min-w-0'
-                            placeholder={
-                              hasMatchingSavedAccessToken
-                                ? '留空保留原访问令牌'
-                                : '输入管理面板访问令牌'
-                            }
-                            autoComplete='new-password'
-                            {...field}
-                            onChange={(event) => {
-                              field.onChange(event)
-                              setTestResult(null)
-                              setTestedAuthType(null)
-                            }}
-                          />
-                        </FormControl>
                         <FormDescription>
-                          不是 sk- 开头的渠道 API 密钥
+                          开启余额同步后，定时更新余额低于此值时标红；开启邮件通知后首次进入低余额状态会发送预警，余额恢复后可再次预警
                         </FormDescription>
                         <FormMessage />
                       </FormItem>
                     )}
                   />
+                </fieldset>
+                <fieldset disabled={sharedReadOnly} className='min-w-0'>
+                  <FormField
+                    control={form.control}
+                    name='balanceAutoDisableThreshold'
+                    render={({ field }) => (
+                      <FormItem
+                        className={cn(
+                          !balanceSyncEnabled && 'text-muted-foreground'
+                        )}
+                      >
+                        <FormLabel>余额自动禁用阈值</FormLabel>
+                        <FormControl>
+                          <Input
+                            type='number'
+                            min={0}
+                            max={MAX_BALANCE_THRESHOLD}
+                            step='any'
+                            placeholder='留空关闭余额自动禁用'
+                            disabled={!balanceSyncEnabled}
+                            value={field.value ?? ''}
+                            onBlur={field.onBlur}
+                            onChange={(event) => {
+                              const value = event.target.value
+                              field.onChange(
+                                value === '' ? null : Number(value)
+                              )
+                            }}
+                            name={field.name}
+                            ref={field.ref}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          开启余额同步后，余额更新成功且低于此值会自动禁用启用中的渠道；余额恢复后不会自动启用
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </fieldset>
+              </div>
+
+              <div className='grid min-w-0 gap-4 sm:grid-cols-2'>
+                {!props.account ? (
+                  <FormField
+                    control={form.control}
+                    name='singleChannelAction'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>仅剩此渠道时</FormLabel>
+                        <Select
+                          items={SINGLE_CHANNEL_ACTION_OPTIONS}
+                          value={field.value}
+                          onValueChange={(value) =>
+                            value !== null && field.onChange(value)
+                          }
+                        >
+                          <FormControl>
+                            <SelectTrigger className='w-full'>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              {SINGLE_CHANNEL_ACTION_OPTIONS.map((option) => (
+                                <SelectItem
+                                  key={option.value}
+                                  value={option.value}
+                                >
+                                  {option.label}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          目标倍率高于当前分组倍率时执行
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ) : null}
+                {!props.account ? (
+                  <FormField
+                    control={form.control}
+                    name='multipleChannelsAction'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>存在多个渠道时</FormLabel>
+                        <Select
+                          items={MULTIPLE_CHANNELS_ACTION_OPTIONS}
+                          value={field.value}
+                          onValueChange={(value) =>
+                            value !== null && field.onChange(value)
+                          }
+                        >
+                          <FormControl>
+                            <SelectTrigger className='w-full'>
+                              <SelectValue />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent alignItemWithTrigger={false}>
+                            <SelectGroup>
+                              {MULTIPLE_CHANNELS_ACTION_OPTIONS.map(
+                                (option) => (
+                                  <SelectItem
+                                    key={option.value}
+                                    value={option.value}
+                                  >
+                                    {option.label}
+                                  </SelectItem>
+                                )
+                              )}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                        <FormDescription>
+                          {
+                            MULTIPLE_CHANNELS_ACTION_DESCRIPTIONS[
+                              multipleChannelsAction
+                            ]
+                          }
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                ) : null}
+              </div>
+
+              {upstreamType === 'new_api' ? (
+                <fieldset disabled={sharedReadOnly} className='min-w-0'>
+                  <FormField
+                    control={form.control}
+                    name='authType'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>认证方式</FormLabel>
+                        <FormControl>
+                          <ToggleGroup
+                            value={[field.value]}
+                            onValueChange={(values) => {
+                              const nextValue = values.find(
+                                (value) => value !== field.value
+                              )
+                              if (
+                                nextValue === 'public' ||
+                                nextValue === 'user'
+                              ) {
+                                field.onChange(nextValue)
+                                form.setValue('accessToken', '')
+                                setUpstreamGroups([])
+                                setTestResult(null)
+                                setTestedAuthType(null)
+                              }
+                            }}
+                            variant='outline'
+                            spacing={2}
+                            className='grid w-full grid-cols-2'
+                          >
+                            <ToggleGroupItem value='public' className='w-full'>
+                              公开接口
+                            </ToggleGroupItem>
+                            <ToggleGroupItem value='user' className='w-full'>
+                              用户认证
+                            </ToggleGroupItem>
+                          </ToggleGroup>
+                        </FormControl>
+                        <FormDescription>{authDescription}</FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </fieldset>
+              ) : null}
+
+              {isSub2API ? (
+                <fieldset disabled={sharedReadOnly} className='min-w-0'>
+                  <FormField
+                    control={form.control}
+                    name='authType'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>认证方式</FormLabel>
+                        <FormControl>
+                          <ToggleGroup
+                            value={[field.value]}
+                            onValueChange={(values) => {
+                              const nextValue = values.find(
+                                (value) => value !== field.value
+                              )
+                              if (
+                                nextValue !== 'api_key' &&
+                                nextValue !== 'account' &&
+                                nextValue !== 'token'
+                              ) {
+                                return
+                              }
+                              field.onChange(nextValue)
+                              form.setValue('password', '')
+                              setUpstreamGroups([])
+                              setTestResult(null)
+                              setTestedAuthType(null)
+                              setUpstreamVersion(null)
+                            }}
+                            variant='outline'
+                            spacing={2}
+                            className='grid w-full grid-cols-3'
+                          >
+                            <ToggleGroupItem value='api_key' className='w-full'>
+                              API Key（新版）
+                            </ToggleGroupItem>
+                            <ToggleGroupItem value='account' className='w-full'>
+                              账号密码
+                            </ToggleGroupItem>
+                            <ToggleGroupItem value='token' className='w-full'>
+                              Token 认证
+                            </ToggleGroupItem>
+                          </ToggleGroup>
+                        </FormControl>
+                        <FormDescription>
+                          {sub2APIAuthDescription}
+                        </FormDescription>
+                        <div className='flex flex-wrap items-center gap-2'>
+                          <Button
+                            type='button'
+                            variant='outline'
+                            size='sm'
+                            onClick={handleFetchVersion}
+                            disabled={pending || !baseUrl.trim()}
+                          >
+                            {versionMutation.isPending ? (
+                              <Spinner data-icon='inline-start' />
+                            ) : (
+                              <HugeiconsIcon
+                                icon={Refresh01Icon}
+                                data-icon='inline-start'
+                              />
+                            )}
+                            获取上游版本
+                          </Button>
+                          {usesSub2APITokenCredential ? (
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={handleOpenSub2APILogin}
+                              disabled={pending || !baseUrl.trim()}
+                            >
+                              <HugeiconsIcon
+                                icon={LinkSquare01Icon}
+                                data-icon='inline-start'
+                              />
+                              打开上游登录
+                            </Button>
+                          ) : null}
+                          {upstreamVersion ? (
+                            <span className='text-muted-foreground text-sm'>
+                              当前版本：{upstreamVersion}
+                            </span>
+                          ) : null}
+                        </div>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </fieldset>
+              ) : null}
+
+              {needsUserAuthentication ? (
+                <div className='grid min-w-0 gap-4 sm:grid-cols-[8rem_minmax(0,1fr)]'>
+                  <fieldset disabled={sharedReadOnly} className='min-w-0'>
+                    <FormField
+                      control={form.control}
+                      name='userId'
+                      render={({ field }) => (
+                        <FormItem className='min-w-0'>
+                          <FormLabel>上游用户 ID</FormLabel>
+                          <FormControl>
+                            <Input
+                              type='number'
+                              min={1}
+                              step={1}
+                              value={field.value}
+                              onBlur={field.onBlur}
+                              onChange={field.onChange}
+                              name={field.name}
+                              ref={field.ref}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </fieldset>
+                  <fieldset disabled={sharedReadOnly} className='min-w-0'>
+                    <FormField
+                      control={form.control}
+                      name='accessToken'
+                      render={({ field }) => (
+                        <FormItem className='min-w-0'>
+                          <FormLabel>管理面板访问令牌</FormLabel>
+                          <FormControl>
+                            <PasswordInput
+                              className='w-full min-w-0'
+                              placeholder={
+                                hasMatchingSavedAccessToken
+                                  ? '留空保留原访问令牌'
+                                  : '输入管理面板访问令牌'
+                              }
+                              autoComplete='new-password'
+                              {...field}
+                              onChange={(event) => {
+                                field.onChange(event)
+                                setTestResult(null)
+                                setTestedAuthType(null)
+                              }}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            不是 sk- 开头的渠道 API 密钥
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </fieldset>
                 </div>
               ) : null}
 
               {needsSub2APIAccount ? (
                 <div className='grid min-w-0 gap-4 sm:grid-cols-2'>
-                  <FormField
-                    control={form.control}
-                    name='account'
-                    render={({ field }) => (
-                      <FormItem className='min-w-0'>
-                        <FormLabel>Sub2API 登录邮箱</FormLabel>
-                        <FormControl>
-                          <Input
-                            type='email'
-                            autoComplete='username'
-                            placeholder='name@example.com'
-                            {...field}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name='password'
-                    render={({ field }) => (
-                      <FormItem className='min-w-0'>
-                        <FormLabel>Sub2API 登录密码</FormLabel>
-                        <FormControl>
-                          <PasswordInput
-                            className='w-full min-w-0'
-                            placeholder={
-                              hasMatchingSavedPassword
-                                ? '留空保留原登录密码'
-                                : '输入 Sub2API 登录密码'
-                            }
-                            autoComplete='new-password'
-                            {...field}
-                            onChange={(event) => {
-                              field.onChange(event)
-                              setTestResult(null)
-                              setTestedAuthType(null)
-                            }}
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          Token
-                          缺失或过期时会自动登录；密码作为敏感配置保存在服务端，接口不会回传明文。上游开启
-                          Turnstile、Cloudflare 人机验证或 TOTP
-                          时无法无人值守登录，请改用 Refresh Token 或手动 Token
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                  <fieldset disabled={sharedReadOnly} className='min-w-0'>
+                    <FormField
+                      control={form.control}
+                      name='account'
+                      render={({ field }) => (
+                        <FormItem className='min-w-0'>
+                          <FormLabel>Sub2API 登录邮箱</FormLabel>
+                          <FormControl>
+                            <Input
+                              type='email'
+                              autoComplete='username'
+                              placeholder='name@example.com'
+                              {...field}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </fieldset>
+                  <fieldset disabled={sharedReadOnly} className='min-w-0'>
+                    <FormField
+                      control={form.control}
+                      name='password'
+                      render={({ field }) => (
+                        <FormItem className='min-w-0'>
+                          <FormLabel>Sub2API 登录密码</FormLabel>
+                          <FormControl>
+                            <PasswordInput
+                              className='w-full min-w-0'
+                              placeholder={
+                                hasMatchingSavedPassword
+                                  ? '留空保留原登录密码'
+                                  : '输入 Sub2API 登录密码'
+                              }
+                              autoComplete='new-password'
+                              {...field}
+                              onChange={(event) => {
+                                field.onChange(event)
+                                setTestResult(null)
+                                setTestedAuthType(null)
+                              }}
+                            />
+                          </FormControl>
+                          <FormDescription>
+                            Token
+                            缺失或过期时会自动登录；密码作为敏感配置保存在服务端，接口不会回传明文。上游开启
+                            Turnstile、Cloudflare 人机验证或 TOTP
+                            时无法无人值守登录，请改用 Refresh Token 或手动
+                            Token
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </fieldset>
                 </div>
               ) : null}
 
               {usesSub2APITokenCredential ? (
                 <div className='grid min-w-0 gap-4 sm:grid-cols-2'>
-                  <FormField
-                    control={form.control}
-                    name='accessToken'
-                    render={({ field }) => (
-                      <FormItem className='min-w-0'>
-                        <FormLabel>Sub2API 手动 Token</FormLabel>
-                        <FormControl>
-                          <PasswordInput
-                            className='w-full min-w-0'
-                            placeholder={
-                              hasSavedSub2APIToken
-                                ? '留空使用已保存 Token'
-                                : '输入登录后的 JWT Token'
-                            }
-                            autoComplete='new-password'
-                            {...field}
-                            onChange={(event) => {
-                              field.onChange(event)
-                              setTestResult(null)
-                              setTestedAuthType(null)
-                            }}
-                          />
-                        </FormControl>
-                        <div className='flex flex-wrap gap-2'>
-                          <Button
-                            type='button'
-                            variant='outline'
-                            size='sm'
-                            onClick={() =>
-                              void handlePasteToken('accessToken', '手动 Token')
-                            }
-                            disabled={pending}
-                          >
-                            <HugeiconsIcon
-                              icon={ClipboardPasteIcon}
-                              data-icon='inline-start'
+                  <fieldset disabled={sharedReadOnly} className='min-w-0'>
+                    <FormField
+                      control={form.control}
+                      name='accessToken'
+                      render={({ field }) => (
+                        <FormItem className='min-w-0'>
+                          <FormLabel>Sub2API 手动 Token</FormLabel>
+                          <FormControl>
+                            <PasswordInput
+                              className='w-full min-w-0'
+                              placeholder={
+                                hasSavedSub2APIToken
+                                  ? '留空使用已保存 Token'
+                                  : '输入登录后的 JWT Token'
+                              }
+                              autoComplete='new-password'
+                              {...field}
+                              onChange={(event) => {
+                                field.onChange(event)
+                                setTestResult(null)
+                                setTestedAuthType(null)
+                              }}
                             />
-                            粘贴
-                          </Button>
-                          <Button
-                            type='button'
-                            variant='outline'
-                            size='sm'
-                            onClick={() =>
-                              void copyToClipboard(SUB2API_ACCESS_TOKEN_COMMAND)
-                            }
-                            disabled={pending}
-                          >
-                            <HugeiconsIcon
-                              icon={Copy01Icon}
-                              data-icon='inline-start'
-                            />
-                            提取命令
-                          </Button>
-                          <Button
-                            type='button'
-                            variant='secondary'
-                            size='sm'
-                            onClick={() =>
-                              void handleTestSub2APICredential('token')
-                            }
-                            disabled={pending || !hasSub2APIToken}
-                          >
-                            {testMutation.isPending &&
-                            testedAuthType === 'token' ? (
-                              <Spinner data-icon='inline-start' />
-                            ) : (
+                          </FormControl>
+                          <div className='flex flex-wrap gap-2'>
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={() =>
+                                void handlePasteToken(
+                                  'accessToken',
+                                  '手动 Token'
+                                )
+                              }
+                              disabled={pending}
+                            >
                               <HugeiconsIcon
-                                icon={TestTubeIcon}
+                                icon={ClipboardPasteIcon}
                                 data-icon='inline-start'
                               />
-                            )}
-                            测试手动 Token
-                          </Button>
-                        </div>
-                        <FormDescription>
-                          必填的短期 JWT；Refresh Token
-                          为可选续期凭据，保存后会在 JWT 过期时自动换取新
-                          Token。
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={form.control}
-                    name='refreshToken'
-                    render={({ field }) => (
-                      <FormItem className='min-w-0'>
-                        <FormLabel>Sub2API Refresh Token</FormLabel>
-                        <FormControl>
-                          <PasswordInput
-                            className='w-full min-w-0'
-                            placeholder={
-                              hasSavedSub2APIRefreshToken
-                                ? '留空使用已保存 Refresh Token'
-                                : '输入 Sub2API Refresh Token'
-                            }
-                            autoComplete='new-password'
-                            {...field}
-                            onChange={(event) => {
-                              field.onChange(event)
-                              setTestResult(null)
-                              setTestedAuthType(null)
-                            }}
-                          />
-                        </FormControl>
-                        <div className='flex flex-wrap gap-2'>
-                          <Button
-                            type='button'
-                            variant='outline'
-                            size='sm'
-                            onClick={() =>
-                              void handlePasteToken(
-                                'refreshToken',
-                                'Refresh Token'
-                              )
-                            }
-                            disabled={pending}
-                          >
-                            <HugeiconsIcon
-                              icon={ClipboardPasteIcon}
-                              data-icon='inline-start'
-                            />
-                            粘贴
-                          </Button>
-                          <Button
-                            type='button'
-                            variant='outline'
-                            size='sm'
-                            onClick={() =>
-                              void copyToClipboard(
-                                SUB2API_REFRESH_TOKEN_COMMAND
-                              )
-                            }
-                            disabled={pending}
-                          >
-                            <HugeiconsIcon
-                              icon={Copy01Icon}
-                              data-icon='inline-start'
-                            />
-                            提取命令
-                          </Button>
-                          <Button
-                            type='button'
-                            variant='secondary'
-                            size='sm'
-                            onClick={() =>
-                              void handleTestSub2APICredential('refresh_token')
-                            }
-                            disabled={pending || !hasSub2APIRefreshToken}
-                          >
-                            {testMutation.isPending &&
-                            testedAuthType === 'refresh_token' ? (
-                              <Spinner data-icon='inline-start' />
-                            ) : (
+                              粘贴
+                            </Button>
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={() =>
+                                void copyToClipboard(
+                                  SUB2API_ACCESS_TOKEN_COMMAND
+                                )
+                              }
+                              disabled={pending}
+                            >
                               <HugeiconsIcon
-                                icon={TestTubeIcon}
+                                icon={Copy01Icon}
                                 data-icon='inline-start'
                               />
-                            )}
-                            测试 Refresh Token
-                          </Button>
-                        </div>
-                        <FormDescription>
-                          可选续期凭据；可单独测试，或在手动 Token
-                          失效时自动换取新 Token。
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+                              提取命令
+                            </Button>
+                            <Button
+                              type='button'
+                              variant='secondary'
+                              size='sm'
+                              onClick={() =>
+                                void handleTestSub2APICredential('token')
+                              }
+                              disabled={pending || !hasSub2APIToken}
+                            >
+                              {testMutation.isPending &&
+                              testedAuthType === 'token' ? (
+                                <Spinner data-icon='inline-start' />
+                              ) : (
+                                <HugeiconsIcon
+                                  icon={TestTubeIcon}
+                                  data-icon='inline-start'
+                                />
+                              )}
+                              测试手动 Token
+                            </Button>
+                          </div>
+                          <FormDescription>
+                            必填的短期 JWT；Refresh Token
+                            为可选续期凭据，保存后会在 JWT 过期时自动换取新
+                            Token。
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </fieldset>
+                  <fieldset disabled={sharedReadOnly} className='min-w-0'>
+                    <FormField
+                      control={form.control}
+                      name='refreshToken'
+                      render={({ field }) => (
+                        <FormItem className='min-w-0'>
+                          <FormLabel>Sub2API Refresh Token</FormLabel>
+                          <FormControl>
+                            <PasswordInput
+                              className='w-full min-w-0'
+                              placeholder={
+                                hasSavedSub2APIRefreshToken
+                                  ? '留空使用已保存 Refresh Token'
+                                  : '输入 Sub2API Refresh Token'
+                              }
+                              autoComplete='new-password'
+                              {...field}
+                              onChange={(event) => {
+                                field.onChange(event)
+                                setTestResult(null)
+                                setTestedAuthType(null)
+                              }}
+                            />
+                          </FormControl>
+                          <div className='flex flex-wrap gap-2'>
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={() =>
+                                void handlePasteToken(
+                                  'refreshToken',
+                                  'Refresh Token'
+                                )
+                              }
+                              disabled={pending}
+                            >
+                              <HugeiconsIcon
+                                icon={ClipboardPasteIcon}
+                                data-icon='inline-start'
+                              />
+                              粘贴
+                            </Button>
+                            <Button
+                              type='button'
+                              variant='outline'
+                              size='sm'
+                              onClick={() =>
+                                void copyToClipboard(
+                                  SUB2API_REFRESH_TOKEN_COMMAND
+                                )
+                              }
+                              disabled={pending}
+                            >
+                              <HugeiconsIcon
+                                icon={Copy01Icon}
+                                data-icon='inline-start'
+                              />
+                              提取命令
+                            </Button>
+                            <Button
+                              type='button'
+                              variant='secondary'
+                              size='sm'
+                              onClick={() =>
+                                void handleTestSub2APICredential(
+                                  'refresh_token'
+                                )
+                              }
+                              disabled={pending || !hasSub2APIRefreshToken}
+                            >
+                              {testMutation.isPending &&
+                              testedAuthType === 'refresh_token' ? (
+                                <Spinner data-icon='inline-start' />
+                              ) : (
+                                <HugeiconsIcon
+                                  icon={TestTubeIcon}
+                                  data-icon='inline-start'
+                                />
+                              )}
+                              测试 Refresh Token
+                            </Button>
+                          </div>
+                          <FormDescription>
+                            可选续期凭据；可单独测试，或在手动 Token
+                            失效时自动换取新 Token。
+                          </FormDescription>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                  </fieldset>
                 </div>
               ) : null}
 
@@ -1646,7 +1752,8 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                 >
                   取消
                 </Button>
-                {(ratioSyncEnabled || isCustom) &&
+                {!props.account &&
+                (ratioSyncEnabled || isCustom) &&
                 !usesSub2APITokenCredential ? (
                   <Button
                     type='button'

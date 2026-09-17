@@ -44,6 +44,7 @@ import {
   testUpstreamAutomation,
   type UpstreamAutomation,
 } from '../api-automations'
+import { useUpstreamAccounts } from '../api-upstream-accounts'
 import {
   automationMetadataSchema,
   upstreamAutomationFormValues,
@@ -69,6 +70,7 @@ export function UpstreamAutomationEditor(props: {
   onCancel: () => void
 }) {
   const queryClient = useQueryClient()
+  const accounts = useUpstreamAccounts()
   const [task, setTask] = useState(props.task)
   const metadata = useForm<AutomationMetadata>({
     defaultValues: task,
@@ -86,6 +88,7 @@ export function UpstreamAutomationEditor(props: {
     control: form.control,
     name: 'customConfig.variableGroupId',
   })
+  const accountId = useWatch({ control: metadata.control, name: 'account_id' })
   const save = useMutation({
     mutationKey: automationsQueryKey,
     mutationFn: saveUpstreamAutomation,
@@ -184,44 +187,78 @@ export function UpstreamAutomationEditor(props: {
           <UpstreamAutomationMetadata
             form={metadata}
             channels={props.channels}
+            accounts={accounts.data}
+            onAccountChange={(account) => {
+              if (!account) return
+              metadata.setValue('channel_ids', account.channel_ids)
+              metadata.setValue('proxy', account.proxy)
+              const values = upstreamAutomationFormValues({
+                ...task,
+                base_url: account.upstream.base_url,
+                custom_config:
+                  account.upstream.custom_config ?? task.custom_config,
+              })
+              const actions = form.getValues('customConfig.actions')
+              form.setValue('baseUrl', values.baseUrl)
+              form.setValue('customConfig', { ...values.customConfig, actions })
+            }}
           />
         </Form>
         <Separator />
         <Form {...form}>
-          <FormField
-            control={form.control}
-            name='baseUrl'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>上游基础地址</FormLabel>
-                <FormControl>
-                  <Input {...field} placeholder='https://upstream.example' />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <ChannelMonitorVariableGroupFields
-            form={form}
-            channelId={0}
-            channelName={task.name}
-            disabled={pending}
-            independent
-          />
-          {!groupId ? (
-            <ChannelMonitorCustomVariableFields
-              form={form}
-              pending={pending}
-              fetchingRequestId={
-                variables.isPending ? variables.variables.requestId : undefined
-              }
-              onFetch={(id) => {
-                void fetchVariables(id).catch(() => undefined)
-              }}
-            />
-          ) : null}
-          <ChannelMonitorCustomUpstreamFields form={form} independent />
-          <Separator />
+          {!accountId ? (
+            <>
+              <FormField
+                control={form.control}
+                name='baseUrl'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>上游基础地址</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        placeholder='https://upstream.example'
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <ChannelMonitorVariableGroupFields
+                form={form}
+                channelId={0}
+                channelName={task.name}
+                disabled={pending}
+                independent
+              />
+              {!groupId ? (
+                <ChannelMonitorCustomVariableFields
+                  form={form}
+                  pending={pending}
+                  fetchingRequestId={
+                    variables.isPending
+                      ? variables.variables.requestId
+                      : undefined
+                  }
+                  onFetch={(id) => {
+                    void fetchVariables(id).catch(() => undefined)
+                  }}
+                />
+              ) : null}
+              <ChannelMonitorCustomUpstreamFields
+                form={form}
+                independent
+                allowAccountBalance
+              />
+              <Separator />
+            </>
+          ) : (
+            <Alert>
+              <AlertDescription>
+                余额查询与认证使用账户配置。以下规则由账户统一执行，倍率规则使用所选渠道。
+              </AlertDescription>
+            </Alert>
+          )}
           <ChannelMonitorCustomActionFields
             form={form}
             disabled={pending}

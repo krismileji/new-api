@@ -447,6 +447,7 @@ func migrateDB() error {
 		&ChannelRatioMonitor{},
 		&ChannelLocalResponseRefund{},
 		&ChannelMonitorVariableGroup{},
+		&ChannelMonitorUpstreamAccount{},
 		&ChannelSmartScheduleRouteState{},
 		&ChannelLogicalSmartScheduleRouteState{},
 		&ChannelLogicalSmartScheduleSampleState{},

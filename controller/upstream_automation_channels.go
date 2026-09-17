@@ -15,6 +15,11 @@ import (
 // Explicit links authorize a fresh read independent of channel status and the
 // legacy consecutive-failure stop. Channel recovery still uses existing policy.
 func refreshUpstreamAutomationChannels(ctx context.Context, config service.UpstreamAutomationConfig) error {
+	if config.AccountID > 0 {
+		_ = requestChannelSmartScheduleRun(ctx)
+		return nil
+	}
+	ctx = withUpstreamAccountBalanceRound(ctx)
 	var failures []error
 	for _, id := range config.ChannelIDs {
 		if ctx.Err() != nil {

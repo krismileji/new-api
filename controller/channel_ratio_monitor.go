@@ -42,6 +42,7 @@ type groupRatioSyncRequest struct {
 }
 
 type channelMonitorUpstreamRequest struct {
+	AccountRevision             *int64                                      `json:"account_revision,omitempty"`
 	Type                        string                                      `json:"type"`
 	BaseURL                     string                                      `json:"base_url"`
 	Group                       string                                      `json:"group"`
@@ -62,6 +63,7 @@ type channelMonitorUpstreamRequest struct {
 }
 
 type channelMonitorUpstreamConfig struct {
+	UpstreamAccountID           int                                              `json:"upstream_account_id"`
 	Type                        string                                           `json:"type"`
 	BaseURL                     string                                           `json:"base_url"`
 	Group                       string                                           `json:"group"`
@@ -161,6 +163,7 @@ func channelMonitorUpstreamFromModel(monitor model.ChannelRatioMonitor) *channel
 		authType = service.Sub2APIAuthToken
 	}
 	return &channelMonitorUpstreamConfig{
+		UpstreamAccountID:           monitor.UpstreamAccountID,
 		Type:                        monitor.UpstreamType,
 		BaseURL:                     monitor.UpstreamBaseURL,
 		Group:                       monitor.UpstreamGroup,
@@ -309,7 +312,7 @@ func resolveChannelMonitorUpstreamRequest(channel *model.Channel, request channe
 			return service.ChannelMonitorUpstreamConfig{}, errors.New("上游访问令牌过长")
 		}
 		if config.AccessToken == "" {
-			monitor, findErr := model.GetChannelRatioMonitor(channel.Id)
+			monitor, findErr := channelMonitorConfigurationForRequest(channel.Id, request.AccountRevision)
 			if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
 				return service.ChannelMonitorUpstreamConfig{}, findErr
 			}
@@ -346,7 +349,7 @@ func resolveChannelMonitorUpstreamRequest(channel *model.Channel, request channe
 				return service.ChannelMonitorUpstreamConfig{}, errors.New("Sub2API 登录密码过长")
 			}
 			if config.Password == "" {
-				monitor, findErr := model.GetChannelRatioMonitor(channel.Id)
+				monitor, findErr := channelMonitorConfigurationForRequest(channel.Id, request.AccountRevision)
 				if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
 					return service.ChannelMonitorUpstreamConfig{}, findErr
 				}
@@ -378,7 +381,7 @@ func resolveChannelMonitorUpstreamRequest(channel *model.Channel, request channe
 			if utf8.RuneCountInString(config.RefreshToken) > 4096 {
 				return service.ChannelMonitorUpstreamConfig{}, errors.New("Sub2API Refresh Token 过长")
 			}
-			monitor, findErr := model.GetChannelRatioMonitor(channel.Id)
+			monitor, findErr := channelMonitorConfigurationForRequest(channel.Id, request.AccountRevision)
 			if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
 				return service.ChannelMonitorUpstreamConfig{}, findErr
 			}
@@ -405,7 +408,7 @@ func resolveChannelMonitorUpstreamRequest(channel *model.Channel, request channe
 		}
 		var savedMonitor model.ChannelRatioMonitor
 		hasSavedMonitor := false
-		monitor, findErr := model.GetChannelRatioMonitor(channel.Id)
+		monitor, findErr := channelMonitorConfigurationForRequest(channel.Id, request.AccountRevision)
 		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
 			return service.ChannelMonitorUpstreamConfig{}, findErr
 		}
@@ -465,7 +468,7 @@ func resolveChannelMonitorUpstreamRequest(channel *model.Channel, request channe
 	case service.CustomUpstreamType:
 		config.AuthType = service.CustomUpstreamAuthType
 		var existingConfig *service.ChannelMonitorCustomUpstreamConfig
-		monitor, findErr := model.GetChannelRatioMonitor(channel.Id)
+		monitor, findErr := channelMonitorConfigurationForRequest(channel.Id, request.AccountRevision)
 		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
 			return service.ChannelMonitorUpstreamConfig{}, findErr
 		}
@@ -483,7 +486,7 @@ func resolveChannelMonitorUpstreamRequest(channel *model.Channel, request channe
 			if err := service.ValidateChannelMonitorVariableGroup(context.Background(), &config.CustomConfig); err != nil {
 				return service.ChannelMonitorUpstreamConfig{}, err
 			}
-			return config, nil
+			return service.ResolveChannelMonitorBalanceSource(context.Background(), config)
 		}
 		customConfig, normalizeErr := service.NormalizeChannelMonitorCustomUpstreamConfigWithExisting(*request.CustomConfig, existingConfig)
 		if normalizeErr != nil {
@@ -493,7 +496,7 @@ func resolveChannelMonitorUpstreamRequest(channel *model.Channel, request channe
 		if err := service.ValidateChannelMonitorVariableGroup(context.Background(), &config.CustomConfig); err != nil {
 			return service.ChannelMonitorUpstreamConfig{}, err
 		}
-		return config, nil
+		return service.ResolveChannelMonitorBalanceSource(context.Background(), config)
 	default:
 		return service.ChannelMonitorUpstreamConfig{}, errors.New("上游类型无效")
 	}
@@ -925,7 +928,7 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的参数"})
 		return
 	}
-	config, err := resolveChannelMonitorUpstreamRequest(channel, request, true)
+	config, err := resolveChannelMonitorUpstreamRequest(channel, request, request.AccountRevision == nil)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
 		return
@@ -936,7 +939,7 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 		return
 	}
 	hasExistingMonitor := findErr == nil
-	if request.CostConversion == nil && hasExistingMonitor {
+	if request.CostConversion == nil && hasExistingMonitor && config.CustomConfig.Balance.Source != service.ChannelMonitorCustomSourceAccount {
 		config.CostConversion, err = service.ParseChannelMonitorCostConversion(existingMonitor.CostConversion)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
@@ -1066,6 +1069,97 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 		})
 	}
 
+	if request.AccountRevision != nil {
+		if config.CustomConfig.Balance.Source == service.ChannelMonitorCustomSourceAccount {
+			common.ApiErrorMsg(c, "账户必须配置自身余额来源，不能关联另一账户")
+			return
+		}
+		if !hasExistingMonitor || existingMonitor.UpstreamAccountID == 0 {
+			common.ApiErrorMsg(c, "渠道尚未关联账户")
+			return
+		}
+		account, readErr := model.GetChannelMonitorUpstreamAccount(c.Request.Context(), existingMonitor.UpstreamAccountID)
+		if readErr != nil {
+			common.ApiError(c, readErr)
+			return
+		}
+		if account.Revision != *request.AccountRevision {
+			common.ApiError(c, model.ErrUpstreamAccountChanged)
+			return
+		}
+		expected := account
+		accountSettings, settingsErr := account.MonitorSettings()
+		if settingsErr != nil {
+			common.ApiError(c, settingsErr)
+			return
+		}
+		if config.Type != accountSettings.UpstreamType {
+			common.ApiErrorMsg(c, "共享账户不能直接切换上游类型，请创建新账户")
+			return
+		}
+		shared := model.ChannelMonitorAccountSettings{UpstreamType: config.Type, UpstreamBaseURL: config.BaseURL,
+			UpstreamAuthType: config.AuthType, UpstreamUserId: config.UserID, UpstreamAccessToken: config.AccessToken,
+			UpstreamRefreshToken: config.RefreshToken, UpstreamAccount: config.Account, UpstreamPassword: config.Password,
+			CostConversion: costConversion, CustomUpstreamConfig: customConfig, UpstreamBalanceSyncDisabled: !balanceSyncEnabled,
+			BalanceWarningThreshold: balanceWarningThreshold, BalanceAutoDisableThreshold: balanceAutoDisableThreshold}
+		if config.Type == service.CustomUpstreamType && config.CustomConfig.BalanceReuseRatioRequest {
+			common.ApiErrorMsg(c, "共享账户的余额查询需使用独立请求")
+			return
+		}
+		encoded, encodeErr := common.Marshal(shared)
+		if encodeErr != nil {
+			common.ApiError(c, encodeErr)
+			return
+		}
+		account.Settings = string(encoded)
+		membersBefore, readErr := model.GetUpstreamAccountMonitors(c.Request.Context(), account.ID)
+		if readErr != nil {
+			common.ApiError(c, readErr)
+			return
+		}
+		revisions := make(map[int]int64, len(membersBefore))
+		for _, member := range membersBefore {
+			revisions[member.ChannelId] = member.UpstreamRevision
+			if err := shared.Apply(&member); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			if member.UpstreamType == service.CustomUpstreamType {
+				custom, err := service.ParseChannelMonitorCustomUpstreamConfig(member.CustomUpstreamConfig)
+				if err != nil {
+					common.ApiError(c, err)
+					return
+				}
+				if err := service.ValidateChannelMonitorVariableGroup(c.Request.Context(), &custom); err != nil {
+					common.ApiError(c, err)
+					return
+				}
+			}
+			conversion, err := service.ParseChannelMonitorCostConversion(member.CostConversion)
+			if err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			if _, _, err := service.CalculateChannelMonitorCostRatio(member.Ratio, conversion); err != nil {
+				common.ApiError(c, err)
+				return
+			}
+		}
+		members, saveErr := model.SaveChannelMonitorUpstreamAccount(c.Request.Context(), &account, &expected, nil, revisions)
+		if saveErr != nil {
+			common.ApiError(c, saveErr)
+			return
+		}
+		for _, member := range members {
+			service.InvalidateChannelDailyCostSnapshot(member.ChannelId)
+			if common.RedisEnabled {
+				_ = service.ConfigureChannelBalanceEstimate(c.Request.Context(), member)
+			}
+		}
+		recordManageAudit(c, "channel.upstream_account_config_update", map[string]any{"account_id": account.ID})
+		common.ApiSuccess(c, gin.H{"account_id": account.ID})
+		return
+	}
 	monitor, err := model.SaveChannelRatioUpstreamConfig(
 		channelId,
 		config.Type,
@@ -1075,6 +1169,7 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 		config.UserID,
 		config.AccessToken,
 		model.ChannelRatioUpstreamOptions{
+			BalanceAccountRevision:      config.AccountRevision,
 			SingleChannelAction:         singleChannelAction,
 			MultipleChannelsAction:      multipleChannelAction,
 			BalanceWarningThreshold:     balanceWarningThreshold,
@@ -1096,8 +1191,25 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 	service.NotifyChannelModelDetectionOverviewChanged()
 	service.InvalidateChannelDailyCostSnapshot(channelId)
 	balanceAutoDisabled := false
-	if configErr := service.ConfigureChannelBalanceEstimate(c.Request.Context(), monitor); configErr != nil {
-		logger.LogWarn(c, fmt.Sprintf("渠道 #%d 余额预估配置缓存更新失败: %v", channelId, configErr))
+	affected := map[int]model.ChannelRatioMonitor{monitor.ChannelId: monitor}
+	for _, id := range []int{existingMonitor.UpstreamAccountID, monitor.UpstreamAccountID} {
+		if id <= 0 {
+			continue
+		}
+		members, readErr := model.GetUpstreamAccountMonitors(c.Request.Context(), id)
+		if readErr != nil {
+			common.ApiError(c, readErr)
+			return
+		}
+		for _, member := range members {
+			affected[member.ChannelId] = member
+		}
+	}
+	for _, member := range affected {
+		service.InvalidateChannelDailyCostSnapshot(member.ChannelId)
+		if configErr := service.ConfigureChannelBalanceEstimate(c.Request.Context(), member); configErr != nil {
+			logger.LogWarn(c, fmt.Sprintf("渠道 #%d 余额预估配置缓存更新失败: %v", member.ChannelId, configErr))
+		}
 	}
 	if config.Type == service.CustomUpstreamType {
 		operatorId, operatorUsername := getChannelMonitorOperator(c)
@@ -1118,6 +1230,13 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 			if !applied {
 				common.ApiError(c, model.ErrChannelRatioMonitorConfigChanged)
 				return
+			}
+			if monitor.UpstreamAccountID > 0 && common.RedisEnabled {
+				service.InvalidateChannelDailyCostSnapshot(channelId)
+				if err := service.ConfigureChannelBalanceEstimate(c.Request.Context(), monitor); err != nil {
+					common.ApiError(c, fmt.Errorf("倍率已保存，但账户余额预估配置更新失败: %w", err))
+					return
+				}
 			}
 		}
 		if config.CustomConfig.Balance.Source == service.ChannelMonitorCustomSourceFixed {
@@ -1226,6 +1345,9 @@ func ListChannelMonitorUpstreamGroups(c *gin.Context) {
 		return
 	}
 
+	if monitor, err := model.GetChannelRatioMonitor(channelId); err == nil && monitor.UpstreamAccountID > 0 && request.AccountRevision == nil {
+		config.AccountID, config.AccountRevision = monitor.UpstreamAccountID, monitor.UpstreamAccountRevision
+	}
 	result, fetchErr := service.FetchChannelMonitorUpstreamGroups(c.Request.Context(), config, channel.GetKeys())
 	if fetchErr != nil {
 		common.ApiError(c, fetchErr)
@@ -1348,10 +1470,12 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 	}
 
 	var balanceSync service.ChannelBalanceSync
-	if !monitor.UpstreamBalanceSyncDisabled && fetchBalance {
+	if monitor.UpstreamAccountID == 0 && !monitor.UpstreamBalanceSyncDisabled && fetchBalance {
 		balanceSync, _ = service.BeginChannelBalanceSync(ctx, monitor)
 	}
 	result, fetchErr := service.FetchChannelMonitorUpstreamGroupRatio(ctx, service.ChannelMonitorUpstreamConfig{
+		AccountID:                    monitor.UpstreamAccountID,
+		AccountRevision:              monitor.UpstreamAccountRevision,
 		Type:                         monitor.UpstreamType,
 		BaseURL:                      monitor.UpstreamBaseURL,
 		Group:                        monitor.UpstreamGroup,
@@ -1367,12 +1491,12 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 		ChannelKeys:                  channelKeys,
 		Proxy:                        proxyURL,
 		RequestTimeout:               requestTimeout,
-		SkipBalance:                  monitor.UpstreamBalanceSyncDisabled || !fetchBalance,
+		SkipBalance:                  monitor.UpstreamAccountID > 0 || monitor.UpstreamBalanceSyncDisabled || !fetchBalance,
 		CostConversion:               costConversion,
 		CustomConfig:                 customConfig,
 	})
 	outcome.Result = result
-	if result.Balance.Amount != nil || strings.TrimSpace(result.Balance.Error) != "" {
+	if monitor.UpstreamAccountID == 0 && (result.Balance.Amount != nil || strings.TrimSpace(result.Balance.Error) != "") {
 		balanceEvaluation, applied, balanceErr := recordChannelMonitorBalanceUpdate(
 			ctx,
 			monitor,
@@ -1425,6 +1549,13 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 	outcome.Created = created
 	outcome.Changed = changed
 	outcome.RatioRecorded = true
+	if monitor.UpstreamAccountID > 0 && !monitor.UpstreamBalanceSyncDisabled && fetchBalance {
+		balanceOutcome, balanceErr := fetchAndRecordUpstreamAccountBalance(ctx, monitor, requestTimeout)
+		outcome.Result.Balance, outcome.BalanceEvaluation, outcome.BalanceRecorded = balanceOutcome.Result.Balance, balanceOutcome.BalanceEvaluation, balanceOutcome.BalanceRecorded
+		if balanceErr != nil {
+			outcome.Result.Balance.Error = balanceErr.Error()
+		}
+	}
 	if runChannelMonitorCustomActions(ctx, monitor, "ratio", result.Ratio, proxyURL, requestTimeout, options) {
 		refreshed, refreshErr := refreshChannelMonitorAfterCustomAction(ctx, monitor, channelKeys, proxyURL, requestTimeout, operatorId, operatorUsername)
 		refreshed.Created = refreshed.Created || created
@@ -1435,6 +1566,9 @@ func fetchAndRecordChannelMonitorUpstreamRatio(ctx context.Context, monitor mode
 }
 
 func channelMonitorSharesRatioBalanceRequest(monitor model.ChannelRatioMonitor) (bool, error) {
+	if monitor.UpstreamAccountID > 0 {
+		return false, nil
+	}
 	if monitor.UpstreamType != service.CustomUpstreamType {
 		return false, nil
 	}
@@ -1446,6 +1580,9 @@ func channelMonitorSharesRatioBalanceRequest(monitor model.ChannelRatioMonitor) 
 }
 
 func fetchAndRecordChannelMonitorUpstreamBalance(ctx context.Context, monitor model.ChannelRatioMonitor, channelKeys []string, proxyURL string, requestTimeout time.Duration, options channelMonitorRefreshOptions) (outcome channelMonitorFetchOutcome, err error) {
+	if monitor.UpstreamAccountID > 0 {
+		return fetchAndRecordUpstreamAccountBalance(ctx, monitor, requestTimeout)
+	}
 	if monitor.UpstreamType != service.NewAPIUpstreamType && monitor.UpstreamType != service.Sub2APIUpstreamType && monitor.UpstreamType != service.CustomUpstreamType {
 		return outcome, errors.New("请先保存上游配置")
 	}
@@ -1817,6 +1954,7 @@ func ApplyChannelMonitorUpstreamGroup(c *gin.Context) {
 	applyResult, applyErr := service.ApplyChannelMonitorUpstreamGroup(
 		c.Request.Context(),
 		service.ChannelMonitorUpstreamConfig{
+			AccountID: monitor.UpstreamAccountID, AccountRevision: monitor.UpstreamAccountRevision,
 			Type:                         monitor.UpstreamType,
 			BaseURL:                      monitor.UpstreamBaseURL,
 			Group:                        monitor.UpstreamGroup,

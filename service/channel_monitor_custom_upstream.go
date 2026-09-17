@@ -22,8 +22,9 @@ const (
 	CustomUpstreamType     = "custom"
 	CustomUpstreamAuthType = "custom"
 
-	ChannelMonitorCustomSourceFixed = "fixed"
-	ChannelMonitorCustomSourceHTTP  = "http"
+	ChannelMonitorCustomSourceFixed   = "fixed"
+	ChannelMonitorCustomSourceHTTP    = "http"
+	ChannelMonitorCustomSourceAccount = "account"
 
 	ChannelMonitorCustomBodyNone = "none"
 	ChannelMonitorCustomBodyJSON = "json"
@@ -75,6 +76,7 @@ type ChannelMonitorCustomResultConfig struct {
 
 type ChannelMonitorCustomMetricConfig struct {
 	Source     string                             `json:"source"`
+	AccountID  int                                `json:"account_id,omitempty"`
 	FixedValue *float64                           `json:"fixed_value,omitempty"`
 	Request    *ChannelMonitorCustomRequestConfig `json:"request,omitempty"`
 	Result     *ChannelMonitorCustomResultConfig  `json:"result,omitempty"`
@@ -268,6 +270,11 @@ func normalizeChannelMonitorCustomMetric(metric ChannelMonitorCustomMetricConfig
 		metric.Source = ChannelMonitorCustomSourceFixed
 	}
 	switch metric.Source {
+	case ChannelMonitorCustomSourceAccount:
+		if ratio || metric.AccountID <= 0 || reuseRequest {
+			return ChannelMonitorCustomMetricConfig{}, errors.New("仅余额来源可以关联有效的上游账户")
+		}
+		return ChannelMonitorCustomMetricConfig{Source: metric.Source, AccountID: metric.AccountID}, nil
 	case ChannelMonitorCustomSourceFixed:
 		if metric.FixedValue == nil {
 			return ChannelMonitorCustomMetricConfig{}, errors.New("固定值不能为空")
@@ -624,6 +631,9 @@ func fetchChannelMonitorCustomUpstreamBalance(ctx context.Context, client *http.
 }
 
 func fetchChannelMonitorCustomBalanceWithResponse(ctx context.Context, client *http.Client, baseURL string, config ChannelMonitorCustomUpstreamConfig, ratioResponse channelMonitorCustomHTTPResponse, includeDebug bool) (ChannelMonitorUpstreamBalanceResult, error) {
+	if config.Balance.Source == ChannelMonitorCustomSourceAccount {
+		return fetchChannelMonitorAccountBalanceSource(ctx, config.Balance.AccountID, false)
+	}
 	if config.Balance.Source == ChannelMonitorCustomSourceFixed {
 		value := *config.Balance.FixedValue
 		return ChannelMonitorUpstreamBalanceResult{Amount: &value, Endpoint: "固定输入"}, nil

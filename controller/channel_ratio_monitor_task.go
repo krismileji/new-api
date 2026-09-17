@@ -283,6 +283,7 @@ type channelRatioMonitorEmailChange struct {
 }
 
 type channelRatioMonitorBalanceWarning struct {
+	AccountID        int
 	ChannelId        int
 	UpstreamRevision int64
 	ChannelName      string
@@ -464,6 +465,8 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 		}
 	}()
 	defer func() {
+		balanceWarnings = mergeUpstreamAccountBalanceWarnings(balanceWarnings)
+		summary.BalanceWarnings = len(balanceWarnings)
 		summary.notificationFailures = make([]channelRatioMonitorTaskFailure, 0, len(failureNotifications))
 		for _, notification := range failureNotifications {
 			summary.notificationFailures = append(summary.notificationFailures, notification.Detail)
@@ -531,6 +534,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 		return summary, err
 	}
 
+	ctx = withUpstreamAccountBalanceRound(ctx)
 	configured := make([]model.ChannelRatioMonitor, 0, len(monitors))
 	for _, monitor := range monitors {
 		if monitor.UpstreamType == service.NewAPIUpstreamType || monitor.UpstreamType == service.Sub2APIUpstreamType || monitor.UpstreamType == service.CustomUpstreamType {
@@ -921,11 +925,12 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 					})
 					stateMu.Unlock()
 				}
-				if balanceWarning &&
+				if monitor.UpstreamAccountID == 0 && balanceWarning &&
 					!monitor.BalanceAlertNotified {
 					stateMu.Lock()
 					summary.BalanceWarnings++
 					balanceWarnings = append(balanceWarnings, channelRatioMonitorBalanceWarning{
+						AccountID:        monitor.UpstreamAccountID,
 						ChannelId:        monitor.ChannelId,
 						UpstreamRevision: monitor.UpstreamRevision,
 						ChannelName:      channel.Name,

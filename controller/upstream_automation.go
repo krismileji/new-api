@@ -34,6 +34,23 @@ func ListUpstreamAutomations(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": views, "migration_warning": warning})
 }
 
+func MergeUpstreamAccountAutomations(c *gin.Context) {
+	var input service.UpstreamAccountAutomationMergeRequest
+	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10), &input); err != nil {
+		common.ApiErrorMsg(c, "任务合并参数无效")
+		return
+	}
+	preview, err := service.MergeUpstreamAccountAutomations(c.Request.Context(), input)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if !input.Preview {
+		recordManageAudit(c, "channel.upstream_account_automations_merge", map[string]any{"account_id": input.AccountID, "target_id": input.TargetID})
+	}
+	common.ApiSuccess(c, preview)
+}
+
 func SaveUpstreamAutomation(c *gin.Context) {
 	var input service.UpstreamAutomationConfig
 	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10), &input); err != nil {
@@ -128,7 +145,31 @@ func TestUpstreamAutomation(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	result, err := service.FetchChannelMonitorUpstreamGroupRatio(c.Request.Context(), service.ChannelMonitorUpstreamConfig{Type: service.CustomUpstreamType, BaseURL: config.BaseURL, Proxy: config.Proxy, RequestTimeout: time.Duration(config.RequestTimeout) * time.Second, CustomConfig: config.CustomConfig})
+	request := service.ChannelMonitorUpstreamConfig{AccountID: config.AccountID, AccountRevision: config.AccountRevision, Type: service.CustomUpstreamType, BaseURL: config.BaseURL, Proxy: config.Proxy, RequestTimeout: time.Duration(config.RequestTimeout) * time.Second, CustomConfig: config.CustomConfig}
+	if config.RatioChannelID > 0 {
+		monitor, readErr := model.GetChannelRatioMonitor(config.RatioChannelID)
+		if readErr != nil {
+			common.ApiError(c, readErr)
+			return
+		}
+		request.Group = monitor.UpstreamGroup
+		channel, readErr := model.GetChannelById(config.RatioChannelID, true)
+		if readErr != nil {
+			common.ApiError(c, readErr)
+			return
+		}
+		request.ChannelKeys = channel.GetKeys()
+	}
+	if config.AccountID > 0 && config.RatioChannelID == 0 {
+		balance, err := service.FetchChannelMonitorUpstreamBalance(c.Request.Context(), request)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		common.ApiSuccess(c, service.NewAPIGroupRatioResult{Balance: balance})
+		return
+	}
+	result, err := service.FetchChannelMonitorUpstreamGroupRatio(c.Request.Context(), request)
 	if err != nil {
 		common.ApiError(c, err)
 		return

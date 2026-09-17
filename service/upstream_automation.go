@@ -13,6 +13,11 @@ import (
 )
 
 type UpstreamAutomationConfig struct {
+	MergedInto      string                             `json:"merged_into,omitempty"`
+	AccountID       int                                `json:"account_id,omitempty"`
+	RatioChannelID  int                                `json:"ratio_channel_id,omitempty"`
+	AccountRevision int64                              `json:"-"`
+	AccountLeaseID  string                             `json:"-"`
 	ID              string                             `json:"id"`
 	Revision        int64                              `json:"revision"`
 	Name            string                             `json:"name"`
@@ -48,12 +53,23 @@ func decodeUpstreamAutomation(row model.SystemTask) (UpstreamAutomationConfig, m
 
 func UpstreamAutomationResponse(row model.SystemTask) (UpstreamAutomationView, error) {
 	config, state, err := decodeUpstreamAutomation(row)
+	if err == nil && config.AccountID > 0 {
+		config, err = ResolveUpstreamAccountAutomation(context.Background(), config)
+	}
 	config.CustomConfig = SanitizeChannelMonitorCustomUpstreamConfig(config.CustomConfig)
 	state.LeaseID = ""
 	return UpstreamAutomationView{UpstreamAutomationConfig: config, State: state}, err
 }
 
 func SaveUpstreamAutomation(ctx context.Context, input UpstreamAutomationConfig) (UpstreamAutomationView, error) {
+	input.MergedInto = ""
+	if input.AccountID > 0 {
+		var err error
+		input, err = ResolveUpstreamAccountAutomation(ctx, input)
+		if err != nil {
+			return UpstreamAutomationView{}, err
+		}
+	}
 	input.Name, input.Proxy = strings.TrimSpace(input.Name), strings.TrimSpace(input.Proxy)
 	if input.Name == "" || utf8.RuneCountInString(input.Name) > 80 {
 		return UpstreamAutomationView{}, errors.New("任务名称须为 1 到 80 个字符")
@@ -92,7 +108,15 @@ func SaveUpstreamAutomation(ctx context.Context, input UpstreamAutomationConfig)
 			return UpstreamAutomationView{}, err
 		}
 	}
-	row, err := model.MutateUpstreamAutomation(ctx, input.ID, create, input.CustomConfig.VariableGroupID, input.CustomConfig.VariableGroupRevision, func(row *model.SystemTask) error {
+	groupID, groupRevision := input.CustomConfig.VariableGroupID, input.CustomConfig.VariableGroupRevision
+	balanceAccountID := 0
+	if input.CustomConfig.Balance.Source == ChannelMonitorCustomSourceAccount {
+		balanceAccountID = input.CustomConfig.Balance.AccountID
+	}
+	if input.AccountID > 0 {
+		groupID, groupRevision = 0, 0
+	}
+	row, err := model.MutateUpstreamAutomation(ctx, input.ID, create, groupID, groupRevision, func(row *model.SystemTask) error {
 		state := model.UpstreamAutomationState{Actions: map[string]model.ChannelMonitorCustomActionState{}}
 		var existing *ChannelMonitorCustomUpstreamConfig
 		if !create {
@@ -101,10 +125,16 @@ func SaveUpstreamAutomation(ctx context.Context, input UpstreamAutomationConfig)
 				return err
 			}
 			state = savedState
+			if current.MergedInto != "" {
+				return errors.New("此任务已合并，仅保留历史，请编辑目标账户任务")
+			}
+			if current.AccountID > 0 && current.AccountID != input.AccountID {
+				return errors.New("账户任务不能直接改绑，请先处理原账户任务")
+			}
 			if current.Revision != input.Revision || state.LeaseUntil > common.GetTimestamp() {
 				return errors.New("任务正在执行或配置已变化，请刷新后重试")
 			}
-			if current.BaseURL == input.BaseURL && current.Proxy == input.Proxy {
+			if current.AccountID == input.AccountID && (input.AccountID > 0 || (current.BaseURL == input.BaseURL && current.Proxy == input.Proxy)) {
 				existing = &current.CustomConfig
 			}
 		}
@@ -119,7 +149,7 @@ func SaveUpstreamAutomation(ctx context.Context, input UpstreamAutomationConfig)
 		state.Revision++
 		input.Revision = state.Revision
 		state.NextCheck, state.Status, state.Message = 0, "waiting", "配置已保存，等待检查"
-		payload, err := common.Marshal(input)
+		payload, err := common.Marshal(upstreamAccountAutomationStoredConfig(input))
 		if err != nil {
 			return err
 		}
@@ -129,7 +159,7 @@ func SaveUpstreamAutomation(ctx context.Context, input UpstreamAutomationConfig)
 		encodedState, err := common.Marshal(state)
 		row.Payload, row.State = string(payload), string(encodedState)
 		return err
-	})
+	}, input.AccountID, balanceAccountID)
 	if err != nil {
 		return UpstreamAutomationView{}, err
 	}
@@ -262,6 +292,9 @@ func ResetUpstreamAutomationAttempts(ctx context.Context, id, actionID string, r
 // Draft reads restore masked credentials only from the same saved origin and
 // never reserve/execute actions or mutate saved task state.
 func PrepareUpstreamAutomationDraft(ctx context.Context, input UpstreamAutomationConfig) (UpstreamAutomationConfig, error) {
+	if input.AccountID > 0 {
+		return ResolveUpstreamAccountAutomation(ctx, input)
+	}
 	var existing *ChannelMonitorCustomUpstreamConfig
 	baseURL, err := NormalizeChannelMonitorCustomBaseURL(input.BaseURL)
 	if err != nil {

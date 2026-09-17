@@ -59,6 +59,9 @@ func (err *channelMonitorUpstreamAuthenticationError) Is(target error) bool {
 // ChannelMonitorUpstreamConfig contains the credentials needed to read a
 // group multiplier from a configured upstream panel.
 type ChannelMonitorUpstreamConfig struct {
+	AccountID                    int
+	AccountRevision              int64
+	AccountLeaseID               string
 	Type                         string
 	BaseURL                      string
 	Group                        string
@@ -153,6 +156,7 @@ type ChannelMonitorUpstreamGroupApplyResult struct {
 }
 
 type Sub2APIGroupRatioConfig struct {
+	AccountID                    int
 	BaseURL                      string
 	Group                        string
 	AuthType                     string
@@ -263,6 +267,16 @@ func NormalizeNewAPIBaseURL(value string) (string, error) {
 }
 
 func FetchChannelMonitorUpstreamGroupRatio(ctx context.Context, config ChannelMonitorUpstreamConfig) (NewAPIGroupRatioResult, error) {
+	_, release, lockErr := LockUpstreamAccountRequest(ctx, config)
+	if lockErr != nil {
+		return NewAPIGroupRatioResult{}, lockErr
+	}
+	defer release()
+	var resolveErr error
+	config, resolveErr = ResolveUpstreamAccountRequest(ctx, config)
+	if resolveErr != nil {
+		return NewAPIGroupRatioResult{}, resolveErr
+	}
 	requestContext, cancel := context.WithTimeout(ctx, channelMonitorUpstreamRequestTimeout(config.RequestTimeout))
 	defer cancel()
 
@@ -331,6 +345,7 @@ func FetchChannelMonitorUpstreamGroupRatio(ctx context.Context, config ChannelMo
 			AccessToken:                  config.AccessToken,
 			RefreshToken:                 config.RefreshToken,
 			RefreshTokenStoredSeparately: config.RefreshTokenStoredSeparately,
+			AccountID:                    config.AccountID,
 			CredentialID:                 config.CredentialID,
 			Revision:                     config.Revision,
 			Account:                      config.Account,
@@ -343,11 +358,24 @@ func FetchChannelMonitorUpstreamGroupRatio(ctx context.Context, config ChannelMo
 			return result, err
 		}
 	case CustomUpstreamType:
-		result, err = withChannelMonitorCustomVariables(requestContext, client, config, false, func(custom ChannelMonitorCustomUpstreamConfig) (NewAPIGroupRatioResult, error) {
-			return fetchChannelMonitorCustomUpstreamRatio(requestContext, client, config.BaseURL, custom, config.SkipBalance, config.CustomDebug)
+		ratioConfig := config
+		accountBalance := config.CustomConfig.Balance.Source == ChannelMonitorCustomSourceAccount
+		if accountBalance {
+			ratioConfig.SkipBalance = true
+		}
+		result, err = withChannelMonitorCustomVariables(requestContext, client, ratioConfig, false, func(custom ChannelMonitorCustomUpstreamConfig) (NewAPIGroupRatioResult, error) {
+			return fetchChannelMonitorCustomUpstreamRatio(requestContext, client, config.BaseURL, custom, ratioConfig.SkipBalance, config.CustomDebug)
 		})
 		if err != nil {
 			return result, err
+		}
+		// Release local variable-group locks before the account acquires its own
+		// credentials. Both sources may legitimately use the same variable group.
+		if accountBalance && !config.SkipBalance {
+			result.Balance, err = fetchChannelMonitorAccountBalanceSource(requestContext, config.CustomConfig.Balance.AccountID, config.AutomationID != "" || config.CredentialID > 0)
+			if err != nil {
+				return result, err
+			}
 		}
 	default:
 		return NewAPIGroupRatioResult{}, errors.New("不支持的上游类型")
@@ -366,8 +394,21 @@ func applyChannelMonitorCostConversion(result NewAPIGroupRatioResult, config Cha
 }
 
 func FetchChannelMonitorUpstreamBalance(ctx context.Context, config ChannelMonitorUpstreamConfig) (ChannelMonitorUpstreamBalanceResult, error) {
+	_, release, lockErr := LockUpstreamAccountRequest(ctx, config)
+	if lockErr != nil {
+		return ChannelMonitorUpstreamBalanceResult{}, lockErr
+	}
+	defer release()
+	var resolveErr error
+	config, resolveErr = ResolveUpstreamAccountRequest(ctx, config)
+	if resolveErr != nil {
+		return ChannelMonitorUpstreamBalanceResult{}, resolveErr
+	}
 	requestContext, cancel := context.WithTimeout(ctx, channelMonitorUpstreamRequestTimeout(config.RequestTimeout))
 	defer cancel()
+	if config.Type == CustomUpstreamType && config.CustomConfig.Balance.Source == ChannelMonitorCustomSourceAccount {
+		return fetchChannelMonitorAccountBalanceSource(requestContext, config.CustomConfig.Balance.AccountID, config.AutomationID != "" || config.CredentialID > 0)
+	}
 
 	client, err := NewSSRFProtectedHTTPClientWithProxy(config.Proxy)
 	if err != nil {
@@ -388,6 +429,7 @@ func FetchChannelMonitorUpstreamBalance(ctx context.Context, config ChannelMonit
 			AccessToken:                  config.AccessToken,
 			RefreshToken:                 config.RefreshToken,
 			RefreshTokenStoredSeparately: config.RefreshTokenStoredSeparately,
+			AccountID:                    config.AccountID,
 			CredentialID:                 config.CredentialID,
 			Revision:                     config.Revision,
 			Account:                      config.Account,
@@ -489,6 +531,16 @@ func fetchNewAPIUpstreamBalance(ctx context.Context, client *http.Client, config
 }
 
 func FetchChannelMonitorUpstreamGroups(ctx context.Context, config ChannelMonitorUpstreamConfig, channelKeys []string) (ChannelMonitorUpstreamGroupsResult, error) {
+	_, release, err := LockUpstreamAccountRequest(ctx, config)
+	if err != nil {
+		return ChannelMonitorUpstreamGroupsResult{}, err
+	}
+	defer release()
+	config.SkipBalance = true
+	config, err = ResolveUpstreamAccountRequest(ctx, config)
+	if err != nil {
+		return ChannelMonitorUpstreamGroupsResult{}, err
+	}
 	client, err := NewSSRFProtectedHTTPClientWithProxy(config.Proxy)
 	if err != nil {
 		return ChannelMonitorUpstreamGroupsResult{}, err
@@ -523,6 +575,7 @@ func FetchChannelMonitorUpstreamGroups(ctx context.Context, config ChannelMonito
 			AccessToken:                  config.AccessToken,
 			RefreshToken:                 config.RefreshToken,
 			RefreshTokenStoredSeparately: config.RefreshTokenStoredSeparately,
+			AccountID:                    config.AccountID,
 			CredentialID:                 config.CredentialID,
 			Revision:                     config.Revision,
 			Account:                      config.Account,
@@ -556,6 +609,16 @@ func normalizeChannelMonitorKeys(channelKeys []string) ([]string, error) {
 }
 
 func ApplyChannelMonitorUpstreamGroup(ctx context.Context, config ChannelMonitorUpstreamConfig, channelKeys []string) (ChannelMonitorUpstreamGroupApplyResult, error) {
+	_, release, err := LockUpstreamAccountRequest(ctx, config)
+	if err != nil {
+		return ChannelMonitorUpstreamGroupApplyResult{}, err
+	}
+	defer release()
+	config.SkipBalance = true
+	config, err = ResolveUpstreamAccountRequest(ctx, config)
+	if err != nil {
+		return ChannelMonitorUpstreamGroupApplyResult{}, err
+	}
 	client, err := NewSSRFProtectedHTTPClientWithProxy(config.Proxy)
 	if err != nil {
 		return ChannelMonitorUpstreamGroupApplyResult{}, err
@@ -1317,6 +1380,7 @@ func fetchSub2APIUpstreamGroups(ctx context.Context, client *http.Client, config
 				AuthType:                     config.AuthType,
 				AccessToken:                  config.RefreshToken,
 				RefreshTokenStoredSeparately: config.RefreshTokenStoredSeparately,
+				AccountID:                    config.AccountID,
 				CredentialID:                 config.CredentialID,
 				Revision:                     config.Revision,
 				Proxy:                        config.Proxy,
@@ -1620,6 +1684,7 @@ func applySub2APIUpstreamGroup(ctx context.Context, client *http.Client, config 
 			AuthType:                     config.AuthType,
 			AccessToken:                  refreshToken,
 			RefreshTokenStoredSeparately: config.RefreshTokenStoredSeparately,
+			AccountID:                    config.AccountID,
 			CredentialID:                 config.CredentialID,
 			Revision:                     config.Revision,
 			Proxy:                        config.Proxy,
@@ -1664,6 +1729,7 @@ func applySub2APIUpstreamGroup(ctx context.Context, client *http.Client, config 
 			Group:        config.Group,
 			AuthType:     config.AuthType,
 			AccessToken:  config.AccessToken,
+			AccountID:    config.AccountID,
 			CredentialID: config.CredentialID,
 			Revision:     config.Revision,
 			Proxy:        config.Proxy,

@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useWatch, type UseFormReturn } from 'react-hook-form'
 
+import { Button } from '@/components/ui/button'
 import { FieldLegend, FieldSet } from '@/components/ui/field'
 import {
   FormControl,
@@ -33,9 +34,12 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from '@/components/ui/input-group'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
+import { useUpstreamAccounts } from '../api-upstream-accounts'
+import { getChannelMonitorConversionFactor } from '../lib/cost-conversion'
 import {
   MAX_CUSTOM_UPSTREAM_BALANCE,
   type UpstreamConfigFormValues,
@@ -47,6 +51,9 @@ type CustomMetricName = 'ratio' | 'balance'
 type ChannelMonitorCustomUpstreamFieldsProps = {
   form: UseFormReturn<UpstreamConfigFormValues>
   independent?: boolean
+  hideRatio?: boolean
+  hideBalance?: boolean
+  allowAccountBalance?: boolean
 }
 
 type CustomMetricFieldsProps = ChannelMonitorCustomUpstreamFieldsProps & {
@@ -196,9 +203,15 @@ function CustomMetricFields(props: CustomMetricFieldsProps) {
                 value={[field.value]}
                 onValueChange={(values) => {
                   const value = values.find((item) => item !== field.value)
-                  if (value !== 'fixed' && value !== 'http') return
+                  if (
+                    value !== 'fixed' &&
+                    value !== 'http' &&
+                    value !== 'account'
+                  ) {
+                    return
+                  }
                   field.onChange(value)
-                  if (value === 'fixed') {
+                  if (value !== 'http') {
                     props.form.setValue(
                       'customConfig.balanceReuseRatioRequest',
                       false,
@@ -208,14 +221,19 @@ function CustomMetricFields(props: CustomMetricFieldsProps) {
                 }}
                 variant='outline'
                 spacing={2}
-                className='grid w-full grid-cols-2'
+                className='flex w-full flex-wrap'
               >
-                <ToggleGroupItem value='fixed' className='w-full'>
+                <ToggleGroupItem value='fixed' className='flex-1'>
                   固定输入
                 </ToggleGroupItem>
-                <ToggleGroupItem value='http' className='w-full'>
+                <ToggleGroupItem value='http' className='flex-1'>
                   接口查询
                 </ToggleGroupItem>
+                {!isRatio && props.allowAccountBalance ? (
+                  <ToggleGroupItem value='account' className='flex-1'>
+                    关联上游账户
+                  </ToggleGroupItem>
+                ) : null}
               </ToggleGroup>
             </FormControl>
             <FormMessage />
@@ -253,14 +271,94 @@ function CustomMetricFields(props: CustomMetricFieldsProps) {
             </FormItem>
           )}
         />
-      ) : (
+      ) : null}
+      {source === 'account' ? <AccountBalanceSource form={props.form} /> : null}
+      {source === 'http' ? (
         <CustomRequestFields
           form={props.form}
           metric={props.metric}
           showRequest={!props.reuseRequest}
         />
-      )}
+      ) : null}
     </FieldSet>
+  )
+}
+
+function AccountBalanceSource(props: {
+  form: UseFormReturn<UpstreamConfigFormValues>
+}) {
+  const accounts = useUpstreamAccounts()
+  const accountId = useWatch({
+    control: props.form.control,
+    name: 'customConfig.balance.accountId',
+  })
+  const selected = accounts.data?.find((account) => account.id === accountId)
+  return (
+    <>
+      <FormField
+        control={props.form.control}
+        name='customConfig.balance.accountId'
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>上游余额账户</FormLabel>
+            <FormControl>
+              <NativeSelect
+                name={field.name}
+                ref={field.ref}
+                onBlur={field.onBlur}
+                value={field.value ?? 0}
+                disabled={accounts.isPending || accounts.isError}
+                onChange={(event) => field.onChange(Number(event.target.value))}
+              >
+                <NativeSelectOption value={0}>
+                  {accounts.isPending ? '正在加载账户…' : '请选择上游账户'}
+                </NativeSelectOption>
+                {accountId && !selected ? (
+                  <NativeSelectOption value={accountId}>
+                    账户 #{accountId}（暂不可用）
+                  </NativeSelectOption>
+                ) : null}
+                {accounts.data?.map((account) => (
+                  <NativeSelectOption key={account.id} value={account.id}>
+                    {account.name} · #{account.id}
+                  </NativeSelectOption>
+                ))}
+              </NativeSelect>
+            </FormControl>
+            <FormDescription>
+              仅复用账户余额和换算方式，当前倍率、请求地址、认证及自定义变量保持独立。
+            </FormDescription>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+      {accounts.isError ? (
+        <p role='alert' className='text-destructive text-sm'>
+          账户加载失败。
+          <Button
+            type='button'
+            variant='link'
+            onClick={() => void accounts.refetch()}
+          >
+            重试加载账户
+          </Button>
+        </p>
+      ) : null}
+      {accounts.data?.length === 0 ? (
+        <p className='text-muted-foreground text-sm'>
+          尚无上游账户，请先在渠道监控的“上游账户”中创建，或改用固定输入、接口查询。
+        </p>
+      ) : null}
+      {selected ? (
+        <p className='text-muted-foreground text-sm'>
+          当前账户余额：{selected.balance ?? '尚未同步'}；换算系数：
+          {getChannelMonitorConversionFactor(
+            selected.upstream.cost_conversion ?? { mode: 'none' }
+          ) ?? '未配置'}
+          。保存后持续使用账户最新配置。
+        </p>
+      ) : null}
+    </>
   )
 }
 
@@ -279,16 +377,22 @@ export function ChannelMonitorCustomUpstreamFields(
     control: props.form.control,
     name: 'customConfig.balanceReuseRatioRequest',
   })
-  const canReuseRequest = ratioSource === 'http' && balanceSource === 'http'
+  const canReuseRequest =
+    !props.hideRatio &&
+    !props.hideBalance &&
+    ratioSource === 'http' &&
+    balanceSource === 'http'
 
   return (
     <div className='flex min-w-0 flex-col gap-4'>
-      <CustomMetricFields
-        form={props.form}
-        metric='ratio'
-        independent={props.independent}
-        reuseRequest={false}
-      />
+      {!props.hideRatio ? (
+        <CustomMetricFields
+          form={props.form}
+          metric='ratio'
+          independent={props.independent}
+          reuseRequest={false}
+        />
+      ) : null}
       {canReuseRequest ? (
         <FormField
           control={props.form.control}
@@ -312,12 +416,15 @@ export function ChannelMonitorCustomUpstreamFields(
           )}
         />
       ) : null}
-      <CustomMetricFields
-        form={props.form}
-        metric='balance'
-        independent={props.independent}
-        reuseRequest={reuseRequest && canReuseRequest}
-      />
+      {!props.hideBalance ? (
+        <CustomMetricFields
+          form={props.form}
+          metric='balance'
+          allowAccountBalance={props.allowAccountBalance}
+          independent={props.independent}
+          reuseRequest={reuseRequest && canReuseRequest}
+        />
+      ) : null}
     </div>
   )
 }

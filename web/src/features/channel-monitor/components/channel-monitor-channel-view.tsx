@@ -230,6 +230,7 @@ function ChannelUpstreamBalanceCell(props: ChannelUpstreamBalanceCellProps) {
 
   return (
     <ChannelMonitorBalanceCell
+      accountId={props.channel.upstream?.upstream_account_id}
       balance={props.channel.upstream_balance}
       enabled={props.channel.upstream.balance_sync_enabled}
       warning={props.channel.upstream.balance_warning_threshold}

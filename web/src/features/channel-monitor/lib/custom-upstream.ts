@@ -51,6 +51,7 @@ function createCustomMetricFormValue(
 ): CustomMetricFormValue {
   return {
     source: metric?.source ?? 'fixed',
+    accountId: metric?.account_id ?? 0,
     fixedValue: metric?.fixed_value ?? fixedValue,
     request: createCustomRequestFormValue(metric?.request),
     result: {
@@ -103,6 +104,9 @@ function toAPIMetric(
   metric: CustomMetricFormValue,
   omitRequest: boolean
 ): ChannelMonitorCustomMetricConfig {
+  if (metric.source === 'account') {
+    return { source: 'account', account_id: metric.accountId }
+  }
   if (metric.source === 'fixed') {
     return { source: 'fixed', fixed_value: metric.fixedValue }
   }

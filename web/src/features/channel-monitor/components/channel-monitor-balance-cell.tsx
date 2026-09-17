@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import { Badge } from '@/components/ui/badge'
 import {
   Collapsible,
@@ -14,6 +32,7 @@ const balanceFormatter = new Intl.NumberFormat(undefined, {
 })
 
 type ChannelMonitorBalanceCellProps = {
+  accountId?: number
   balance: number
   enabled: boolean
   warning?: number | null
@@ -30,6 +49,9 @@ export function ChannelMonitorBalanceCell(
 
   return (
     <div className='flex flex-col items-start gap-1'>
+      {props.accountId ? (
+        <Badge variant='outline'>共享账户 #{props.accountId}</Badge>
+      ) : null}
       <div className='flex items-center gap-1.5 whitespace-nowrap'>
         <span className='text-muted-foreground text-xs'>上游</span>
         <span
@@ -99,7 +121,8 @@ export function ChannelMonitorBalanceCell(
               <p>未确认请求：{estimate.unknown_count} 笔</p>
             ) : null}
             <p>
-              均值取同渠道、同模型近 30 分钟最多 100 笔费用，至少 5 笔后使用。
+              均值取同余额池、同模型和相同价格条件下近 30 分钟最多 100
+              笔费用，至少 5 笔后使用。
             </p>
             <p>预估仅用于余额监控；请求完成后校正，页面刷新时读取最新值。</p>
             {estimate.reason ? <p>{estimate.reason}</p> : null}

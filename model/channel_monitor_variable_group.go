@@ -118,6 +118,9 @@ func SaveChannelMonitorVariableGroup(ctx context.Context, group *ChannelMonitorV
 			}
 		}
 		for _, monitor := range monitors {
+			if monitor.ChannelId == 0 {
+				continue
+			}
 			if monitor.UpstreamRevision == math.MaxInt64 {
 				return ErrChannelRatioMonitorConfigChanged
 			}
@@ -143,6 +146,35 @@ func channelMonitorVariableGroupReferences(tx *gorm.DB, id int) ([]ChannelRatioM
 			return nil, errors.New("渠道自定义配置无效，无法检查共享变量引用")
 		}
 		if groupID == id {
+			references = append(references, monitor)
+		}
+	}
+	// Also validate the canonical balance request of accounts with no members.
+	// These synthetic monitors are only validation inputs, never channel writes.
+	if tx.Migrator().HasTable(&ChannelMonitorUpstreamAccount{}) {
+		var accounts []ChannelMonitorUpstreamAccount
+		if err := tx.Find(&accounts).Error; err != nil {
+			return nil, err
+		}
+		for _, account := range accounts {
+			settings, err := account.MonitorSettings()
+			if err != nil {
+				return nil, err
+			}
+			groupID, err := channelMonitorVariableGroupID(settings.CustomUpstreamConfig)
+			if err != nil {
+				return nil, err
+			}
+			if groupID != id {
+				continue
+			}
+			if account.LeaseUntil > common.GetTimestamp() {
+				return nil, errors.New("引用此共享配置的上游账户正在执行，请稍后重试")
+			}
+			var monitor ChannelRatioMonitor
+			if err := settings.Apply(&monitor); err != nil {
+				return nil, err
+			}
 			references = append(references, monitor)
 		}
 	}

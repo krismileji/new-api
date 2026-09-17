@@ -194,10 +194,12 @@ func resolveSub2APIRefreshTokenConfig(ctx context.Context, client *http.Client, 
 		sub2APIRefreshTokenCache.Unlock()
 
 		entry, refreshErr := refreshSub2APIToken(ctx, client, baseURL, refreshToken, validateURL)
-		if refreshErr == nil && entry.refreshToken != refreshToken && config.CredentialID > 0 {
+		if refreshErr == nil && entry.refreshToken != refreshToken && (config.CredentialID > 0 || config.AccountID > 0) {
 			var rotated bool
 			var persistErr error
-			if config.RefreshTokenStoredSeparately {
+			if config.AccountID > 0 {
+				rotated, persistErr = model.RotateUpstreamAccountRefreshToken(ctx, config.AccountID, config.Revision, config.RefreshTokenStoredSeparately, refreshToken, entry.refreshToken)
+			} else if config.RefreshTokenStoredSeparately {
 				rotated, persistErr = model.RotateChannelRatioUpstreamRefreshToken(
 					config.CredentialID,
 					Sub2APIUpstreamType,

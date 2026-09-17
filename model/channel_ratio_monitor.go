@@ -32,6 +32,8 @@ var ErrChannelRatioMonitorConfigChanged = errors.New("渠道监控配置已变�
 type ChannelRatioMonitor struct {
 	Id                          int      `json:"id"`
 	ChannelId                   int      `json:"channel_id" gorm:"uniqueIndex;not null"`
+	UpstreamAccountID           int      `json:"upstream_account_id" gorm:"index"`
+	UpstreamAccountRevision     int64    `json:"-"`
 	Ratio                       float64  `json:"ratio" gorm:"not null"`
 	PreviousRatio               *float64 `json:"previous_ratio"`
 	Remark                      string   `json:"remark" gorm:"type:varchar(255);default:''"`
@@ -85,6 +87,7 @@ type ChannelConcurrencyConfig struct {
 }
 
 type ChannelRatioUpstreamOptions struct {
+	BalanceAccountRevision      int64
 	SingleChannelAction         string
 	MultipleChannelsAction      string
 	BalanceWarningThreshold     *float64
@@ -303,6 +306,21 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 		if err := lockChannelMonitorVariableGroupReference(tx, upstreamType, options.CustomUpstreamConfig, options.VariableGroupRevision); err != nil {
 			return err
 		}
+		previous := ChannelRatioMonitor{ChannelId: channelId}
+		if err := tx.Where("channel_id = ?", channelId).First(&previous).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		balanceAccount, err := lockChannelMonitorBalanceSource(tx, previous, upstreamType, options)
+		if err != nil {
+			return err
+		}
+		if balanceAccount != nil {
+			settings, err := balanceAccount.MonitorSettings()
+			if err != nil {
+				return err
+			}
+			options.CostConversion = settings.CostConversion
+		}
 		economicRevision, err := lockChannelMonitorEconomicRevisionTx(tx)
 		if err != nil {
 			return err
@@ -316,9 +334,31 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 		} else if findErr != nil {
 			return findErr
 		}
+		if monitor.UpstreamRevision != previous.UpstreamRevision || monitor.UpstreamAccountID != previous.UpstreamAccountID {
+			return ErrChannelRatioMonitorConfigChanged
+		}
 		if err := validateChannelUpstreamAutomationOwnership(tx, channelId, upstreamType, options.CustomUpstreamConfig); err != nil {
 			return err
 		}
+		if monitor.UpstreamAccountID > 0 && !monitor.UsesIndependentUpstreamConfig() {
+			proposed := ChannelMonitorAccountSettings{UpstreamType: upstreamType, UpstreamBaseURL: baseURL,
+				UpstreamAuthType: authType, UpstreamUserId: userId, UpstreamAccessToken: accessToken,
+				UpstreamRefreshToken: options.UpstreamRefreshToken, UpstreamAccount: options.UpstreamAccount, UpstreamPassword: options.UpstreamPassword,
+				CostConversion: options.CostConversion, CustomUpstreamConfig: options.CustomUpstreamConfig,
+				UpstreamBalanceSyncDisabled: !options.BalanceSyncEnabled, BalanceWarningThreshold: options.BalanceWarningThreshold, BalanceAutoDisableThreshold: options.BalanceAutoDisableThreshold}
+			before, beforeErr := ChannelMonitorAccountSettingsFromMonitor(monitor).SharedJSON()
+			after, afterErr := proposed.SharedJSON()
+			if beforeErr != nil || afterErr != nil || before != after {
+				return errors.New("共享余额、认证和换算请在上游账户中修改")
+			}
+		}
+		previousAccountID := monitor.UpstreamAccountID
+		if balanceAccount != nil {
+			monitor.UpstreamAccountID, monitor.UpstreamAccountRevision = balanceAccount.ID, balanceAccount.Revision
+		} else if monitor.UsesIndependentUpstreamConfig() {
+			monitor.UpstreamAccountID, monitor.UpstreamAccountRevision = 0, 0
+		}
+		balanceSourceChanged := previousAccountID != monitor.UpstreamAccountID
 		upstreamAccountChanged := monitor.UpstreamType != upstreamType ||
 			monitor.UpstreamBaseURL != baseURL ||
 			monitor.UpstreamAuthType != authType ||
@@ -328,6 +368,10 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 			monitor.UpstreamAccount != options.UpstreamAccount ||
 			monitor.UpstreamPassword != options.UpstreamPassword ||
 			monitor.CustomUpstreamConfig != options.CustomUpstreamConfig
+		if monitor.UpstreamAccountID > 0 {
+			upstreamAccountChanged = balanceSourceChanged
+		}
+		upstreamAccountChanged = upstreamAccountChanged || balanceSourceChanged
 		balanceWarningThresholdChanged :=
 			(monitor.BalanceWarningThreshold == nil) != (options.BalanceWarningThreshold == nil) ||
 				(monitor.BalanceWarningThreshold != nil && options.BalanceWarningThreshold != nil &&
@@ -336,11 +380,17 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 		balanceSyncChanged := monitor.UpstreamBalanceSyncDisabled != !options.BalanceSyncEnabled
 		costConversionChanged := monitor.CostConversion != options.CostConversion
 		ratioRequestChanged := upstreamAccountChanged ||
+			monitor.UpstreamBaseURL != baseURL ||
+			monitor.CustomUpstreamConfig != options.CustomUpstreamConfig ||
 			monitor.UpstreamGroup != group ||
 			costConversionChanged ||
 			ratioSyncChanged
 		balanceRequestChanged := upstreamAccountChanged || balanceSyncChanged
+		balancePolicyChanged := balanceWarningThresholdChanged || balanceSyncChanged ||
+			(monitor.BalanceAutoDisableThreshold == nil) != (options.BalanceAutoDisableThreshold == nil) ||
+			(monitor.BalanceAutoDisableThreshold != nil && options.BalanceAutoDisableThreshold != nil && *monitor.BalanceAutoDisableThreshold != *options.BalanceAutoDisableThreshold)
 		upstreamConfigChanged := upstreamAccountChanged ||
+			monitor.UpstreamBaseURL != baseURL ||
 			monitor.UpstreamGroup != group ||
 			costConversionChanged ||
 			monitor.CustomUpstreamConfig != options.CustomUpstreamConfig ||
@@ -390,6 +440,9 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 		if upstreamAccountChanged {
 			monitor.UpstreamBalance = nil
 			monitor.LastBalanceTime = 0
+			if balanceAccount != nil {
+				monitor.UpstreamBalance, monitor.LastBalanceTime = balanceAccount.Balance, balanceAccount.LastBalanceTime
+			}
 		}
 		if ratioRequestChanged {
 			monitor.ConsecutiveFailures = 0
@@ -414,7 +467,16 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 				return err
 			}
 		}
-		return tx.Save(&monitor).Error
+		if err := tx.Save(&monitor).Error; err != nil {
+			return err
+		}
+		if balanceSourceChanged || (balanceAccount != nil && balancePolicyChanged) {
+			if err := reviseChannelMonitorBalanceSources(tx, previousAccountID, monitor.UpstreamAccountID); err != nil {
+				return err
+			}
+			return tx.Where("channel_id = ?", channelId).First(&monitor).Error
+		}
+		return nil
 	})
 	return monitor, err
 }
@@ -424,6 +486,12 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 func RotateChannelRatioUpstreamCredential(channelId int, upstreamType string, authType string, expectedRevision int64, oldCredential string, newCredential string) (bool, error) {
 	if channelId <= 0 || expectedRevision < 0 || oldCredential == "" || newCredential == "" {
 		return false, errors.New("渠道监控上游凭据轮换参数无效")
+	}
+	if monitor, err := GetChannelRatioMonitor(channelId); err == nil && monitor.UpstreamAccountID > 0 {
+		if monitor.UpstreamRevision != expectedRevision {
+			return false, ErrChannelRatioMonitorConfigChanged
+		}
+		return RotateUpstreamAccountRefreshToken(context.Background(), monitor.UpstreamAccountID, monitor.UpstreamAccountRevision, false, oldCredential, newCredential)
 	}
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
@@ -448,6 +516,12 @@ func RotateChannelRatioUpstreamCredential(channelId int, upstreamType string, au
 func RotateChannelRatioUpstreamRefreshToken(channelId int, upstreamType string, authType string, expectedRevision int64, oldCredential string, newCredential string) (bool, error) {
 	if channelId <= 0 || expectedRevision < 0 || oldCredential == "" || newCredential == "" {
 		return false, errors.New("渠道监控 Refresh Token 轮换参数无效")
+	}
+	if monitor, err := GetChannelRatioMonitor(channelId); err == nil && monitor.UpstreamAccountID > 0 {
+		if monitor.UpstreamRevision != expectedRevision {
+			return false, ErrChannelRatioMonitorConfigChanged
+		}
+		return RotateUpstreamAccountRefreshToken(context.Background(), monitor.UpstreamAccountID, monitor.UpstreamAccountRevision, true, oldCredential, newCredential)
 	}
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
@@ -653,9 +727,12 @@ func MarkChannelRatioMonitorBalanceAlertsNotified(guards []ChannelRatioMonitorBa
 				monitor.BalanceAlertNotified {
 				continue
 			}
-			if err := tx.Model(&ChannelRatioMonitor{}).
-				Where("id = ?", monitor.Id).
-				Update("balance_alert_notified", true).Error; err != nil {
+			query := tx.Model(&ChannelRatioMonitor{}).Where("id = ?", monitor.Id)
+			if monitor.UpstreamAccountID > 0 {
+				query = tx.Model(&ChannelRatioMonitor{}).Where("upstream_account_id = ? AND upstream_account_revision = ?", monitor.UpstreamAccountID, monitor.UpstreamAccountRevision).
+					Where("upstream_balance < balance_warning_threshold").Where("upstream_balance_sync_disabled = ?", false)
+			}
+			if err := query.Update("balance_alert_notified", true).Error; err != nil {
 				return err
 			}
 		}

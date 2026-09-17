@@ -213,6 +213,9 @@ const LazyTokenProtectionDialog = lazy(
 const LazyUpstreamAutomationsDialog = lazy(
   () => import('./components/upstream-automations-dialog')
 )
+const LazyUpstreamAccountsDialog = lazy(
+  () => import('./components/upstream-accounts-dialog')
+)
 
 const LazyChannelBatchTestDialog = lazy(() =>
   import('@/features/channels/components/dialogs/channel-batch-test-dialog').then(
@@ -413,6 +416,7 @@ export function ChannelMonitor() {
   const [tokenProtectionOpen, setTokenProtectionOpen] = useState(false)
   const [variableGroupsOpen, setVariableGroupsOpen] = useState(false)
   const [automationsOpen, setAutomationsOpen] = useState(false)
+  const [upstreamAccountsOpen, setUpstreamAccountsOpen] = useState(false)
   const [groupMonitorSettingsOpen, setGroupMonitorSettingsOpen] =
     useState(false)
   const [smartScheduleSettingsMounted, setSmartScheduleSettingsMounted] =
@@ -1694,6 +1698,12 @@ export function ChannelMonitor() {
             >
               共享请求与变量
             </Button>
+            <Button
+              variant='outline'
+              onClick={() => setUpstreamAccountsOpen(true)}
+            >
+              上游账户
+            </Button>
             <Button variant='outline' onClick={() => setAutomationsOpen(true)}>
               上游自动任务
             </Button>
@@ -1805,6 +1815,10 @@ export function ChannelMonitor() {
       )}
       {dialogChannel && channelDialog?.type === 'upstream' && (
         <UpstreamConfigDialog
+          onManageAccounts={() => {
+            setChannelDialog(null)
+            setUpstreamAccountsOpen(true)
+          }}
           key={dialogChannel.id}
           channel={dialogChannel}
           open
@@ -1869,6 +1883,14 @@ export function ChannelMonitor() {
           <LazyUpstreamAutomationsDialog
             channels={channels}
             onOpenChange={setAutomationsOpen}
+          />
+        </Suspense>
+      )}
+      {upstreamAccountsOpen && (
+        <Suspense fallback={null}>
+          <LazyUpstreamAccountsDialog
+            channels={channels}
+            onOpenChange={setUpstreamAccountsOpen}
           />
         </Suspense>
       )}

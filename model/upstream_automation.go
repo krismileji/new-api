@@ -103,12 +103,44 @@ func upstreamAutomationVariableGroupReferences(tx *gorm.DB, id int, lock bool) (
 	references := make([]SystemTask, 0)
 	for _, task := range tasks {
 		var config struct {
+			AccountID    int `json:"account_id"`
 			CustomConfig struct {
 				VariableGroupID int `json:"variable_group_id"`
 			} `json:"custom_config"`
 		}
 		if err := common.UnmarshalJsonStr(task.Payload, &config); err != nil {
 			return nil, err
+		}
+		if config.AccountID > 0 {
+			var account ChannelMonitorUpstreamAccount
+			if err := tx.First(&account, config.AccountID).Error; err != nil {
+				return nil, err
+			}
+			settings, err := account.MonitorSettings()
+			if err != nil {
+				return nil, err
+			}
+			config.CustomConfig.VariableGroupID, err = channelMonitorVariableGroupID(settings.CustomUpstreamConfig)
+			if err != nil {
+				return nil, err
+			}
+			if config.CustomConfig.VariableGroupID == id {
+				var payload, custom, shared map[string]any
+				if err := common.UnmarshalJsonStr(task.Payload, &payload); err != nil {
+					return nil, err
+				}
+				custom, _ = payload["custom_config"].(map[string]any)
+				if err := common.UnmarshalJsonStr(settings.CustomUpstreamConfig, &shared); err != nil {
+					return nil, err
+				}
+				shared["actions"] = custom["actions"]
+				payload["custom_config"], payload["base_url"], payload["proxy"] = shared, settings.UpstreamBaseURL, account.Proxy
+				raw, err := common.Marshal(payload)
+				if err != nil {
+					return nil, err
+				}
+				task.Payload = string(raw)
+			}
 		}
 		if config.CustomConfig.VariableGroupID == id {
 			references = append(references, task)
@@ -120,11 +152,57 @@ func upstreamAutomationVariableGroupReferences(tx *gorm.DB, id int, lock bool) (
 // The same row lock covers edits, reservations and completion. The process lock
 // provides SQLite's equivalent serialization; cross-process writes still use a
 // transaction and can safely fail busy without sending an upstream action.
-func MutateUpstreamAutomation(ctx context.Context, id string, create bool, groupID int, groupRevision int64, update func(*SystemTask) error) (SystemTask, error) {
+func MutateUpstreamAutomation(ctx context.Context, id string, create bool, groupID int, groupRevision int64, update func(*SystemTask) error, accountIDs ...int) (SystemTask, error) {
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
 	var row SystemTask
 	err := DB.WithContext(ctx).Session(&gorm.Session{Logger: DB.Logger.LogMode(logger.Silent)}).Transaction(func(tx *gorm.DB) error {
+		if len(accountIDs) > 0 && accountIDs[0] > 0 {
+			var account ChannelMonitorUpstreamAccount
+			if err := lockForUpdate(tx).First(&account, accountIDs[0]).Error; err != nil {
+				return err
+			}
+			if account.LeaseUntil > common.GetTimestamp() {
+				return errors.New("上游账户正在执行，请稍后重试")
+			}
+			var tasks []SystemTask
+			if err := tx.Where("type = ?", UpstreamAutomationConfigType).Find(&tasks).Error; err != nil {
+				return err
+			}
+			var members []int
+			if err := tx.Model(&ChannelRatioMonitor{}).Where("upstream_account_id = ?", account.ID).Pluck("channel_id", &members).Error; err != nil {
+				return err
+			}
+			memberSet := make(map[int]bool, len(members))
+			for _, id := range members {
+				memberSet[id] = true
+			}
+			for _, task := range tasks {
+				var config struct {
+					AccountID    int    `json:"account_id"`
+					ChannelIDs   []int  `json:"channel_ids"`
+					MergedInto   string `json:"merged_into"`
+					CustomConfig struct {
+						Balance struct {
+							Source string `json:"source"`
+						} `json:"balance"`
+					} `json:"custom_config"`
+				}
+				if err := common.UnmarshalJsonStr(task.Payload, &config); err != nil {
+					return err
+				}
+				if config.AccountID == account.ID && task.TaskID != id {
+					return errors.New("该账户已有自动任务，请在同一任务中管理规则")
+				}
+				if config.AccountID == 0 && config.MergedInto == "" && task.TaskID != id && config.CustomConfig.Balance.Source != "account" {
+					for _, channelID := range config.ChannelIDs {
+						if memberSet[channelID] {
+							return errors.New("账户渠道仍有旧自动任务，请先合并以保留全部执行次数和冷却状态")
+						}
+					}
+				}
+			}
+		}
 		// Group edits take the same group -> task lock order. Runtime state
 		// updates and local credential refreshes do not acquire a group lock.
 		if groupID > 0 {
@@ -134,6 +212,12 @@ func MutateUpstreamAutomation(ctx context.Context, id string, create bool, group
 			}
 			if group.Revision != groupRevision {
 				return ErrChannelMonitorVariableGroupChanged
+			}
+		}
+		if len(accountIDs) > 1 && accountIDs[1] > 0 {
+			var account ChannelMonitorUpstreamAccount
+			if err := lockForUpdate(tx).First(&account, accountIDs[1]).Error; err != nil {
+				return errors.New("关联的上游账户不存在，请重新选择余额来源")
 			}
 		}
 		err := lockForUpdate(tx).Where("type = ? AND task_id = ?", UpstreamAutomationConfigType, id).First(&row).Error

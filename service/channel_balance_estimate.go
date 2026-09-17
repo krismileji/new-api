@@ -26,12 +26,17 @@ var ErrChannelBalanceUnavailable = errors.New("渠道余额预估不可用，等
 // ChannelBalanceConfig contains no credentials. Account isolates upstream
 // accounts; Revision fences configuration changes without repricing old attempts.
 type ChannelBalanceConfig struct {
-	ChannelID int
-	Account   string
-	Revision  int64
-	Enabled   bool
-	Warning   *float64
-	Threshold *float64
+	ChannelID        int
+	AccountID        int
+	Account          string
+	Revision         int64
+	Enabled          bool
+	Warning          *float64
+	Threshold        *float64
+	CostRatioCNY     float64
+	ConversionFactor float64
+	PriceConfigured  bool
+	ChannelRevision  int64
 }
 
 type ChannelBalanceEstimate struct {
@@ -70,6 +75,23 @@ type ChannelBalanceSync struct {
 }
 
 func ChannelBalanceConfigForMonitor(monitor model.ChannelRatioMonitor) ChannelBalanceConfig {
+	if monitor.UpstreamAccountID > 0 {
+		config := ChannelBalanceConfig{ChannelID: monitor.ChannelId, AccountID: monitor.UpstreamAccountID,
+			ChannelRevision: monitor.UpstreamRevision,
+			Account:         "shared", Revision: monitor.UpstreamAccountRevision, Enabled: true,
+			Warning: monitor.BalanceWarningThreshold, Threshold: monitor.BalanceAutoDisableThreshold}
+		// Every member still spends the shared wallet when its own balance
+		// synchronization is paused. Keep accounting active, but omit its policy.
+		if monitor.UpstreamBalanceSyncDisabled {
+			config.Warning, config.Threshold = nil, nil
+		}
+		conversion, err := ParseChannelMonitorCostConversion(monitor.CostConversion)
+		if err == nil {
+			config.CostRatioCNY, config.ConversionFactor, err = CalculateChannelMonitorCostRatio(monitor.Ratio, conversion)
+			config.PriceConfigured = err == nil && monitor.UpdatedTime > 0
+		}
+		return config
+	}
 	// Price/conversion changes do not change the balance unit or account. They
 	// belong in the sample fingerprint, not in the key holding active requests.
 	var customAccount any
@@ -87,13 +109,17 @@ func ChannelBalanceConfigForMonitor(monitor model.ChannelRatioMonitor) ChannelBa
 		monitor.UpstreamAuthType, monitor.UpstreamUserId, monitor.UpstreamAccount,
 		monitor.UpstreamAccessToken, customAccount})
 	return ChannelBalanceConfig{
-		ChannelID: monitor.ChannelId, Account: fmt.Sprintf("%x", sha256.Sum256(identity)),
+		ChannelRevision: monitor.UpstreamRevision,
+		ChannelID:       monitor.ChannelId, Account: fmt.Sprintf("%x", sha256.Sum256(identity)),
 		Revision: monitor.UpstreamRevision, Enabled: !monitor.UpstreamBalanceSyncDisabled,
 		Warning: monitor.BalanceWarningThreshold, Threshold: monitor.BalanceAutoDisableThreshold,
 	}
 }
 
 func (config ChannelBalanceConfig) key() string {
+	if config.AccountID > 0 {
+		return fmt.Sprintf("upstream_balance:{account_%d}", config.AccountID)
+	}
 	return fmt.Sprintf("channel_balance:{%d}:%s", config.ChannelID, config.Account)
 }
 
@@ -132,6 +158,17 @@ func runChannelBalanceOperation(ctx context.Context, config ChannelBalanceConfig
 		key + ":samples:" + sample, key + ":sample_costs:" + sample, key + ":sample_sum:" + sample,
 		fmt.Sprintf("channel_balance:{%d}:recovery:%s", config.ChannelID, eventID),
 		fmt.Sprintf("channel_balance:{%d}:config", config.ChannelID)}
+	if config.AccountID > 0 {
+		keys[6], keys[7] = key+":recovery:"+eventID, key+":config"
+		// The per-channel locator preserves the original pool when a delayed
+		// cost event arrives after that channel was detached or rebound.
+		if operation == "start" && len(args) > 4 {
+			if err := client.Set(opCtx, fmt.Sprintf("channel_balance:{%d}:recovery:%s", config.ChannelID, eventID), args[4], 48*time.Hour).Err(); err != nil {
+				_ = channelBalanceMarkGapScript.Run(opCtx, client, []string{keys[0]}).Err()
+				return "", err
+			}
+		}
+	}
 	arguments := append([]any{operation}, args...)
 	result, err := channelBalanceScript.Run(opCtx, client, keys, arguments...).Text()
 	if err != nil {
@@ -186,9 +223,31 @@ func ConfigureChannelBalanceEstimate(ctx context.Context, monitor model.ChannelR
 	if err != nil {
 		return err
 	}
+	policies, err := channelBalanceSourcePolicies(ctx, config)
+	if err != nil {
+		return err
+	}
+	args = append(args, policies)
 	_, err = runChannelBalanceOperation(ctx, config, "configure", "", "", args...)
+	if err == nil && config.AccountID > 0 {
+		encoded, encodeErr := common.Marshal(config)
+		if encodeErr != nil {
+			return encodeErr
+		}
+		_, err = channelBalanceLocatorScript.Run(ctx, common.RedisMonitorWriteClient(), []string{fmt.Sprintf("channel_balance:{%d}:config", config.ChannelID)}, string(encoded), config.ChannelRevision).Result()
+	}
 	return err
 }
+
+var channelBalanceLocatorScript = redis.NewScript(`
+local previous = redis.call('GET', KEYS[1])
+if previous then
+  local config = cjson.decode(previous)
+  if tonumber(config.ChannelRevision or config.Revision or 0) > tonumber(ARGV[2]) then return 0 end
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', 172800)
+return 1
+`)
 
 func BeginChannelBalanceSync(ctx context.Context, monitor model.ChannelRatioMonitor) (ChannelBalanceSync, error) {
 	sync := ChannelBalanceSync{Config: ChannelBalanceConfigForMonitor(monitor), ID: common.GetUUID()}
@@ -196,7 +255,12 @@ func BeginChannelBalanceSync(ctx context.Context, monitor model.ChannelRatioMoni
 	if err != nil {
 		return sync, err
 	}
-	sync.IdleCoverage = ChannelBalanceHasIdleRequestCoverage(ctx, monitor.ChannelId)
+	policies, err := channelBalanceSourcePolicies(ctx, sync.Config)
+	if err != nil {
+		return sync, err
+	}
+	args = append(args, policies)
+	sync.IdleCoverage = ChannelBalanceConfigHasIdleRequestCoverage(ctx, sync.Config)
 	sync.Epoch, err = runChannelBalanceOperation(ctx, sync.Config, "sync_begin", "", "", args...)
 	return sync, err
 }
@@ -214,7 +278,7 @@ func CommitChannelBalanceSync(ctx context.Context, sync ChannelBalanceSync, bala
 	// Reclaim active orphans only after actual requests were idle on both sides
 	// of this successful upstream query, including direct channel tests.
 	idle := "0"
-	if coverageComplete && sync.IdleCoverage && ChannelBalanceHasIdleRequestCoverage(ctx, sync.Config.ChannelID) {
+	if coverageComplete && sync.IdleCoverage && ChannelBalanceConfigHasIdleRequestCoverage(ctx, sync.Config) {
 		idle = "1"
 	}
 	raw, err := runChannelBalanceOperation(ctx, sync.Config, "sync_commit", "", "",
@@ -255,6 +319,25 @@ func ChannelBalanceHasIdleRequestCoverage(ctx context.Context, channelID int) bo
 	probes := pipeline.ZCard(opCtx, fmt.Sprintf("channel_balance:{%d}:probe_active", channelID))
 	_, err := pipeline.Exec(opCtx)
 	return err == nil && loaded.Val() == "1" && active.Val() == 0 && probes.Val() == 0
+}
+
+func ChannelBalanceConfigHasIdleRequestCoverage(ctx context.Context, config ChannelBalanceConfig) bool {
+	if model.DB == nil && config.AccountID > 0 {
+		return false
+	}
+	if config.AccountID == 0 {
+		return ChannelBalanceHasIdleRequestCoverage(ctx, config.ChannelID)
+	}
+	members, err := model.GetUpstreamAccountMonitors(ctx, config.AccountID)
+	if err != nil || len(members) == 0 {
+		return false
+	}
+	for _, member := range members {
+		if !ChannelBalanceHasIdleRequestCoverage(ctx, member.ChannelId) {
+			return false
+		}
+	}
+	return true
 }
 
 func decodeChannelBalanceEstimate(raw string) (ChannelBalanceEstimate, error) {
@@ -349,7 +432,7 @@ func GetChannelBalanceEstimates(ctx context.Context, monitors []model.ChannelRat
 			continue
 		}
 		estimate, err := channelBalanceEstimateFromFields(fields)
-		if err != nil || estimate.Revision != monitor.UpstreamRevision || monitor.UpstreamBalance == nil ||
+		if err != nil || estimate.Revision != ChannelBalanceConfigForMonitor(monitor).Revision || monitor.UpstreamBalance == nil ||
 			math.Abs(estimate.UpstreamBalance-*monitor.UpstreamBalance) > 0.000001 {
 			estimate = ChannelBalanceEstimate{Reason: "等待同一轮余额同步完成"}
 		}

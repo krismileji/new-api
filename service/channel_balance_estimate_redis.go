@@ -46,11 +46,24 @@ local epoch = redis.call('HGET', state, 'epoch')
 if op == 'configure' or op == 'sync_begin' then
   local revision = tonumber(ARGV[3])
   local cached = redis.call('GET', KEYS[8])
-  if cached and revision < tonumber(cjson.decode(cached).Revision) then return 'stale' end
+  if cached then
+    local previous = cjson.decode(cached)
+    if string.find(KEYS[1], 'upstream_balance:', 1, true) == 1 then
+      if revision < tonumber(previous.Revision) then return 'stale' end
+    else
+      local current = cjson.decode(ARGV[7])
+      if tonumber(current.ChannelRevision or current.Revision) < tonumber(previous.ChannelRevision or previous.Revision) then return 'stale' end
+    end
+  end
   if revision < get('revision') then return 'stale' end
+  if revision > get('revision') and string.find(KEYS[1], 'upstream_balance:', 1, true) == 1 then
+    redis.call('HSET', state, 'coverage', '0')
+    put('gap_revision', get('gap_revision') + 1)
+  end
   if op == 'configure' or revision > get('revision') or redis.call('HEXISTS', state, 'enabled') == 0 then
     redis.call('HSET', state, 'revision', ARGV[3], 'enabled', ARGV[4],
       'warning', ARGV[5], 'threshold', ARGV[6])
+    redis.call('HSET', state, 'policies', ARGV[8] or '[]')
     redis.call('SET', KEYS[8], ARGV[7], 'EX', ttl)
   end
   redis.call('EXPIRE', KEYS[8], ttl)
@@ -258,6 +271,27 @@ if available and get('enabled') == 1 and threshold then
   recover = complete and effective >= threshold
 end
 local decision = low and 'low' or (recover and 'ok' or 'unknown')
+local policies = cjson.decode(redis.call('HGET', state, 'policies') or '[]')
+if #policies > 0 then
+  local decisions = {}
+  local known = false
+  for _, policy in ipairs(policies) do
+    local value = 'unknown'
+    if available and policy.enabled and type(policy.threshold) == 'number' then
+      local effective = balance
+      local estimating = type(policy.warning) == 'number' and balance < policy.warning and get('coverage') == 1
+      if estimating then effective = balance - consumption end
+      if effective + (estimating and get('uncertain') or 0) < policy.threshold then
+        value = 'low'
+      elseif complete and effective >= policy.threshold then
+        value = 'ok'
+      end
+    end
+    known = known or value ~= 'unknown'
+    table.insert(decisions, tostring(policy.id) .. ':' .. value)
+  end
+  decision = known and table.concat(decisions, ',') or 'unknown'
+end
 redis.call('HSET', state, 'decision', decision)
 local result = {}
 for _, field in ipairs({'epoch','revision','balance','baseline_start','baseline_end','baseline_id',

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
 
@@ -58,6 +59,7 @@ type channelMonitorCustomVariableSession struct {
 	revision     int64
 	refreshed    map[string]bool
 	shared       *model.ChannelMonitorVariableGroup
+	account      *model.ChannelMonitorUpstreamAccount
 }
 
 func (session *channelMonitorCustomVariableSession) refresh(ctx context.Context, client *http.Client, baseURL string, names map[string]bool, afterFailure bool) (bool, error) {
@@ -106,9 +108,31 @@ func (session *channelMonitorCustomVariableSession) refresh(ctx context.Context,
 		if err != nil {
 			return refreshed, err
 		}
-		if session.credentialID > 0 || session.automationID != "" {
+		if session.credentialID > 0 || session.automationID != "" || session.account != nil {
 			if session.shared != nil {
 				err = model.RefreshChannelMonitorVariableGroup(ctx, *session.shared, raw)
+			} else if session.account != nil {
+				settings, parseErr := session.account.MonitorSettings()
+				if parseErr != nil {
+					return refreshed, parseErr
+				}
+				canonical, parseErr := ParseChannelMonitorCustomUpstreamConfig(settings.CustomUpstreamConfig)
+				if parseErr != nil {
+					return refreshed, parseErr
+				}
+				canonical.VariableRequests = updated.VariableRequests
+				settings.CustomUpstreamConfig, parseErr = MarshalChannelMonitorCustomUpstreamConfig(canonical)
+				if parseErr != nil {
+					return refreshed, parseErr
+				}
+				err = model.RefreshUpstreamAccountCredentials(ctx, *session.account, settings)
+				if err == nil {
+					encoded, encodeErr := common.Marshal(settings)
+					if encodeErr != nil {
+						return refreshed, encodeErr
+					}
+					session.account.Settings = string(encoded)
+				}
 			} else if session.automationID != "" {
 				err = persistUpstreamAutomationVariables(ctx, session.automationID, session.revision, session.savedRaw, raw)
 			} else {
@@ -140,8 +164,12 @@ func withChannelMonitorCustomVariables[T any](ctx context.Context, client *http.
 	if len(names) == 0 {
 		return fetch(normalized)
 	}
-	if config.CredentialID > 0 {
-		lock, _ := channelMonitorCustomVariableLocks.LoadOrStore(config.CredentialID, make(chan struct{}, 1))
+	if config.CredentialID > 0 || config.AccountID > 0 {
+		lockID := config.CredentialID
+		if config.AccountID > 0 {
+			lockID = -config.AccountID
+		}
+		lock, _ := channelMonitorCustomVariableLocks.LoadOrStore(lockID, make(chan struct{}, 1))
 		gate := lock.(chan struct{})
 		select {
 		case gate <- struct{}{}:
@@ -151,13 +179,31 @@ func withChannelMonitorCustomVariables[T any](ctx context.Context, client *http.
 		defer func() { <-gate }()
 	}
 	session := channelMonitorCustomVariableSession{config: normalized, credentialID: config.CredentialID, revision: config.Revision, refreshed: make(map[string]bool)}
-	if config.AutomationID != "" {
+	if config.AccountID > 0 {
+		account, err := model.GetChannelMonitorUpstreamAccount(ctx, config.AccountID)
+		if err != nil {
+			return zero, err
+		}
+		if account.Revision != config.AccountRevision {
+			return zero, model.ErrUpstreamAccountChanged
+		}
+		settings, err := account.MonitorSettings()
+		if err != nil {
+			return zero, err
+		}
+		shared, err := ParseChannelMonitorCustomUpstreamConfig(settings.CustomUpstreamConfig)
+		if err != nil {
+			return zero, err
+		}
+		shared.Ratio = normalized.Ratio
+		session.config, session.savedRaw, session.account = shared, settings.CustomUpstreamConfig, &account
+	} else if config.AutomationID != "" {
 		session, err = loadUpstreamAutomationVariableSession(ctx, config.AutomationID, config.Revision)
 		if err != nil {
 			return zero, err
 		}
 	}
-	if config.CredentialID > 0 {
+	if config.CredentialID > 0 && config.AccountID == 0 {
 		monitor, err := model.GetChannelRatioMonitor(config.CredentialID)
 		if err != nil {
 			return zero, err
