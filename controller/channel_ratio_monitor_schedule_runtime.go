@@ -703,17 +703,14 @@ func applyChannelSmartScheduleRuntimeFailureWithSource(
 		if common.SyncFrequency <= 0 {
 			bridgeSeconds = 65
 		}
-		if redisEventSequence > 0 {
-			if _, err := service.StartChannelRateLimitCooldownUntilIfControlRevision(
-				context.Background(), channelId, requestModelName, now+int64(bridgeSeconds),
-				settings.SmartScheduleControlRevision, redisEventSequence,
-			); err != nil {
+		if _, err := service.StartChannelStabilityBridgeCooldownUntilIfControlRevision(
+			context.Background(), channelId, requestModelName, now+int64(bridgeSeconds),
+			settings.SmartScheduleControlRevision, redisEventSequence,
+		); err != nil {
+			if redisEventSequence > 0 {
 				return err
 			}
-		} else {
-			service.StartChannelRateLimitCooldownIfControlRevision(
-				channelId, requestModelName, bridgeSeconds, settings.SmartScheduleControlRevision,
-			)
+			common.SysError("启动稳定性同步保护冷却失败: " + err.Error())
 		}
 	}
 	if routingChanged || (redisEventSequence > 0 && len(changedPools) > 0) {

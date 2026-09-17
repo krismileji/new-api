@@ -30,6 +30,7 @@ local requested_model = ARGV[4]
 local requested_member = requested_channel .. '|' .. requested_model
 
 local function route_matches(member)
+  member = string.gsub(member, '^stability:', '')
   local separator = string.find(member, '|', 1, true)
   if not separator then
     return false

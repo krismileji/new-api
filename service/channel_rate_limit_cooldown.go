@@ -28,6 +28,7 @@ var ErrChannelRateLimitCooldownRedisUnavailable = errors.New("Redis 429 冷却�
 
 const channelRateLimitBypassRedisLua = `
 local function channel_rate_limit_bypass_active(bypass_key, now, requested_member)
+  requested_member = string.gsub(requested_member, '^stability:', '')
   redis.call('ZREMRANGEBYSCORE', bypass_key, '-inf', now)
   local separator = string.find(requested_member, '|', 1, true)
   if not separator then
@@ -164,8 +165,9 @@ return 1
 `
 
 type channelRateLimitCooldownKey struct {
-	channelId int
-	modelName string
+	channelId       int
+	modelName       string
+	stabilityBridge bool
 }
 
 type channelRateLimitCooldownEntry struct {
@@ -268,6 +270,7 @@ func StartChannelRateLimitCooldownIfControlRevision(
 		expectedControlRevision,
 		0,
 		false,
+		false,
 	)
 	if err != nil {
 		common.SysError("启动 429 冷却失败: " + err.Error())
@@ -294,6 +297,24 @@ func StartChannelRateLimitCooldownUntilIfControlRevision(
 		expectedControlRevision,
 		eventSequence,
 		true,
+		false,
+	)
+}
+
+// StartChannelStabilityBridgeCooldownUntilIfControlRevision defers traffic while
+// stability protection propagates to routing caches. It shares routing behavior
+// with a 429 cooldown, but must not be reported as an upstream rate limit.
+func StartChannelStabilityBridgeCooldownUntilIfControlRevision(
+	ctx context.Context,
+	channelId int,
+	modelName string,
+	requestedUntil int64,
+	expectedControlRevision string,
+	eventSequence int64,
+) (bool, error) {
+	return startChannelRateLimitCooldownUntilIfControlRevision(
+		ctx, channelId, modelName, requestedUntil, expectedControlRevision,
+		eventSequence, eventSequence > 0, true,
 	)
 }
 
@@ -305,6 +326,7 @@ func startChannelRateLimitCooldownUntilIfControlRevision(
 	expectedControlRevision string,
 	eventSequence int64,
 	requireRedis bool,
+	stabilityBridge bool,
 ) (accepted bool, resultErr error) {
 	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
 	expectedControlRevision = strings.TrimSpace(expectedControlRevision)
@@ -330,7 +352,7 @@ func startChannelRateLimitCooldownUntilIfControlRevision(
 		return false, nil
 	}
 	channelRateLimitCooldowns.Lock()
-	key := channelRateLimitCooldownKey{channelId: channelId, modelName: modelName}
+	key := channelRateLimitCooldownKey{channelId: channelId, modelName: modelName, stabilityBridge: stabilityBridge}
 	previous, previousExists := channelRateLimitCooldowns.untilByRoute[key]
 	localChanged := false
 	defer func() {
@@ -622,6 +644,7 @@ func UpdateChannelRateLimitCooldown(
 		controlRevision,
 		0,
 		false,
+		false,
 	)
 	if err != nil {
 		return ChannelRateLimitCooldownUpdateResult{}, err
@@ -714,6 +737,10 @@ func removeChannelRateLimitCooldownRouteLocal(channelId int, modelName string) b
 }
 
 func ChannelRateLimitCooldownUntil(channelId int, modelName string) int64 {
+	return channelRateLimitCooldownUntil(channelId, modelName, true)
+}
+
+func channelRateLimitCooldownUntil(channelId int, modelName string, includeStabilityBridge bool) int64 {
 	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
 	if channelId <= 0 || modelName == "" {
 		return 0
@@ -722,7 +749,15 @@ func ChannelRateLimitCooldownUntil(channelId int, modelName string) int64 {
 	key := channelRateLimitCooldownKey{channelId: channelId, modelName: modelName}
 	now := common.GetTimestamp()
 	controlRevision := channelRateLimitCooldownControlRevision()
-	entry := loadChannelRateLimitCooldownSnapshot().untilByRoute[key]
+	snapshot := loadChannelRateLimitCooldownSnapshot()
+	entry := snapshot.untilByRoute[key]
+	if includeStabilityBridge {
+		key.stabilityBridge = true
+		bridge := snapshot.untilByRoute[key]
+		if bridge.revision == controlRevision && (entry.revision != controlRevision || bridge.until > entry.until) {
+			entry = bridge
+		}
+	}
 	if entry.revision != controlRevision || entry.until <= now {
 		return 0
 	}
@@ -732,6 +767,16 @@ func ChannelRateLimitCooldownUntil(channelId int, modelName string) int64 {
 // ChannelRateLimitCooldownUntilMatching returns the latest active cooldown for
 // an exact route model or any concrete model covered by a wildcard route.
 func ChannelRateLimitCooldownUntilMatching(channelId int, modelName string) int64 {
+	return channelRateLimitCooldownUntilMatching(channelId, modelName, true)
+}
+
+// ChannelUpstreamRateLimitCooldownUntilMatching excludes stability cache bridges
+// so monitoring reports a 429 only for an actual rate-limit cooldown.
+func ChannelUpstreamRateLimitCooldownUntilMatching(channelId int, modelName string) int64 {
+	return channelRateLimitCooldownUntilMatching(channelId, modelName, false)
+}
+
+func channelRateLimitCooldownUntilMatching(channelId int, modelName string, includeStabilityBridge bool) int64 {
 	modelName = ratio_setting.FormatMatchingModelName(strings.TrimSpace(modelName))
 	if channelId <= 0 || modelName == "" {
 		return 0
@@ -751,7 +796,7 @@ func ChannelRateLimitCooldownUntilMatching(channelId int, modelName string) int6
 		return 0
 	}
 	if !strings.HasSuffix(modelName, "*") {
-		return ChannelRateLimitCooldownUntil(channelId, modelName)
+		return channelRateLimitCooldownUntil(channelId, modelName, includeStabilityBridge)
 	}
 	ensureChannelRateLimitCooldownRedisSync()
 	prefix := strings.TrimSuffix(modelName, "*")
@@ -760,7 +805,7 @@ func ChannelRateLimitCooldownUntilMatching(channelId int, modelName string) int6
 	latestUntil := int64(0)
 	for key, entry := range loadChannelRateLimitCooldownSnapshot().untilByRoute {
 		if key.channelId != channelId || entry.revision != controlRevision || entry.until <= now ||
-			!strings.HasPrefix(key.modelName, prefix) {
+			!strings.HasPrefix(key.modelName, prefix) || (key.stabilityBridge && !includeStabilityBridge) {
 			continue
 		}
 		latestUntil = max(latestUntil, entry.until)
@@ -798,7 +843,7 @@ func ChannelRateLimitCooldownUntilMatchingFromRedis(
 	wildcard := strings.HasSuffix(modelName, "*")
 	pipe := client.TxPipeline()
 	revisionCommand := pipe.Get(ctx, channelRateLimitCooldownRedisRevisionKey)
-	var exactCommand *redis.FloatCmd
+	var exactCommands []*redis.FloatCmd
 	var activeCommand *redis.ZSliceCmd
 	if wildcard {
 		activeCommand = pipe.ZRangeByScoreWithScores(
@@ -807,14 +852,15 @@ func ChannelRateLimitCooldownUntilMatchingFromRedis(
 			&redis.ZRangeBy{Min: "(" + strconv.FormatInt(now, 10), Max: "+inf"},
 		)
 	} else {
-		exactCommand = pipe.ZScore(
-			ctx,
-			channelRateLimitCooldownRedisKey,
-			channelRateLimitCooldownRedisMember(channelRateLimitCooldownKey{
-				channelId: channelId,
-				modelName: modelName,
-			}),
-		)
+		for _, stabilityBridge := range []bool{false, true} {
+			exactCommands = append(exactCommands, pipe.ZScore(
+				ctx,
+				channelRateLimitCooldownRedisKey,
+				channelRateLimitCooldownRedisMember(channelRateLimitCooldownKey{
+					channelId: channelId, modelName: modelName, stabilityBridge: stabilityBridge,
+				}),
+			))
+		}
 	}
 	_, err := pipe.Exec(ctx)
 	if err != nil && !errors.Is(err, redis.Nil) {
@@ -836,11 +882,14 @@ func ChannelRateLimitCooldownUntilMatchingFromRedis(
 		)
 	}
 
-	if exactCommand != nil {
-		if exactErr := exactCommand.Err(); exactErr != nil && !errors.Is(exactErr, redis.Nil) {
-			return 0, fmt.Errorf("读取 Redis 429 冷却路由失败: %w", exactErr)
+	if len(exactCommands) > 0 {
+		until := int64(0)
+		for _, command := range exactCommands {
+			if exactErr := command.Err(); exactErr != nil && !errors.Is(exactErr, redis.Nil) {
+				return 0, fmt.Errorf("读取 Redis 429 冷却路由失败: %w", exactErr)
+			}
+			until = max(until, int64(command.Val()))
 		}
-		until := int64(exactCommand.Val())
 		if until <= now {
 			return 0, nil
 		}
@@ -956,7 +1005,11 @@ func channelRateLimitCooldownControlRevision() string {
 }
 
 func channelRateLimitCooldownRedisMember(key channelRateLimitCooldownKey) string {
-	return strconv.Itoa(key.channelId) + "|" + key.modelName
+	member := strconv.Itoa(key.channelId) + "|" + key.modelName
+	if key.stabilityBridge {
+		return "stability:" + member
+	}
+	return member
 }
 
 func parseChannelRateLimitCooldownRedisMember(value any) (channelRateLimitCooldownKey, bool) {
@@ -964,6 +1017,7 @@ func parseChannelRateLimitCooldownRedisMember(value any) (channelRateLimitCooldo
 	if !ok {
 		return channelRateLimitCooldownKey{}, false
 	}
+	member, stabilityBridge := strings.CutPrefix(member, "stability:")
 	channelIdText, modelName, found := strings.Cut(member, "|")
 	if !found {
 		return channelRateLimitCooldownKey{}, false
@@ -972,7 +1026,7 @@ func parseChannelRateLimitCooldownRedisMember(value any) (channelRateLimitCooldo
 	if err != nil || channelId <= 0 || modelName == "" {
 		return channelRateLimitCooldownKey{}, false
 	}
-	return channelRateLimitCooldownKey{channelId: channelId, modelName: modelName}, true
+	return channelRateLimitCooldownKey{channelId: channelId, modelName: modelName, stabilityBridge: stabilityBridge}, true
 }
 
 func applyChannelRateLimitCooldowns(

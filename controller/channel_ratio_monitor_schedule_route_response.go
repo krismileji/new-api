@@ -80,6 +80,12 @@ func channelSmartScheduleRouteResponses(
 			state := *runtimeView.State
 			effectiveState = &state
 		}
+		rateLimitUntil := service.ChannelUpstreamRateLimitCooldownUntilMatching(route.ChannelId, route.Model)
+		rateLimitCoolingDown := runtimeView.RateLimitCoolingDown
+		if rateLimitCoolingDown != nil {
+			cooling := *rateLimitCoolingDown && rateLimitUntil > 0
+			rateLimitCoolingDown = &cooling
+		}
 		responses = append(responses, channelSmartScheduleRouteResponse{
 			ChannelId: route.ChannelId, ChannelName: route.ChannelName,
 			ChannelStatus: channelStatus, ChannelPriority: route.ChannelPriority,
@@ -87,8 +93,8 @@ func channelSmartScheduleRouteResponses(
 			SampleModel: ratio_setting.FormatMatchingModelName(route.Model),
 			Enabled:     enabled, Priority: runtimeView.Priority, Weight: runtimeView.Weight,
 			TrafficPausedUntil:     runtimeView.TrafficPausedUntil,
-			RateLimitCooldownUntil: service.ChannelRateLimitCooldownUntilMatching(route.ChannelId, route.Model),
-			RateLimitCoolingDown:   runtimeView.RateLimitCoolingDown,
+			RateLimitCooldownUntil: rateLimitUntil,
+			RateLimitCoolingDown:   rateLimitCoolingDown,
 			RateLimitBypassUntil:   service.ChannelRateLimitBypassUntilMatching(route.ChannelId, route.Model),
 			CostRatio:              route.CostRatio, GroupRatio: route.GroupRatio,
 			GrossMargin: route.GrossMargin, EconomicRole: route.EconomicRole,
