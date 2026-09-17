@@ -1,7 +1,11 @@
 package openai
 
 import (
+	"context"
 	"fmt"
+	"net/http"
+	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -24,6 +28,30 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	info.IsStream = true
 	clientConn := info.ClientWs
 	targetConn := info.TargetWs
+	sessionCtx, stopSession := context.WithCancel(c.Request.Context())
+	defer stopSession()
+	var readers sync.WaitGroup
+	readers.Add(2)
+	interrupted := make(chan struct{})
+	stopInterrupt := context.AfterFunc(sessionCtx, func() {
+		defer close(interrupted)
+		_ = targetConn.Close()
+		_ = clientConn.UnderlyingConn().SetReadDeadline(time.Now())
+		_ = clientConn.UnderlyingConn().SetWriteDeadline(time.Now())
+	})
+	defer func() {
+		stopSession()
+		if !stopInterrupt() {
+			<-interrupted
+		}
+		readers.Wait()
+		if cause := service.TokenAutoDisableFromContext(c.Request.Context()); cause != nil {
+			c.Set("token_protection_ws_notified", true)
+			_ = clientConn.SetWriteDeadline(time.Now().Add(time.Second))
+			helper.WssError(c, clientConn, types.OpenAIError{Code: service.TokenAutoDisabledCode, Type: "permission_error", Message: cause.Record.ResponseMessage})
+			_ = clientConn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, "API Key 已被自动禁用"), time.Now().Add(time.Second))
+		}
+	}()
 
 	clientClosed := make(chan struct{})
 	targetClosed := make(chan struct{})
@@ -36,6 +64,7 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	sumUsage := &dto.RealtimeUsage{}
 
 	gopool.Go(func() {
+		defer readers.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				errChan <- fmt.Errorf("panic in client reader: %v", r)
@@ -43,7 +72,7 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 		}()
 		for {
 			select {
-			case <-c.Done():
+			case <-sessionCtx.Done():
 				return
 			default:
 				_, message, err := clientConn.ReadMessage()
@@ -96,6 +125,7 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	})
 
 	gopool.Go(func() {
+		defer readers.Done()
 		defer func() {
 			if r := recover(); r != nil {
 				errChan <- fmt.Errorf("panic in target reader: %v", r)
@@ -103,7 +133,7 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 		}()
 		for {
 			select {
-			case <-c.Done():
+			case <-sessionCtx.Done():
 				return
 			default:
 				_, message, err := targetConn.ReadMessage()
@@ -115,6 +145,10 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					return
 				}
 				info.SetFirstResponseTime()
+				service.ObserveTokenAutoDisableJSON(c.Request.Context(), info.ChannelId, http.StatusSwitchingProtocols, message)
+				if service.TokenAutoDisableFromContext(c.Request.Context()) != nil {
+					return
+				}
 				realtimeEvent := &dto.RealtimeEvent{}
 				err = common.Unmarshal(message, realtimeEvent)
 				if err != nil {
@@ -207,8 +241,13 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	case err := <-errChan:
 		//return service.OpenAIErrorWrapper(err, "realtime_error", http.StatusInternalServerError), nil
 		logger.LogError(c, "realtime error: "+err.Error())
-	case <-c.Done():
+	case <-sessionCtx.Done():
 	}
+	stopSession()
+	if !stopInterrupt() {
+		<-interrupted
+	}
+	readers.Wait()
 
 	if usage.TotalTokens != 0 {
 		_ = preConsumeUsage(c, info, usage, sumUsage)

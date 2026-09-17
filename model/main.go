@@ -411,6 +411,8 @@ func migrateDB() error {
 		&ChannelLogicalGroup{},
 		&ChannelLogicalGroupMember{},
 		&Token{},
+		&TokenAutoDisableConfig{},
+		&TokenAutoDisableRecord{},
 		&User{},
 		&UserSession{},
 		&AuthFlow{},

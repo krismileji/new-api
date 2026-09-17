@@ -47,6 +47,10 @@ func newAwsInvokeContext(parent context.Context) (context.Context, context.Cance
 }
 
 func newAwsInvokeError(requestContext context.Context, err error, operation string) *types.NewAPIError {
+	var httpErr interface{ HTTPStatusCode() int }
+	if errors.As(err, &httpErr) {
+		service.ObserveTokenAutoDisableError(requestContext, service.TokenProtectionChannel(requestContext), httpErr.HTTPStatusCode(), err.Error())
+	}
 	options := make([]types.NewAPIErrorOptions, 0, 1)
 	if requestContext.Err() != nil {
 		options = append(options, types.ErrOptionWithSkipRetry())

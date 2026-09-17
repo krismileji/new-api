@@ -401,6 +401,9 @@ func InitResources() error {
 		}
 	}
 	model.InitOptionMap()
+	if err := service.InitTokenAutoDisable(context.Background()); err != nil {
+		return fmt.Errorf("加载 API Key 自动禁用状态失败: %w", err)
+	}
 
 	// 清理旧的磁盘缓存文件
 	common.CleanupOldCacheFiles()

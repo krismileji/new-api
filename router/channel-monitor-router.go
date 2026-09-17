@@ -16,6 +16,10 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 	)
 	{
 		registerChannelModelDetectionRoutes(monitorRoute)
+		monitorRoute.GET("/token_protection/settings", controller.GetTokenProtectionSettings)
+		monitorRoute.PUT("/token_protection/settings", controller.SaveTokenProtectionSettings)
+		monitorRoute.GET("/token_protection/records", controller.ListTokenProtectionRecords)
+		monitorRoute.POST("/token_protection/records/:id/release", controller.ReleaseTokenProtection)
 		monitorRoute.GET("/variable_groups", controller.ListChannelMonitorVariableGroups)
 		monitorRoute.PUT("/variable_groups", controller.SaveChannelMonitorVariableGroup)
 		monitorRoute.DELETE("/variable_groups/:id", controller.DeleteChannelMonitorVariableGroup)

@@ -460,6 +460,9 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 			common2.SetContextKey(c, service.UpstreamResponseStatusContextKey, statusCode)
 		}
 		if handshakeResp != nil && handshakeResp.Body != nil {
+			if service.ProtectTokenUpstreamResponse(c.Request.Context(), info.ChannelId, handshakeResp) {
+				_, _ = io.CopyN(io.Discard, handshakeResp.Body, 1<<20)
+			}
 			_ = handshakeResp.Body.Close()
 		}
 		if clientGoneErr := types.NewClientGoneErrorFromContext(c.Request.Context(), err); clientGoneErr != nil {
@@ -574,6 +577,9 @@ func keepUpstreamRedirectResponse(_ *http.Request, _ []*http.Request) error {
 }
 
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
+	if err := service.TokenAutoDisableError(c.Request.Context()); err != nil {
+		return nil, err
+	}
 	common2.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, nil)
 	common2.SetContextKey(c, service.UpstreamResponseStatusContextKey, 0)
 	common2.SetContextKey(c, service.UpstreamRequestWrittenContextKey, false)
@@ -627,6 +633,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	// and channel-test probes. Setup failures return before this point.
 	service.MarkChannelDailyCostRequestDispatched(c)
 	resp, err := relayClient.Do(req)
+	service.ProtectTokenUpstreamResponse(c.Request.Context(), info.ChannelId, resp)
 	common2.SetContextKey(c, service.UpstreamRequestWrittenContextKey, requestWritten.Load())
 	if resp != nil {
 		// Record the status as soon as headers arrive. Streaming first-response

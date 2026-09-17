@@ -73,6 +73,11 @@ func EmitChannelMonitorSuccessEvent(
 	event.IsFinalAttempt = true
 	event.RequestDispatched = true
 	event.SchedulingEligible = channelMonitorEventSchedulingEligible(ctx, source)
+	if ctx != nil && ctx.Request != nil && TokenAutoDisableFromContext(ctx.Request.Context()) != nil {
+		event.Outcome = model.ChannelMonitorEventOutcomeCanceled
+		event.SchedulingEligible = false
+		event.ErrorCode = string(TokenAutoDisabledCode)
+	}
 	event.PromptTokens = channelMonitorNonNegativeIntPointer(input.PromptTokens)
 	event.CompletionTokens = channelMonitorNonNegativeIntPointer(input.CompletionTokens)
 	event.CacheReadTokens = channelMonitorNonNegativeIntPointer(input.CacheReadTokens)

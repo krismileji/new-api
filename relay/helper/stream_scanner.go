@@ -210,6 +210,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 		}()
 		sr := newStreamResult(info.StreamStatus)
 		for data := range dataChan {
+			if service.TokenAutoDisableFromContext(c.Request.Context()) != nil {
+				return
+			}
 			sr.reset()
 			func() {
 				writeMutex.Lock()
@@ -298,7 +301,11 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	case <-c.Request.Context().Done():
 		// 客户端断开：立即 cleanup 关闭上游 resp.Body，解除 scanner 阻塞并让上游停止生成，
 		// 避免为已放弃的请求继续消费上游 token。
-		info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
+		if cause := service.TokenAutoDisableFromContext(c.Request.Context()); cause != nil {
+			info.StreamStatus.SetEndReason(relaycommon.StreamEndReason("api_key_auto_disabled"), cause)
+		} else {
+			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
+		}
 	}
 
 	cleanup()

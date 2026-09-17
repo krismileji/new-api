@@ -314,6 +314,11 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 			return
 		}
 
+		finishProtection, denied := protectTokenRequest(c, token)
+		defer finishProtection()
+		if denied {
+			return
+		}
 		// TokenAuthReadOnly must keep allowing other token states to query read-only
 		// data, such as token usage logs; only explicitly disabled tokens are denied.
 		if token.Status == common.TokenStatusDisabled {
@@ -409,6 +414,11 @@ func TokenAuth() func(c *gin.Context) {
 			key = parts[0]
 		}
 		token, err := model.ValidateUserToken(key)
+		finishProtection, denied := protectTokenRequest(c, token)
+		defer finishProtection()
+		if denied {
+			return
+		}
 		if token != nil {
 			id := c.GetInt("id")
 			if id == 0 {

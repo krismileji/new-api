@@ -95,6 +95,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 
 	defer func() {
+		if service.TokenAutoDisableFromContext(c.Request.Context()) != nil {
+			if ws != nil && !c.GetBool("token_protection_ws_notified") {
+				cause := service.TokenAutoDisableFromContext(c.Request.Context())
+				_ = ws.SetWriteDeadline(time.Now().Add(time.Second))
+				helper.WssError(c, ws, types.OpenAIError{Code: service.TokenAutoDisabledCode, Type: "permission_error", Message: cause.Record.ResponseMessage})
+			}
+			return // The authentication middleware owns the terminal response.
+		}
 		if newAPIError != nil {
 			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
@@ -180,11 +188,16 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	defer func() {
 		// Only return quota if downstream failed and quota was actually pre-consumed
 		if newAPIError != nil {
-			newAPIError = service.NormalizeViolationFeeError(newAPIError)
+			protected := service.TokenAutoDisableFromContext(c.Request.Context()) != nil
+			if !protected {
+				newAPIError = service.NormalizeViolationFeeError(newAPIError)
+			}
 			if relayInfo.Billing != nil {
 				relayInfo.Billing.Refund(c)
 			}
-			service.ChargeViolationFeeIfNeeded(c, relayInfo, newAPIError)
+			if !protected {
+				service.ChargeViolationFeeIfNeeded(c, relayInfo, newAPIError)
+			}
 		}
 	}()
 
@@ -215,6 +228,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	}
 
 	for retryParam.GetRetry() <= common.RetryTimes {
+		if blocked := service.TokenAutoDisableError(c.Request.Context()); blocked != nil {
+			newAPIError = blocked
+			return
+		}
 		if attemptIndex > 0 {
 			err = attemptState.Reset(c, relayInfo)
 		}
@@ -288,9 +305,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		service.BeginChannelDailyCostAttempt(c, channel.Id)
 		attemptStartedAt := time.Now()
 		service.BeginChannelMonitorPerformanceAttempt(c, attemptStartedAt)
+		service.SetTokenProtectionChannel(c.Request.Context(), channel.Id)
 		newAPIError = relayWithChannelConcurrency(c, relayInfo, relayFormat, concurrencyLease)
 		attemptDuration := time.Since(attemptStartedAt)
 		service.FinalizeChannelDailyCostAttempt(c, channel.Id, false)
+		if blocked := service.TokenAutoDisableError(c.Request.Context()); blocked != nil {
+			newAPIError = blocked
+			return
+		}
 
 		if newAPIError == nil {
 			relayInfo.LastError = nil
@@ -467,6 +489,9 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 }
 
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
+	if c != nil && c.Request != nil && service.TokenAutoDisableFromContext(c.Request.Context()) != nil {
+		return false
+	}
 	if openaiErr == nil {
 		return false
 	}
@@ -616,6 +641,9 @@ func processChannelErrorWithTiming(
 	attemptDuration *time.Duration,
 	finalRetrySummary bool,
 ) {
+	if c != nil && c.Request != nil && service.TokenAutoDisableFromContext(c.Request.Context()) != nil {
+		return
+	}
 	// Automatic channel tests are maintenance checks, not production traffic.
 	// They may still auto-disable a channel below, but must never mutate the
 	// smart-schedule runtime state or stability samples.
@@ -952,6 +980,7 @@ func executeTaskSubmissionWith(
 		attemptStartedAt := time.Now()
 		service.BeginChannelMonitorPerformanceAttempt(c, attemptStartedAt)
 		stage = "submit"
+		service.SetTokenProtectionChannel(c.Request.Context(), channel.Id)
 		result, taskErr = relayTaskWithChannelConcurrency(c, relayInfo, concurrencyLease, submit)
 		attemptDuration := time.Since(attemptStartedAt)
 		if retryParam.ModelName == "" && relayInfo.OriginModelName != "" {
@@ -1226,6 +1255,9 @@ func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 }
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *taskdto.TaskError, retryTimes int) bool {
+	if c != nil && c.Request != nil && service.TokenAutoDisableFromContext(c.Request.Context()) != nil {
+		return false
+	}
 	if taskErr == nil {
 		return false
 	}

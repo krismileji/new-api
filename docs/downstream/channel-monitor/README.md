@@ -17,6 +17,7 @@
 - [模型广场分组监控](model-market-monitoring.md)：用户侧分组状态与管理员探测配置。
 - [连通性测试](connectivity-test.md)：单次、批量和并发循环测试。
 - [渠道并发限制](channel-concurrency.md)：渠道并发上限、租约和满载重选。
+- [用户 API Key 自动禁用](token-auto-disable.md)：上游错误规则、同 Key 在途取消、管理员解除与恢复机制。
 - [本地探针响应](local-probe-response.md)：公开请求的本地探针响应。
 
 环境变量、Option 和保留期见[配置参考](../configuration-reference.md)。启用顺序见[集成指南](../integration-guide.md)。

@@ -134,6 +134,7 @@ func uploadDifyFile(c *gin.Context, info *relaycommon.RelayInfo, user string, me
 			return nil, fmt.Errorf("create dify upload client failed: %w", err)
 		}
 		resp, err := client.Do(req)
+		protected := service.ProtectTokenUpstreamResponse(requestContext, info.ChannelId, resp)
 		if err != nil {
 			common.SysLog("failed to send request: " + err.Error())
 			if clientGoneErr := types.NewClientGoneErrorFromContext(requestContext, err); clientGoneErr != nil {
@@ -155,6 +156,9 @@ func uploadDifyFile(c *gin.Context, info *relaycommon.RelayInfo, user string, me
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			if protected {
+				_, _ = io.CopyN(io.Discard, resp.Body, 1<<20)
+			}
 			common.SysLog(fmt.Sprintf("dify upload failed with status %d", resp.StatusCode))
 			return nil, types.NewErrorWithStatusCode(
 				fmt.Errorf("dify upload failed with status %d", resp.StatusCode),
@@ -346,6 +350,12 @@ func difyStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 	})
 	if info.StreamStatus == nil {
 		return nil, types.NewError(errors.New("dify stream status is unavailable"), types.ErrorCodeBadResponse)
+	}
+	if service.TokenAutoDisableFromContext(c.Request.Context()) != nil {
+		if usage.TotalTokens == 0 {
+			usage = service.ResponseText2Usage(c, responseText, info.UpstreamModelName, info.GetEstimatePromptTokens())
+		}
+		return usage, nil
 	}
 	if info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone {
 		return nil, types.NewClientGoneError(c.Request.Context().Err())

@@ -204,6 +204,10 @@ import type {
   GroupMonitorItem,
 } from './types'
 
+const LazyTokenProtectionDialog = lazy(
+  () => import('./components/token-protection-dialog')
+)
+
 const LazyChannelBatchTestDialog = lazy(() =>
   import('@/features/channels/components/dialogs/channel-batch-test-dialog').then(
     (module) => ({ default: module.ChannelBatchTestDialog })
@@ -399,6 +403,7 @@ export function ChannelMonitor() {
   )
   const [performanceModelFilter, setPerformanceModelFilter] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [tokenProtectionOpen, setTokenProtectionOpen] = useState(false)
   const [variableGroupsOpen, setVariableGroupsOpen] = useState(false)
   const [groupMonitorSettingsOpen, setGroupMonitorSettingsOpen] =
     useState(false)
@@ -1671,6 +1676,12 @@ export function ChannelMonitor() {
             >
               共享请求与变量
             </Button>
+            <Button
+              variant='outline'
+              onClick={() => setTokenProtectionOpen(true)}
+            >
+              API Key 自动禁用
+            </Button>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1826,6 +1837,11 @@ export function ChannelMonitor() {
         <ChannelMonitorVariableGroupsDialog
           onOpenChange={setVariableGroupsOpen}
         />
+      )}
+      {tokenProtectionOpen && (
+        <Suspense fallback={null}>
+          <LazyTokenProtectionDialog onOpenChange={setTokenProtectionOpen} />
+        </Suspense>
       )}
       {settingsOpen && (
         <ChannelMonitorSettingsDialog

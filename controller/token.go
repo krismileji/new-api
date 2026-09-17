@@ -429,7 +429,7 @@ func UpdateToken(c *gin.Context) {
 			}
 		}
 	}
-	err = cleanToken.Update()
+	err = service.UpdateTokenWithProtection(cleanToken)
 	if err != nil {
 		common.ApiError(c, err)
 		return

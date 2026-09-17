@@ -218,6 +218,7 @@ func updateTask(ctx context.Context, info *relaycommon.RelayInfo, taskID string)
 		return &aliResponse, err, nil
 	}
 	resp, err := client.Do(req)
+	service.ProtectTokenUpstreamResponse(ctx, info.ChannelId, resp)
 	if err != nil {
 		common.SysLog("updateTask client.Do err: " + err.Error())
 		return &aliResponse, err, nil

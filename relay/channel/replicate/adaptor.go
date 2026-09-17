@@ -514,6 +514,7 @@ func uploadFileFromForm(c *gin.Context, info *relaycommon.RelayInfo, fieldCandid
 		return "", fmt.Errorf("replicate adaptor: create upload client failed: %w", err)
 	}
 	resp, err := client.Do(req)
+	service.ProtectTokenUpstreamResponse(requestContext, info.ChannelId, resp)
 	if err != nil {
 		if clientGoneErr := types.NewClientGoneErrorFromContext(requestContext, err); clientGoneErr != nil {
 			return "", clientGoneErr

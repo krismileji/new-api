@@ -2,6 +2,7 @@ package coze
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -354,12 +355,24 @@ func doRequest(req *http.Request, info *relaycommon.RelayInfo) (*http.Response, 
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
 	resp, err := client.Do(req)
+	protected := service.ProtectTokenUpstreamResponse(req.Context(), info.ChannelId, resp)
 	if err != nil { // 增加对 client.Do(req) 返回错误的检查
 		return nil, fmt.Errorf("client.Do failed: %w", err)
 	}
 	if resp == nil || resp.Body == nil {
 		return nil, errors.New("client.Do returned an empty response")
 	}
+	if protected && (resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices) {
+		// Callers return a status-only error; inspect a bounded prefix before
+		// they close the body so token-protection rules see the upstream message.
+		prefix, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		resp.Body = &cozeReplayErrorBody{Reader: io.MultiReader(bytes.NewReader(prefix), resp.Body), Closer: resp.Body}
+	}
 	// _ = resp.Body.Close()
 	return resp, nil
+}
+
+type cozeReplayErrorBody struct {
+	io.Reader
+	io.Closer
 }
