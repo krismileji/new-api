@@ -15,6 +15,7 @@ type ChannelMonitorCustomAction struct {
 	ID              string                            `json:"id"`
 	Name            string                            `json:"name"`
 	Enabled         bool                              `json:"enabled"`
+	TriggerMode     string                            `json:"trigger_mode,omitempty"`
 	Metric          string                            `json:"metric"`
 	Operator        string                            `json:"operator"`
 	Threshold       *float64                          `json:"threshold"`
@@ -44,6 +45,9 @@ func normalizeChannelMonitorCustomActions(actions []ChannelMonitorCustomAction, 
 			return nil, errors.New("触发规则标识无效或重复")
 		}
 		seen[action.ID] = true
+		if action.TriggerMode != "" && action.TriggerMode != "edge" && action.TriggerMode != "repeat" {
+			return nil, errors.New("触发模式无效")
+		}
 		if action.Name == "" || len([]rune(action.Name)) > 80 {
 			return nil, errors.New("触发规则名称不能为空且不能超过 80 个字符")
 		}

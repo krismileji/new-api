@@ -310,6 +310,9 @@ func SaveChannelRatioUpstreamConfig(channelId int, upstreamType string, baseURL 
 		} else if findErr != nil {
 			return findErr
 		}
+		if err := validateChannelUpstreamAutomationOwnership(tx, channelId, upstreamType, options.CustomUpstreamConfig); err != nil {
+			return err
+		}
 		upstreamAccountChanged := monitor.UpstreamType != upstreamType ||
 			monitor.UpstreamBaseURL != baseURL ||
 			monitor.UpstreamAuthType != authType ||

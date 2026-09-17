@@ -24,12 +24,13 @@ import { afterEach, describe, expect, test, vi } from 'vitest'
 import { api } from '@/lib/api'
 
 import { customVariableChannel } from '../../lib/__tests__/custom-variable.fixture'
+import { emptyUpstreamAutomation } from '../../lib/automation'
 import {
   createChannelMonitorCustomAction,
   createChannelMonitorCustomFormConfig,
   createChannelMonitorCustomRequestConfig,
 } from '../../lib/custom-upstream'
-import { UpstreamConfigDialog } from '../upstream-config-dialog'
+import { UpstreamAutomationEditor } from '../upstream-automation-editor'
 
 afterEach(() => vi.useRealTimers())
 
@@ -59,15 +60,30 @@ function channelWithAction() {
 }
 
 function renderActionDialog(channel = customVariableChannel()) {
+  vi.spyOn(api, 'get').mockResolvedValue({ data: { success: true, data: [] } })
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   return render(
     <QueryClientProvider client={queryClient}>
-      <UpstreamConfigDialog
-        channel={channel}
-        open
-        onOpenChange={() => undefined}
+      <UpstreamAutomationEditor
+        task={{
+          ...emptyUpstreamAutomation(),
+          id: 'task-7',
+          revision: 1,
+          name: '测试上游',
+          base_url: channel.upstream?.base_url ?? '',
+          custom_config:
+            channel.upstream?.custom_config ??
+            emptyUpstreamAutomation().custom_config,
+          state: {
+            ...emptyUpstreamAutomation().state,
+            actions: channel.upstream?.custom_action_states ?? {},
+          },
+        }}
+        channels={[channel]}
+        onSaved={() => undefined}
+        onCancel={() => undefined}
       />
     </QueryClientProvider>
   )
@@ -96,13 +112,14 @@ describe('条件触发接口编辑', () => {
     await user.clear(threshold)
     await user.type(threshold, '5')
     expect(within(rule).getByLabelText('截止时间（不含）')).toHaveValue('23:00')
-    await user.click(screen.getByRole('button', { name: '保存' }))
+    await user.click(screen.getByRole('button', { name: '保存任务' }))
     await waitFor(() => expect(put).toHaveBeenCalled())
     expect(put.mock.calls[0][1]).toMatchObject({
       custom_config: {
         actions: [
           {
             enabled: true,
+            trigger_mode: 'repeat',
             threshold: 5,
             metric: 'balance',
             operator: 'lt',
@@ -116,7 +133,7 @@ describe('条件触发接口编辑', () => {
     })
   })
 
-  test('删除规则只删除该规则并在保存时提交空列表', async () => {
+  test('删除最后一条规则后保存显示错误且不提交空任务', async () => {
     const user = userEvent.setup()
     const put = vi
       .spyOn(api, 'put')
@@ -127,11 +144,13 @@ describe('条件触发接口编辑', () => {
       screen.getByRole('button', { name: '删除触发规则 余额不足时重置' })
     )
     expect(screen.queryByLabelText('触发阈值')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '保存' }))
-    await waitFor(() => expect(put).toHaveBeenCalled())
-    expect(put.mock.calls[0][1]).toMatchObject({
-      custom_config: { actions: [], variable_requests: [{ id: 'login' }] },
-    })
+    await user.click(screen.getByRole('button', { name: '保存任务' }))
+    await waitFor(() =>
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        '请至少添加一条触发规则'
+      )
+    )
+    expect(put).not.toHaveBeenCalled()
   })
 
   test('修改上限后保留今日次数且保存不会请求重置', async () => {
@@ -157,7 +176,7 @@ describe('条件触发接口编辑', () => {
     expect(
       within(rule).getByText('保存后上限为 3 次，已调用次数保留。')
     ).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: '保存' }))
+    await user.click(screen.getByRole('button', { name: '保存任务' }))
     await waitFor(() => expect(put).toHaveBeenCalled())
     expect(put.mock.calls[0][1]).toMatchObject({
       custom_config: { actions: [{ id: 'reset', daily_limit: 3 }] },
@@ -189,8 +208,8 @@ describe('条件触发接口编辑', () => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
     )
     expect(post).toHaveBeenCalledWith(
-      '/api/channel_monitor/channel/7/upstream/actions/reset/reset-count',
-      { day: '2026-09-13', attempts: 1, last_attempt: 1789308000 },
+      '/api/channel_monitor/automations/task-7/actions/reset/reset-count',
+      { revision: 1, day: '2026-09-13', attempts: 1, last_attempt: 1789308000 },
       expect.objectContaining({
         skipBusinessError: true,
         skipErrorHandler: true,

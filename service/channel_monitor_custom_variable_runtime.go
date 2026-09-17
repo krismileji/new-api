@@ -54,6 +54,7 @@ type channelMonitorCustomVariableSession struct {
 	config       ChannelMonitorCustomUpstreamConfig
 	savedRaw     string
 	credentialID int
+	automationID string
 	revision     int64
 	refreshed    map[string]bool
 	shared       *model.ChannelMonitorVariableGroup
@@ -105,9 +106,11 @@ func (session *channelMonitorCustomVariableSession) refresh(ctx context.Context,
 		if err != nil {
 			return refreshed, err
 		}
-		if session.credentialID > 0 {
+		if session.credentialID > 0 || session.automationID != "" {
 			if session.shared != nil {
 				err = model.RefreshChannelMonitorVariableGroup(ctx, *session.shared, raw)
+			} else if session.automationID != "" {
+				err = persistUpstreamAutomationVariables(ctx, session.automationID, session.revision, session.savedRaw, raw)
 			} else {
 				err = model.UpdateChannelMonitorCustomVariableConfig(ctx, session.credentialID, session.revision, session.savedRaw, raw)
 			}
@@ -148,6 +151,12 @@ func withChannelMonitorCustomVariables[T any](ctx context.Context, client *http.
 		defer func() { <-gate }()
 	}
 	session := channelMonitorCustomVariableSession{config: normalized, credentialID: config.CredentialID, revision: config.Revision, refreshed: make(map[string]bool)}
+	if config.AutomationID != "" {
+		session, err = loadUpstreamAutomationVariableSession(ctx, config.AutomationID, config.Revision)
+		if err != nil {
+			return zero, err
+		}
+	}
 	if config.CredentialID > 0 {
 		monitor, err := model.GetChannelRatioMonitor(config.CredentialID)
 		if err != nil {

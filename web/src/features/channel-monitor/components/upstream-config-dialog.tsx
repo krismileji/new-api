@@ -79,10 +79,10 @@ import {
   fetchChannelMonitorCustomVariable,
   fetchChannelMonitorSub2APIUpstreamVersion,
   listChannelMonitorUpstreamGroups,
-  resetChannelMonitorCustomActionAttempts,
   saveChannelMonitorUpstreamConfig,
   testChannelMonitorUpstreamConfig,
 } from '../api'
+import { listUpstreamAutomations } from '../api-automations'
 import { createChannelMonitorCustomFormConfig } from '../lib/custom-upstream'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import { formatMonitorRatio } from '../lib/format'
@@ -94,7 +94,6 @@ import {
 import { createChannelMonitorUpstreamRequest } from '../lib/upstream-request'
 import type {
   ChannelMonitorItem,
-  ChannelMonitorCustomActionState,
   ChannelMonitorCostConversion,
   ChannelMonitorPolicyAction,
   ChannelMonitorUpstreamGroup,
@@ -102,7 +101,6 @@ import type {
   NewAPIGroupRatioResult,
 } from '../types'
 import { ChannelMonitorCostConversionFields } from './channel-monitor-cost-conversion-fields'
-import { ChannelMonitorCustomActionFields } from './channel-monitor-custom-action-fields'
 import { ChannelMonitorCustomUpstreamFields } from './channel-monitor-custom-upstream-fields'
 import { ChannelMonitorCustomVariableFields } from './channel-monitor-custom-variable-fields'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
@@ -157,14 +155,6 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   const [ratioEditorOpen, setRatioEditorOpen] = useState(false)
   const [upstreamVersion, setUpstreamVersion] = useState<string | null>(null)
   const savedUpstream = props.channel.upstream
-  const [resetActionStates, setResetActionStates] = useState<{
-    source: typeof savedUpstream
-    states: Record<string, ChannelMonitorCustomActionState>
-  }>()
-  const actionStates =
-    resetActionStates?.source === savedUpstream
-      ? resetActionStates?.states
-      : savedUpstream?.custom_action_states
   const savedCostConversion: ChannelMonitorCostConversion =
     savedUpstream?.cost_conversion ?? { mode: 'none' }
   const initialGroup = savedUpstream?.group || ''
@@ -380,19 +370,6 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
       props.onOpenChange(false)
     },
   })
-  const resetActionMutation = useMutation({
-    mutationFn: resetChannelMonitorCustomActionAttempts,
-    onSettled: () => {
-      queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
-    },
-    onSuccess: (response, variables) => {
-      setResetActionStates({
-        source: savedUpstream,
-        states: { ...actionStates, [variables.actionId]: response.data },
-      })
-      toast.success('今日调用次数已重置')
-    },
-  })
   const testMutation = useMutation({
     mutationFn: testChannelMonitorUpstreamConfig,
     onError: handleChannelMonitorMutationError,
@@ -541,8 +518,33 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
     return false
   }
 
-  const handleSave = form.handleSubmit((values) => {
+  const handleSave = form.handleSubmit(async (values) => {
     if (!requireGroup(values)) return
+    if (
+      values.upstreamType === 'custom' &&
+      values.customConfig.actions.length > 0
+    ) {
+      try {
+        const migrated = await listUpstreamAutomations()
+        if (
+          !migrated.tasks.some((task) =>
+            task.id.startsWith(`ua_channel_${props.channel.id}_`)
+          )
+        ) {
+          throw new Error(
+            migrated.migrationWarning ||
+              '旧规则尚未迁移，请先打开上游自动任务完成迁移'
+          )
+        }
+      } catch (error) {
+        handleChannelMonitorMutationError(error)
+        return
+      }
+      values = {
+        ...values,
+        customConfig: { ...values.customConfig, actions: [] },
+      }
+    }
     saveMutation.mutate({
       channelId: props.channel.id,
       config: createChannelMonitorUpstreamRequest(values),
@@ -689,7 +691,6 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   }
   const pending =
     saveMutation.isPending ||
-    resetActionMutation.isPending ||
     testMutation.isPending ||
     groupsMutation.isPending ||
     applyGroupMutation.isPending ||
@@ -942,20 +943,9 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
                     />
                   ) : null}
                   <ChannelMonitorCustomUpstreamFields form={form} />
-                  <ChannelMonitorCustomActionFields
-                    form={form}
-                    disabled={pending}
-                    states={actionStates}
-                    stateError={savedUpstream?.custom_action_state_error}
-                    savedActions={savedUpstream?.custom_config?.actions}
-                    onReset={async (actionId, state) => {
-                      await resetActionMutation.mutateAsync({
-                        channelId: props.channel.id,
-                        actionId,
-                        state,
-                      })
-                    }}
-                  />
+                  <p className='text-muted-foreground text-sm'>
+                    条件触发接口已移至渠道监控首页的“上游自动任务”。旧规则会自动迁移，独立运行，不受渠道启停影响。
+                  </p>
                 </>
               ) : null}
 

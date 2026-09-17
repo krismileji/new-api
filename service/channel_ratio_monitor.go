@@ -68,6 +68,7 @@ type ChannelMonitorUpstreamConfig struct {
 	RefreshToken                 string
 	RefreshTokenStoredSeparately bool
 	CredentialID                 int
+	AutomationID                 string
 	Revision                     int64
 	Account                      string
 	Password                     string

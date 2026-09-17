@@ -47,6 +47,7 @@ import { ChannelMonitorCustomActionQuota } from './channel-monitor-custom-action
 import { ChannelMonitorCustomRequestFields } from './channel-monitor-custom-request-fields'
 
 type ActionFieldsProps = {
+  independent?: boolean
   form: UseFormReturn<UpstreamConfigFormValues>
   disabled: boolean
   states?: Record<string, ChannelMonitorCustomActionState>
@@ -68,7 +69,9 @@ export function ChannelMonitorCustomActionFields(props: ActionFieldsProps) {
     <FieldSet className='min-w-0'>
       <FieldLegend>条件触发接口</FieldLegend>
       <FieldDescription>
-        保存并启用后，在手动或自动刷新指标成功时检查。条件首次满足时调用一次，指标恢复到条件外后才能再次触发；保存和“测试获取”不会调用。
+        {props.independent
+          ? '任务独立查询上游指标，不受渠道启停影响。保存和测试获取不会调用触发接口；每轮至多成功执行一条规则，然后复查指标。'
+          : '保存并启用后，在手动或自动刷新指标成功时检查。条件首次满足时调用一次，指标恢复到条件外后才能再次触发；保存和“测试获取”不会调用。'}
       </FieldDescription>
       {props.stateError ? (
         <p role='alert' className='text-destructive text-sm'>
@@ -80,6 +83,7 @@ export function ChannelMonitorCustomActionFields(props: ActionFieldsProps) {
           <CustomActionRule
             key={action.fieldKey}
             form={props.form}
+            independent={props.independent}
             disabled={props.disabled}
             index={index}
             state={props.states?.[action.id]}
@@ -97,7 +101,11 @@ export function ChannelMonitorCustomActionFields(props: ActionFieldsProps) {
         variant='outline'
         className='self-start'
         disabled={props.disabled || actions.fields.length >= 8}
-        onClick={() => actions.append(createChannelMonitorCustomAction())}
+        onClick={() => {
+          const action = createChannelMonitorCustomAction()
+          if (props.independent) action.triggerMode = 'repeat'
+          actions.append(action)
+        }}
       >
         添加触发规则
       </Button>
@@ -106,6 +114,7 @@ export function ChannelMonitorCustomActionFields(props: ActionFieldsProps) {
 }
 
 type CustomActionRuleProps = {
+  independent?: boolean
   form: UseFormReturn<UpstreamConfigFormValues>
   disabled: boolean
   index: number
@@ -119,6 +128,10 @@ type CustomActionRuleProps = {
 function CustomActionRule(props: CustomActionRuleProps) {
   const prefix = `customConfig.actions.${props.index}` as const
   const name = useWatch({ control: props.form.control, name: `${prefix}.name` })
+  const triggerMode = useWatch({
+    control: props.form.control,
+    name: `${prefix}.triggerMode`,
+  })
   return (
     <FieldSet
       className='bg-muted/20 min-w-0 rounded-lg border p-4'
@@ -166,6 +179,40 @@ function CustomActionRule(props: CustomActionRuleProps) {
         )}
       />
       <FieldGroup className='grid min-w-0 gap-4 sm:grid-cols-2'>
+        {props.independent ? (
+          <FormField
+            control={props.form.control}
+            name={`${prefix}.triggerMode`}
+            render={({ field }) => (
+              <FormItem className='sm:col-span-2'>
+                <FormLabel>触发模式</FormLabel>
+                <FormControl>
+                  <ToggleGroup
+                    aria-label='触发模式'
+                    value={[field.value ?? 'edge']}
+                    onValueChange={(values) => {
+                      const value = values.find(
+                        (item) => item !== (field.value ?? 'edge')
+                      )
+                      if (value === 'edge' || value === 'repeat') {
+                        field.onChange(value)
+                      }
+                    }}
+                    disabled={props.disabled}
+                    variant='outline'
+                    spacing={2}
+                  >
+                    <ToggleGroupItem value='edge'>首次满足</ToggleGroupItem>
+                    <ToggleGroupItem value='repeat'>持续满足</ToggleGroupItem>
+                  </ToggleGroup>
+                </FormControl>
+                <FormDescription>
+                  首次满足：指标退出条件后才重新触发。持续满足：冷却结束后可再次调用，仍遵守每日次数和执行时段。
+                </FormDescription>
+              </FormItem>
+            )}
+          />
+        ) : null}
         <FormField
           control={props.form.control}
           name={`${prefix}.metric`}
@@ -322,8 +369,9 @@ function CustomActionRule(props: CustomActionRuleProps) {
         ))}
       </FieldGroup>
       <FieldDescription>
-        例如 00:05–23:00：23:00
-        起停止发起调用。请给上游自动重置留出时间；已发出的请求无法保证撤销。失败、超时和结果未知均计入次数，不自动重试。自动检查需要开启对应指标的定时刷新。
+        {props.independent
+          ? '执行时段不包含截止时刻。接口调用计入每日次数，发送前失败不计入；调用结果未知时暂停该规则，核对上游结果后可解除暂停。'
+          : '例如 00:05–23:00：23:00 起停止发起调用。请给上游自动重置留出时间；已发出的请求无法保证撤销。失败、超时和结果未知均计入次数，不自动重试。自动检查需要开启对应指标的定时刷新。'}
       </FieldDescription>
       <FormField
         control={props.form.control}
@@ -398,7 +446,7 @@ function CustomActionRule(props: CustomActionRuleProps) {
             )}{' '}
             · 指标值 {props.state.last_value}
           </p>
-          {props.state.triggered ? (
+          {props.state.triggered && triggerMode !== 'repeat' ? (
             <p className='mt-1'>等待指标恢复到触发条件外后重新检测。</p>
           ) : null}
         </div>

@@ -12,14 +12,17 @@ import (
 const SystemTaskTypeChannelMonitorCustomAction = "channel_monitor_custom_action"
 
 type ChannelMonitorCustomActionState struct {
-	Triggered   bool    `json:"triggered"`
-	Day         string  `json:"day"`
-	Attempts    int     `json:"attempts"`
-	LastAttempt int64   `json:"last_attempt"`
-	AttemptID   string  `json:"attempt_id"`
-	LastValue   float64 `json:"last_value"`
-	Status      string  `json:"status"`
-	Message     string  `json:"message"`
+	Triggered         bool    `json:"triggered"`
+	Day               string  `json:"day"`
+	Attempts          int     `json:"attempts"`
+	LastAttempt       int64   `json:"last_attempt"`
+	AttemptID         string  `json:"attempt_id"`
+	LastValue         float64 `json:"last_value"`
+	Status            string  `json:"status"`
+	Message           string  `json:"message"`
+	LastChecked       int64   `json:"last_checked,omitempty"`
+	SkipReason        string  `json:"skip_reason,omitempty"`
+	NeedsConfirmation bool    `json:"needs_confirmation,omitempty"`
 }
 
 // Keep one durable task per channel, using the existing task schema. It is not

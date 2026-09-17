@@ -150,6 +150,7 @@ export function createChannelMonitorCustomFormConfig(
     balanceReuseRatioRequest: config?.balance_reuse_ratio_request ?? false,
     variableGroupId: config?.variable_group_id ?? 0,
     actions: (config?.actions ?? []).map((action) => ({
+      triggerMode: action.trigger_mode,
       id: action.id,
       name: action.name,
       enabled: action.enabled,
@@ -196,6 +197,7 @@ export function createChannelMonitorCustomRequestConfig(
       ? []
       : config.variableRequests.map(toAPIVariableRequest),
     actions: config.actions.map((action) => ({
+      ...(action.triggerMode ? { trigger_mode: action.triggerMode } : {}),
       id: action.id,
       name: action.name.trim(),
       enabled: action.enabled,

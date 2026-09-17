@@ -112,7 +112,7 @@ func SaveChannelMonitorVariableGroup(ctx context.Context, input ChannelMonitorVa
 	if err != nil {
 		return ChannelMonitorVariableGroupConfig{}, err
 	}
-	err = model.SaveChannelMonitorVariableGroup(ctx, &group, existing, func(monitors []model.ChannelRatioMonitor) error {
+	err = model.SaveChannelMonitorVariableGroup(ctx, &group, existing, func(monitors []model.ChannelRatioMonitor, automations []model.SystemTask) error {
 		for _, monitor := range monitors {
 			config, err := ParseChannelMonitorCustomUpstreamConfig(monitor.CustomUpstreamConfig)
 			if err != nil {
@@ -120,6 +120,15 @@ func SaveChannelMonitorVariableGroup(ctx context.Context, input ChannelMonitorVa
 			}
 			if _, err := resolveChannelMonitorVariableGroup(config, group); err != nil {
 				return fmt.Errorf("渠道 %d 仍在使用该配置：%w", monitor.ChannelId, err)
+			}
+		}
+		for _, task := range automations {
+			config, _, err := decodeUpstreamAutomation(task)
+			if err != nil {
+				return err
+			}
+			if _, err := resolveChannelMonitorVariableGroup(config.CustomConfig, group); err != nil {
+				return fmt.Errorf("上游自动任务 %s 仍在使用该配置：%w", config.Name, err)
 			}
 		}
 		return nil

@@ -1555,6 +1555,7 @@ const customUpstreamConfigSchema = z.object({
     .array(
       z.object({
         id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/, '触发规则标识无效'),
+        triggerMode: z.enum(['edge', 'repeat']).optional(),
         name: z
           .string()
           .trim()

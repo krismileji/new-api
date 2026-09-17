@@ -185,7 +185,7 @@ func ListSystemTasks(limit int) ([]*SystemTask, error) {
 		limit = 100
 	}
 	var tasks []*SystemTask
-	err := DB.Order("id desc").Limit(limit).Find(&tasks).Error
+	err := DB.Where("type <> ?", UpstreamAutomationConfigType).Order("id desc").Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
 
@@ -402,6 +402,9 @@ func (task *SystemTask) DecodeState(v any) error {
 }
 
 func (task *SystemTask) ToResponse() SystemTaskResponse {
+	if task.Type == UpstreamAutomationConfigType {
+		return SystemTaskResponse{ID: task.ID, TaskID: task.TaskID, Type: task.Type, Status: task.Status}
+	}
 	return SystemTaskResponse{
 		ID:        task.ID,
 		TaskID:    task.TaskID,

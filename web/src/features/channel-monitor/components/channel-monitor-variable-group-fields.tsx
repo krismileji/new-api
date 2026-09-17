@@ -47,6 +47,7 @@ import { emptyVariableGroup } from '../lib/variable-group'
 import { ChannelMonitorVariableGroupsDialog } from './channel-monitor-variable-groups-dialog'
 
 type Props = {
+  independent?: boolean
   form: UseFormReturn<UpstreamConfigFormValues>
   channelId: number
   channelName: string
@@ -146,7 +147,9 @@ export function ChannelMonitorVariableGroupFields(props: Props) {
         )}
       />
       <p className='text-muted-foreground text-sm'>
-        配置一次即可供多个渠道共用；各渠道保留自己的倍率、余额接口和策略。
+        {props.independent
+          ? '可引用共享凭据；任务保留自己的指标查询、触发规则和调度。'
+          : '配置一次即可供多个渠道共用；各渠道保留自己的倍率、余额接口和策略。'}
       </p>
       {groups.isError ? (
         <Alert variant='destructive'>
@@ -180,7 +183,7 @@ export function ChannelMonitorVariableGroupFields(props: Props) {
             .join('、')}
         </p>
       ) : null}
-      {!groupId && requestCount > 0 ? (
+      {!props.independent && !groupId && requestCount > 0 ? (
         <div className='flex flex-col items-start gap-2'>
           <p className='text-muted-foreground text-sm'>
             此渠道当前使用独立配置，可将请求和已保存的凭据转为共享配置。

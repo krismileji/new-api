@@ -208,6 +208,10 @@ const LazyTokenProtectionDialog = lazy(
   () => import('./components/token-protection-dialog')
 )
 
+const LazyUpstreamAutomationsDialog = lazy(
+  () => import('./components/upstream-automations-dialog')
+)
+
 const LazyChannelBatchTestDialog = lazy(() =>
   import('@/features/channels/components/dialogs/channel-batch-test-dialog').then(
     (module) => ({ default: module.ChannelBatchTestDialog })
@@ -405,6 +409,7 @@ export function ChannelMonitor() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tokenProtectionOpen, setTokenProtectionOpen] = useState(false)
   const [variableGroupsOpen, setVariableGroupsOpen] = useState(false)
+  const [automationsOpen, setAutomationsOpen] = useState(false)
   const [groupMonitorSettingsOpen, setGroupMonitorSettingsOpen] =
     useState(false)
   const [smartScheduleSettingsMounted, setSmartScheduleSettingsMounted] =
@@ -1676,6 +1681,9 @@ export function ChannelMonitor() {
             >
               共享请求与变量
             </Button>
+            <Button variant='outline' onClick={() => setAutomationsOpen(true)}>
+              上游自动任务
+            </Button>
             <Button
               variant='outline'
               onClick={() => setTokenProtectionOpen(true)}
@@ -1832,6 +1840,14 @@ export function ChannelMonitor() {
             if (!open) setSyncingGroup(null)
           }}
         />
+      )}
+      {automationsOpen && (
+        <Suspense fallback={null}>
+          <LazyUpstreamAutomationsDialog
+            channels={channels}
+            onOpenChange={setAutomationsOpen}
+          />
+        </Suspense>
       )}
       {variableGroupsOpen && (
         <ChannelMonitorVariableGroupsDialog

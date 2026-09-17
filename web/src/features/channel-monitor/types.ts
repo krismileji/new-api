@@ -152,6 +152,7 @@ export type ChannelMonitorCustomAction = {
   id: string
   name: string
   enabled: boolean
+  trigger_mode?: 'edge' | 'repeat'
   metric: 'balance' | 'ratio'
   operator: 'lt' | 'lte' | 'gt' | 'gte'
   threshold: number
@@ -172,8 +173,12 @@ export type ChannelMonitorCustomActionState = {
   attempts: number
   last_attempt: number
   last_value: number
-  status: 'running' | 'succeeded' | 'failed'
+  status: '' | 'running' | 'succeeded' | 'failed' | 'acknowledged'
   message: string
+  attempt_id?: string
+  last_checked?: number
+  skip_reason?: string
+  needs_confirmation?: boolean
 }
 
 export type ChannelMonitorCustomLegacyVariableRequest = {

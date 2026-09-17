@@ -72,8 +72,8 @@ func lockChannelMonitorVariableGroupReference(tx *gorm.DB, upstreamType, raw str
 
 // SaveChannelMonitorVariableGroup compares the full saved row, including
 // refreshed values, so an editor cannot overwrite credentials refreshed since
-// it read them. validate protects the templates of all referencing channels.
-func SaveChannelMonitorVariableGroup(ctx context.Context, group *ChannelMonitorVariableGroup, expected *ChannelMonitorVariableGroup, validate func([]ChannelRatioMonitor) error) error {
+// it read them. validate protects all referencing channels and automations.
+func SaveChannelMonitorVariableGroup(ctx context.Context, group *ChannelMonitorVariableGroup, expected *ChannelMonitorVariableGroup, validate func([]ChannelRatioMonitor, []SystemTask) error) error {
 	channelStatusLock.Lock()
 	defer channelStatusLock.Unlock()
 	return DB.WithContext(ctx).Session(&gorm.Session{Logger: DB.Logger.LogMode(logger.Silent)}).Transaction(func(tx *gorm.DB) error {
@@ -88,12 +88,34 @@ func SaveChannelMonitorVariableGroup(ctx context.Context, group *ChannelMonitorV
 		if expected == nil || current != *expected || group.Revision != current.Revision || current.Revision == math.MaxInt64 {
 			return ErrChannelMonitorVariableGroupChanged
 		}
+		automations, err := upstreamAutomationVariableGroupReferences(tx, group.ID, true)
+		if err != nil {
+			return err
+		}
 		monitors, err := channelMonitorVariableGroupReferences(tx, group.ID)
 		if err != nil {
 			return err
 		}
-		if err := validate(monitors); err != nil {
+		if err := validate(monitors, automations); err != nil {
 			return err
+		}
+		for _, task := range automations {
+			var state UpstreamAutomationState
+			if err := common.UnmarshalJsonStr(task.State, &state); err != nil {
+				return err
+			}
+			if state.LeaseUntil > common.GetTimestamp() || state.Revision == math.MaxInt64 {
+				return errors.New("引用此共享配置的上游自动任务正在执行，请稍后重试")
+			}
+			state.Revision++
+			state.NextCheck, state.Status, state.Message = 0, "waiting", "共享凭据配置已更新，等待检查"
+			encoded, err := common.Marshal(state)
+			if err != nil {
+				return err
+			}
+			if err := tx.Model(&task).Updates(map[string]any{"state": string(encoded), "updated_at": common.GetTimestamp()}).Error; err != nil {
+				return err
+			}
 		}
 		for _, monitor := range monitors {
 			if monitor.UpstreamRevision == math.MaxInt64 {
@@ -144,6 +166,13 @@ func DeleteChannelMonitorVariableGroup(ctx context.Context, id int, revision int
 		}
 		if len(references) > 0 {
 			return errors.New("共享配置仍被渠道引用，请先解除引用后再删除")
+		}
+		automations, err := upstreamAutomationVariableGroupReferences(tx, id, false)
+		if err != nil {
+			return err
+		}
+		if len(automations) > 0 {
+			return errors.New("共享配置仍被上游自动任务引用，请先解除引用后再删除")
 		}
 		return tx.Delete(&group).Error
 	})

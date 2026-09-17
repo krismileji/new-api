@@ -46,6 +46,7 @@ type CustomMetricName = 'ratio' | 'balance'
 
 type ChannelMonitorCustomUpstreamFieldsProps = {
   form: UseFormReturn<UpstreamConfigFormValues>
+  independent?: boolean
 }
 
 type CustomMetricFieldsProps = ChannelMonitorCustomUpstreamFieldsProps & {
@@ -243,7 +244,11 @@ function CustomMetricFields(props: CustomMetricFieldsProps) {
                   ref={field.ref}
                 />
               </FormControl>
-              <FormDescription>保存后立即写入渠道监控。</FormDescription>
+              <FormDescription>
+                {props.independent
+                  ? '在任务检查时作为指标值使用。'
+                  : '保存后立即写入渠道监控。'}
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -281,6 +286,7 @@ export function ChannelMonitorCustomUpstreamFields(
       <CustomMetricFields
         form={props.form}
         metric='ratio'
+        independent={props.independent}
         reuseRequest={false}
       />
       {canReuseRequest ? (
@@ -309,6 +315,7 @@ export function ChannelMonitorCustomUpstreamFields(
       <CustomMetricFields
         form={props.form}
         metric='balance'
+        independent={props.independent}
         reuseRequest={reuseRequest && canReuseRequest}
       />
     </div>
