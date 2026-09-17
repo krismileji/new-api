@@ -3,7 +3,7 @@ package service
 import "github.com/go-redis/redis/v8"
 
 // All amounts are integer micro-credits. Each operation is bounded: the only
-// loop visits a model's at-most-100 samples, never the channel's request history.
+// loops visit at most 100 samples or a bounded batch of outstanding attempts.
 // A refresh captures the completed counter before HTTP starts. Installing its
 // result subtracts that counter, so ledger delivery time cannot affect balance.
 var channelBalanceScript = redis.NewScript(`
@@ -56,7 +56,8 @@ if op == 'configure' or op == 'sync_begin' then
   redis.call('EXPIRE', KEYS[8], ttl)
   if op == 'sync_begin' then
     redis.call('HSET', state, 'fetch_id', ARGV[2], 'fetch_start', integer(now),
-      'cut_completed', integer(get('completed')), 'cut_unknown', integer(get('unknown_completed')))
+      'cut_completed', integer(get('completed')), 'cut_unknown', integer(get('unknown_completed')),
+      'fetch_gap_revision', integer(get('gap_revision')))
     return epoch
   end
 elseif op == 'sync_commit' then
@@ -70,6 +71,46 @@ elseif op == 'sync_commit' then
   put('unknown_completed', math.max(0, get('unknown_completed') - get('cut_unknown')))
   redis.call('HSET', state, 'balance', ARGV[4], 'baseline_start', integer(get('fetch_start')),
     'baseline_end', integer(now), 'baseline_id', ARGV[2], 'coverage', ARGV[5], 'sync_failed', '0')
+  if get('gap_revision') ~= get('fetch_gap_revision') then redis.call('HSET', state, 'coverage', '0') end
+
+  -- A synchronous attempt that ended before this query no longer needs its
+  -- old reservation: the fresh upstream balance is now its accounting basis.
+  -- Keep live attempts, asynchronous jobs and query-window completions. Scan
+  -- a bounded batch with a cursor so long-running requests cannot starve the
+  -- cleanup of later unresolved attempts. This also handles existing records.
+  local cursor = get('reconcile_cursor')
+  if cursor >= redis.call('ZCARD', KEYS[3]) then cursor = 0 end
+  local pending = redis.call('ZRANGE', KEYS[3], cursor, cursor + 127, 'WITHSCORES')
+  local removed = 0
+  for i = 1, #pending, 2 do
+    local id, ended = pending[i], tonumber(pending[i + 1])
+    local key = KEYS[2] .. id
+    local encoded = redis.call('GET', key)
+    local attempt = encoded and cjson.decode(encoded) or nil
+    if attempt and attempt.epoch == epoch and attempt.status == 'unresolved' and ended < get('fetch_start') then
+      local uncertain = attempt.completion_uncertain
+      if uncertain == nil then
+        local recovery = redis.call('GET', KEYS[7] .. id)
+        uncertain = recovery and cjson.decode(recovery).CompletionUncertain
+      end
+      if not uncertain then
+        add('inflight', -tonumber(attempt.amount))
+        add('active', -1)
+        if not attempt.known then add('unknown_active', -1) end
+        if attempt.source == 'average' then add('average_active', -1) end
+        if attempt.source == 'budget' then add('budget_active', -1) end
+        redis.call('ZREM', KEYS[3], id)
+        -- Retain a tombstone for the original reservation's lifetime. A late
+        -- usage/outbox callback must not charge it again after rebasing.
+        redis.call('SET', key, cjson.encode({epoch=epoch,status='reconcile',at=integer(ended)}), 'EX', ttl)
+        redis.call('DEL', KEYS[7] .. id)
+        removed = removed + 1
+      end
+    end
+  end
+  cursor = cursor + #pending / 2 - removed
+  if cursor >= redis.call('ZCARD', KEYS[3]) then cursor = 0 end
+  put('reconcile_cursor', cursor)
   if ARGV[5] == '1' and get('active') == 0 then redis.call('HDEL', state, 'damaged') end
   redis.call('HDEL', state, 'fetch_id', 'cut_completed', 'cut_unknown')
 elseif op == 'sync_fail' then
@@ -106,9 +147,9 @@ elseif op == 'finish' or op == 'release' or op == 'reconcile' then
   local attempt = existing and cjson.decode(existing) or nil
   if not attempt or attempt.status == 'active' or attempt.status == 'unresolved' then
     if op == 'finish' and tonumber(ARGV[3]) < 0 then
-      -- A disconnected client does not prove that upstream has stopped.
-      -- Retain its reservation and incomplete coverage until authoritative
-      -- settlement; a balance refresh alone must not declare it a free call.
+      -- Unknown usage is not a free call. Retain the reservation until a
+      -- subsequent balance snapshot covers this ended synchronous attempt.
+      -- Incremental WebSocket usage and async submission are not completion.
       if not attempt or attempt.epoch ~= epoch then
         attempt = {epoch=epoch,amount='0',known=false,source='unknown',samples=0,started=integer(now)}
         add('active', 1)
@@ -118,6 +159,7 @@ elseif op == 'finish' or op == 'release' or op == 'reconcile' then
         add('unknown_active', 1)
       end
       attempt.status = 'unresolved'
+      attempt.completion_uncertain = attempt.completion_uncertain or ARGV[7] == '1'
       redis.call('SET', KEYS[2], cjson.encode(attempt), 'EX', ttl)
       redis.call('ZADD', KEYS[3], now, ARGV[4])
       redis.call('EXPIRE', KEYS[3], ttl)
@@ -141,6 +183,7 @@ elseif op == 'finish' or op == 'release' or op == 'reconcile' then
       -- a debit boundary. Clear the reservation and require a fresh balance
       -- instead of counting a potentially old debit as a new consumption.
       redis.call('HSET', state, 'coverage', '0')
+      redis.call('HINCRBY', state, 'gap_revision', 1)
     end
     if op == 'finish' then
       if known then
@@ -180,6 +223,7 @@ elseif op == 'finish' or op == 'release' or op == 'reconcile' then
   end
 elseif op == 'gap' then
   redis.call('HSET', state, 'coverage', '0')
+  redis.call('HINCRBY', state, 'gap_revision', 1)
 end
 
 -- Expired request records are not evidence of a free request. Keep the state

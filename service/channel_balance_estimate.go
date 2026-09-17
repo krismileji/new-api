@@ -63,9 +63,10 @@ type ChannelBalanceEstimate struct {
 }
 
 type ChannelBalanceSync struct {
-	Config ChannelBalanceConfig
-	ID     string
-	Epoch  string
+	Config       ChannelBalanceConfig
+	ID           string
+	Epoch        string
+	IdleCoverage bool
 }
 
 func ChannelBalanceConfigForMonitor(monitor model.ChannelRatioMonitor) ChannelBalanceConfig {
@@ -146,7 +147,10 @@ func runChannelBalanceOperation(ctx context.Context, config ChannelBalanceConfig
 }
 
 var channelBalanceMarkGapScript = redis.NewScript(`
-if redis.call('EXISTS', KEYS[1]) == 1 then redis.call('HSET', KEYS[1], 'coverage', '0') end
+if redis.call('EXISTS', KEYS[1]) == 1 then
+  redis.call('HSET', KEYS[1], 'coverage', '0')
+  redis.call('HINCRBY', KEYS[1], 'gap_revision', 1)
+end
 return 0
 `)
 
@@ -192,6 +196,7 @@ func BeginChannelBalanceSync(ctx context.Context, monitor model.ChannelRatioMoni
 	if err != nil {
 		return sync, err
 	}
+	sync.IdleCoverage = ChannelBalanceHasIdleRequestCoverage(ctx, monitor.ChannelId)
 	sync.Epoch, err = runChannelBalanceOperation(ctx, sync.Config, "sync_begin", "", "", args...)
 	return sync, err
 }
@@ -230,7 +235,8 @@ func GetChannelBalanceEstimate(ctx context.Context, config ChannelBalanceConfig)
 // no older, untracked transport remains. Do not infer this from a missing key
 // alone: the existing concurrency runtime must also have initialized.
 func ChannelBalanceHasIdleRequestCoverage(ctx context.Context, channelID int) bool {
-	client := common.RedisMonitorReadClient()
+	// A replica may still report idle after another node acquired a lease.
+	client := common.RedisMonitorWriteClient()
 	if !common.RedisEnabled || client == nil {
 		return false
 	}

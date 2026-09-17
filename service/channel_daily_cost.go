@@ -491,7 +491,7 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 		logger.LogError(ctx, fmt.Sprintf("渠道 #%d 每日成本事件无效: %v", snapshot.ChannelId, err))
 		return false
 	}
-	finishChannelBalanceAttempt(ctx, snapshot, delta.EventId, costNanoCNY, settledDelta > 0)
+	finishChannelBalanceAttempt(ctx, snapshot, delta.EventId, costNanoCNY, settledDelta > 0, false)
 	var persisted bool
 	if isProbe {
 		persisted = writeChannelDailyCostSynchronously(delta)
@@ -737,6 +737,7 @@ func RecordTaskChannelDailyCost(ctx *gin.Context, channelId int, occurredAt int6
 	}
 	costNanoCNY, resolved := calculateChannelDailyCost(snapshot, quotaBeforeGroup)
 	if !resolved {
+		finishChannelBalanceTaskAttempt(ctx, snapshot)
 		recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
 		return 0, false, nil
 	}

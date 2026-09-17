@@ -157,7 +157,7 @@ func channelBalanceRequestBudget(ctx *gin.Context, info *relaycommon.RelayInfo, 
 	return budget, sample, eligible
 }
 
-func finishChannelBalanceAttempt(ctx *gin.Context, snapshot channelDailyCostSnapshot, eventID string, costNanoCNY int64, settled bool) {
+func finishChannelBalanceAttempt(ctx *gin.Context, snapshot channelDailyCostSnapshot, eventID string, costNanoCNY int64, settled, completionUncertain bool) {
 	if ctx == nil || snapshot.BalanceConfig.Account == "" || !snapshot.BalanceConfig.Enabled {
 		return
 	}
@@ -178,6 +178,7 @@ func finishChannelBalanceAttempt(ctx *gin.Context, snapshot channelDailyCostSnap
 	if attempt.Finished {
 		return
 	}
+	attempt.CompletionUncertain = attempt.CompletionUncertain || completionUncertain
 	// Incremental WebSocket usage and async task submission are not evidence
 	// that the upstream job ended. Keep coverage incomplete for those paths.
 	settled = settled && !attempt.CompletionUncertain
@@ -191,8 +192,12 @@ func finishChannelBalanceAttempt(ctx *gin.Context, snapshot channelDailyCostSnap
 	if attempt.SampleEligible && settled {
 		eligible = "1"
 	}
+	uncertain := "0"
+	if attempt.CompletionUncertain {
+		uncertain = "1"
+	}
 	raw, err := runChannelBalanceOperation(ctx, attempt.Config, "finish", eventID, attempt.Sample,
-		common.GetUUID(), amount, eventID, eligible, 0)
+		common.GetUUID(), amount, eventID, eligible, 0, uncertain)
 	if err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("渠道 #%d 已完成费用预估更新失败: %v", snapshot.ChannelId, err))
 		return
@@ -204,5 +209,5 @@ func finishChannelBalanceAttempt(ctx *gin.Context, snapshot channelDailyCostSnap
 // Unknown asynchronous task charges must not become samples for synchronous
 // requests or be presented as final upstream debits at submission time.
 func finishChannelBalanceTaskAttempt(ctx *gin.Context, snapshot channelDailyCostSnapshot) {
-	finishChannelBalanceAttempt(ctx, snapshot, channelDailyCostEventId(ctx, snapshot.ChannelId), 0, false)
+	finishChannelBalanceAttempt(ctx, snapshot, channelDailyCostEventId(ctx, snapshot.ChannelId), 0, false, true)
 }

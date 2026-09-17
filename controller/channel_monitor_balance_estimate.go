@@ -105,7 +105,9 @@ func recordChannelMonitorBalanceUpdate(ctx context.Context, monitor model.Channe
 			return nil, false, readErr
 		}
 		coverage := current.Coverage && current.Epoch == sync.Epoch
-		if !coverage && current.InFlightCount == 0 {
+		if !coverage && sync.IdleCoverage {
+			// Unresolved balance reservations can outlive the transport. Check
+			// actual request leases on both sides of the query, not that backlog.
 			coverage = service.ChannelBalanceHasIdleRequestCoverage(ctx, monitor.ChannelId)
 		}
 		_, err = service.CommitChannelBalanceSync(ctx, sync, *balance, coverage)

@@ -131,12 +131,13 @@ func TestChannelBalanceOutboxRecoveryNeverUsesLedgerDeliveryAsDebitTime(t *testi
 	assert.Nil(t, model.DB)
 }
 
-func TestChannelBalanceUnknownReservationSurvivesSyncAndResolvesOnce(t *testing.T) {
+func TestChannelBalanceUnknownReservationResolvesOnceBeforeSync(t *testing.T) {
 	f := newChannelBalanceFixture(t)
 	f.sync(24)
 	f.operation("start", "cancelled", "model", 3_000_000, true, 0)
 	f.operation("finish", "cancelled", "model", -1, false, 0)
-	estimate := f.sync(24)
+	estimate, err := GetChannelBalanceEstimate(t.Context(), f.config)
+	require.NoError(t, err)
 	assert.False(t, estimate.Complete)
 	assert.Equal(t, int64(1), estimate.UnknownCount)
 	assert.Equal(t, 3.0, estimate.InFlightConsumption)

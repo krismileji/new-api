@@ -271,6 +271,7 @@ func relayWithChannelConcurrency(c *gin.Context, info *relaycommon.RelayInfo, re
 
 func relayTaskWithChannelConcurrency(c *gin.Context, info *relaycommon.RelayInfo, lease *service.ChannelConcurrencyLease, submit taskSubmitAttempt) (*relay.TaskSubmitResult, *dto.TaskError) {
 	defer lease.Release()
+	service.PrepareChannelBalanceAttempt(c, info)
 	resetRelayAttemptResponseState(c)
 	return submit(c, info)
 }
