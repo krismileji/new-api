@@ -547,6 +547,11 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	}
 	requestBody := bytes.NewBuffer(jsonData)
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
+	balanceProbeLease, err := service.AcquireChannelBalanceProbeLease(ctx, channel.Id)
+	if err != nil {
+		return testResult{context: c, localErr: err}
+	}
+	defer balanceProbeLease.Release()
 	service.BeginChannelDailyCostAttempt(c, channel.Id)
 	attemptStartedAt := time.Now()
 	service.BeginChannelMonitorPerformanceAttempt(c, attemptStartedAt)

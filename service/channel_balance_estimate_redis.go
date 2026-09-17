@@ -75,6 +75,10 @@ elseif op == 'sync_commit' then
 
   -- A synchronous attempt that ended before this query no longer needs its
   -- old reservation: the fresh upstream balance is now its accounting basis.
+  -- Active synchronous records may survive a lost completion callback. Only
+  -- reclaim them after a fresh query with confirmed idle request leases at both
+  -- boundaries. A gap during that query invalidates the idle evidence too.
+  local idle = ARGV[6] == '1' and get('coverage') == 1 and get('gap_revision') == get('fetch_gap_revision')
   -- Keep live attempts, asynchronous jobs and query-window completions. Scan
   -- a bounded batch with a cursor so long-running requests cannot starve the
   -- cleanup of later unresolved attempts. This also handles existing records.
@@ -87,13 +91,16 @@ elseif op == 'sync_commit' then
     local key = KEYS[2] .. id
     local encoded = redis.call('GET', key)
     local attempt = encoded and cjson.decode(encoded) or nil
-    if attempt and attempt.epoch == epoch and attempt.status == 'unresolved' and ended < get('fetch_start') then
+    if attempt and attempt.epoch == epoch and ended < get('fetch_start') and
+        (attempt.status == 'unresolved' or (idle and attempt.status == 'active')) then
       local uncertain = attempt.completion_uncertain
       if uncertain == nil then
         local recovery = redis.call('GET', KEYS[7] .. id)
-        uncertain = recovery and cjson.decode(recovery).CompletionUncertain
+        if recovery then uncertain = cjson.decode(recovery).CompletionUncertain end
       end
-      if not uncertain then
+      -- For legacy active records, an absent completion flag is not evidence
+      -- of a synchronous request. Require the explicit false recovery marker.
+      if not uncertain and (attempt.status == 'unresolved' or uncertain == false) then
         add('inflight', -tonumber(attempt.amount))
         add('active', -1)
         if not attempt.known then add('unknown_active', -1) end

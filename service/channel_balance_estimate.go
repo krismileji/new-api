@@ -210,8 +210,15 @@ func CommitChannelBalanceSync(ctx context.Context, sync ChannelBalanceSync, bala
 	if coverageComplete {
 		coverage = "1"
 	}
+	// Existing complete coverage is not evidence that old reservations ended.
+	// Reclaim active orphans only after actual requests were idle on both sides
+	// of this successful upstream query, including direct channel tests.
+	idle := "0"
+	if coverageComplete && sync.IdleCoverage && ChannelBalanceHasIdleRequestCoverage(ctx, sync.Config.ChannelID) {
+		idle = "1"
+	}
 	raw, err := runChannelBalanceOperation(ctx, sync.Config, "sync_commit", "", "",
-		sync.ID, sync.Config.Revision, amount, coverage)
+		sync.ID, sync.Config.Revision, amount, coverage, idle)
 	if err != nil {
 		return ChannelBalanceEstimate{}, err
 	}
@@ -245,8 +252,9 @@ func ChannelBalanceHasIdleRequestCoverage(ctx context.Context, channelID int) bo
 	pipeline := client.Pipeline()
 	loaded := pipeline.HGet(opCtx, channelConcurrencyRedisConfigKey, channelConcurrencyRedisLoadedField)
 	active := pipeline.ZCard(opCtx, channelConcurrencyRedisActivePrefix+strconv.Itoa(channelID))
+	probes := pipeline.ZCard(opCtx, fmt.Sprintf("channel_balance:{%d}:probe_active", channelID))
 	_, err := pipeline.Exec(opCtx)
-	return err == nil && loaded.Val() == "1" && active.Val() == 0
+	return err == nil && loaded.Val() == "1" && active.Val() == 0 && probes.Val() == 0
 }
 
 func decodeChannelBalanceEstimate(raw string) (ChannelBalanceEstimate, error) {
