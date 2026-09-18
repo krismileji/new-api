@@ -10,13 +10,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGetChannelGroupMonitorCacheRatesUsesBusinessSamplesInLast24Hours(t *testing.T) {
+func TestGetChannelGroupMonitorCacheRatesUsesBusinessSamplesInDisplayWindow(t *testing.T) {
 	_, client := newChannelMonitorRedisSharedProjectionTestClient(t)
 	originalClient, originalEnabled := common.RDBMonitorRead, common.RedisEnabled
 	common.RDBMonitorRead, common.RedisEnabled = client, true
 	t.Cleanup(func() { common.RDBMonitorRead, common.RedisEnabled = originalClient, originalEnabled })
 	now := int64(1_750_032_000)
-	windowStart := now - now%60 + 60 - 24*60*60
+	windowStart := now - now%60 - 14*60
 	var events []model.ChannelMonitorEvent
 	for _, fixture := range []struct {
 		id    string
@@ -46,7 +46,7 @@ func TestGetChannelGroupMonitorCacheRatesUsesBusinessSamplesInLast24Hours(t *tes
 	}
 	projection := NewChannelMonitorRedisSharedProjectionWithClient(client)
 	require.NoError(t, projection.WriteChannelMonitorEvents(context.Background(), events))
-	rates, err := GetChannelGroupMonitorCacheRates(context.Background(), []string{"vip", "zero", "unknown", "empty"}, now)
+	rates, err := GetChannelGroupMonitorCacheRates(context.Background(), []string{"vip", "zero", "unknown", "empty"}, windowStart, now+1)
 	require.NoError(t, err)
 	assert.Equal(t, map[string]float64{"vip": 50, "zero": 0}, rates)
 }
@@ -55,10 +55,10 @@ func TestGetChannelGroupMonitorCacheRatesWithoutRedisReturnsUnavailable(t *testi
 	originalEnabled := common.RedisEnabled
 	common.RedisEnabled = false
 	t.Cleanup(func() { common.RedisEnabled = originalEnabled })
-	rates, err := GetChannelGroupMonitorCacheRates(context.Background(), []string{"vip"}, 1_750_032_000)
+	rates, err := GetChannelGroupMonitorCacheRates(context.Background(), []string{"vip"}, 1_750_031_100, 1_750_032_001)
 	assert.ErrorIs(t, err, ErrChannelMonitorRedisSharedProjectionUnavailable)
 	assert.Nil(t, rates)
-	rates, err = GetChannelGroupMonitorCacheRates(context.Background(), nil, 1_750_032_000)
+	rates, err = GetChannelGroupMonitorCacheRates(context.Background(), nil, 1_750_031_100, 1_750_032_001)
 	require.NoError(t, err)
 	assert.Empty(t, rates)
 }

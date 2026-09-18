@@ -386,7 +386,7 @@ export function ChannelGroupMonitorSettingsSheet(
                   <FormItem>
                     <FormLabel>状态展示范围</FormLabel>
                     <FormDescription>
-                      成功率按此范围内的有效逻辑探测统计
+                      成功率按此范围内的有效逻辑探测统计，缓存率按此范围内的实际请求统计
                     </FormDescription>
                     <FormControl>
                       <div className='flex min-w-0 flex-wrap items-center gap-2'>
@@ -474,8 +474,7 @@ export function ChannelGroupMonitorSettingsSheet(
                     <div className='min-w-0 space-y-1'>
                       <FormLabel>显示缓存率</FormLabel>
                       <FormDescription>
-                        在分组监控页展示近 24
-                        小时实际请求的缓存命中率，无有效样本时显示暂无数据
+                        按当前状态展示范围统计实际请求的缓存命中率，无有效样本时显示暂无数据
                       </FormDescription>
                     </div>
                     <FormControl>

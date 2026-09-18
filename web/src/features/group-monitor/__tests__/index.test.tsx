@@ -90,6 +90,34 @@ test('开启缓存率后展示各组百分比，区分零命中与无有效样�
   )
 })
 
+test('修改状态展示范围后缓存率说明同步更新', () => {
+  const result = categoryMonitorResult([{ group: 'vip' }])
+  result.show_cache_rate = true
+  const view = render(<GroupMonitorContent result={result} />)
+
+  expect(
+    screen.getByTitle('近 60 分钟命中缓存的请求数 / 有效缓存样本数')
+  ).toBeVisible()
+
+  view.rerender(
+    <GroupMonitorContent
+      result={{ ...result, display_value: 3, display_unit: 'hour' }}
+    />
+  )
+  expect(
+    screen.getByTitle('近 3 小时命中缓存的请求数 / 有效缓存样本数')
+  ).toBeVisible()
+
+  view.rerender(
+    <GroupMonitorContent
+      result={{ ...result, display_value: 7, display_unit: 'day' }}
+    />
+  )
+  expect(
+    screen.getByTitle('近 7 天命中缓存的请求数 / 有效缓存样本数')
+  ).toBeVisible()
+})
+
 test('groups interleaved categories in first appearance order and keeps each category’s group order', () => {
   render(
     <GroupMonitorContent

@@ -507,18 +507,18 @@ func buildChannelGroupMonitorItems(
 	if err != nil {
 		return nil, err
 	}
-	var cacheRates map[string]float64
-	if showCacheRate {
-		cacheRates, err = service.GetChannelGroupMonitorCacheRates(ctx, groupNames, now)
-		if err != nil {
-			common.SysError("读取分组监控缓存率失败: " + err.Error())
-		}
-	}
 	displayValue, displayUnit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
 	bucketSeconds := model.ChannelStatusProbeDisplayBucketSeconds(displayUnit)
 	windowStart := model.ChannelStatusProbeDisplayBucketStart(now, displayUnit) -
 		int64(displayValue-1)*bucketSeconds
 	windowEnd := now + 1
+	var cacheRates map[string]float64
+	if showCacheRate {
+		cacheRates, err = service.GetChannelGroupMonitorCacheRates(ctx, groupNames, windowStart, windowEnd)
+		if err != nil {
+			common.SysError("读取分组监控缓存率失败: " + err.Error())
+		}
+	}
 	summaries, err := model.GetChannelGroupMonitorExecutionSummariesForGroups(
 		ctx, groupNames, windowStart, windowEnd,
 	)

@@ -489,7 +489,7 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                           {props.result.show_cache_rate ? (
                             <div
                               className='min-w-0'
-                              title='近 24 小时命中缓存的请求数 / 有效缓存样本数'
+                              title={`近 ${props.result.display_value} ${DISPLAY_UNIT_LABEL[props.result.display_unit]}命中缓存的请求数 / 有效缓存样本数`}
                             >
                               <dt className='text-muted-foreground mb-1 text-[11px] lg:sr-only'>
                                 缓存率
@@ -608,7 +608,7 @@ export function GroupMonitor() {
                   成功率按近 {result.display_value}{' '}
                   {DISPLAY_UNIT_LABEL[result.display_unit]}内的有效逻辑探测统计
                   {result.show_cache_rate
-                    ? '；缓存率按近 24 小时实际请求的有效缓存样本统计'
+                    ? '；缓存率按同一时间范围内实际请求的有效缓存样本统计'
                     : null}
                 </p>
                 {!result.enabled ? (

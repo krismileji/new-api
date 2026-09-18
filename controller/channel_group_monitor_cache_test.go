@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -122,6 +123,63 @@ func TestGetPricingGroupMonitorCacheRateVisibilityAndFallback(t *testing.T) {
 				assert.NotContains(t, payload.Data.Items[0], "cache_rate")
 			}
 			assert.NotContains(t, payload.Data.Items[0], "channel_id")
+		})
+	}
+}
+
+func TestChannelGroupMonitorCacheRateFollowsDisplayWindow(t *testing.T) {
+	zone := time.FixedZone("UTC+8", 8*60*60)
+	now := time.Date(2026, time.September, 19, 10, 37, 25, 0, zone).Unix()
+	for _, tc := range []struct {
+		name  string
+		value int
+		unit  string
+		start int64
+	}{
+		{"minutes", 15, model.ChannelStatusProbeDisplayUnitMinute, time.Date(2026, time.September, 19, 10, 23, 0, 0, zone).Unix()},
+		{"hours", 3, model.ChannelStatusProbeDisplayUnitHour, time.Date(2026, time.September, 19, 8, 0, 0, 0, zone).Unix()},
+		{"day", 1, model.ChannelStatusProbeDisplayUnitDay, time.Date(2026, time.September, 19, 0, 0, 0, 0, zone).Unix()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := setupChannelMonitorControllerTestDB(t)
+			require.NoError(t, db.AutoMigrate(
+				&model.ChannelGroupMonitorConfig{}, &model.ChannelGroupMonitorState{}, &model.ChannelGroupMonitorExecution{},
+			))
+			config, err := model.SaveChannelGroupMonitorConfig(model.ChannelGroupMonitorConfigInput{
+				Enabled: true, ShowCacheRate: true,
+				Groups:          []model.ChannelGroupMonitorGroup{{GroupName: "vip", ProbeModel: "gpt-4.1"}},
+				IntervalSeconds: 60, DisplayValue: tc.value, DisplayUnit: tc.unit,
+			}, now)
+			require.NoError(t, err)
+			common.RedisEnabled = false
+			projection := service.NewChannelMonitorRedisSharedProjectionWithClient(common.RDB)
+			var events []model.ChannelMonitorEvent
+			for _, fixture := range []struct {
+				id    string
+				at    int64
+				cache int64
+			}{
+				{"before-window", tc.start - 1, 20},
+				{"at-start", tc.start, 0},
+				{"recent-hit", now - 60, 20},
+				{"current-hit", now, 20},
+			} {
+				events = append(events, model.ChannelMonitorEvent{
+					EventId: fixture.id, EventSequence: uint64(len(events) + 1), SchemaVersion: model.ChannelMonitorEventSchemaVersion,
+					OccurredAt: fixture.at, CreatedAt: now, ChannelId: 11, GroupName: "vip", ModelName: "gpt-4.1",
+					Source: model.ChannelMonitorEventSourceBusiness, Outcome: model.ChannelMonitorEventOutcomeSuccess,
+					CostStatus: model.ChannelMonitorEventCostNone, RequestDispatched: true, IsFinalAttempt: true,
+					InputTokens: common.GetPointer(int64(100)), CacheReadTokens: common.GetPointer(fixture.cache),
+				})
+			}
+			require.NoError(t, projection.WriteChannelMonitorEvents(context.Background(), events))
+			common.RedisEnabled = true
+			items, err := buildChannelGroupMonitorItems(context.Background(), config, map[string][]string{"vip": {"gpt-4.1"}}, now)
+			require.NoError(t, err)
+			require.Len(t, items, 1)
+			require.NotNil(t, items[0].CacheRate)
+			assert.InDelta(t, 200.0/3, *items[0].CacheRate, 0.000001)
+			assert.Equal(t, tc.start, items[0].RecentWindow[0].StartedAt)
 		})
 	}
 }
