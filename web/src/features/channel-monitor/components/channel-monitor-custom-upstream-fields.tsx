@@ -34,7 +34,14 @@ import {
   InputGroupAddon,
   InputGroupInput,
 } from '@/components/ui/input-group'
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
@@ -293,6 +300,19 @@ function AccountBalanceSource(props: {
     name: 'customConfig.balance.accountId',
   })
   const selected = accounts.data?.find((account) => account.id === accountId)
+  const accountOptions = [
+    {
+      value: 0,
+      label: accounts.isPending ? '正在加载账户…' : '请选择上游账户',
+    },
+    ...(accountId && !selected
+      ? [{ value: accountId, label: `账户 #${accountId}（暂不可用）` }]
+      : []),
+    ...(accounts.data ?? []).map((account) => ({
+      value: account.id,
+      label: `${account.name} · #${account.id}`,
+    })),
+  ]
   return (
     <>
       <FormField
@@ -301,30 +321,39 @@ function AccountBalanceSource(props: {
         render={({ field }) => (
           <FormItem>
             <FormLabel>上游余额账户</FormLabel>
-            <FormControl>
-              <NativeSelect
-                name={field.name}
-                ref={field.ref}
-                onBlur={field.onBlur}
-                value={field.value ?? 0}
-                disabled={accounts.isPending || accounts.isError}
-                onChange={(event) => field.onChange(Number(event.target.value))}
+            <Select
+              items={accountOptions}
+              name={field.name}
+              value={field.value ?? 0}
+              disabled={accounts.isPending || accounts.isError}
+              onValueChange={(value) => {
+                if (value !== null) field.onChange(value)
+              }}
+            >
+              <FormControl>
+                <SelectTrigger
+                  className='w-full min-w-0'
+                  ref={field.ref}
+                  onBlur={field.onBlur}
+                >
+                  <SelectValue className='min-w-0 truncate' />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent
+                alignItemWithTrigger={false}
+                className='max-h-[min(20rem,var(--available-height))]'
               >
-                <NativeSelectOption value={0}>
-                  {accounts.isPending ? '正在加载账户…' : '请选择上游账户'}
-                </NativeSelectOption>
-                {accountId && !selected ? (
-                  <NativeSelectOption value={accountId}>
-                    账户 #{accountId}（暂不可用）
-                  </NativeSelectOption>
-                ) : null}
-                {accounts.data?.map((account) => (
-                  <NativeSelectOption key={account.id} value={account.id}>
-                    {account.name} · #{account.id}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </FormControl>
+                <SelectGroup>
+                  {accountOptions.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      <span className='break-all whitespace-normal'>
+                        {item.label}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
             <FormDescription>
               仅复用账户余额和换算方式，当前倍率、请求地址、认证及自定义变量保持独立。
             </FormDescription>

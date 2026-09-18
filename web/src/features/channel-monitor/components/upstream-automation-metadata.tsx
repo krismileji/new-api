@@ -30,7 +30,14 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 
 import type { UpstreamAccount } from '../api-upstream-accounts'
@@ -50,6 +57,19 @@ export function UpstreamAutomationMetadata(props: {
     name: 'account_id',
   })
   const account = props.accounts?.find((item) => item.id === accountId)
+  const accountOptions = [
+    { value: 0, label: '自定义（可单独关联账户余额）' },
+    ...(props.accounts ?? []).map((item) => ({
+      value: item.id,
+      label: `继承整套账户配置：${item.name}`,
+    })),
+  ]
+  const ratioChannelOptions = [
+    { value: 0, label: '仅使用账户余额' },
+    ...props.channels
+      .filter((channel) => account?.channel_ids.includes(channel.id))
+      .map((channel) => ({ value: channel.id, label: channel.name })),
+  ]
   const channels = props.channels.filter((channel) =>
     `${channel.id} ${channel.name}`.toLowerCase().includes(search.toLowerCase())
   )
@@ -62,28 +82,43 @@ export function UpstreamAutomationMetadata(props: {
         render={({ field }) => (
           <FormItem>
             <FormLabel>任务配置方式</FormLabel>
-            <FormControl>
-              <NativeSelect
-                value={field.value ?? 0}
-                onChange={(event) => {
-                  const value = Number(event.target.value)
-                  field.onChange(value)
-                  props.form.setValue('ratio_channel_id', 0)
-                  props.onAccountChange?.(
-                    props.accounts?.find((item) => item.id === value)
-                  )
-                }}
+            <Select
+              items={accountOptions}
+              name={field.name}
+              value={field.value ?? 0}
+              onValueChange={(value) => {
+                if (value === null) return
+                field.onChange(value)
+                props.form.setValue('ratio_channel_id', 0)
+                props.onAccountChange?.(
+                  props.accounts?.find((item) => item.id === value)
+                )
+              }}
+            >
+              <FormControl>
+                <SelectTrigger
+                  className='w-full min-w-0'
+                  ref={field.ref}
+                  onBlur={field.onBlur}
+                >
+                  <SelectValue className='min-w-0 truncate' />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent
+                alignItemWithTrigger={false}
+                className='max-h-[min(20rem,var(--available-height))]'
               >
-                <NativeSelectOption value={0}>
-                  自定义（可单独关联账户余额）
-                </NativeSelectOption>
-                {props.accounts?.map((item) => (
-                  <NativeSelectOption key={item.id} value={item.id}>
-                    继承整套账户配置：{item.name}
-                  </NativeSelectOption>
-                ))}
-              </NativeSelect>
-            </FormControl>
+                <SelectGroup>
+                  {accountOptions.map((item) => (
+                    <SelectItem key={item.value} value={item.value}>
+                      <span className='break-all whitespace-normal'>
+                        {item.label}
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
             <FormMessage />
           </FormItem>
         )}
@@ -99,27 +134,38 @@ export function UpstreamAutomationMetadata(props: {
             render={({ field }) => (
               <FormItem>
                 <FormLabel>倍率来源渠道（倍率规则必选）</FormLabel>
-                <FormControl>
-                  <NativeSelect
-                    value={field.value ?? 0}
-                    onChange={(event) =>
-                      field.onChange(Number(event.target.value))
-                    }
+                <Select
+                  items={ratioChannelOptions}
+                  name={field.name}
+                  value={field.value ?? 0}
+                  onValueChange={(value) => {
+                    if (value !== null) field.onChange(value)
+                  }}
+                >
+                  <FormControl>
+                    <SelectTrigger
+                      className='w-full min-w-0'
+                      ref={field.ref}
+                      onBlur={field.onBlur}
+                    >
+                      <SelectValue className='min-w-0 truncate' />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent
+                    alignItemWithTrigger={false}
+                    className='max-h-[min(20rem,var(--available-height))]'
                   >
-                    <NativeSelectOption value={0}>
-                      仅使用账户余额
-                    </NativeSelectOption>
-                    {props.channels
-                      .filter((channel) =>
-                        account?.channel_ids.includes(channel.id)
-                      )
-                      .map((channel) => (
-                        <NativeSelectOption key={channel.id} value={channel.id}>
-                          {channel.name}
-                        </NativeSelectOption>
+                    <SelectGroup>
+                      {ratioChannelOptions.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          <span className='break-all whitespace-normal'>
+                            {item.label}
+                          </span>
+                        </SelectItem>
                       ))}
-                  </NativeSelect>
-                </FormControl>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
                 <FormMessage />
               </FormItem>
             )}

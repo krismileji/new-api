@@ -173,7 +173,7 @@ func MigrateUpstreamAutomations(ctx context.Context, intervalMinutes int) error 
 	}
 	var failures []error
 	for _, monitor := range monitors {
-		if monitor.UpstreamType != CustomUpstreamType {
+		if monitor.UpstreamType != CustomUpstreamType || strings.TrimSpace(monitor.CustomUpstreamConfig) == "" {
 			continue
 		}
 		config, err := ParseChannelMonitorCustomUpstreamConfig(monitor.CustomUpstreamConfig)

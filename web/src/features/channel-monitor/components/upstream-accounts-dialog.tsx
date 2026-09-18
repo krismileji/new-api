@@ -16,14 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { ArrowDown01Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import {
   Dialog,
   DialogContent,
@@ -37,6 +44,7 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from '@/components/ui/empty'
+import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 
 import {
@@ -64,6 +72,7 @@ export default function UpstreamAccountsDialog(props: {
   )
   const [configuring, setConfiguring] = useState<UpstreamAccount | null>(null)
   const [merging, setMerging] = useState<UpstreamAccount | null>(null)
+  const [search, setSearch] = useState('')
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
   }
@@ -79,6 +88,20 @@ export default function UpstreamAccountsDialog(props: {
   })
   const busy = poll.isPending || remove.isPending
   const accounts = query.data ?? []
+  const channelNames = useMemo(
+    () => new Map(props.channels.map((channel) => [channel.id, channel.name])),
+    [props.channels]
+  )
+  const keyword = search.trim().toLowerCase()
+  const filteredAccounts = accounts.filter(
+    (account) =>
+      `${account.name} ${account.upstream.base_url}`
+        .toLowerCase()
+        .includes(keyword) ||
+      account.channel_ids.some((id) =>
+        `${id} ${channelNames.get(id) ?? ''}`.toLowerCase().includes(keyword)
+      )
+  )
   const configuredChannel = props.channels.find((channel) =>
     configuring?.channel_ids.includes(channel.id)
   )
@@ -87,7 +110,7 @@ export default function UpstreamAccountsDialog(props: {
       <Dialog open onOpenChange={props.onOpenChange}>
         <DialogContent
           className={channelMonitorDialogContentClassName(
-            'flex h-[min(52rem,90dvh)] flex-col sm:max-w-3xl'
+            'flex h-[min(52rem,90dvh)] flex-col gap-3 sm:max-w-5xl'
           )}
         >
           <DialogHeader>
@@ -96,6 +119,29 @@ export default function UpstreamAccountsDialog(props: {
               同一余额池配置一次。渠道分别保留倍率、分组和请求统计。
             </DialogDescription>
           </DialogHeader>
+          {!editing ? (
+            <div className='flex flex-wrap items-center gap-2'>
+              <Input
+                type='search'
+                aria-label='搜索上游账户'
+                placeholder='搜索账户、地址或关联渠道'
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                className='min-w-0 flex-1 basis-56'
+              />
+              <span className='text-muted-foreground text-xs tabular-nums'>
+                {keyword ? `${filteredAccounts.length} / ` : ''}
+                {accounts.length} 个账户
+              </span>
+              <Button
+                size='sm'
+                disabled={busy || query.isPending || query.isError}
+                onClick={() => setEditing({})}
+              >
+                从渠道创建账户
+              </Button>
+            </div>
+          ) : null}
           <div className='min-h-0 flex-1 overflow-y-auto px-1'>
             {query.isPending ? <Spinner aria-label='加载上游账户' /> : null}
             {query.isError ? (
@@ -120,7 +166,7 @@ export default function UpstreamAccountsDialog(props: {
                 }}
               />
             ) : (
-              <div className='flex flex-col gap-4'>
+              <div className='flex flex-col gap-2 pb-1'>
                 {merging ? (
                   <UpstreamAccountTaskMerge
                     key={merging.id}
@@ -129,17 +175,6 @@ export default function UpstreamAccountsDialog(props: {
                     onClose={() => setMerging(null)}
                   />
                 ) : null}
-                <div className='flex flex-wrap items-center justify-between gap-3'>
-                  <p className='text-muted-foreground text-sm'>
-                    {accounts.length} 个账户 · 每个余额池单独列示
-                  </p>
-                  <Button
-                    disabled={busy || query.isPending || query.isError}
-                    onClick={() => setEditing({})}
-                  >
-                    从渠道创建账户
-                  </Button>
-                </div>
                 {!query.isPending && !query.isError && accounts.length === 0 ? (
                   <Empty>
                     <EmptyHeader>
@@ -150,92 +185,152 @@ export default function UpstreamAccountsDialog(props: {
                     </EmptyHeader>
                   </Empty>
                 ) : null}
-                {accounts.map((account) => (
-                  <Card key={account.id}>
-                    <CardHeader>
-                      <CardTitle className='flex flex-wrap items-center gap-2'>
-                        {account.name}
-                        <Badge variant='secondary'>
-                          {account.channel_ids.length} 个渠道
-                        </Badge>
-                      </CardTitle>
-                    </CardHeader>
-                    <CardContent className='flex flex-col gap-3'>
-                      <p className='text-muted-foreground text-sm break-all'>
-                        {account.upstream.base_url}
-                      </p>
-                      {account.balance === null ? (
-                        <p>
-                          余额待同步
-                          {account.last_balance_error
-                            ? `：${account.last_balance_error}`
-                            : ''}
-                        </p>
-                      ) : (
-                        <ChannelMonitorBalanceCell
-                          balance={account.balance}
-                          enabled={account.upstream.balance_sync_enabled}
-                          warning={account.upstream.balance_warning_threshold}
-                          error={account.last_balance_error}
-                          estimate={account.balance_estimate}
-                        />
-                      )}
-                      <p className='text-muted-foreground text-sm'>
-                        {account.refresh_interval_minutes
-                          ? `每 ${account.refresh_interval_minutes} 分钟刷新余额`
-                          : '定时余额刷新已关闭'}
-                      </p>
-                      <div className='flex flex-wrap gap-2'>
-                        {account.channel_ids.map((channelId) => (
-                          <Badge key={channelId} variant='outline'>
-                            {props.channels.find(
-                              (channel) => channel.id === channelId
-                            )?.name ?? `#${channelId}`}
-                          </Badge>
-                        ))}
-                      </div>
-                      <div className='flex flex-wrap gap-2'>
-                        <Button
-                          variant='outline'
-                          disabled={busy || !account.channel_ids.length}
-                          onClick={() => poll.mutate(account.id)}
-                        >
-                          刷新余额
-                        </Button>
-                        <Button
-                          variant='outline'
-                          disabled={busy || !account.channel_ids.length}
-                          onClick={() => setConfiguring(account)}
-                        >
-                          编辑共享配置
-                        </Button>
-                        <Button
-                          variant='outline'
-                          disabled={busy}
-                          onClick={() => setMerging(account)}
-                        >
-                          合并关联任务
-                        </Button>
-                        <Button
-                          variant='outline'
-                          disabled={busy}
-                          onClick={() => setEditing({ account })}
-                        >
-                          管理关联
-                        </Button>
-                        {account.channel_ids.length === 0 ? (
-                          <Button
-                            variant='outline'
-                            disabled={busy}
-                            onClick={() => remove.mutate(account)}
+                {query.isSuccess &&
+                accounts.length > 0 &&
+                filteredAccounts.length === 0 ? (
+                  <Empty>
+                    <EmptyHeader>
+                      <EmptyTitle>没有匹配的账户</EmptyTitle>
+                      <EmptyDescription>
+                        试试其他账户名称、地址或渠道。
+                      </EmptyDescription>
+                    </EmptyHeader>
+                    <Button
+                      size='sm'
+                      variant='outline'
+                      onClick={() => setSearch('')}
+                    >
+                      清空搜索
+                    </Button>
+                  </Empty>
+                ) : null}
+                <div
+                  role='list'
+                  aria-label='上游账户列表'
+                  className='flex flex-col gap-2'
+                >
+                  {filteredAccounts.map((account) => (
+                    <Collapsible
+                      key={account.id}
+                      render={<Card size='sm' role='listitem' />}
+                    >
+                      <CardHeader className='flex flex-col items-stretch justify-between gap-2 sm:flex-row sm:items-start'>
+                        <div className='flex min-w-0 flex-1 flex-col gap-1'>
+                          <CardTitle className='truncate' title={account.name}>
+                            {account.name}
+                          </CardTitle>
+                          <p
+                            className='text-muted-foreground truncate text-xs'
+                            title={account.upstream.base_url}
                           >
-                            删除空账户
-                          </Button>
-                        ) : null}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+                            {account.upstream.base_url}
+                          </p>
+                        </div>
+                        <div className='min-w-0 text-sm'>
+                          {account.balance === null ? (
+                            <p
+                              className='text-muted-foreground max-w-80 truncate text-xs'
+                              title={account.last_balance_error}
+                            >
+                              余额待同步
+                              {account.last_balance_error
+                                ? `：${account.last_balance_error}`
+                                : ''}
+                            </p>
+                          ) : (
+                            <ChannelMonitorBalanceCell
+                              balance={account.balance}
+                              enabled={account.upstream.balance_sync_enabled}
+                              warning={
+                                account.upstream.balance_warning_threshold
+                              }
+                              error={account.last_balance_error}
+                              estimate={account.balance_estimate}
+                            />
+                          )}
+                        </div>
+                      </CardHeader>
+                      <CardContent>
+                        <div className='flex flex-wrap items-center gap-x-3 gap-y-2'>
+                          <p className='text-muted-foreground text-xs'>
+                            {account.refresh_interval_minutes
+                              ? `每 ${account.refresh_interval_minutes} 分钟刷新余额`
+                              : '定时余额刷新已关闭'}
+                          </p>
+                          <CollapsibleTrigger
+                            className='group'
+                            render={<Button variant='ghost' size='sm' />}
+                            disabled={account.channel_ids.length === 0}
+                          >
+                            关联渠道（{account.channel_ids.length}）
+                            <HugeiconsIcon
+                              icon={ArrowDown01Icon}
+                              aria-hidden='true'
+                              className='transition-transform group-aria-expanded:rotate-180'
+                            />
+                          </CollapsibleTrigger>
+                          <div className='flex flex-wrap gap-1 sm:ml-auto'>
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              disabled={busy || !account.channel_ids.length}
+                              onClick={() => poll.mutate(account.id)}
+                            >
+                              刷新余额
+                            </Button>
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              disabled={busy || !account.channel_ids.length}
+                              onClick={() => setConfiguring(account)}
+                            >
+                              编辑共享配置
+                            </Button>
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              disabled={busy}
+                              onClick={() => setMerging(account)}
+                            >
+                              合并关联任务
+                            </Button>
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              disabled={busy}
+                              onClick={() => setEditing({ account })}
+                            >
+                              管理关联
+                            </Button>
+                            {account.channel_ids.length === 0 ? (
+                              <Button
+                                size='sm'
+                                variant='outline'
+                                disabled={busy}
+                                onClick={() => remove.mutate(account)}
+                              >
+                                删除空账户
+                              </Button>
+                            ) : null}
+                          </div>
+                        </div>
+                        <CollapsibleContent>
+                          <div className='flex flex-wrap gap-1.5 pt-3'>
+                            {account.channel_ids.map((channelId) => (
+                              <Badge
+                                key={channelId}
+                                variant='outline'
+                                className='h-auto max-w-full break-all whitespace-normal'
+                              >
+                                {channelNames.get(channelId) ?? `#${channelId}`}
+                              </Badge>
+                            ))}
+                          </div>
+                        </CollapsibleContent>
+                      </CardContent>
+                    </Collapsible>
+                  ))}
+                </div>
               </div>
             )}
           </div>

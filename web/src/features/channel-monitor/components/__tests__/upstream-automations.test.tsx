@@ -261,6 +261,9 @@ describe('独立上游自动任务', () => {
     expect(screen.getByRole('button', { name: '立即检查' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '编辑任务' })).toBeDisabled()
     expect(screen.getByRole('button', { name: '删除任务' })).toBeDisabled()
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: '规则与记录（1）' }))
     expect(screen.getByText('最近检查记录')).toBeInTheDocument()
   })
 })

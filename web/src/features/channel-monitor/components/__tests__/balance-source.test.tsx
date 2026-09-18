@@ -103,8 +103,15 @@ describe('自定义上游余额来源', () => {
       </QueryClientProvider>
     )
     await user.click(screen.getByRole('button', { name: '关联上游账户' }))
-    await screen.findByRole('option', { name: '共享钱包 · #8' })
-    await user.selectOptions(screen.getByLabelText('上游余额账户'), '8')
+    await waitFor(() =>
+      expect(
+        screen.getByRole('combobox', { name: '上游余额账户' })
+      ).toBeEnabled()
+    )
+    await user.click(screen.getByRole('combobox', { name: '上游余额账户' }))
+    await user.click(
+      await screen.findByRole('option', { name: '共享钱包 · #8' })
+    )
     expect(screen.getByLabelText('接口基础地址')).toHaveValue(
       'https://upstream.example'
     )
@@ -116,7 +123,9 @@ describe('自定义上游余额来源', () => {
     await user.click(within(balance).getByRole('button', { name: '固定输入' }))
     expect(screen.getByLabelText('固定余额')).toHaveValue(42)
     await user.click(screen.getByRole('button', { name: '关联上游账户' }))
-    expect(screen.getByLabelText('上游余额账户')).toHaveValue('8')
+    expect(
+      screen.getByRole('combobox', { name: '上游余额账户' })
+    ).toHaveTextContent('共享钱包 · #8')
     await user.click(screen.getByRole('button', { name: '保存' }))
     await waitFor(() => expect(put).toHaveBeenCalledOnce())
     expect(put.mock.calls[0][1]).toMatchObject({
@@ -153,9 +162,15 @@ describe('自定义上游余额来源', () => {
         />
       </QueryClientProvider>
     )
-    await screen.findByRole('option', { name: '共享钱包 · #8' })
+    await waitFor(() =>
+      expect(
+        screen.getByRole('combobox', { name: '上游余额账户' })
+      ).toHaveTextContent('共享钱包 · #8')
+    )
     expect(screen.getByLabelText('接口基础地址')).toBeEnabled()
-    expect(screen.getByLabelText('上游余额账户')).toHaveValue('8')
+    expect(
+      screen.getByRole('combobox', { name: '上游余额账户' })
+    ).toHaveTextContent('共享钱包 · #8')
     const user = userEvent.setup()
     await user.click(
       within(screen.getByRole('group', { name: '上游余额来源' })).getByRole(
@@ -192,8 +207,15 @@ describe('自定义上游余额来源', () => {
     )
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: '关联上游账户' }))
-    await screen.findByRole('option', { name: '共享钱包 · #8' })
-    await user.selectOptions(screen.getByLabelText('上游余额账户'), '8')
+    await waitFor(() =>
+      expect(
+        screen.getByRole('combobox', { name: '上游余额账户' })
+      ).toBeEnabled()
+    )
+    await user.click(screen.getByRole('combobox', { name: '上游余额账户' }))
+    await user.click(
+      await screen.findByRole('option', { name: '共享钱包 · #8' })
+    )
     await user.click(screen.getByRole('button', { name: '添加触发规则' }))
     await user.click(screen.getByRole('button', { name: '保存任务' }))
     await waitFor(() => expect(put).toHaveBeenCalledOnce())
