@@ -55,25 +55,26 @@ describe('独立请求与变量交互', () => {
       .spyOn(api, 'put')
       .mockResolvedValue({ data: { success: true, data: {} } })
     renderCustomVariableDialog()
-    await user.type(screen.getByLabelText('当前值'), 'first-token')
+    await user.click(screen.getByLabelText('当前值'))
+    await user.paste('first-token')
     await user.click(screen.getByRole('button', { name: '添加独立请求' }))
     const second = screen.getByRole('group', { name: '独立请求 请求 2' })
-    await user.type(within(second).getByLabelText('变量名'), 'balance_token')
-    await user.type(
-      within(second).getByLabelText('JSON 取值路径'),
-      'data.access_token'
-    )
-    await user.type(within(second).getByLabelText('当前值'), 'second-token')
+    await user.click(within(second).getByLabelText('变量名'))
+    await user.paste('balance_token')
+    await user.click(within(second).getByLabelText('JSON 取值路径'))
+    await user.paste('data.access_token')
+    await user.click(within(second).getByLabelText('当前值'))
+    await user.paste('second-token')
     await user.click(
       within(second).getByRole('button', { name: '每次更新前获取' })
     )
     await user.click(within(second).getByRole('button', { name: '添加变量' }))
-    await user.type(within(second).getAllByLabelText('变量名')[1], 'account_id')
-    await user.type(
-      within(second).getAllByLabelText('JSON 取值路径')[1],
-      'data.id'
-    )
-    await user.type(within(second).getAllByLabelText('当前值')[1], '42')
+    await user.click(within(second).getAllByLabelText('变量名')[1])
+    await user.paste('account_id')
+    await user.click(within(second).getAllByLabelText('JSON 取值路径')[1])
+    await user.paste('data.id')
+    await user.click(within(second).getAllByLabelText('当前值')[1])
+    await user.paste('42')
     await user.click(
       screen.getByRole('button', { name: '配置请求 登录获取凭据' })
     )

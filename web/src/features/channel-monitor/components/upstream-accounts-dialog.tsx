@@ -59,6 +59,10 @@ import { ChannelMonitorBalanceCell } from './channel-monitor-balance-cell'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { UpstreamAccountEditor } from './upstream-account-editor'
 import { UpstreamConfigDialog } from './upstream-config-dialog'
+import {
+  upstreamEditorDialogClassName,
+  upstreamEditorHeaderClassName,
+} from './upstream-editor-layout'
 
 export default function UpstreamAccountsDialog(props: {
   channels: ChannelMonitorItem[]
@@ -107,14 +111,22 @@ export default function UpstreamAccountsDialog(props: {
     <>
       <Dialog open onOpenChange={props.onOpenChange}>
         <DialogContent
-          className={channelMonitorDialogContentClassName(
-            'flex h-[min(52rem,90dvh)] flex-col gap-3 sm:max-w-5xl'
-          )}
+          className={
+            editing
+              ? upstreamEditorDialogClassName
+              : channelMonitorDialogContentClassName(
+                  'flex h-[min(52rem,90dvh)] flex-col gap-3 sm:max-w-5xl'
+                )
+          }
         >
-          <DialogHeader>
-            <DialogTitle>上游账户</DialogTitle>
+          <DialogHeader
+            className={editing ? upstreamEditorHeaderClassName : 'pr-8'}
+          >
+            <DialogTitle>{editing ? '管理账户关联' : '上游账户'}</DialogTitle>
             <DialogDescription>
-              同一余额池配置一次。渠道分别保留倍率、分组和请求统计。
+              {editing
+                ? `${editing.account?.name || '新上游账户'} · 选择关联渠道，预览配置差异后确认。`
+                : '同一余额池配置一次。渠道分别保留倍率、分组和请求统计。'}
             </DialogDescription>
           </DialogHeader>
           {!editing ? (
@@ -140,7 +152,13 @@ export default function UpstreamAccountsDialog(props: {
               </Button>
             </div>
           ) : null}
-          <div className='min-h-0 flex-1 overflow-y-auto px-1'>
+          <div
+            className={
+              editing
+                ? 'flex min-h-0 flex-1 flex-col overflow-hidden'
+                : 'min-h-0 flex-1 overflow-y-auto px-1'
+            }
+          >
             {query.isPending ? <Spinner aria-label='加载上游账户' /> : null}
             {query.isError ? (
               <Alert variant='destructive'>

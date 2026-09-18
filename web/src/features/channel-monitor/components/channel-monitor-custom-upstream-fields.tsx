@@ -44,6 +44,7 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { cn } from '@/lib/utils'
 
 import { useUpstreamAccounts } from '../api-upstream-accounts'
 import { getChannelMonitorConversionFactor } from '../lib/cost-conversion'
@@ -56,6 +57,7 @@ import { ChannelMonitorCustomRequestFields } from './channel-monitor-custom-requ
 type CustomMetricName = 'ratio' | 'balance'
 
 type ChannelMonitorCustomUpstreamFieldsProps = {
+  workspace?: boolean
   form: UseFormReturn<UpstreamConfigFormValues>
   independent?: boolean
   hideRatio?: boolean
@@ -81,107 +83,146 @@ function CustomRequestFields(props: CustomRequestFieldsProps) {
   })
 
   return (
-    <div className='flex min-w-0 flex-col gap-4'>
-      {props.showRequest ? (
-        <ChannelMonitorCustomRequestFields
-          form={props.form}
-          prefix={`${prefix}.request`}
-          allowVariables
-        />
-      ) : null}
+    <div className='@container min-w-0'>
+      <div
+        className={cn(
+          'flex min-w-0 flex-col gap-4',
+          props.workspace &&
+            props.showRequest &&
+            '@4xl:grid @4xl:grid-cols-2 @4xl:items-start @4xl:gap-6'
+        )}
+      >
+        {props.showRequest ? (
+          <div className='flex min-w-0 flex-col gap-4'>
+            {props.workspace ? (
+              <h4 className='text-sm font-medium'>查询请求</h4>
+            ) : null}
+            <ChannelMonitorCustomRequestFields
+              form={props.form}
+              prefix={`${prefix}.request`}
+              allowVariables
+            />
+          </div>
+        ) : null}
 
-      <div className='grid min-w-0 items-start gap-4 sm:grid-cols-[10rem_minmax(0,1fr)_10rem]'>
-        <FormField
-          control={props.form.control}
-          name={`${prefix}.result.responseType`}
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>响应格式</FormLabel>
-              <FormControl>
-                <ToggleGroup
-                  value={[field.value]}
-                  onValueChange={(values) => {
-                    const value = values.find((item) => item !== field.value)
-                    if (value !== 'json' && value !== 'text') return
-                    field.onChange(value)
-                  }}
-                  variant='outline'
-                  spacing={2}
-                  className='grid w-full grid-cols-2'
+        <div
+          className={cn(
+            '@container flex min-w-0 flex-col gap-4',
+            props.workspace && props.showRequest && '@4xl:border-l @4xl:pl-6'
+          )}
+        >
+          {props.workspace ? (
+            <h4 className='text-sm font-medium'>响应提取</h4>
+          ) : null}
+          <div
+            className={cn(
+              'grid min-w-0 items-start gap-4',
+              props.workspace
+                ? '@sm:grid-cols-2'
+                : 'sm:grid-cols-[10rem_minmax(0,1fr)_10rem]'
+            )}
+          >
+            <FormField
+              control={props.form.control}
+              name={`${prefix}.result.responseType`}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>响应格式</FormLabel>
+                  <FormControl>
+                    <ToggleGroup
+                      value={[field.value]}
+                      onValueChange={(values) => {
+                        const value = values.find(
+                          (item) => item !== field.value
+                        )
+                        if (value !== 'json' && value !== 'text') return
+                        field.onChange(value)
+                      }}
+                      variant='outline'
+                      spacing={2}
+                      className='grid w-full grid-cols-2'
+                    >
+                      <ToggleGroupItem value='json' className='w-full'>
+                        JSON
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value='text' className='w-full'>
+                        文本
+                      </ToggleGroupItem>
+                    </ToggleGroup>
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name={`${prefix}.result.valuePath`}
+              render={({ field }) => (
+                <FormItem
+                  className={
+                    props.workspace
+                      ? '@sm:order-last @sm:col-span-2'
+                      : undefined
+                  }
                 >
-                  <ToggleGroupItem value='json' className='w-full'>
-                    JSON
-                  </ToggleGroupItem>
-                  <ToggleGroupItem value='text' className='w-full'>
-                    文本
-                  </ToggleGroupItem>
-                </ToggleGroup>
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={props.form.control}
-          name={`${prefix}.result.valuePath`}
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>JSON 取值路径 / 表达式</FormLabel>
-              <FormControl>
-                <Input
-                  placeholder={`data.${props.metric}`}
-                  disabled={responseType === 'text'}
-                  value={field.value}
-                  onBlur={field.onBlur}
-                  onChange={field.onChange}
-                  name={field.name}
-                  ref={field.ref}
-                />
-              </FormControl>
-              <FormDescription className='min-w-0 break-words'>
-                {responseType === 'text' ? (
-                  '文本响应直接取数字，再乘结果乘数。'
-                ) : (
-                  <>
-                    直接填写路径，或以 = 开头计算；用 json("路径") 取值，支持
-                    +、-、*、/ 和括号，计算后再乘结果乘数。
-                    <code className='mt-1 block break-all'>
-                      =json("data.total") - json("data.used")
-                    </code>
-                  </>
-                )}
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={props.form.control}
-          name={`${prefix}.result.multiplier`}
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>结果乘数</FormLabel>
-              <InputGroup className='ring-inset'>
-                <InputGroupAddon>×</InputGroupAddon>
-                <FormControl data-slot='input-group-control'>
-                  <InputGroupInput
-                    type='number'
-                    min={0}
-                    max={1_000_000}
-                    step='any'
-                    inputMode='decimal'
-                    value={field.value}
-                    onBlur={field.onBlur}
-                    onChange={field.onChange}
-                    name={field.name}
-                    ref={field.ref}
-                  />
-                </FormControl>
-              </InputGroup>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+                  <FormLabel>JSON 取值路径 / 表达式</FormLabel>
+                  <FormControl>
+                    <Input
+                      placeholder={`data.${props.metric}`}
+                      disabled={responseType === 'text'}
+                      value={field.value}
+                      onBlur={field.onBlur}
+                      onChange={field.onChange}
+                      name={field.name}
+                      ref={field.ref}
+                    />
+                  </FormControl>
+                  <FormDescription className='min-w-0 break-words'>
+                    {responseType === 'text' ? (
+                      '文本响应直接取数字，再乘结果乘数。'
+                    ) : (
+                      <>
+                        直接填写路径，或以 = 开头计算；用 json("路径")
+                        取值，支持 +、-、*、/ 和括号，计算后再乘结果乘数。
+                        <code className='mt-1 block break-all'>
+                          =json("data.total") - json("data.used")
+                        </code>
+                      </>
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name={`${prefix}.result.multiplier`}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>结果乘数</FormLabel>
+                  <InputGroup className='ring-inset'>
+                    <InputGroupAddon>×</InputGroupAddon>
+                    <FormControl data-slot='input-group-control'>
+                      <InputGroupInput
+                        type='number'
+                        min={0}
+                        max={1_000_000}
+                        step='any'
+                        inputMode='decimal'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                      />
+                    </FormControl>
+                  </InputGroup>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+        </div>
       </div>
     </div>
   )
@@ -282,6 +323,7 @@ function CustomMetricFields(props: CustomMetricFieldsProps) {
       {source === 'account' ? <AccountBalanceSource form={props.form} /> : null}
       {source === 'http' ? (
         <CustomRequestFields
+          workspace={props.workspace}
           form={props.form}
           metric={props.metric}
           showRequest={!props.reuseRequest}
@@ -416,6 +458,7 @@ export function ChannelMonitorCustomUpstreamFields(
     <div className='flex min-w-0 flex-col gap-4'>
       {!props.hideRatio ? (
         <CustomMetricFields
+          workspace={props.workspace}
           form={props.form}
           metric='ratio'
           independent={props.independent}
@@ -447,6 +490,7 @@ export function ChannelMonitorCustomUpstreamFields(
       ) : null}
       {!props.hideBalance ? (
         <CustomMetricFields
+          workspace={props.workspace}
           form={props.form}
           metric='balance'
           allowAccountBalance={props.allowAccountBalance}

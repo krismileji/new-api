@@ -51,6 +51,12 @@ import {
   variableGroupPayload,
 } from '../lib/variable-group'
 import { ChannelMonitorCustomVariableFields } from './channel-monitor-custom-variable-fields'
+import {
+  UpstreamEditorLayout,
+  UpstreamEditorSection,
+  upstreamEditorFooterClassName,
+} from './upstream-editor-layout'
+import { UpstreamEditorVariableReference } from './upstream-editor-variable-reference'
 
 type Props = {
   group: ChannelMonitorVariableGroup
@@ -127,7 +133,7 @@ export function ChannelMonitorVariableGroupEditor(props: Props) {
   return (
     <Form {...form}>
       <form
-        className='flex min-h-0 flex-1 flex-col gap-4'
+        className='flex min-h-0 flex-1 flex-col'
         onSubmit={(event) => {
           event.stopPropagation()
           void form.handleSubmit((values) => {
@@ -143,101 +149,127 @@ export function ChannelMonitorVariableGroupEditor(props: Props) {
       >
         <fieldset
           disabled={save.isPending}
-          className='flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-1'
+          className='flex min-h-0 min-w-0 flex-1 flex-col'
         >
-          <div className='grid gap-4 sm:grid-cols-2'>
-            <div className='flex flex-col gap-2'>
-              <Label htmlFor={`${id}-name`}>共享配置名称</Label>
-              <Input
-                id={`${id}-name`}
-                required
-                maxLength={80}
-                value={group.name}
-                onChange={(event) =>
-                  setGroup({ ...group, name: event.target.value })
+          <UpstreamEditorLayout
+            sections={[
+              {
+                id: 'connection',
+                label: '基本设置',
+                detail: '名称、地址与连接方式',
+              },
+              {
+                id: 'variables',
+                label: '请求与变量',
+                detail: '请求参数、变量映射与刷新',
+              },
+            ]}
+            reference={<UpstreamEditorVariableReference form={form} />}
+          >
+            <UpstreamEditorSection
+              id='connection'
+              title='基本设置'
+              description='请求、变量值和刷新策略由所有引用渠道共用。单个请求未填写基础地址时，使用这里的共享地址。'
+            >
+              <div className='grid gap-4 sm:grid-cols-2 xl:grid-cols-4'>
+                <div className='flex flex-col gap-2'>
+                  <Label htmlFor={`${id}-name`}>共享配置名称</Label>
+                  <Input
+                    id={`${id}-name`}
+                    required
+                    maxLength={80}
+                    value={group.name}
+                    onChange={(event) =>
+                      setGroup({ ...group, name: event.target.value })
+                    }
+                    placeholder='例如：上游 A 登录凭据'
+                  />
+                </div>
+                <FormField
+                  control={form.control}
+                  name='baseUrl'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>共享请求基础地址</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          placeholder='https://upstream.example'
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+                <div className='flex flex-col gap-2'>
+                  <Label htmlFor={`${id}-proxy`}>请求代理（可选）</Label>
+                  <Input
+                    id={`${id}-proxy`}
+                    value={group.proxy}
+                    onChange={(event) =>
+                      setGroup({ ...group, proxy: event.target.value })
+                    }
+                    placeholder='留空直连'
+                  />
+                </div>
+                <div className='flex flex-col gap-2'>
+                  <Label htmlFor={`${id}-timeout`}>请求超时（秒）</Label>
+                  <Input
+                    id={`${id}-timeout`}
+                    type='number'
+                    min={1}
+                    max={120}
+                    required
+                    value={group.request_timeout}
+                    onChange={(event) =>
+                      setGroup({
+                        ...group,
+                        request_timeout: event.target.valueAsNumber,
+                      })
+                    }
+                  />
+                </div>
+              </div>
+            </UpstreamEditorSection>
+            <UpstreamEditorSection
+              id='variables'
+              title='请求与变量'
+              description='同一共享配置内的变量名不能重复（包含不同请求）；不同共享配置可以使用相同变量名，渠道只读取所选配置的变量。'
+            >
+              <ChannelMonitorCustomVariableFields
+                workspace
+                form={form}
+                pending={pending}
+                fetchingRequestId={
+                  fetch.isPending ? fetch.variables.requestId : undefined
                 }
-                placeholder='例如：上游 A 登录凭据'
-              />
-            </div>
-            <FormField
-              control={form.control}
-              name='baseUrl'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>共享请求基础地址</FormLabel>
-                  <FormControl>
-                    <Input {...field} placeholder='https://upstream.example' />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <div className='flex flex-col gap-2'>
-              <Label htmlFor={`${id}-proxy`}>请求代理（可选）</Label>
-              <Input
-                id={`${id}-proxy`}
-                value={group.proxy}
-                onChange={(event) =>
-                  setGroup({ ...group, proxy: event.target.value })
-                }
-                placeholder='留空直连'
-              />
-            </div>
-            <div className='flex flex-col gap-2'>
-              <Label htmlFor={`${id}-timeout`}>请求超时（秒）</Label>
-              <Input
-                id={`${id}-timeout`}
-                type='number'
-                min={1}
-                max={120}
-                required
-                value={group.request_timeout}
-                onChange={(event) =>
-                  setGroup({
-                    ...group,
-                    request_timeout: event.target.valueAsNumber,
+                onFetch={async (requestId) => {
+                  const index = form
+                    .getValues('customConfig.variableRequests')
+                    .findIndex((request) => request.id === requestId)
+                  if (!group.name.trim()) {
+                    toast.error('请先填写共享配置名称')
+                    return
+                  }
+                  if (
+                    index < 0 ||
+                    !(await form.trigger([
+                      'baseUrl',
+                      `customConfig.variableRequests.${index}`,
+                    ]))
+                  ) {
+                    return
+                  }
+                  fetch.mutate({
+                    group: variableGroupPayload(group, form.getValues()),
+                    requestId,
                   })
-                }
+                }}
               />
-            </div>
-          </div>
-          <p className='text-muted-foreground text-sm'>
-            请求、变量值和刷新策略由所有引用渠道共用。单个请求未填写基础地址时，使用这里的共享地址。
-          </p>
-          <p className='text-muted-foreground text-sm'>
-            同一共享配置内的变量名不能重复（包含不同请求）；不同共享配置可以使用相同变量名，渠道只读取所选配置的变量。
-          </p>
-          <ChannelMonitorCustomVariableFields
-            form={form}
-            pending={pending}
-            fetchingRequestId={
-              fetch.isPending ? fetch.variables.requestId : undefined
-            }
-            onFetch={async (requestId) => {
-              const index = form
-                .getValues('customConfig.variableRequests')
-                .findIndex((request) => request.id === requestId)
-              if (!group.name.trim()) {
-                toast.error('请先填写共享配置名称')
-                return
-              }
-              if (
-                index < 0 ||
-                !(await form.trigger([
-                  'baseUrl',
-                  `customConfig.variableRequests.${index}`,
-                ]))
-              ) {
-                return
-              }
-              fetch.mutate({
-                group: variableGroupPayload(group, form.getValues()),
-                requestId,
-              })
-            }}
-          />
+            </UpstreamEditorSection>
+          </UpstreamEditorLayout>
         </fieldset>
-        <div className='flex shrink-0 justify-end gap-2'>
+        <div className={upstreamEditorFooterClassName}>
           <Button
             type='button'
             variant='outline'

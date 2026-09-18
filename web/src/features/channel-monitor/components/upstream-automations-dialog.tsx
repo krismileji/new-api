@@ -77,6 +77,10 @@ import type {
 } from '../types'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { UpstreamAutomationEditor } from './upstream-automation-editor'
+import {
+  upstreamEditorDialogClassName,
+  upstreamEditorHeaderClassName,
+} from './upstream-editor-layout'
 
 type Confirmation = {
   task: UpstreamAutomation
@@ -148,16 +152,24 @@ export default function UpstreamAutomationsDialog(props: {
       }}
     >
       <DialogContent
-        className={channelMonitorDialogContentClassName(
-          'flex h-[min(54rem,calc(100dvh-2rem))] flex-col gap-3 sm:max-w-5xl'
-        )}
+        className={
+          editing
+            ? upstreamEditorDialogClassName
+            : channelMonitorDialogContentClassName(
+                'flex h-[min(54rem,calc(100dvh-2rem))] flex-col gap-3 sm:max-w-5xl'
+              )
+        }
       >
-        <DialogHeader>
+        <DialogHeader
+          className={editing ? upstreamEditorHeaderClassName : 'pr-8'}
+        >
           <DialogTitle>
             {editing ? '编辑上游自动任务' : '上游自动任务'}
           </DialogTitle>
           <DialogDescription>
-            按上游账户独立查询和执行，一个任务可关联多个渠道。旧渠道规则会自动迁移并保留执行限制。
+            {editing
+              ? `${editing.name || '新自动任务'} · 配置指标来源与触发规则，保存和测试获取不会执行触发接口。`
+              : '按上游账户独立查询和执行，一个任务可关联多个渠道。旧渠道规则会自动迁移并保留执行限制。'}
           </DialogDescription>
         </DialogHeader>
         {editing ? (

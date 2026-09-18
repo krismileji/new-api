@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Add01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   useFieldArray,
   useFormState,
@@ -39,6 +39,7 @@ import type { UpstreamConfigFormValues } from '../lib/schema'
 import { ChannelMonitorCustomVariableRequestCard } from './channel-monitor-custom-variable-request-card'
 
 type ChannelMonitorCustomVariableFieldsProps = {
+  workspace?: boolean
   form: UseFormReturn<UpstreamConfigFormValues>
   pending: boolean
   fetchingRequestId?: string
@@ -48,6 +49,7 @@ type ChannelMonitorCustomVariableFieldsProps = {
 export function ChannelMonitorCustomVariableFields(
   props: ChannelMonitorCustomVariableFieldsProps
 ) {
+  const content = useRef<HTMLElement>(null)
   const requests = useFieldArray({
     control: props.form.control,
     name: 'customConfig.variableRequests',
@@ -74,6 +76,7 @@ export function ChannelMonitorCustomVariableFields(
 
   return (
     <section
+      ref={content}
       aria-label='独立请求与变量'
       className='flex min-w-0 flex-col gap-3'
     >
@@ -107,6 +110,41 @@ export function ChannelMonitorCustomVariableFields(
           添加独立请求
         </Button>
       </div>
+      {props.workspace && values.length > 1 ? (
+        <nav
+          aria-label='请求快速定位'
+          className='bg-background sticky top-0 z-10 flex gap-2 overflow-x-auto border-b py-2'
+        >
+          {values.map((request, index) => (
+            <Button
+              key={request.id}
+              type='button'
+              size='sm'
+              variant={openRequestId === request.id ? 'secondary' : 'ghost'}
+              aria-label={`定位请求 ${request.name || index + 1}`}
+              aria-pressed={openRequestId === request.id}
+              className='max-w-64 shrink-0'
+              onClick={() => {
+                setOpenRequestId(request.id)
+                requestAnimationFrame(() => {
+                  const target = content.current?.querySelectorAll<HTMLElement>(
+                    '[data-request-card]'
+                  )[index]
+                  target?.scrollIntoView({ block: 'start' })
+                  target?.focus({ preventScroll: true })
+                })
+              }}
+            >
+              <span className='truncate'>
+                {request.name || `请求 ${index + 1}`}
+              </span>
+              <span className='text-muted-foreground text-xs'>
+                {request.variables.length} 个变量
+              </span>
+            </Button>
+          ))}
+        </nav>
+      ) : null}
       {rootError ? (
         <p role='alert' className='text-destructive text-sm'>
           {rootError}
@@ -125,6 +163,7 @@ export function ChannelMonitorCustomVariableFields(
         requests.fields.map((request, index) => (
           <ChannelMonitorCustomVariableRequestCard
             key={request.fieldKey}
+            workspace={props.workspace}
             form={props.form}
             index={index}
             open={request.id === openRequestId}

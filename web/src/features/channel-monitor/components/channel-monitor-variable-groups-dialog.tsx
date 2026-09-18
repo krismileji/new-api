@@ -60,6 +60,10 @@ import { handleChannelMonitorMutationError } from '../lib/error'
 import { emptyVariableGroup } from '../lib/variable-group'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { ChannelMonitorVariableGroupEditor } from './channel-monitor-variable-group-editor'
+import {
+  upstreamEditorDialogClassName,
+  upstreamEditorHeaderClassName,
+} from './upstream-editor-layout'
 
 type Props = {
   onOpenChange: (open: boolean) => void
@@ -94,16 +98,24 @@ export function ChannelMonitorVariableGroupsDialog(props: Props) {
       }}
     >
       <DialogContent
-        className={channelMonitorDialogContentClassName(
-          'flex h-[min(52rem,calc(100dvh-2rem))] max-w-4xl flex-col sm:max-w-4xl'
-        )}
+        className={
+          editing
+            ? upstreamEditorDialogClassName
+            : channelMonitorDialogContentClassName(
+                'flex h-[min(52rem,calc(100dvh-2rem))] max-w-4xl flex-col sm:max-w-4xl'
+              )
+        }
       >
-        <DialogHeader>
+        <DialogHeader
+          className={editing ? upstreamEditorHeaderClassName : 'pr-8'}
+        >
           <DialogTitle>
             {editing ? '编辑共享请求与变量' : '共享请求与变量'}
           </DialogTitle>
           <DialogDescription>
-            集中配置上游请求，多个 API Key 对应的渠道可引用同一份变量。
+            {editing
+              ? `${editing.name || '新共享配置'} · 请求与响应变量可并排配置，保存后由引用渠道共用。`
+              : '集中配置上游请求，多个 API Key 对应的渠道可引用同一份变量。'}
           </DialogDescription>
         </DialogHeader>
         {editing ? (

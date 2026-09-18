@@ -35,10 +35,12 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { cn } from '@/lib/utils'
 
 import type { UpstreamConfigFormValues } from '../lib/schema'
 
 type ChannelMonitorCustomVariableMappingsProps = {
+  workspace?: boolean
   form: UseFormReturn<UpstreamConfigFormValues>
   requestIndex: number
   disabled: boolean
@@ -63,7 +65,7 @@ export function ChannelMonitorCustomVariableMappings(
   })
 
   return (
-    <FieldSet className='min-w-0' disabled={props.disabled}>
+    <FieldSet className='@container min-w-0' disabled={props.disabled}>
       <FieldLegend variant='label'>变量映射</FieldLegend>
       <div className='flex items-start justify-between gap-3'>
         <div>
@@ -93,7 +95,12 @@ export function ChannelMonitorCustomVariableMappings(
         {mappings.fields.map((mapping, index) => (
           <div
             key={mapping.id}
-            className='grid min-w-0 gap-3 rounded-md border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.2fr)_auto]'
+            className={cn(
+              'grid min-w-0 gap-3 rounded-md border p-3',
+              props.workspace
+                ? '@sm:grid-cols-2 @3xl:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.2fr)_auto]'
+                : 'sm:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)_minmax(0,1.2fr)_auto]'
+            )}
           >
             <FormField
               control={props.form.control}

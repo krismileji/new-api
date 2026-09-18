@@ -74,172 +74,180 @@ export function UpstreamAutomationMetadata(props: {
     `${channel.id} ${channel.name}`.toLowerCase().includes(search.toLowerCase())
   )
   return (
-    <FieldSet>
-      <FieldLegend>任务与调度</FieldLegend>
-      <FormField
-        control={props.form.control}
-        name='account_id'
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>任务配置方式</FormLabel>
-            <Select
-              items={accountOptions}
-              name={field.name}
-              value={field.value ?? 0}
-              onValueChange={(value) => {
-                if (value === null) return
-                field.onChange(value)
-                props.form.setValue('ratio_channel_id', 0)
-                props.onAccountChange?.(
-                  props.accounts?.find((item) => item.id === value)
-                )
-              }}
-            >
-              <FormControl>
-                <SelectTrigger
-                  className='w-full min-w-0'
-                  ref={field.ref}
-                  onBlur={field.onBlur}
-                >
-                  <SelectValue className='min-w-0 truncate' />
-                </SelectTrigger>
-              </FormControl>
-              <SelectContent
-                alignItemWithTrigger={false}
-                className='max-h-[min(20rem,var(--available-height))]'
-              >
-                <SelectGroup>
-                  {accountOptions.map((item) => (
-                    <SelectItem key={item.value} value={item.value}>
-                      <span className='break-all whitespace-normal'>
-                        {item.label}
-                      </span>
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-      {accountId ? (
-        <>
-          <FieldDescription>
-            认证和余额查询继承账户配置，关联渠道随账户自动更新。
-          </FieldDescription>
-          <FormField
-            control={props.form.control}
-            name='ratio_channel_id'
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>倍率来源渠道（倍率规则必选）</FormLabel>
-                <Select
-                  items={ratioChannelOptions}
-                  name={field.name}
-                  value={field.value ?? 0}
-                  onValueChange={(value) => {
-                    if (value !== null) field.onChange(value)
-                  }}
-                >
-                  <FormControl>
-                    <SelectTrigger
-                      className='w-full min-w-0'
-                      ref={field.ref}
-                      onBlur={field.onBlur}
-                    >
-                      <SelectValue className='min-w-0 truncate' />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent
-                    alignItemWithTrigger={false}
-                    className='max-h-[min(20rem,var(--available-height))]'
-                  >
-                    <SelectGroup>
-                      {ratioChannelOptions.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
-                          <span className='break-all whitespace-normal'>
-                            {item.label}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </>
-      ) : null}
-      <FormField
-        control={props.form.control}
-        name='name'
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>任务名称 / 上游账户</FormLabel>
-            <FormControl>
-              <Input {...field} placeholder='例如 主账户每日额度重置' />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-      <FormField
-        control={props.form.control}
-        name='enabled'
-        render={({ field }) => (
-          <FormItem className='flex items-center gap-3'>
-            <FormControl>
-              <Switch checked={field.value} onCheckedChange={field.onChange} />
-            </FormControl>
-            <FormLabel>启用独立任务</FormLabel>
-          </FormItem>
-        )}
-      />
-      <div className='grid gap-4 sm:grid-cols-2'>
-        {(
-          [
-            ['interval_minutes', '检查间隔（分钟）', 10080],
-            ['request_timeout', '请求超时（秒）', 120],
-          ] as const
-        ).map(([name, label, max]) => (
-          <FormField
-            key={name}
-            control={props.form.control}
-            name={name}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{label}</FormLabel>
-                <FormControl>
-                  <Input {...field} type='number' min={1} max={max} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        ))}
-      </div>
-      {!accountId ? (
+    <div className='grid min-w-0 items-start gap-6 xl:grid-cols-2'>
+      <FieldSet className='min-w-0'>
+        <FieldLegend variant='label'>配置来源</FieldLegend>
         <FormField
           control={props.form.control}
-          name='proxy'
+          name='account_id'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>任务请求代理（可选）</FormLabel>
+              <FormLabel>任务配置方式</FormLabel>
+              <Select
+                items={accountOptions}
+                name={field.name}
+                value={field.value ?? 0}
+                onValueChange={(value) => {
+                  if (value === null) return
+                  field.onChange(value)
+                  props.form.setValue('ratio_channel_id', 0)
+                  props.onAccountChange?.(
+                    props.accounts?.find((item) => item.id === value)
+                  )
+                }}
+              >
+                <FormControl>
+                  <SelectTrigger
+                    className='w-full min-w-0'
+                    ref={field.ref}
+                    onBlur={field.onBlur}
+                  >
+                    <SelectValue className='min-w-0 truncate' />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent
+                  alignItemWithTrigger={false}
+                  className='max-h-[min(20rem,var(--available-height))]'
+                >
+                  <SelectGroup>
+                    {accountOptions.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        <span className='break-all whitespace-normal'>
+                          {item.label}
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        {accountId ? (
+          <>
+            <FieldDescription>
+              认证和余额查询继承账户配置，关联渠道随账户自动更新。
+            </FieldDescription>
+            <FormField
+              control={props.form.control}
+              name='ratio_channel_id'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>倍率来源渠道（倍率规则必选）</FormLabel>
+                  <Select
+                    items={ratioChannelOptions}
+                    name={field.name}
+                    value={field.value ?? 0}
+                    onValueChange={(value) => {
+                      if (value !== null) field.onChange(value)
+                    }}
+                  >
+                    <FormControl>
+                      <SelectTrigger
+                        className='w-full min-w-0'
+                        ref={field.ref}
+                        onBlur={field.onBlur}
+                      >
+                        <SelectValue className='min-w-0 truncate' />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent
+                      alignItemWithTrigger={false}
+                      className='max-h-[min(20rem,var(--available-height))]'
+                    >
+                      <SelectGroup>
+                        {ratioChannelOptions.map((item) => (
+                          <SelectItem key={item.value} value={item.value}>
+                            <span className='break-all whitespace-normal'>
+                              {item.label}
+                            </span>
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </>
+        ) : null}
+      </FieldSet>
+      <FieldSet className='min-w-0'>
+        <FieldLegend variant='label'>运行设置</FieldLegend>
+        <FormField
+          control={props.form.control}
+          name='name'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>任务名称 / 上游账户</FormLabel>
               <FormControl>
-                <Input
-                  {...field}
-                  placeholder='http:// 或 socks5://，留空直连'
-                />
+                <Input {...field} placeholder='例如 主账户每日额度重置' />
               </FormControl>
               <FormMessage />
             </FormItem>
           )}
         />
-      ) : null}
+        <FormField
+          control={props.form.control}
+          name='enabled'
+          render={({ field }) => (
+            <FormItem className='flex items-center gap-3'>
+              <FormControl>
+                <Switch
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                />
+              </FormControl>
+              <FormLabel>启用独立任务</FormLabel>
+            </FormItem>
+          )}
+        />
+        <div className='grid gap-4 sm:grid-cols-2'>
+          {(
+            [
+              ['interval_minutes', '检查间隔（分钟）', 10080],
+              ['request_timeout', '请求超时（秒）', 120],
+            ] as const
+          ).map(([name, label, max]) => (
+            <FormField
+              key={name}
+              control={props.form.control}
+              name={name}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{label}</FormLabel>
+                  <FormControl>
+                    <Input {...field} type='number' min={1} max={max} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          ))}
+        </div>
+        {!accountId ? (
+          <FormField
+            control={props.form.control}
+            name='proxy'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>任务请求代理（可选）</FormLabel>
+                <FormControl>
+                  <Input
+                    {...field}
+                    placeholder='http:// 或 socks5://，留空直连'
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        ) : null}
+      </FieldSet>
       {!accountId ? (
-        <FieldSet>
+        <FieldSet className='min-w-0 xl:col-span-2'>
           <FieldLegend variant='label'>关联渠道（可选）</FieldLegend>
           <FieldDescription>
             每次成功检查后重新获取关联渠道的指标，并按既有策略恢复。禁用渠道也会刷新，手动禁用不会自动启用；不关联渠道也能运行。
@@ -258,7 +266,7 @@ export function UpstreamAutomationMetadata(props: {
             name='channel_ids'
             render={({ field }) => (
               <FormItem>
-                <div className='max-h-40 overflow-y-auto rounded-md border p-3'>
+                <div className='grid max-h-56 gap-x-4 overflow-y-auto rounded-md border p-3 md:grid-cols-2 xl:grid-cols-3'>
                   {channels.length === 0 ? (
                     <p className='text-muted-foreground text-sm'>
                       没有匹配的渠道
@@ -322,6 +330,6 @@ export function UpstreamAutomationMetadata(props: {
           />
         </FieldSet>
       ) : null}
-    </FieldSet>
+    </div>
   )
 }

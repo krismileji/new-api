@@ -40,12 +40,14 @@ import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { cn } from '@/lib/utils'
 
 import type { UpstreamConfigFormValues } from '../lib/schema'
 import { ChannelMonitorCustomRequestFields } from './channel-monitor-custom-request-fields'
 import { ChannelMonitorCustomVariableMappings } from './channel-monitor-custom-variable-mappings'
 
 type ChannelMonitorCustomVariableRequestCardProps = {
+  workspace?: boolean
   form: UseFormReturn<UpstreamConfigFormValues>
   index: number
   open: boolean
@@ -78,9 +80,11 @@ export function ChannelMonitorCustomVariableRequestCard(
 
   return (
     <Collapsible
+      data-request-card
+      tabIndex={-1}
       open={props.open || hasError}
       onOpenChange={props.onOpenChange}
-      className='min-w-0 rounded-lg border'
+      className='min-w-0 scroll-mt-14 rounded-lg border outline-none'
     >
       <div className='flex min-w-0 items-start gap-2 p-3'>
         <CollapsibleTrigger
@@ -144,126 +148,153 @@ export function ChannelMonitorCustomVariableRequestCard(
         <FieldSet
           aria-label={`独立请求 ${requestName}`}
           disabled={props.pending}
-          className='min-w-0 p-4'
+          className='@container min-w-0 p-4'
         >
-          <FormField
-            control={props.form.control}
-            name={`${prefix}.name`}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>请求名称</FormLabel>
-                <FormControl>
-                  <Input {...field} placeholder='例如：登录获取凭据' />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
+          <div
+            className={cn(
+              'flex min-w-0 flex-col gap-6',
+              props.workspace && '@4xl:grid @4xl:grid-cols-2 @4xl:items-start'
             )}
-          />
-          <FormField
-            control={props.form.control}
-            name={`${prefix}.refreshPolicy`}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>刷新策略</FormLabel>
-                <FormControl>
-                  <ToggleGroup
-                    disabled={props.pending}
-                    value={[field.value]}
-                    onValueChange={(values) => {
-                      const value = values.find((item) => item !== field.value)
-                      if (value === 'always' || value === 'on_failure') {
-                        field.onChange(value)
-                      }
-                    }}
-                    variant='outline'
-                    spacing={2}
-                    className='grid w-full grid-cols-2'
-                    aria-label='刷新策略'
-                  >
-                    <ToggleGroupItem value='always'>
-                      每次更新前获取
-                    </ToggleGroupItem>
-                    <ToggleGroupItem value='on_failure'>
-                      更新失败时获取
-                    </ToggleGroupItem>
-                  </ToggleGroup>
-                </FormControl>
-                <FormDescription>
-                  仅作用于本请求产生的变量。首次使用缺少值的变量时会先获取；失败刷新后最多重试一次。
-                </FormDescription>
-              </FormItem>
-            )}
-          />
-          <FormField
-            control={props.form.control}
-            name={`${prefix}.baseUrl`}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>独立请求基础地址</FormLabel>
-                <FormControl>
-                  <Input
-                    {...field}
-                    placeholder='留空使用上方的自定义接口基础地址'
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-          <ChannelMonitorCustomRequestFields
-            form={props.form}
-            prefix={`${prefix}.request`}
-            disabled={props.pending}
-          />
-          <Separator />
-          <FormField
-            control={props.form.control}
-            name={`${prefix}.responseType`}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>响应格式</FormLabel>
-                <FormControl>
-                  <ToggleGroup
-                    disabled={props.pending}
-                    value={[field.value]}
-                    onValueChange={(values) => {
-                      const value = values.find((item) => item !== field.value)
-                      if (value === 'json' || value === 'text') {
-                        field.onChange(value)
-                      }
-                    }}
-                    variant='outline'
-                    spacing={2}
-                    className='w-fit'
-                  >
-                    <ToggleGroupItem value='json'>JSON</ToggleGroupItem>
-                    <ToggleGroupItem value='text'>文本</ToggleGroupItem>
-                  </ToggleGroup>
-                </FormControl>
-              </FormItem>
-            )}
-          />
-          <ChannelMonitorCustomVariableMappings
-            form={props.form}
-            requestIndex={props.index}
-            disabled={props.pending}
-            canAddVariable={props.canAddVariable}
-          />
-          <div className='flex flex-wrap items-center gap-3'>
-            <Button
-              type='button'
-              variant='outline'
-              disabled={props.pending}
-              onClick={props.onFetch}
-            >
-              {props.fetching ? (
-                <Spinner data-icon='inline-start' aria-hidden='true' />
+          >
+            <div className='flex min-w-0 flex-col gap-4'>
+              {props.workspace ? (
+                <h4 className='text-sm font-medium'>请求配置</h4>
               ) : null}
-              {props.fetching ? '正在获取变量…' : '请求并回填变量'}
-            </Button>
-            <span className='text-muted-foreground text-xs'>
-              同时回填本请求的全部变量，保存后生效。
-            </span>
+              <FormField
+                control={props.form.control}
+                name={`${prefix}.name`}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>请求名称</FormLabel>
+                    <FormControl>
+                      <Input {...field} placeholder='例如：登录获取凭据' />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={props.form.control}
+                name={`${prefix}.refreshPolicy`}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>刷新策略</FormLabel>
+                    <FormControl>
+                      <ToggleGroup
+                        disabled={props.pending}
+                        value={[field.value]}
+                        onValueChange={(values) => {
+                          const value = values.find(
+                            (item) => item !== field.value
+                          )
+                          if (value === 'always' || value === 'on_failure') {
+                            field.onChange(value)
+                          }
+                        }}
+                        variant='outline'
+                        spacing={2}
+                        className='grid w-full grid-cols-2'
+                        aria-label='刷新策略'
+                      >
+                        <ToggleGroupItem value='always'>
+                          每次更新前获取
+                        </ToggleGroupItem>
+                        <ToggleGroupItem value='on_failure'>
+                          更新失败时获取
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                    </FormControl>
+                    <FormDescription>
+                      仅作用于本请求产生的变量。首次使用缺少值的变量时会先获取；失败刷新后最多重试一次。
+                    </FormDescription>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={props.form.control}
+                name={`${prefix}.baseUrl`}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>独立请求基础地址</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        placeholder='留空使用上方的自定义接口基础地址'
+                      />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+              <ChannelMonitorCustomRequestFields
+                form={props.form}
+                prefix={`${prefix}.request`}
+                disabled={props.pending}
+              />
+            </div>
+            <div
+              className={cn(
+                'flex min-w-0 flex-col gap-4 border-t pt-4',
+                props.workspace &&
+                  '@4xl:border-t-0 @4xl:border-l @4xl:pt-0 @4xl:pl-6'
+              )}
+            >
+              {props.workspace ? (
+                <h4 className='text-sm font-medium'>响应与变量</h4>
+              ) : null}
+              <FormField
+                control={props.form.control}
+                name={`${prefix}.responseType`}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>响应格式</FormLabel>
+                    <FormControl>
+                      <ToggleGroup
+                        disabled={props.pending}
+                        value={[field.value]}
+                        onValueChange={(values) => {
+                          const value = values.find(
+                            (item) => item !== field.value
+                          )
+                          if (value === 'json' || value === 'text') {
+                            field.onChange(value)
+                          }
+                        }}
+                        variant='outline'
+                        spacing={2}
+                        className='w-fit'
+                      >
+                        <ToggleGroupItem value='json'>JSON</ToggleGroupItem>
+                        <ToggleGroupItem value='text'>文本</ToggleGroupItem>
+                      </ToggleGroup>
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+              <ChannelMonitorCustomVariableMappings
+                workspace={props.workspace}
+                form={props.form}
+                requestIndex={props.index}
+                disabled={props.pending}
+                canAddVariable={props.canAddVariable}
+              />
+              <div className='flex flex-wrap items-center gap-3'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  disabled={props.pending}
+                  onClick={props.onFetch}
+                >
+                  {props.fetching ? (
+                    <Spinner data-icon='inline-start' aria-hidden='true' />
+                  ) : null}
+                  {props.fetching ? '正在获取变量…' : '请求并回填变量'}
+                </Button>
+                <span className='text-muted-foreground text-xs'>
+                  同时回填本请求的全部变量，保存后生效。
+                </span>
+              </div>
+            </div>
           </div>
         </FieldSet>
       </CollapsibleContent>

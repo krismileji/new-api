@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useRef, useState } from 'react'
 import { useFieldArray, useWatch, type UseFormReturn } from 'react-hook-form'
 
 import { Button } from '@/components/ui/button'
@@ -36,6 +37,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { cn } from '@/lib/utils'
 
 import { createChannelMonitorCustomAction } from '../lib/custom-upstream'
 import type { UpstreamConfigFormValues } from '../lib/schema'
@@ -47,6 +49,7 @@ import { ChannelMonitorCustomActionQuota } from './channel-monitor-custom-action
 import { ChannelMonitorCustomRequestFields } from './channel-monitor-custom-request-fields'
 
 type ActionFieldsProps = {
+  workspace?: boolean
   independent?: boolean
   form: UseFormReturn<UpstreamConfigFormValues>
   disabled: boolean
@@ -60,13 +63,19 @@ type ActionFieldsProps = {
 }
 
 export function ChannelMonitorCustomActionFields(props: ActionFieldsProps) {
+  const content = useRef<HTMLFieldSetElement>(null)
+  const [selected, setSelected] = useState<string>()
+  const values = useWatch({
+    control: props.form.control,
+    name: 'customConfig.actions',
+  })
   const actions = useFieldArray({
     control: props.form.control,
     name: 'customConfig.actions',
     keyName: 'fieldKey',
   })
   return (
-    <FieldSet className='min-w-0'>
+    <FieldSet ref={content} className='min-w-0'>
       <FieldLegend>条件触发接口</FieldLegend>
       <FieldDescription>
         {props.independent
@@ -78,10 +87,45 @@ export function ChannelMonitorCustomActionFields(props: ActionFieldsProps) {
           {props.stateError}
         </p>
       ) : null}
+      {props.workspace && values.length > 1 ? (
+        <nav
+          aria-label='规则快速定位'
+          className='bg-background sticky top-0 z-10 flex gap-2 overflow-x-auto border-b py-2'
+        >
+          {values.map((action, index) => (
+            <Button
+              key={action.id}
+              type='button'
+              size='sm'
+              variant={selected === action.id ? 'secondary' : 'ghost'}
+              aria-label={`定位规则 ${action.name || index + 1}`}
+              aria-pressed={selected === action.id}
+              className='max-w-64 shrink-0'
+              onClick={() => {
+                setSelected(action.id)
+                const target =
+                  content.current?.querySelectorAll<HTMLElement>(
+                    '[data-action-rule]'
+                  )[index]
+                target?.scrollIntoView({ block: 'start' })
+                target?.focus({ preventScroll: true })
+              }}
+            >
+              <span className='truncate'>
+                {action.name || `规则 ${index + 1}`}
+              </span>
+              <span className='text-muted-foreground text-xs'>
+                {action.enabled ? '已启用' : '未启用'}
+              </span>
+            </Button>
+          ))}
+        </nav>
+      ) : null}
       <FieldGroup>
         {actions.fields.map((action, index) => (
           <CustomActionRule
             key={action.fieldKey}
+            workspace={props.workspace}
             form={props.form}
             independent={props.independent}
             disabled={props.disabled}
@@ -114,6 +158,7 @@ export function ChannelMonitorCustomActionFields(props: ActionFieldsProps) {
 }
 
 type CustomActionRuleProps = {
+  workspace?: boolean
   independent?: boolean
   form: UseFormReturn<UpstreamConfigFormValues>
   disabled: boolean
@@ -134,7 +179,9 @@ function CustomActionRule(props: CustomActionRuleProps) {
   })
   return (
     <FieldSet
-      className='bg-muted/20 min-w-0 rounded-lg border p-4'
+      data-action-rule
+      tabIndex={-1}
+      className='bg-muted/20 @container min-w-0 scroll-mt-14 rounded-lg border p-4 outline-none'
       aria-label={`触发规则 ${name || props.index + 1}`}
     >
       <div className='flex items-center justify-between gap-3'>
@@ -178,264 +225,296 @@ function CustomActionRule(props: CustomActionRuleProps) {
           </FormItem>
         )}
       />
-      <FieldGroup className='grid min-w-0 gap-4 sm:grid-cols-2'>
-        {props.independent ? (
+      <div
+        className={cn(
+          'flex min-w-0 flex-col gap-6',
+          props.workspace && '@4xl:grid @4xl:grid-cols-2 @4xl:items-start'
+        )}
+      >
+        <div className='flex min-w-0 flex-col gap-4'>
+          {props.workspace ? (
+            <h4 className='text-sm font-medium'>触发条件与执行限制</h4>
+          ) : null}
+          <FieldGroup className='grid min-w-0 gap-4 sm:grid-cols-2'>
+            {props.independent ? (
+              <FormField
+                control={props.form.control}
+                name={`${prefix}.triggerMode`}
+                render={({ field }) => (
+                  <FormItem className='sm:col-span-2'>
+                    <FormLabel>触发模式</FormLabel>
+                    <FormControl>
+                      <ToggleGroup
+                        aria-label='触发模式'
+                        value={[field.value ?? 'edge']}
+                        onValueChange={(values) => {
+                          const value = values.find(
+                            (item) => item !== (field.value ?? 'edge')
+                          )
+                          if (value === 'edge' || value === 'repeat') {
+                            field.onChange(value)
+                          }
+                        }}
+                        disabled={props.disabled}
+                        variant='outline'
+                        spacing={2}
+                      >
+                        <ToggleGroupItem value='edge'>首次满足</ToggleGroupItem>
+                        <ToggleGroupItem value='repeat'>
+                          持续满足
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                    </FormControl>
+                    <FormDescription>
+                      首次满足：指标退出条件后才重新触发。持续满足：冷却结束后可再次调用，仍遵守每日次数和执行时段。
+                    </FormDescription>
+                  </FormItem>
+                )}
+              />
+            ) : null}
+            <FormField
+              control={props.form.control}
+              name={`${prefix}.metric`}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>触发指标</FormLabel>
+                  <FormControl>
+                    <ToggleGroup
+                      value={[field.value]}
+                      onValueChange={(values) => {
+                        const value = values.find(
+                          (item) => item !== field.value
+                        )
+                        if (value === 'balance' || value === 'ratio') {
+                          field.onChange(value)
+                        }
+                      }}
+                      disabled={props.disabled}
+                      variant='outline'
+                      spacing={2}
+                      className='w-full'
+                    >
+                      <ToggleGroupItem value='balance'>
+                        上游余额
+                      </ToggleGroupItem>
+                      <ToggleGroupItem value='ratio'>上游倍率</ToggleGroupItem>
+                    </ToggleGroup>
+                  </FormControl>
+                  <FormDescription>
+                    使用接口提取后的数值，倍率不含成本换算，余额不含本地估算扣减。
+                  </FormDescription>
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name={`${prefix}.operator`}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>触发条件</FormLabel>
+                  <FormControl>
+                    <ToggleGroup
+                      value={[field.value]}
+                      onValueChange={(values) => {
+                        const value = values.find(
+                          (item) => item !== field.value
+                        )
+                        if (value) field.onChange(value)
+                      }}
+                      disabled={props.disabled}
+                      variant='outline'
+                      spacing={1}
+                      className='grid w-full grid-cols-2'
+                    >
+                      <ToggleGroupItem value='lt'>小于</ToggleGroupItem>
+                      <ToggleGroupItem value='lte'>小于等于</ToggleGroupItem>
+                      <ToggleGroupItem value='gt'>大于</ToggleGroupItem>
+                      <ToggleGroupItem value='gte'>大于等于</ToggleGroupItem>
+                    </ToggleGroup>
+                  </FormControl>
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name={`${prefix}.threshold`}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>触发阈值</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      type='number'
+                      step='any'
+                      disabled={props.disabled}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name={`${prefix}.timezone`}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>执行时区</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      placeholder='Asia/Shanghai'
+                      disabled={props.disabled}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    例如 Asia/Shanghai（北京时间）或 UTC。
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            {(
+              [
+                ['startTime', '开始时间（含）'],
+                ['endTime', '截止时间（不含）'],
+              ] as const
+            ).map(([key, label]) => (
+              <FormField
+                key={key}
+                control={props.form.control}
+                name={`${prefix}.${key}`}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{label}</FormLabel>
+                    <FormControl>
+                      <Input {...field} type='time' disabled={props.disabled} />
+                    </FormControl>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+            ))}
+            {(
+              [
+                ['dailyLimit', '每日最多调用次数', 100],
+                ['cooldownMinutes', '两次调用最短间隔（分钟）', 10080],
+              ] as const
+            ).map(([key, label, max]) => (
+              <FormField
+                key={key}
+                control={props.form.control}
+                name={`${prefix}.${key}`}
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{label}</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        type='number'
+                        min={1}
+                        max={max}
+                        step={1}
+                        disabled={props.disabled}
+                      />
+                    </FormControl>
+                    <FormMessage />
+                    {key === 'dailyLimit' && (
+                      <ChannelMonitorCustomActionQuota
+                        savedAction={props.savedAction}
+                        state={props.state}
+                        stateError={props.stateError}
+                        dailyLimit={Number(field.value)}
+                        disabled={props.disabled}
+                        onReset={props.onReset}
+                      />
+                    )}
+                  </FormItem>
+                )}
+              />
+            ))}
+          </FieldGroup>
+          <FieldDescription>
+            {props.independent
+              ? '执行时段不包含截止时刻。接口调用计入每日次数，发送前失败不计入；调用结果未知时暂停该规则，核对上游结果后可解除暂停。'
+              : '例如 00:05–23:00：23:00 起停止发起调用。请给上游自动重置留出时间；已发出的请求无法保证撤销。失败、超时和结果未知均计入次数，不自动重试。自动检查需要开启对应指标的定时刷新。'}
+          </FieldDescription>
+        </div>
+        <div
+          className={cn(
+            'flex min-w-0 flex-col gap-4',
+            props.workspace && '@4xl:border-l @4xl:pl-6'
+          )}
+        >
+          {props.workspace ? (
+            <h4 className='text-sm font-medium'>执行接口与成功判定</h4>
+          ) : null}
           <FormField
             control={props.form.control}
-            name={`${prefix}.triggerMode`}
-            render={({ field }) => (
-              <FormItem className='sm:col-span-2'>
-                <FormLabel>触发模式</FormLabel>
-                <FormControl>
-                  <ToggleGroup
-                    aria-label='触发模式'
-                    value={[field.value ?? 'edge']}
-                    onValueChange={(values) => {
-                      const value = values.find(
-                        (item) => item !== (field.value ?? 'edge')
-                      )
-                      if (value === 'edge' || value === 'repeat') {
-                        field.onChange(value)
-                      }
-                    }}
-                    disabled={props.disabled}
-                    variant='outline'
-                    spacing={2}
-                  >
-                    <ToggleGroupItem value='edge'>首次满足</ToggleGroupItem>
-                    <ToggleGroupItem value='repeat'>持续满足</ToggleGroupItem>
-                  </ToggleGroup>
-                </FormControl>
-                <FormDescription>
-                  首次满足：指标退出条件后才重新触发。持续满足：冷却结束后可再次调用，仍遵守每日次数和执行时段。
-                </FormDescription>
-              </FormItem>
-            )}
-          />
-        ) : null}
-        <FormField
-          control={props.form.control}
-          name={`${prefix}.metric`}
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>触发指标</FormLabel>
-              <FormControl>
-                <ToggleGroup
-                  value={[field.value]}
-                  onValueChange={(values) => {
-                    const value = values.find((item) => item !== field.value)
-                    if (value === 'balance' || value === 'ratio') {
-                      field.onChange(value)
-                    }
-                  }}
-                  disabled={props.disabled}
-                  variant='outline'
-                  spacing={2}
-                  className='w-full'
-                >
-                  <ToggleGroupItem value='balance'>上游余额</ToggleGroupItem>
-                  <ToggleGroupItem value='ratio'>上游倍率</ToggleGroupItem>
-                </ToggleGroup>
-              </FormControl>
-              <FormDescription>
-                使用接口提取后的数值，倍率不含成本换算，余额不含本地估算扣减。
-              </FormDescription>
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={props.form.control}
-          name={`${prefix}.operator`}
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>触发条件</FormLabel>
-              <FormControl>
-                <ToggleGroup
-                  value={[field.value]}
-                  onValueChange={(values) => {
-                    const value = values.find((item) => item !== field.value)
-                    if (value) field.onChange(value)
-                  }}
-                  disabled={props.disabled}
-                  variant='outline'
-                  spacing={1}
-                  className='grid w-full grid-cols-2'
-                >
-                  <ToggleGroupItem value='lt'>小于</ToggleGroupItem>
-                  <ToggleGroupItem value='lte'>小于等于</ToggleGroupItem>
-                  <ToggleGroupItem value='gt'>大于</ToggleGroupItem>
-                  <ToggleGroupItem value='gte'>大于等于</ToggleGroupItem>
-                </ToggleGroup>
-              </FormControl>
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={props.form.control}
-          name={`${prefix}.threshold`}
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>触发阈值</FormLabel>
-              <FormControl>
-                <Input
-                  {...field}
-                  type='number'
-                  step='any'
-                  disabled={props.disabled}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={props.form.control}
-          name={`${prefix}.timezone`}
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>执行时区</FormLabel>
-              <FormControl>
-                <Input
-                  {...field}
-                  placeholder='Asia/Shanghai'
-                  disabled={props.disabled}
-                />
-              </FormControl>
-              <FormDescription>
-                例如 Asia/Shanghai（北京时间）或 UTC。
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        {(
-          [
-            ['startTime', '开始时间（含）'],
-            ['endTime', '截止时间（不含）'],
-          ] as const
-        ).map(([key, label]) => (
-          <FormField
-            key={key}
-            control={props.form.control}
-            name={`${prefix}.${key}`}
+            name={`${prefix}.baseUrl`}
             render={({ field }) => (
               <FormItem>
-                <FormLabel>{label}</FormLabel>
-                <FormControl>
-                  <Input {...field} type='time' disabled={props.disabled} />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        ))}
-        {(
-          [
-            ['dailyLimit', '每日最多调用次数', 100],
-            ['cooldownMinutes', '两次调用最短间隔（分钟）', 10080],
-          ] as const
-        ).map(([key, label, max]) => (
-          <FormField
-            key={key}
-            control={props.form.control}
-            name={`${prefix}.${key}`}
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>{label}</FormLabel>
+                <FormLabel>触发接口基础地址</FormLabel>
                 <FormControl>
                   <Input
                     {...field}
-                    type='number'
-                    min={1}
-                    max={max}
-                    step={1}
+                    placeholder='留空使用上游基础地址'
                     disabled={props.disabled}
                   />
                 </FormControl>
                 <FormMessage />
-                {key === 'dailyLimit' && (
-                  <ChannelMonitorCustomActionQuota
-                    savedAction={props.savedAction}
-                    state={props.state}
-                    stateError={props.stateError}
-                    dailyLimit={Number(field.value)}
-                    disabled={props.disabled}
-                    onReset={props.onReset}
-                  />
-                )}
               </FormItem>
             )}
           />
-        ))}
-      </FieldGroup>
-      <FieldDescription>
-        {props.independent
-          ? '执行时段不包含截止时刻。接口调用计入每日次数，发送前失败不计入；调用结果未知时暂停该规则，核对上游结果后可解除暂停。'
-          : '例如 00:05–23:00：23:00 起停止发起调用。请给上游自动重置留出时间；已发出的请求无法保证撤销。失败、超时和结果未知均计入次数，不自动重试。自动检查需要开启对应指标的定时刷新。'}
-      </FieldDescription>
-      <FormField
-        control={props.form.control}
-        name={`${prefix}.baseUrl`}
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>触发接口基础地址</FormLabel>
-            <FormControl>
-              <Input
-                {...field}
-                placeholder='留空使用上游基础地址'
-                disabled={props.disabled}
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-      <ChannelMonitorCustomRequestFields
-        form={props.form}
-        prefix={`${prefix}.request`}
-        allowVariables
-        disabled={props.disabled}
-      />
-      <FieldGroup className='grid min-w-0 gap-4 sm:grid-cols-2'>
-        <FormField
-          control={props.form.control}
-          name={`${prefix}.successPath`}
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>成功判定 JSON 路径（可选）</FormLabel>
-              <FormControl>
-                <Input
-                  {...field}
-                  placeholder='例如 success'
-                  disabled={props.disabled}
-                />
-              </FormControl>
-              <FormDescription>留空时以 HTTP 2xx 判断成功。</FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        <FormField
-          control={props.form.control}
-          name={`${prefix}.successValue`}
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>成功判定期望值</FormLabel>
-              <FormControl>
-                <Input
-                  {...field}
-                  placeholder='例如 true 或 0'
-                  disabled={props.disabled}
-                />
-              </FormControl>
-              <FormDescription>
-                字符串无需引号，布尔值填写 true 或 false。
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      </FieldGroup>
+          <ChannelMonitorCustomRequestFields
+            form={props.form}
+            prefix={`${prefix}.request`}
+            allowVariables
+            disabled={props.disabled}
+          />
+          <FieldGroup className='grid min-w-0 gap-4 sm:grid-cols-2'>
+            <FormField
+              control={props.form.control}
+              name={`${prefix}.successPath`}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>成功判定 JSON 路径（可选）</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      placeholder='例如 success'
+                      disabled={props.disabled}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    留空时以 HTTP 2xx 判断成功。
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name={`${prefix}.successValue`}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>成功判定期望值</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      placeholder='例如 true 或 0'
+                      disabled={props.disabled}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    字符串无需引号，布尔值填写 true 或 false。
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </FieldGroup>
+        </div>
+      </div>
       {props.state && props.state.last_attempt > 0 ? (
         <div role='status' className='bg-muted rounded-md p-3 text-sm'>
           <p>{props.state.message}</p>

@@ -33,7 +33,6 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { Separator } from '@/components/ui/separator'
 import { Spinner } from '@/components/ui/spinner'
 
 import {
@@ -62,6 +61,12 @@ import { ChannelMonitorCustomUpstreamFields } from './channel-monitor-custom-ups
 import { ChannelMonitorCustomVariableFields } from './channel-monitor-custom-variable-fields'
 import { ChannelMonitorVariableGroupFields } from './channel-monitor-variable-group-fields'
 import { UpstreamAutomationMetadata } from './upstream-automation-metadata'
+import {
+  UpstreamEditorLayout,
+  UpstreamEditorSection,
+  upstreamEditorFooterClassName,
+} from './upstream-editor-layout'
+import { UpstreamEditorVariableReference } from './upstream-editor-variable-reference'
 
 export function UpstreamAutomationEditor(props: {
   task: UpstreamAutomation
@@ -164,7 +169,7 @@ export function UpstreamAutomationEditor(props: {
 
   return (
     <form
-      className='flex min-h-0 flex-1 flex-col gap-4'
+      className='flex min-h-0 flex-1 flex-col'
       onSubmit={async (event) => {
         event.preventDefault()
         if (!(await metadata.trigger())) return
@@ -181,123 +186,184 @@ export function UpstreamAutomationEditor(props: {
     >
       <fieldset
         disabled={pending}
-        className='min-h-0 flex-1 space-y-6 overflow-y-auto px-1 pb-4'
+        className='flex min-h-0 min-w-0 flex-1 flex-col'
       >
-        <Form {...metadata}>
-          <UpstreamAutomationMetadata
-            form={metadata}
-            channels={props.channels}
-            accounts={accounts.data}
-            onAccountChange={(account) => {
-              if (!account) return
-              metadata.setValue('channel_ids', account.channel_ids)
-              metadata.setValue('proxy', account.proxy)
-              const values = upstreamAutomationFormValues({
-                ...task,
-                base_url: account.upstream.base_url,
-                custom_config:
-                  account.upstream.custom_config ?? task.custom_config,
-              })
-              const actions = form.getValues('customConfig.actions')
-              form.setValue('baseUrl', values.baseUrl)
-              form.setValue('customConfig', { ...values.customConfig, actions })
-            }}
-          />
-        </Form>
-        <Separator />
-        <Form {...form}>
-          {!accountId ? (
-            <>
-              <FormField
-                control={form.control}
-                name='baseUrl'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>上游基础地址</FormLabel>
-                    <FormControl>
-                      <Input
-                        {...field}
-                        placeholder='https://upstream.example'
-                      />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
+        <UpstreamEditorLayout
+          sections={[
+            {
+              id: 'schedule',
+              label: '任务与调度',
+              detail: '配置来源、运行时间与渠道',
+            },
+            ...(!accountId
+              ? [
+                  {
+                    id: 'variables',
+                    label: '请求与变量',
+                    detail: '基础地址与认证变量',
+                  },
+                  {
+                    id: 'metrics',
+                    label: '指标来源',
+                    detail: '余额与倍率查询',
+                  },
+                ]
+              : []),
+            {
+              id: 'actions',
+              label: '触发规则',
+              detail: '触发条件、执行接口与限额',
+            },
+          ]}
+          reference={
+            accountId ? (
+              <div className='flex flex-col gap-2 text-sm'>
+                <h3 className='font-medium'>继承账户配置</h3>
+                <p className='break-all'>
+                  {accounts.data?.find((account) => account.id === accountId)
+                    ?.name ?? `账户 #${accountId}`}
+                </p>
+                <p className='text-muted-foreground text-xs'>
+                  余额查询与认证使用账户配置。倍率规则使用所选渠道。
+                </p>
+              </div>
+            ) : (
+              <UpstreamEditorVariableReference form={form} />
+            )
+          }
+        >
+          <UpstreamEditorSection id='schedule' title='任务与调度'>
+            <Form {...metadata}>
+              <UpstreamAutomationMetadata
+                form={metadata}
+                channels={props.channels}
+                accounts={accounts.data}
+                onAccountChange={(account) => {
+                  if (!account) return
+                  metadata.setValue('channel_ids', account.channel_ids)
+                  metadata.setValue('proxy', account.proxy)
+                  const values = upstreamAutomationFormValues({
+                    ...task,
+                    base_url: account.upstream.base_url,
+                    custom_config:
+                      account.upstream.custom_config ?? task.custom_config,
+                  })
+                  const actions = form.getValues('customConfig.actions')
+                  form.setValue('baseUrl', values.baseUrl)
+                  form.setValue('customConfig', {
+                    ...values.customConfig,
+                    actions,
+                  })
+                }}
               />
-              <ChannelMonitorVariableGroupFields
+            </Form>
+          </UpstreamEditorSection>
+          <Form {...form}>
+            {!accountId ? (
+              <>
+                <UpstreamEditorSection id='variables' title='请求与变量'>
+                  <FormField
+                    control={form.control}
+                    name='baseUrl'
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>上游基础地址</FormLabel>
+                        <FormControl>
+                          <Input
+                            {...field}
+                            placeholder='https://upstream.example'
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <ChannelMonitorVariableGroupFields
+                    form={form}
+                    channelId={0}
+                    channelName={task.name}
+                    disabled={pending}
+                    independent
+                  />
+                  {!groupId ? (
+                    <ChannelMonitorCustomVariableFields
+                      workspace
+                      form={form}
+                      pending={pending}
+                      fetchingRequestId={
+                        variables.isPending
+                          ? variables.variables.requestId
+                          : undefined
+                      }
+                      onFetch={(id) => {
+                        void fetchVariables(id).catch(() => undefined)
+                      }}
+                    />
+                  ) : null}
+                </UpstreamEditorSection>
+                <UpstreamEditorSection id='metrics' title='指标来源'>
+                  <ChannelMonitorCustomUpstreamFields
+                    workspace
+                    form={form}
+                    independent
+                    allowAccountBalance
+                  />
+                </UpstreamEditorSection>
+              </>
+            ) : (
+              <Alert>
+                <AlertDescription>
+                  余额查询与认证使用账户配置。以下规则由账户统一执行，倍率规则使用所选渠道。
+                </AlertDescription>
+              </Alert>
+            )}
+            <UpstreamEditorSection
+              id='actions'
+              title='触发规则'
+              description='先设置何时触发，再配置执行接口；多条规则可直接定位。'
+            >
+              <ChannelMonitorCustomActionFields
+                workspace
                 form={form}
-                channelId={0}
-                channelName={task.name}
                 disabled={pending}
                 independent
+                states={task.state.actions}
+                savedActions={task.custom_config.actions}
+                onReset={async (actionId, state) => {
+                  await reset.mutateAsync({ task, actionId, state })
+                  setTask({
+                    ...task,
+                    state: {
+                      ...task.state,
+                      actions: {
+                        ...task.state.actions,
+                        [actionId]: { ...state, attempts: 0 },
+                      },
+                    },
+                  })
+                  void queryClient.invalidateQueries({
+                    queryKey: automationsQueryKey,
+                  })
+                }}
               />
-              {!groupId ? (
-                <ChannelMonitorCustomVariableFields
-                  form={form}
-                  pending={pending}
-                  fetchingRequestId={
-                    variables.isPending
-                      ? variables.variables.requestId
-                      : undefined
-                  }
-                  onFetch={(id) => {
-                    void fetchVariables(id).catch(() => undefined)
-                  }}
-                />
+              {form.formState.errors.customConfig?.actions?.message ? (
+                <p role='alert' className='text-destructive text-sm'>
+                  {form.formState.errors.customConfig.actions.message}
+                </p>
               ) : null}
-              <ChannelMonitorCustomUpstreamFields
-                form={form}
-                independent
-                allowAccountBalance
-              />
-              <Separator />
-            </>
-          ) : (
+            </UpstreamEditorSection>
+          </Form>
+          {test.data ? (
             <Alert>
               <AlertDescription>
-                余额查询与认证使用账户配置。以下规则由账户统一执行，倍率规则使用所选渠道。
+                测试获取成功：倍率 {test.data.ratio}，余额{' '}
+                {test.data.balance.amount ?? '未返回'}。未执行触发接口。
               </AlertDescription>
             </Alert>
-          )}
-          <ChannelMonitorCustomActionFields
-            form={form}
-            disabled={pending}
-            independent
-            states={task.state.actions}
-            savedActions={task.custom_config.actions}
-            onReset={async (actionId, state) => {
-              await reset.mutateAsync({ task, actionId, state })
-              setTask({
-                ...task,
-                state: {
-                  ...task.state,
-                  actions: {
-                    ...task.state.actions,
-                    [actionId]: { ...state, attempts: 0 },
-                  },
-                },
-              })
-              void queryClient.invalidateQueries({
-                queryKey: automationsQueryKey,
-              })
-            }}
-          />
-          {form.formState.errors.customConfig?.actions?.message ? (
-            <p role='alert' className='text-destructive text-sm'>
-              {form.formState.errors.customConfig.actions.message}
-            </p>
           ) : null}
-        </Form>
-        {test.data ? (
-          <Alert>
-            <AlertDescription>
-              测试获取成功：倍率 {test.data.ratio}，余额{' '}
-              {test.data.balance.amount ?? '未返回'}。未执行触发接口。
-            </AlertDescription>
-          </Alert>
-        ) : null}
+        </UpstreamEditorLayout>
       </fieldset>
-      <div className='flex flex-wrap justify-end gap-2 border-t pt-4'>
+      <div className={upstreamEditorFooterClassName}>
         <Button
           type='button'
           variant='outline'
