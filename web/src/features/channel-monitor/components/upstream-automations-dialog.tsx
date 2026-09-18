@@ -23,7 +23,7 @@ import {
   useMutation,
   useQueryClient,
 } from '@tanstack/react-query'
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -59,13 +59,16 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
+import { Switch } from '@/components/ui/switch'
 
 import {
   acknowledgeUpstreamAutomation,
   automationsQueryKey,
   deleteUpstreamAutomation,
   runUpstreamAutomation,
+  saveUpstreamAutomation,
   useUpstreamAutomations,
   type UpstreamAutomation,
 } from '../api-automations'
@@ -92,6 +95,7 @@ export default function UpstreamAutomationsDialog(props: {
   channels: ChannelMonitorItem[]
   onOpenChange: (open: boolean) => void
 }) {
+  const id = useId()
   const queryClient = useQueryClient()
   const query = useUpstreamAutomations()
   const busy = useIsMutating({ mutationKey: automationsQueryKey }) > 0
@@ -124,6 +128,28 @@ export default function UpstreamAutomationsDialog(props: {
       toast.success('已安排立即检查，仍遵守触发条件、冷却和次数限制')
       refresh()
     },
+  })
+  const toggle = useMutation({
+    mutationKey: automationsQueryKey,
+    mutationFn: saveUpstreamAutomation,
+    onError: handleChannelMonitorMutationError,
+    onSuccess: async (saved) => {
+      await queryClient.cancelQueries({ queryKey: automationsQueryKey })
+      queryClient.setQueryData<NonNullable<typeof query.data>>(
+        automationsQueryKey,
+        (current) => {
+          if (!current) return current
+          return {
+            ...current,
+            tasks: current.tasks.map((task) =>
+              task.id === saved.id ? saved : task
+            ),
+          }
+        }
+      )
+      toast.success(saved.enabled ? '任务已启用' : '任务已暂停')
+    },
+    onSettled: refresh,
   })
   const remove = useMutation({
     mutationKey: automationsQueryKey,
@@ -269,6 +295,9 @@ export default function UpstreamAutomationsDialog(props: {
                 className='flex flex-col gap-2'
               >
                 {filteredTasks.map((task) => {
+                  const saving =
+                    toggle.isPending && toggle.variables.id === task.id
+                  const switchId = `${id}-${task.id}-enabled`
                   const running =
                     (task.state.lease_until ?? 0) > Date.now() / 1000
                   const pendingConfirmations =
@@ -311,7 +340,33 @@ export default function UpstreamAutomationsDialog(props: {
                             {task.base_url}
                           </p>
                         </div>
-                        <div className='flex shrink-0 flex-wrap gap-1'>
+                        <div className='flex shrink-0 flex-wrap items-center gap-1'>
+                          <div
+                            className='flex items-center gap-2 px-2'
+                            title={
+                              running
+                                ? '任务正在检查，完成后可切换启停'
+                                : undefined
+                            }
+                          >
+                            <Switch
+                              id={switchId}
+                              checked={task.enabled}
+                              disabled={busy || running}
+                              aria-labelledby={`${switchId}-label`}
+                              aria-busy={saving}
+                              onCheckedChange={(enabled) =>
+                                toggle.mutate({ ...task, enabled })
+                              }
+                            />
+                            <Label id={`${switchId}-label`} htmlFor={switchId}>
+                              启用任务
+                              <span className='sr-only'>：{task.name}</span>
+                            </Label>
+                            {saving ? (
+                              <Spinner aria-label='正在保存任务状态' />
+                            ) : null}
+                          </div>
                           <Button
                             variant='outline'
                             size='sm'
