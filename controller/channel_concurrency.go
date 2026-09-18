@@ -138,12 +138,14 @@ func acquireRelayChannelConcurrency(
 	var saturatedChannels []int
 	waitDuration := time.Duration(getChannelMonitorSettings().ChannelConcurrencyWaitSeconds) * time.Second
 	waitDeadline := time.Now().Add(waitDuration)
+	admissionCtx, admission := service.NewChannelAdmission(c.Request.Context(), waitDeadline)
+	defer admission.Close()
 	for {
 		if channel != nil {
 			if handled, localErr := tryChannelSmallInputResponse(c, info, channel.Id); handled || localErr != nil {
 				return channel, nil, localErr
 			}
-			lease, acquired, status, err := service.AcquireChannelConcurrency(c.Request.Context(), channel.Id)
+			lease, acquired, status, err := service.AcquireChannelConcurrency(admissionCtx, channel.Id)
 			if err != nil {
 				return nil, nil, types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 			}
@@ -152,6 +154,7 @@ func acquireRelayChannelConcurrency(
 			}
 
 			if !allowAlternative {
+				admission.Waiting = true
 				lastSaturatedError = channelConcurrencySaturatedError(channel.Id, status)
 				if !waitForChannelConcurrency(c.Request.Context(), waitDeadline) {
 					return nil, nil, lastSaturatedError
@@ -159,6 +162,7 @@ func acquireRelayChannelConcurrency(
 				continue
 			}
 			if _, specificChannel := c.Get("specific_channel_id"); specificChannel {
+				admission.Waiting = true
 				lastSaturatedError = channelConcurrencySaturatedError(channel.Id, status)
 				if !waitForChannelConcurrency(c.Request.Context(), waitDeadline) {
 					return nil, nil, lastSaturatedError
@@ -172,6 +176,14 @@ func acquireRelayChannelConcurrency(
 			if !alreadyExcluded {
 				saturatedChannels = append(saturatedChannels, channel.Id)
 			}
+			if status.Shared != nil && (status.Shared.Reason == "group_concurrency" || status.Shared.Reason == "group_rpm" || status.Shared.Reason == "paused") {
+				for _, memberID := range status.Shared.Members {
+					if _, excluded := retryRouting.excluded[memberID]; !excluded {
+						retryRouting.exclude(memberID)
+						saturatedChannels = append(saturatedChannels, memberID)
+					}
+				}
+			}
 		}
 
 		var selectGroup string
@@ -180,6 +192,7 @@ func acquireRelayChannelConcurrency(
 			return nil, nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（并发重选）: %s", selectGroup, info.OriginModelName, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 		}
 		if selected == nil {
+			admission.Waiting = true
 			if len(saturatedChannels) == 0 {
 				if lastSetupError != nil {
 					return nil, nil, lastSetupError
@@ -247,6 +260,10 @@ func waitForChannelConcurrency(ctx context.Context, deadline time.Time) bool {
 }
 
 func channelConcurrencySaturatedError(channelID int, status service.ChannelConcurrencyStatus) *types.NewAPIError {
+	if status.Shared != nil {
+		message := service.ChannelLimitReasonText(status.Shared.Reason)
+		return types.NewErrorWithStatusCode(errors.New(message), types.ErrorCodeGetChannelFailed, http.StatusTooManyRequests, types.ErrOptionWithSkipRetry())
+	}
 	message := fmt.Sprintf("渠道 #%d 当前并发 %d 已达到限制 %d，请稍后再试", channelID, status.Active, status.Limit)
 	if status.RPMLimit > 0 && status.CurrentRPM >= status.RPMLimit {
 		message = fmt.Sprintf("渠道 #%d 当前 RPM %d 已达到限制 %d，请稍后再试", channelID, status.CurrentRPM, status.RPMLimit)
@@ -256,6 +273,11 @@ func channelConcurrencySaturatedError(channelID int, status service.ChannelConcu
 
 func relayWithChannelConcurrency(c *gin.Context, info *relaycommon.RelayInfo, relayFormat types.RelayFormat, lease *service.ChannelConcurrencyLease) *types.NewAPIError {
 	defer lease.Release()
+	request := c.Request
+	if lease != nil && lease.Context != nil {
+		c.Request = request.WithContext(lease.Context)
+		defer func() { c.Request = request }()
+	}
 	service.PrepareChannelBalanceAttempt(c, info)
 	resetRelayAttemptResponseState(c)
 	var apiErr *types.NewAPIError
@@ -274,6 +296,11 @@ func relayWithChannelConcurrency(c *gin.Context, info *relaycommon.RelayInfo, re
 
 func relayTaskWithChannelConcurrency(c *gin.Context, info *relaycommon.RelayInfo, lease *service.ChannelConcurrencyLease, submit taskSubmitAttempt) (*relay.TaskSubmitResult, *dto.TaskError) {
 	defer lease.Release()
+	request := c.Request
+	if lease != nil && lease.Context != nil {
+		c.Request = request.WithContext(lease.Context)
+		defer func() { c.Request = request }()
+	}
 	service.PrepareChannelBalanceAttempt(c, info)
 	resetRelayAttemptResponseState(c)
 	return submit(c, info)

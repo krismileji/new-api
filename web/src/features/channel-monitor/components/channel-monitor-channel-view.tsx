@@ -72,9 +72,11 @@ import { ChannelMonitorSmartScheduleCell } from './channel-monitor-smart-schedul
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 import { ChannelMonitorSuccessRateValue } from './channel-monitor-success-rate-value'
 import { GroupRatioValue } from './group-ratio-value'
+import type { ChannelLimitGroup } from '../api-limit-groups'
 import { RatioChangeBadge } from './ratio-change-badge'
 
 type ChannelMonitorChannelViewProps = {
+  limitGroups?: ChannelLimitGroup[]
   channels: ChannelMonitorItem[]
   groupRatios: Record<string, number>
   groupCoefficients: Record<string, number>
@@ -278,6 +280,15 @@ function ChannelTodayCostCell(props: {
 export function ChannelMonitorChannelView(
   props: ChannelMonitorChannelViewProps
 ) {
+  const sharedByChannel = new Map<
+    number,
+    { group: ChannelLimitGroup; priority: number }
+  >()
+  for (const group of props.limitGroups ?? []) {
+    for (const member of group.members) {
+      sharedByChannel.set(member.channel_id, { group, priority: member.priority })
+    }
+  }
   if (props.channels.length === 0) {
     return (
       <Empty className='min-h-72'>
@@ -309,6 +320,7 @@ export function ChannelMonitorChannelView(
         </TableHeader>
         <TableBody>
           {props.channels.map((channel) => {
+            const shared = sharedByChannel.get(channel.id)
             const channelEnabled = channel.status === CHANNEL_STATUS.ENABLED
             const successMetric = props.successByChannel.get(channel.id)
             const channelStatusLabel = `渠道状态：${getChannelMonitorStatusLabel(channel.status)}`
@@ -536,8 +548,25 @@ export function ChannelMonitorChannelView(
                       当前并发：{channel.concurrency_active}
                     </span>
                     <span className='text-muted-foreground text-xs'>
-                      当前 RPM：{channel.current_rpm ?? 0}
+                      {shared ? '消费日志请求数：' : '当前 RPM：'}
+                      {channel.current_rpm ?? 0}
                     </span>
+                    {shared && (
+                      <>
+                        <Badge variant='secondary'>
+                          {shared.group.name} · 优先级 {shared.priority}
+                        </Badge>
+                        <span className='text-muted-foreground text-xs'>
+                          渠道限流 RPM：{shared.group.channel_usage?.[channel.id]?.current_rpm ?? '—'}
+                        </span>
+                        <span className='text-muted-foreground text-xs'>
+                          组并发：{shared.group.runtime?.active ?? '—'} / {shared.group.concurrency_limit || '不限'}
+                        </span>
+                        <span className='text-muted-foreground text-xs'>
+                          组限流 RPM：{shared.group.runtime?.rpm ?? '—'} / {shared.group.rpm_limit || '不限'}
+                        </span>
+                      </>
+                    )}
                   </div>
                 </TableCell>
                 <TableCell className='whitespace-normal'>

@@ -77,6 +77,9 @@ func withChannelStatusProbeTestContext(ctx context.Context) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if service.ChannelProbeTrigger(ctx) == "" {
+		ctx = service.WithChannelProbeTrigger(ctx, "manual")
+	}
 	return context.WithValue(ctx, channelStatusProbeTestContextKey{}, true)
 }
 
@@ -531,6 +534,7 @@ func executeChannelStatusProbeModelWithEndpoint(
 			ErrorCode: "channel_busy", ErrorMessage: "渠道并发已满，本次未发送请求",
 		}
 	}
+	probeCtx = service.WithChannelConcurrencyLease(probeCtx, channel.Id, lease)
 	probeResult := testChannel(probeCtx, channel, testUserId, modelName, endpointType, true)
 	if service.IsChannelProbePolicySkip(probeResult.localErr) {
 		lease.Release()

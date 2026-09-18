@@ -546,6 +546,14 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		return testResult{context: c, localErr: err}
 	}
 	requestBody := bytes.NewBuffer(jsonData)
+	sharedLease, sharedErr := service.AcquireChannelLimitProbeLease(ctx, channel.Id)
+	if sharedErr != nil {
+		return testResult{context: c, localErr: sharedErr}
+	}
+	defer sharedLease.Release()
+	if sharedLease != nil && sharedLease.Context != nil {
+		c.Request = c.Request.WithContext(sharedLease.Context)
+	}
 	c.Request.Body = io.NopCloser(bytes.NewBuffer(jsonData))
 	balanceProbeLease, err := service.AcquireChannelBalanceProbeLease(ctx, channel.Id)
 	if err != nil {

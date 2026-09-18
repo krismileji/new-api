@@ -79,7 +79,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 			Region:                  region,
 			BearerAuthTokenProvider: bearer.StaticTokenProvider{Token: bearer.Token{Value: apiKey}},
 			HTTPClient:              httpClient,
-		})
+		}, sharedLimitRetryPolicy(c.Request.Context()))
 	case 3:
 		ak := awsSecret[0]
 		sk := awsSecret[1]
@@ -88,7 +88,7 @@ func newAwsClient(c *gin.Context, info *relaycommon.RelayInfo) (*bedrockruntime.
 			Region:      region,
 			Credentials: aws.NewCredentialsCache(credentials.NewStaticCredentialsProvider(ak, sk, "")),
 			HTTPClient:  httpClient,
-		})
+		}, sharedLimitRetryPolicy(c.Request.Context()))
 	default:
 		return nil, errors.New("invalid aws secret key")
 	}

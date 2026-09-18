@@ -24,6 +24,7 @@ import { I18nextProvider } from 'react-i18next'
 import { describe, test } from 'vitest'
 
 import { formatTimestampToDate } from '@/lib/format'
+import type { ChannelLimitGroup } from '../../api-limit-groups'
 
 import { formatChannelMonitorCost, formatMonitorRatio } from '../../lib/format'
 import type {
@@ -184,12 +185,14 @@ function renderView(
   groupRatios: Record<string, number> = { default: 1 },
   groupCoefficients: Record<string, number> = { default: 1 },
   successByChannel: Map<number, ChannelMonitorSuccessSummary> = new Map(),
-  smartScheduleRoutes: ChannelMonitorSmartScheduleRoute[] = []
+  smartScheduleRoutes: ChannelMonitorSmartScheduleRoute[] = [],
+  limitGroups: ChannelLimitGroup[] = []
 ) {
   return renderToStaticMarkup(
     <I18nextProvider i18n={testI18n}>
       <ChannelMonitorChannelView
         channels={[channel]}
+        limitGroups={limitGroups}
         groupRatios={groupRatios}
         groupCoefficients={groupCoefficients}
         performanceByChannel={new Map()}
@@ -488,6 +491,21 @@ describe('channel monitor channel view timestamps', () => {
       cells[6] ?? '',
       />8<[\s\S]*RPM 限制：60[\s\S]*当前并发：3[\s\S]*当前 RPM：42/
     )
+  })
+
+  test('共享组渠道区分限流 RPM 与消费日志数量', () => {
+    const markup = renderView(createChannel({ current_rpm: 42 }), {}, {}, new Map(), [], [{
+      id: 1, name: '共享上游', revision: 1, enabled: true, updated_at: 0,
+      concurrency_limit: 10, rpm_limit: 300,
+      tiers: [{ priority: 100, reserved_concurrency: 3, reserved_rpm: 90 }],
+      members: [{ channel_id: 7, priority: 100 }],
+      channel_usage: { 7: { active: 2, current_rpm: 12 } },
+      runtime: { active: 6, rpm: 80, waiting: 0 },
+    }])
+    assert.match(markup, /消费日志请求数：42/)
+    assert.match(markup, /渠道限流 RPM：12/)
+    assert.match(markup, /共享上游 · 优先级 100/)
+    assert.match(markup, /组限流 RPM：80 \/ 300/)
   })
 
   test('shows cache utilization on the third line of the success rate cell', () => {

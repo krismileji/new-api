@@ -16,6 +16,10 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 	)
 	{
 		registerChannelModelDetectionRoutes(monitorRoute)
+		monitorRoute.GET("/limit-groups", controller.ListChannelLimitGroups)
+		monitorRoute.POST("/limit-groups", controller.SaveChannelLimitGroup)
+		monitorRoute.PUT("/limit-groups/:id", controller.SaveChannelLimitGroup)
+		monitorRoute.DELETE("/limit-groups/:id", controller.DeleteChannelLimitGroup)
 		monitorRoute.GET("/upstream_accounts", controller.ListChannelMonitorUpstreamAccounts)
 		monitorRoute.POST("/upstream_accounts/preview", controller.PreviewChannelMonitorUpstreamAccount)
 		monitorRoute.PUT("/upstream_accounts", controller.SaveChannelMonitorUpstreamAccount)

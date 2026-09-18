@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"sort"
 
 	"gorm.io/gorm"
@@ -87,6 +88,15 @@ func deleteChannelRowsWithMonitorDataTx(tx *gorm.DB, channelIds []int) (int64, b
 		}
 		for index := range channels {
 			existingChannelIds = append(existingChannelIds, channels[index].Id)
+		}
+	}
+	if tx.Migrator().HasTable(&ChannelLimitGroupMember{}) {
+		var bound int64
+		if err := tx.Model(&ChannelLimitGroupMember{}).Where("channel_id IN ?", existingChannelIds).Count(&bound).Error; err != nil {
+			return 0, false, err
+		}
+		if bound > 0 {
+			return 0, false, errors.New("请先移出共享限流组，再删除渠道")
 		}
 	}
 	logicalRelationsChanged, err := detachDeletedChannelsFromLogicalGroupsTx(tx, existingChannelIds)

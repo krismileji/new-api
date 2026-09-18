@@ -96,6 +96,7 @@ export function EditChannelConcurrencyLimitDialog(
           <DialogTitle>设置渠道并发限制</DialogTitle>
           <DialogDescription>
             {props.channel.name} · ID {props.channel.id}
+            {' · 加入共享限流组后，同时受组规则和本渠道上限约束。'}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>

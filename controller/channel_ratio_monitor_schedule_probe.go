@@ -581,6 +581,7 @@ func runChannelSmartScheduleProbeOnce(
 			}
 		}
 		probeStartedAt := time.Now()
+		probeCtx = service.WithChannelConcurrencyLease(probeCtx, channel.Id, lease)
 		endpointType := selectChannelSmartScheduleProbeEndpointType(channel)
 		probeResult := testChannel(
 			probeCtx, channel, testUserID, item.requestModel,

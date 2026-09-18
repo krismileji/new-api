@@ -118,6 +118,7 @@ function getChannelMonitorManualRefreshTargets(
     { queryKey: ['channel-monitor', 'health'], exact: true },
     { queryKey: CHANNEL_MONITOR_DIAGNOSTICS_QUERY_KEY, exact: true },
     { queryKey: CHANNEL_MONITOR_CONCURRENCY_QUERY_KEY, exact: true },
+    { queryKey: ['channel-monitor', 'limit-groups'], exact: true },
     { queryKey: ['channel-monitor-performance'] },
     { queryKey: ['channel-monitor', 'cost', 'summary', 2], exact: true },
     { queryKey: ['channel-monitor', 'success', 'today'], exact: true },

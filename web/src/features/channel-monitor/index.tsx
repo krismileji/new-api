@@ -111,6 +111,7 @@ import {
 import { ChannelMonitorSmartScheduleBoard } from './components/channel-monitor-smart-schedule-board'
 import { ChannelMonitorTodaySuccessCard } from './components/channel-monitor-today-success-card'
 import { ChannelMonitorVariableGroupsDialog } from './components/channel-monitor-variable-groups-dialog'
+import { useChannelLimitGroups } from './api-limit-groups'
 import { ChannelMonitorViewTabs } from './components/channel-monitor-view-tabs'
 import { ChannelPassiveMonitorPanel } from './components/channel-passive-monitor-panel'
 import { ChannelProbePolicyAction } from './components/channel-probe-policy-dialog'
@@ -205,6 +206,12 @@ import type {
   ChannelMonitorUpstreamType,
   GroupMonitorItem,
 } from './types'
+
+const ChannelLimitGroupsDialog = lazy(() =>
+  import('./components/channel-limit-groups-dialog').then((module) => ({
+    default: module.ChannelLimitGroupsDialog,
+  }))
+)
 
 const LazyTokenProtectionDialog = lazy(
   () => import('./components/token-protection-dialog')
@@ -414,6 +421,8 @@ export function ChannelMonitor() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tokenProtectionOpen, setTokenProtectionOpen] = useState(false)
   const [variableGroupsOpen, setVariableGroupsOpen] = useState(false)
+  const [limitGroupsOpen, setLimitGroupsOpen] = useState(false)
+  const limitGroupsQuery = useChannelLimitGroups()
   const [automationsOpen, setAutomationsOpen] = useState(false)
   const [upstreamAccountsOpen, setUpstreamAccountsOpen] = useState(false)
   const [groupMonitorSettingsOpen, setGroupMonitorSettingsOpen] =
@@ -1395,6 +1404,7 @@ export function ChannelMonitor() {
             <div className='flex flex-col gap-4'>
               <ChannelMonitorChannelView
                 channels={filteredChannels}
+                limitGroups={limitGroupsQuery.data}
                 groupRatios={groupRatios}
                 groupCoefficients={groupCoefficients}
                 performanceByChannel={performanceByChannel}
@@ -1691,6 +1701,9 @@ export function ChannelMonitor() {
             >
               共享请求与变量
             </Button>
+            <Button variant='outline' onClick={() => setLimitGroupsOpen(true)}>
+              共享限流组
+            </Button>
             <Button
               variant='outline'
               onClick={() => setUpstreamAccountsOpen(true)}
@@ -1882,6 +1895,14 @@ export function ChannelMonitor() {
         <ChannelMonitorVariableGroupsDialog
           onOpenChange={setVariableGroupsOpen}
         />
+      )}
+      {limitGroupsOpen && (
+        <Suspense fallback={null}>
+          <ChannelLimitGroupsDialog
+            channels={channels}
+            onOpenChange={setLimitGroupsOpen}
+          />
+        </Suspense>
       )}
       {tokenProtectionOpen && (
         <Suspense fallback={null}>

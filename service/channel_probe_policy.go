@@ -50,5 +50,5 @@ func CheckChannelProbeAllowedWithDB(ctx context.Context, db *gorm.DB, channelID 
 }
 
 func IsChannelProbePolicySkip(err error) bool {
-	return errors.Is(err, ErrChannelAutoProbeDisabled) || errors.Is(err, ErrChannelProbePolicyUnavailable)
+	return errors.Is(err, ErrChannelAutoProbeDisabled) || errors.Is(err, ErrChannelProbePolicyUnavailable) || errors.Is(err, ErrChannelLimitProbeBusy)
 }

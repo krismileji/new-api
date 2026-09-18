@@ -14,13 +14,12 @@ import (
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
 const (
-	MaxChannelConcurrencyLimit          = 100_000
-	MaxChannelRPMLimit                  = 100_000
+	MaxChannelConcurrencyLimit          = model.MaxChannelLimit
+	MaxChannelRPMLimit                  = model.MaxChannelLimit
 	channelConcurrencyRedisConfigKey    = "channelConcurrency:v1:limits"
 	channelConcurrencyRedisRPMConfigKey = "channelConcurrency:v1:rpm_limits"
 	channelConcurrencyRedisRevisionKey  = "channelConcurrency:v1:revisions"
@@ -93,54 +92,25 @@ redis.call('HSET', KEYS[3], ARGV[2], revision)
 return 1
 `
 
-const channelConcurrencyRedisAcquireScript = `
-if redis.call('HGET', KEYS[1], ARGV[1]) ~= '1' then
-  return {-1, 0, 0, 0, 0}
-end
-local limit = tonumber(redis.call('HGET', KEYS[1], tostring(ARGV[2])) or '0')
-local rpm_limit = tonumber(redis.call('HGET', KEYS[2], tostring(ARGV[2])) or '0')
-local redis_time = redis.call('TIME')
-local now = tonumber(redis_time[1]) * 1000 + math.floor(tonumber(redis_time[2]) / 1000)
-local ttl = tonumber(ARGV[3])
-local rpm_window = tonumber(ARGV[4])
-local active_key = KEYS[3]
-local rpm_key = ARGV[5] .. ARGV[2]
-redis.call('ZREMRANGEBYSCORE', active_key, '-inf', now - ttl)
-local active = redis.call('ZCARD', active_key)
-redis.call('ZREMRANGEBYSCORE', rpm_key, '-inf', now - rpm_window)
-local current_rpm = redis.call('ZCARD', rpm_key)
-if limit > 0 and active >= limit then
-  return {0, active, limit, current_rpm, rpm_limit}
-end
-if rpm_limit > 0 and current_rpm >= rpm_limit then
-  return {0, active, limit, current_rpm, rpm_limit}
-end
-redis.call('ZADD', active_key, now, ARGV[6])
-redis.call('PEXPIRE', active_key, ttl * 2)
-if rpm_limit > 0 then
-  redis.call('ZADD', rpm_key, now, ARGV[6])
-  redis.call('PEXPIRE', rpm_key, rpm_window * 2)
-end
-return {1, active + 1, limit, current_rpm + (rpm_limit > 0 and 1 or 0), rpm_limit}
-`
-
 const channelConcurrencyRedisHeartbeatScript = `
 if not redis.call('ZSCORE', KEYS[1], ARGV[1]) then
   return 0
 end
 local redis_time = redis.call('TIME')
 local now = tonumber(redis_time[1]) * 1000 + math.floor(tonumber(redis_time[2]) / 1000)
-redis.call('ZADD', KEYS[1], 'XX', now, ARGV[1])
-redis.call('PEXPIRE', KEYS[1], tonumber(ARGV[2]) * 2)
+for _, key in ipairs(KEYS) do
+  redis.call('ZADD', key, now, ARGV[1])
+  redis.call('PEXPIRE', key, tonumber(ARGV[2]) * 2)
+end
 return 1
 `
 
 const channelConcurrencyRedisReleaseScript = `
-redis.call('ZREM', KEYS[1], ARGV[1])
-local active = redis.call('ZCARD', KEYS[1])
-if active == 0 then
-  redis.call('DEL', KEYS[1])
+for _, key in ipairs(KEYS) do
+  redis.call('ZREM', key, ARGV[1])
+  if redis.call('ZCARD', key) == 0 then redis.call('DEL', key) end
 end
+local active = redis.call('ZCARD', KEYS[1])
 return active
 `
 
@@ -174,13 +144,15 @@ return result
 `
 
 type ChannelConcurrencyStatus struct {
-	Active     int `json:"active"`
-	Limit      int `json:"limit"`
-	CurrentRPM int `json:"current_rpm"`
-	RPMLimit   int `json:"rpm_limit"`
+	Shared     *ChannelLimitStatus `json:"shared,omitempty"`
+	Active     int                 `json:"active"`
+	Limit      int                 `json:"limit"`
+	CurrentRPM int                 `json:"current_rpm"`
+	RPMLimit   int                 `json:"rpm_limit"`
 }
 
 type ChannelConcurrencyLease struct {
+	Context context.Context
 	once    sync.Once
 	release func()
 }
@@ -205,10 +177,12 @@ var channelConcurrency = struct {
 	configs    map[int]model.ChannelConcurrencyConfig
 	active     map[int]int
 	rpm        map[int][]int64
+	attempts   map[int]map[string]*channelLimitUsage
 }{
-	configs: make(map[int]model.ChannelConcurrencyConfig),
-	active:  make(map[int]int),
-	rpm:     make(map[int][]int64),
+	configs:  make(map[int]model.ChannelConcurrencyConfig),
+	active:   make(map[int]int),
+	rpm:      make(map[int][]int64),
+	attempts: make(map[int]map[string]*channelLimitUsage),
 }
 
 var channelConcurrencyReload sync.Mutex
@@ -289,8 +263,22 @@ func AcquireChannelConcurrency(ctx context.Context, channelID int) (*ChannelConc
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ctx.Err(); err != nil {
+		if admission, _ := ctx.Value(channelAdmissionContextKey{}).(*ChannelAdmission); admission != nil {
+			admission.Close()
+		}
+		return nil, false, ChannelConcurrencyStatus{}, err
+	}
+	if admission, _ := ctx.Value(channelAdmissionContextKey{}).(*ChannelAdmission); admission != nil && admission.Waiting && !time.Now().Before(admission.Deadline) {
+		status := ChannelConcurrencyStatus{Shared: &ChannelLimitStatus{GroupID: admission.groupID, Reason: "wait_timeout"}}
+		admission.Close()
+		return nil, false, status, nil
+	}
 	if channelID <= 0 {
 		return &ChannelConcurrencyLease{}, true, ChannelConcurrencyStatus{}, nil
+	}
+	if err := ensureChannelLimitRegistry(ctx); err != nil {
+		return nil, false, ChannelConcurrencyStatus{}, err
 	}
 	refreshed, err := loadChannelConcurrencyLimits(ctx, false)
 	if err != nil {
@@ -302,7 +290,7 @@ func AcquireChannelConcurrency(ctx context.Context, channelID int) (*ChannelConc
 			config := channelConcurrency.configs[channelID]
 			channelConcurrency.Unlock()
 			if config.Limit <= 0 && config.RPMLimit <= 0 {
-				return acquireChannelConcurrencyLocal(channelID)
+				return acquireChannelLimitLocal(ctx, channelID)
 			}
 		}
 		if refreshed {
@@ -310,9 +298,9 @@ func AcquireChannelConcurrency(ctx context.Context, channelID int) (*ChannelConc
 				return nil, false, ChannelConcurrencyStatus{}, err
 			}
 		}
-		return acquireChannelConcurrencyRedis(ctx, common.RDB, channelID)
+		return acquireChannelLimitRedis(ctx, common.RDB, channelID)
 	}
-	return acquireChannelConcurrencyLocal(channelID)
+	return acquireChannelLimitLocal(ctx, channelID)
 }
 
 func GetChannelConcurrencySnapshot(ctx context.Context) (map[int]ChannelConcurrencyStatus, error) {
@@ -517,6 +505,7 @@ func mergeProvidedChannelConcurrencyConfigs(configs map[int]model.ChannelConcurr
 		merged = make(map[int]model.ChannelConcurrencyConfig, len(configs))
 		channelConcurrency.active = make(map[int]int)
 		channelConcurrency.rpm = make(map[int][]int64)
+		channelConcurrency.attempts = make(map[int]map[string]*channelLimitUsage)
 	}
 	for channelID, config := range configs {
 		current, exists := merged[channelID]
@@ -621,6 +610,7 @@ func loadChannelConcurrencyLimits(ctx context.Context, force bool) (bool, error)
 	if channelConcurrency.sourceDB != sourceDB {
 		channelConcurrency.active = make(map[int]int)
 		channelConcurrency.rpm = make(map[int][]int64)
+		channelConcurrency.attempts = make(map[int]map[string]*channelLimitUsage)
 	}
 	channelConcurrency.loaded = true
 	channelConcurrency.sourceDB = sourceDB
@@ -643,53 +633,6 @@ func copyChannelConcurrencyConfigs(configs map[int]model.ChannelConcurrencyConfi
 		result[channelID] = config
 	}
 	return result
-}
-
-func acquireChannelConcurrencyLocal(channelID int) (*ChannelConcurrencyLease, bool, ChannelConcurrencyStatus, error) {
-	channelConcurrency.Lock()
-	config := channelConcurrency.configs[channelID]
-	limit := config.Limit
-	active := channelConcurrency.active[channelID]
-	now := time.Now().UnixMilli()
-	cutoff := now - channelConcurrencyRPMWindow.Milliseconds()
-	requests := channelConcurrency.rpm[channelID]
-	first := 0
-	for first < len(requests) && requests[first] <= cutoff {
-		first++
-	}
-	if first > 0 {
-		requests = requests[first:]
-	}
-	channelConcurrency.rpm[channelID] = requests
-	currentRPM := len(requests)
-	status := ChannelConcurrencyStatus{Active: active, Limit: limit, CurrentRPM: currentRPM, RPMLimit: config.RPMLimit}
-	if limit > 0 && active >= limit {
-		channelConcurrency.Unlock()
-		return nil, false, status, nil
-	}
-	if config.RPMLimit > 0 && currentRPM >= config.RPMLimit {
-		channelConcurrency.Unlock()
-		return nil, false, status, nil
-	}
-	channelConcurrency.active[channelID] = active + 1
-	status.Active++
-	if config.RPMLimit > 0 {
-		channelConcurrency.rpm[channelID] = append(channelConcurrency.rpm[channelID], now)
-		status.CurrentRPM++
-	}
-	channelConcurrency.Unlock()
-
-	lease := &ChannelConcurrencyLease{release: func() {
-		channelConcurrency.Lock()
-		defer channelConcurrency.Unlock()
-		current := channelConcurrency.active[channelID]
-		if current <= 1 {
-			delete(channelConcurrency.active, channelID)
-			return
-		}
-		channelConcurrency.active[channelID] = current - 1
-	}}
-	return lease, true, status, nil
 }
 
 func ensureChannelConcurrencyRedisConfig(ctx context.Context, client *redis.Client, configs map[int]model.ChannelConcurrencyConfig) error {
@@ -757,80 +700,14 @@ func updateChannelConcurrencyRedisLimits(ctx context.Context, client *redis.Clie
 	return nil
 }
 
-func acquireChannelConcurrencyRedis(ctx context.Context, client *redis.Client, channelID int) (*ChannelConcurrencyLease, bool, ChannelConcurrencyStatus, error) {
-	if client == nil {
-		return nil, false, ChannelConcurrencyStatus{}, errors.New("Redis 客户端未初始化")
-	}
-	member := fmt.Sprintf("%s:%s", common.NodeName, uuid.NewString())
-	activeKey := channelConcurrencyRedisActivePrefix + strconv.Itoa(channelID)
-	values, err := takeChannelConcurrencyRedisLease(ctx, client, channelID, activeKey, member)
-	if err != nil {
-		return nil, false, ChannelConcurrencyStatus{}, err
-	}
-	if values[0] == -1 {
-		if _, err = loadChannelConcurrencyLimits(ctx, true); err != nil {
-			return nil, false, ChannelConcurrencyStatus{}, err
-		}
-		if err = ensureChannelConcurrencyRedisConfig(ctx, client, getChannelConcurrencyConfigsSnapshot()); err != nil {
-			return nil, false, ChannelConcurrencyStatus{}, err
-		}
-		values, err = takeChannelConcurrencyRedisLease(ctx, client, channelID, activeKey, member)
-		if err != nil {
-			return nil, false, ChannelConcurrencyStatus{}, err
-		}
-	}
-
-	status := ChannelConcurrencyStatus{
-		Active:     int(values[1]),
-		Limit:      int(values[2]),
-		CurrentRPM: int(values[3]),
-		RPMLimit:   int(values[4]),
-	}
-	switch values[0] {
-	case 0:
-		return nil, false, status, nil
-	case 1:
-		return newChannelConcurrencyRedisLease(client, activeKey, member), true, status, nil
-	default:
-		return nil, false, ChannelConcurrencyStatus{}, fmt.Errorf("Redis 返回未知的渠道并发状态 %d", values[0])
-	}
-}
-
-func takeChannelConcurrencyRedisLease(ctx context.Context, client *redis.Client, channelID int, activeKey string, member string) ([5]int64, error) {
-	var values [5]int64
-	reply, err := client.Eval(
-		ctx,
-		channelConcurrencyRedisAcquireScript,
-		[]string{channelConcurrencyRedisConfigKey, channelConcurrencyRedisRPMConfigKey, activeKey},
-		channelConcurrencyRedisLoadedField,
-		channelID,
-		channelConcurrencyLeaseTTL.Milliseconds(),
-		channelConcurrencyRPMWindow.Milliseconds(),
-		channelConcurrencyRedisRPMPrefix,
-		member,
-	).Slice()
-	if err != nil {
-		return values, err
-	}
-	if len(reply) != len(values) {
-		return values, fmt.Errorf("Redis 渠道并发响应长度无效: %d", len(reply))
-	}
-	for index := range values {
-		values[index], err = channelConcurrencyRedisInteger(reply[index])
-		if err != nil {
-			return [5]int64{}, err
-		}
-	}
-	return values, nil
-}
-
-func newChannelConcurrencyRedisLease(client *redis.Client, activeKey string, member string) *ChannelConcurrencyLease {
+func newChannelConcurrencyRedisLease(client *redis.Client, activeKey string, member string, extraKeys ...string) *ChannelConcurrencyLease {
+	keys := append([]string{activeKey}, extraKeys...)
 	heartbeatCtx, stopHeartbeat := context.WithCancel(context.Background())
 	lease := &ChannelConcurrencyLease{release: func() {
 		stopHeartbeat()
 		ctx, cancel := context.WithTimeout(context.Background(), channelConcurrencyRedisOpTimeout)
 		defer cancel()
-		if err := client.Eval(ctx, channelConcurrencyRedisReleaseScript, []string{activeKey}, member).Err(); err != nil {
+		if err := client.Eval(ctx, channelConcurrencyRedisReleaseScript, keys, member).Err(); err != nil {
 			if shouldLogChannelConcurrencyRedisIssue("release", activeKey) {
 				logger.LogError(context.Background(), fmt.Sprintf("释放渠道并发租约失败（%s）: %v", activeKey, err))
 			}
@@ -849,7 +726,7 @@ func newChannelConcurrencyRedisLease(client *redis.Client, activeKey string, mem
 				refreshed, err := client.Eval(
 					ctx,
 					channelConcurrencyRedisHeartbeatScript,
-					[]string{activeKey},
+					keys,
 					member,
 					channelConcurrencyLeaseTTL.Milliseconds(),
 				).Int()

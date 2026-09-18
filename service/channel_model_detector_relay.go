@@ -308,6 +308,7 @@ func (relay *ChannelModelDetectorRelay) Execute(ctx context.Context, request Cha
 	}
 
 	selectedChannelID := authorization.Claims.ChannelID
+	ctx = WithChannelProbeTrigger(ctx, "model_detection")
 	var lease channelModelDetectorConcurrencyLease
 	if authorization.Claims.LogicalRevision <= 0 {
 		if err := CheckChannelProbeAllowed(WithChannelProbeTrigger(ctx, authorization.Claims.Trigger), selectedChannelID); err != nil {
@@ -361,6 +362,9 @@ func (relay *ChannelModelDetectorRelay) Execute(ctx context.Context, request Cha
 	}
 	if lease != nil {
 		defer lease.Release()
+		if physicalLease, ok := lease.(*ChannelConcurrencyLease); ok {
+			ctx = WithChannelConcurrencyLease(ctx, selectedChannelID, physicalLease)
+		}
 	}
 
 	execution := ChannelModelDetectorRelayExecution{
