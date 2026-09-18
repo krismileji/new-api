@@ -313,7 +313,7 @@ export function ChannelMonitorChannelView(
             <TableHead title='按真实上游调用统计，包含重试过程中的失败'>
               成功率（{props.performanceRangeLabel}）
             </TableHead>
-            <TableHead>并发限制</TableHead>
+            <TableHead>并发 / RPM</TableHead>
             <TableHead>智能调度</TableHead>
             <TableHead className='min-w-[112px]'>操作</TableHead>
           </TableRow>
@@ -534,22 +534,16 @@ export function ChannelMonitorChannelView(
                 <TableCell className='whitespace-normal'>
                   <div className='flex min-w-0 flex-col items-start gap-0.5'>
                     <span className='font-mono text-sm font-medium'>
+                      当前并发：{channel.concurrency_active} /{' '}
                       {channel.concurrency_limit > 0
                         ? channel.concurrency_limit
                         : '不限'}
                     </span>
                     <span className='text-muted-foreground text-xs'>
-                      RPM 限制：
+                      当前 RPM：{channel.current_rpm ?? 0} /{' '}
                       {channel.rpm_limit && channel.rpm_limit > 0
                         ? channel.rpm_limit
                         : '不限'}
-                    </span>
-                    <span className='text-muted-foreground text-xs'>
-                      当前并发：{channel.concurrency_active}
-                    </span>
-                    <span className='text-muted-foreground text-xs'>
-                      {shared ? '消费日志请求数：' : '当前 RPM：'}
-                      {channel.current_rpm ?? 0}
                     </span>
                     {shared && (
                       <>
@@ -557,13 +551,12 @@ export function ChannelMonitorChannelView(
                           {shared.group.name} · 优先级 {shared.priority}
                         </Badge>
                         <span className='text-muted-foreground text-xs'>
-                          渠道限流 RPM：{shared.group.channel_usage?.[channel.id]?.current_rpm ?? '—'}
+                          组并发：{shared.group.runtime?.active ?? '—'} /{' '}
+                          {shared.group.concurrency_limit || '不限'}
                         </span>
                         <span className='text-muted-foreground text-xs'>
-                          组并发：{shared.group.runtime?.active ?? '—'} / {shared.group.concurrency_limit || '不限'}
-                        </span>
-                        <span className='text-muted-foreground text-xs'>
-                          组限流 RPM：{shared.group.runtime?.rpm ?? '—'} / {shared.group.rpm_limit || '不限'}
+                          组 RPM：{shared.group.runtime?.rpm ?? '—'} /{' '}
+                          {shared.group.rpm_limit || '不限'}
                         </span>
                       </>
                     )}

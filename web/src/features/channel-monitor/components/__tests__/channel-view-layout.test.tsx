@@ -21,7 +21,7 @@ import assert from 'node:assert/strict'
 import { createInstance } from 'i18next'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { I18nextProvider } from 'react-i18next'
-import { describe, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
 import { formatTimestampToDate } from '@/lib/format'
 import type { ChannelLimitGroup } from '../../api-limit-groups'
@@ -475,7 +475,7 @@ describe('channel monitor channel view timestamps', () => {
     )
   })
 
-  test('shows configured limit, current concurrency, and current rpm on separate lines', () => {
+  test('配置渠道限额时，并发和 RPM 分别显示当前用量与上限', () => {
     const cells = getTableCells(
       renderView(
         createChannel({
@@ -487,25 +487,41 @@ describe('channel monitor channel view timestamps', () => {
       )
     )
 
-    assert.match(
-      cells[6] ?? '',
-      />8<[\s\S]*RPM 限制：60[\s\S]*当前并发：3[\s\S]*当前 RPM：42/
-    )
+    expect(cells[6]).toMatch(/当前并发：3 \/ 8[\s\S]*当前 RPM：42 \/ 60/)
+    expect(cells[6]).not.toContain('RPM 限制：')
   })
 
-  test('共享组渠道区分限流 RPM 与消费日志数量', () => {
-    const markup = renderView(createChannel({ current_rpm: 42 }), {}, {}, new Map(), [], [{
-      id: 1, name: '共享上游', revision: 1, enabled: true, updated_at: 0,
-      concurrency_limit: 10, rpm_limit: 300,
-      tiers: [{ priority: 100, reserved_concurrency: 3, reserved_rpm: 90 }],
-      members: [{ channel_id: 7, priority: 100 }],
-      channel_usage: { 7: { active: 2, current_rpm: 12 } },
-      runtime: { active: 6, rpm: 80, waiting: 0 },
-    }])
-    assert.match(markup, /消费日志请求数：42/)
-    assert.match(markup, /渠道限流 RPM：12/)
-    assert.match(markup, /共享上游 · 优先级 100/)
-    assert.match(markup, /组限流 RPM：80 \/ 300/)
+  test('加入共享组时，仅显示一份渠道 RPM 并保留组用量', () => {
+    const markup = renderView(
+      createChannel({ concurrency_active: 2, current_rpm: 12, rpm_limit: 60 }),
+      {},
+      {},
+      new Map(),
+      [],
+      [
+        {
+          id: 1,
+          name: '共享上游',
+          revision: 1,
+          enabled: true,
+          updated_at: 0,
+          concurrency_limit: 10,
+          rpm_limit: 300,
+          tiers: [{ priority: 100, reserved_concurrency: 3, reserved_rpm: 90 }],
+          members: [{ channel_id: 7, priority: 100 }],
+          channel_usage: { 7: { active: 2, current_rpm: 12 } },
+          runtime: { active: 6, rpm: 80, waiting: 0 },
+        },
+      ]
+    )
+    expect(markup).toContain('当前并发：2 / 不限')
+    expect(markup).toContain('当前 RPM：12 / 60')
+    expect(markup.match(/当前 RPM：/g)).toHaveLength(1)
+    expect(markup).not.toContain('消费日志请求数')
+    expect(markup).not.toContain('渠道限流 RPM')
+    expect(markup).toContain('共享上游 · 优先级 100')
+    expect(markup).toContain('组并发：6 / 10')
+    expect(markup).toContain('组 RPM：80 / 300')
   })
 
   test('shows cache utilization on the third line of the success rate cell', () => {
@@ -550,8 +566,8 @@ describe('channel monitor channel view timestamps', () => {
     )
     const cells = getTableCells(markup)
 
-    assert.ok(cells[6]?.includes('不限'))
-    assert.ok(cells[6]?.includes('当前并发：4'))
+    expect(cells[6]).toContain('当前并发：4 / 不限')
+    expect(cells[6]).toContain('当前 RPM：0 / 不限')
     assert.ok(markup.includes('aria-label="设置并发限制"'))
   })
 
@@ -568,7 +584,7 @@ describe('channel monitor channel view timestamps', () => {
     const smartScheduleCell = cells[7] ?? ''
 
     assert.equal(cells.length, 9)
-    assert.ok(headers[6]?.includes('并发限制'))
+    expect(headers[6]).toContain('并发 / RPM')
     assert.ok(headers[7]?.includes('智能调度'))
     assert.match(smartScheduleCell, /优先级[\s\S]*80[\s\S]*权重[\s\S]*60/)
     assert.equal(smartScheduleCell.includes('路由参与'), false)

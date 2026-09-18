@@ -318,8 +318,8 @@ func getChannelConcurrencySnapshot(ctx context.Context, providedChannelIDs []int
 	return getChannelConcurrencySnapshotAndConfigs(ctx, providedChannelIDs, nil)
 }
 
-// GetChannelConcurrencySnapshotWithRPM augments the live concurrency snapshot
-// with the visible consume request count from the last minute.
+// GetChannelConcurrencySnapshotWithRPM returns live concurrency and the limiter's
+// admitted request count from the last minute, independent of consume logs.
 func GetChannelConcurrencySnapshotWithRPM(ctx context.Context) (map[int]ChannelConcurrencyStatus, error) {
 	return getChannelConcurrencySnapshotWithRPM(ctx, nil)
 }
@@ -343,19 +343,6 @@ func GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigs(
 	return getChannelConcurrencySnapshotWithRPMAndConfigs(ctx, channelIDs, configs)
 }
 
-// GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigsAt uses the
-// caller's request timestamp for the RPM window. Aggregate monitor responses
-// already establish a single generated_at value and should pass it through so
-// all data sources share the same time boundary.
-func GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigsAt(
-	ctx context.Context,
-	channelIDs []int,
-	configs map[int]model.ChannelConcurrencyConfig,
-	now int64,
-) (map[int]ChannelConcurrencyStatus, error) {
-	return getChannelConcurrencySnapshotWithRPMAndConfigsAt(ctx, channelIDs, configs, now)
-}
-
 func getChannelConcurrencySnapshotWithRPM(ctx context.Context, providedChannelIDs []int) (map[int]ChannelConcurrencyStatus, error) {
 	return getChannelConcurrencySnapshotWithRPMAndConfigs(ctx, providedChannelIDs, nil)
 }
@@ -365,20 +352,8 @@ func getChannelConcurrencySnapshotWithRPMAndConfigs(
 	providedChannelIDs []int,
 	providedConfigs map[int]model.ChannelConcurrencyConfig,
 ) (map[int]ChannelConcurrencyStatus, error) {
-	return getChannelConcurrencySnapshotWithRPMAndConfigsAt(ctx, providedChannelIDs, providedConfigs, common.GetTimestamp())
-}
-
-func getChannelConcurrencySnapshotWithRPMAndConfigsAt(
-	ctx context.Context,
-	providedChannelIDs []int,
-	providedConfigs map[int]model.ChannelConcurrencyConfig,
-	now int64,
-) (map[int]ChannelConcurrencyStatus, error) {
 	if ctx == nil {
 		ctx = context.Background()
-	}
-	if now <= 0 {
-		now = common.GetTimestamp()
 	}
 	if providedChannelIDs != nil {
 		hasChannelID := false
@@ -392,23 +367,7 @@ func getChannelConcurrencySnapshotWithRPMAndConfigsAt(
 			return map[int]ChannelConcurrencyStatus{}, nil
 		}
 	}
-	snapshot, err := getChannelConcurrencySnapshotAndConfigs(ctx, providedChannelIDs, providedConfigs)
-	if err != nil {
-		return nil, err
-	}
-	currentRPM, err := model.GetChannelMonitorCurrentRPM(ctx, now-60)
-	if err != nil {
-		return nil, err
-	}
-	for channelID, rpm := range currentRPM {
-		status, exists := snapshot[channelID]
-		if !exists {
-			continue
-		}
-		status.CurrentRPM = rpm
-		snapshot[channelID] = status
-	}
-	return snapshot, nil
+	return getChannelConcurrencySnapshotAndConfigs(ctx, providedChannelIDs, providedConfigs)
 }
 
 func getChannelConcurrencySnapshotAndConfigs(

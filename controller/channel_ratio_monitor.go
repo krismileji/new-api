@@ -584,8 +584,8 @@ func GetChannelMonitorOverview(c *gin.Context) {
 			Revision: monitor.ConcurrencyRevision,
 		}
 	}
-	concurrencyByChannel, err := service.GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigsAt(
-		ctx, channelIDs, concurrencyConfigs, generatedAt,
+	concurrencyByChannel, err := service.GetChannelConcurrencySnapshotWithRPMForChannelIDsAndConfigs(
+		ctx, channelIDs, concurrencyConfigs,
 	)
 	if err != nil {
 		common.ApiError(c, err)

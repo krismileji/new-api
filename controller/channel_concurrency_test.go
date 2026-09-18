@@ -3,6 +3,7 @@ package controller
 import (
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -76,6 +77,7 @@ func TestGetChannelMonitorConcurrencyReturnsCurrentStateForAllChannels(t *testin
 	require.NoError(t, db.Create([]model.Channel{
 		{Id: 109, Name: "limited snapshot", Key: "key-1", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled},
 		{Id: 110, Name: "unlimited snapshot", Key: "key-2", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled},
+		{Id: 111, Name: "logs without recent admission", Key: "key-3", Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled},
 	}).Error)
 	now := common.GetTimestamp()
 	require.NoError(t, db.Create([]model.Log{
@@ -85,6 +87,7 @@ func TestGetChannelMonitorConcurrencyReturnsCurrentStateForAllChannels(t *testin
 		{ChannelId: 109, CreatedAt: now, Type: model.LogTypeConsume, IsRetryAttempt: true},
 		{ChannelId: 109, CreatedAt: now, Type: model.LogTypeConsume, Other: `{"channel_monitor_channel_test":true}`},
 		{ChannelId: 110, CreatedAt: now, Type: model.LogTypeConsume},
+		{ChannelId: 111, CreatedAt: now, Type: model.LogTypeConsume},
 	}).Error)
 	_, err := service.SaveChannelConcurrencyLimit(t.Context(), 109, 1)
 	require.NoError(t, err)
@@ -96,6 +99,7 @@ func TestGetChannelMonitorConcurrencyReturnsCurrentStateForAllChannels(t *testin
 	require.NoError(t, err)
 	require.True(t, acquired)
 	t.Cleanup(unlimitedLease.Release)
+	unlimitedLease.Release()
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
@@ -111,9 +115,25 @@ func TestGetChannelMonitorConcurrencyReturnsCurrentStateForAllChannels(t *testin
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	require.True(t, response.Success)
-	assert.Len(t, response.Data.Channels, 2)
-	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 1, CurrentRPM: 2}, response.Data.Channels["109"])
-	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 0, CurrentRPM: 1}, response.Data.Channels["110"])
+	assert.Len(t, response.Data.Channels, 3)
+	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 1, CurrentRPM: 1}, response.Data.Channels["109"])
+	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 0, Limit: 0, CurrentRPM: 1}, response.Data.Channels["110"])
+	assert.Equal(t, service.ChannelConcurrencyStatus{}, response.Data.Channels["111"])
+
+	useChannelMonitorOptionMap(t, map[string]string{})
+	overviewContext, overviewRecorder := newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor", nil)
+	GetChannelMonitorOverview(overviewContext)
+	require.Equal(t, http.StatusOK, overviewRecorder.Code)
+	var overviewResponse channelMonitorOverviewAPIResponse
+	require.NoError(t, common.Unmarshal(overviewRecorder.Body.Bytes(), &overviewResponse))
+	require.True(t, overviewResponse.Success)
+	require.Len(t, overviewResponse.Data.Channels, 3)
+	for _, channel := range overviewResponse.Data.Channels {
+		expected, exists := response.Data.Channels[strconv.Itoa(channel.Id)]
+		require.True(t, exists)
+		assert.Equal(t, expected.Active, channel.ConcurrencyActive)
+		assert.Equal(t, expected.CurrentRPM, channel.CurrentRPM)
+	}
 
 	var monitor model.ChannelRatioMonitor
 	require.NoError(t, db.Where("channel_id = ?", 109).First(&monitor).Error)
@@ -136,8 +156,8 @@ func TestGetChannelMonitorConcurrencyReturnsCurrentStateForAllChannels(t *testin
 	}
 	require.NoError(t, common.Unmarshal(refreshedRecorder.Body.Bytes(), &refreshedResponse))
 	require.True(t, refreshedResponse.Success)
-	assert.Len(t, refreshedResponse.Data.Channels, 1)
-	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 3, CurrentRPM: 2}, refreshedResponse.Data.Channels["109"])
+	assert.Len(t, refreshedResponse.Data.Channels, 2)
+	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 3, CurrentRPM: 1}, refreshedResponse.Data.Channels["109"])
 	assert.NotContains(t, refreshedResponse.Data.Channels, "110")
 }
 
