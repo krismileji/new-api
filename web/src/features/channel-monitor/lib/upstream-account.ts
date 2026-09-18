@@ -55,8 +55,3 @@ export const upstreamAccountSchema = z
   })
 
 export type UpstreamAccountFormValues = z.infer<typeof upstreamAccountSchema>
-
-export const upstreamAccountMergeSchema = z.object({
-  target: z.string().min(1, '请选择目标任务'),
-  ratioChannel: z.number().int().nonnegative(),
-})

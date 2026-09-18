@@ -29,7 +29,6 @@ import type {
 } from './types'
 
 export type UpstreamAutomation = {
-  merged_into?: string
   account_id?: number
   ratio_channel_id?: number
   id: string

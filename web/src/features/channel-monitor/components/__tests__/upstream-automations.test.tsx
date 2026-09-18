@@ -70,6 +70,26 @@ function renderDialog() {
 }
 
 describe('独立上游自动任务', () => {
+  test('带旧合并标记的暂停任务保持暂停且可以编辑', async () => {
+    const task = { ...taskFixture(), enabled: false, merged_into: 'old-target' }
+    vi.spyOn(api, 'get').mockImplementation(async (path) => ({
+      data: {
+        success: true,
+        data: path === '/api/channel_monitor/automations' ? [task] : [],
+      },
+    }))
+    const user = userEvent.setup()
+    renderDialog()
+    expect(await screen.findByText(task.name)).toBeInTheDocument()
+    expect(screen.getByText('已暂停')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '立即检查' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '编辑任务' }))
+    expect(screen.getByLabelText('任务名称 / 上游账户')).toHaveValue(task.name)
+    expect(
+      screen.getByRole('switch', { name: '启用独立任务' })
+    ).not.toBeChecked()
+  })
+
   test('空列表可创建不关联渠道的任务并切换触发模式', async () => {
     vi.spyOn(api, 'get').mockResolvedValue({
       data: { success: true, data: [] },

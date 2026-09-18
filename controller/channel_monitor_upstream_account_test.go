@@ -86,56 +86,10 @@ func TestUpstreamAccountDatabaseMatrix(t *testing.T) {
 			require.NoError(t, err)
 			assert.ElementsMatch(t, []int{101, 102}, view.ChannelIDs)
 
-			// Merging two previously executed tasks retains the daily limit and
-			// source history, and never leaves a second runnable copy.
-			first := automationTestConfig(server.URL)
-			first.ChannelIDs, first.CustomConfig.Actions[0].DailyLimit = []int{101}, 2
-			second := first
-			second.Name, second.ChannelIDs = "第二渠道重复任务", []int{102}
-			one, err := service.SaveUpstreamAutomation(t.Context(), first)
+			input := automationTestConfig(server.URL)
+			input.AccountID = account.ID
+			one, err := service.SaveUpstreamAutomation(t.Context(), input)
 			require.NoError(t, err)
-			_, err = service.RunUpstreamAutomation(t.Context(), one.ID, true, time.Now, refreshUpstreamAutomationChannels)
-			require.ErrorContains(t, err, "请先在账户管理中合并此任务")
-			assert.Zero(t, actions.Load())
-			two, err := service.SaveUpstreamAutomation(t.Context(), second)
-			require.NoError(t, err)
-			fresh := automationTestConfig(server.URL)
-			fresh.AccountID = account.ID
-			_, err = service.SaveUpstreamAutomation(t.Context(), fresh)
-			require.ErrorContains(t, err, "请先合并")
-			for _, task := range []service.UpstreamAutomationView{one, two} {
-				_, err := model.MutateUpstreamAutomation(t.Context(), task.ID, false, 0, 0, func(row *model.SystemTask) error {
-					state := task.State
-					state.Actions["reset"] = model.ChannelMonitorCustomActionState{Day: time.Now().In(time.FixedZone("CST", 8*3600)).Format("2006-01-02"), Attempts: 1, LastAttempt: common.GetTimestamp(), Triggered: true, Status: "succeeded"}
-					encoded, err := common.Marshal(state)
-					row.State = string(encoded)
-					return err
-				})
-				require.NoError(t, err)
-			}
-			merge := service.UpstreamAccountAutomationMergeRequest{AccountID: account.ID, AccountRevision: account.Revision, TargetID: one.ID, TaskRevisions: map[string]int64{one.ID: one.Revision, two.ID: two.Revision}, Preview: true}
-			preview, err := service.MergeUpstreamAccountAutomations(t.Context(), merge)
-			require.NoError(t, err)
-			assert.Len(t, preview.RuleNames, 1)
-			merge.Preview = false
-			_, err = service.MergeUpstreamAccountAutomations(t.Context(), merge)
-			require.NoError(t, err)
-			row, err := model.GetUpstreamAutomation(t.Context(), one.ID)
-			require.NoError(t, err)
-			assert.NotContains(t, row.Payload, server.URL, "账户地址与认证不复制到自动任务")
-			merged, err := service.UpstreamAutomationResponse(row)
-			require.NoError(t, err)
-			require.Len(t, merged.CustomConfig.Actions, 1)
-			assert.Equal(t, 2, merged.State.Actions[merged.CustomConfig.Actions[0].ID].Attempts)
-			row, err = model.GetUpstreamAutomation(t.Context(), two.ID)
-			require.NoError(t, err)
-			archived, err := service.UpstreamAutomationResponse(row)
-			require.NoError(t, err)
-			assert.False(t, archived.Enabled)
-			assert.Equal(t, one.ID, archived.MergedInto)
-			assert.Equal(t, 1, archived.State.Actions["reset"].Attempts)
-			_, err = service.RunUpstreamAutomation(t.Context(), two.ID, true, time.Now, refreshUpstreamAutomationChannels)
-			require.ErrorIs(t, err, service.ErrUpstreamAutomationNotDue)
 			// A balance-only account task checks once, independent of member count.
 			before := polls.Load()
 			_, err = service.RunUpstreamAutomation(t.Context(), one.ID, true, time.Now, refreshUpstreamAutomationChannels)
@@ -236,8 +190,6 @@ func TestUpstreamAccountAutomationInheritsBuiltinAuthentication(t *testing.T) {
 	input.AccountID = account.ID
 	task, err := service.SaveUpstreamAutomation(t.Context(), input)
 	require.NoError(t, err)
-	_, err = service.SaveUpstreamAutomation(t.Context(), input)
-	require.ErrorContains(t, err, "该账户已有自动任务")
 	row, err := model.GetUpstreamAutomation(t.Context(), task.ID)
 	require.NoError(t, err)
 	assert.NotContains(t, row.Payload, "shared-token")

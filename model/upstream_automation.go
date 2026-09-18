@@ -165,43 +165,6 @@ func MutateUpstreamAutomation(ctx context.Context, id string, create bool, group
 			if account.LeaseUntil > common.GetTimestamp() {
 				return errors.New("上游账户正在执行，请稍后重试")
 			}
-			var tasks []SystemTask
-			if err := tx.Where("type = ?", UpstreamAutomationConfigType).Find(&tasks).Error; err != nil {
-				return err
-			}
-			var members []int
-			if err := tx.Model(&ChannelRatioMonitor{}).Where("upstream_account_id = ?", account.ID).Pluck("channel_id", &members).Error; err != nil {
-				return err
-			}
-			memberSet := make(map[int]bool, len(members))
-			for _, id := range members {
-				memberSet[id] = true
-			}
-			for _, task := range tasks {
-				var config struct {
-					AccountID    int    `json:"account_id"`
-					ChannelIDs   []int  `json:"channel_ids"`
-					MergedInto   string `json:"merged_into"`
-					CustomConfig struct {
-						Balance struct {
-							Source string `json:"source"`
-						} `json:"balance"`
-					} `json:"custom_config"`
-				}
-				if err := common.UnmarshalJsonStr(task.Payload, &config); err != nil {
-					return err
-				}
-				if config.AccountID == account.ID && task.TaskID != id {
-					return errors.New("该账户已有自动任务，请在同一任务中管理规则")
-				}
-				if config.AccountID == 0 && config.MergedInto == "" && task.TaskID != id && config.CustomConfig.Balance.Source != "account" {
-					for _, channelID := range config.ChannelIDs {
-						if memberSet[channelID] {
-							return errors.New("账户渠道仍有旧自动任务，请先合并以保留全部执行次数和冷却状态")
-						}
-					}
-				}
-			}
 		}
 		// Group edits take the same group -> task lock order. Runtime state
 		// updates and local credential refreshes do not acquire a group lock.

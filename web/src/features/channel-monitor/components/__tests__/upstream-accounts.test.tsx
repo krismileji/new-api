@@ -73,6 +73,7 @@ describe('共享上游账户', () => {
     expect(screen.getByRole('button', { name: '确认关联' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: '预览配置差异' }))
     await screen.findByText(/统一余额查询及共享变量/)
+    expect(screen.queryByText(/合并前暂停执行/)).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '确认关联' })).toBeEnabled()
     await user.type(screen.getByLabelText('账户名称'), '更新')
     expect(screen.getByRole('button', { name: '确认关联' })).toBeDisabled()
@@ -108,6 +109,42 @@ describe('共享上游账户', () => {
     await user.click(screen.getByRole('button', { name: '重试' }))
     expect(await screen.findByText('尚无上游账户')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '从渠道创建账户' })).toBeEnabled()
+  })
+
+  test('已有关联渠道的账户仅提供账户管理操作，不再提供任务合并入口', async () => {
+    const channel = customVariableChannel()
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: {
+        success: true,
+        data: [
+          {
+            id: 8,
+            revision: 1,
+            name: '共享钱包',
+            channel_ids: [channel.id],
+            refresh_interval_minutes: 5,
+            balance: null,
+            upstream: channel.upstream,
+          },
+        ],
+      },
+    })
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <UpstreamAccountsDialog
+          channels={[channel]}
+          onOpenChange={() => undefined}
+        />
+      </QueryClientProvider>
+    )
+    expect(await screen.findByText('共享钱包')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '管理关联' })).toBeEnabled()
+    expect(
+      screen.queryByRole('button', { name: '合并关联任务' })
+    ).not.toBeInTheDocument()
   })
 
   test('已关联渠道的共享地址和阈值不可编辑，倍率配置仍可用', () => {

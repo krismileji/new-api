@@ -264,9 +264,6 @@ export function UpstreamAccountEditor(props: {
             {input.channel_ids.length === 0 ? (
               <p>将解除全部关联，渠道保留当前配置独立运行。</p>
             ) : null}
-            <p>
-              原有自动任务需在账户列表中合并，合并前暂停执行关联渠道的旧任务。
-            </p>
           </AlertDescription>
         </Alert>
       ) : null}

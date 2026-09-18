@@ -13,7 +13,6 @@ import (
 )
 
 type UpstreamAutomationConfig struct {
-	MergedInto      string                             `json:"merged_into,omitempty"`
 	AccountID       int                                `json:"account_id,omitempty"`
 	RatioChannelID  int                                `json:"ratio_channel_id,omitempty"`
 	AccountRevision int64                              `json:"-"`
@@ -62,7 +61,6 @@ func UpstreamAutomationResponse(row model.SystemTask) (UpstreamAutomationView, e
 }
 
 func SaveUpstreamAutomation(ctx context.Context, input UpstreamAutomationConfig) (UpstreamAutomationView, error) {
-	input.MergedInto = ""
 	if input.AccountID > 0 {
 		var err error
 		input, err = ResolveUpstreamAccountAutomation(ctx, input)
@@ -125,9 +123,6 @@ func SaveUpstreamAutomation(ctx context.Context, input UpstreamAutomationConfig)
 				return err
 			}
 			state = savedState
-			if current.MergedInto != "" {
-				return errors.New("此任务已合并，仅保留历史，请编辑目标账户任务")
-			}
 			if current.AccountID > 0 && current.AccountID != input.AccountID {
 				return errors.New("账户任务不能直接改绑，请先处理原账户任务")
 			}

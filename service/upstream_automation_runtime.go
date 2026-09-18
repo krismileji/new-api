@@ -21,6 +21,7 @@ func RunUpstreamAutomation(ctx context.Context, id string, force bool, now func(
 		return view, err
 	}
 	var config UpstreamAutomationConfig
+	var previousState model.UpstreamAutomationState
 	_, err = model.MutateUpstreamAutomation(ctx, id, false, 0, 0, func(row *model.SystemTask) error {
 		var state model.UpstreamAutomationState
 		var err error
@@ -29,9 +30,10 @@ func RunUpstreamAutomation(ctx context.Context, id string, force bool, now func(
 			return err
 		}
 		timestamp := now().Unix()
-		if config.MergedInto != "" || !config.Enabled || state.LeaseUntil > timestamp || (!force && state.NextCheck > timestamp) {
+		if !config.Enabled || state.LeaseUntil > timestamp || (!force && state.NextCheck > timestamp) {
 			return ErrUpstreamAutomationNotDue
 		}
+		previousState = state
 		state.LeaseID, state.LeaseUntil = leaseID, timestamp+300
 		state.LastCheck, state.NextCheck = timestamp, timestamp+int64(config.IntervalMinutes)*60
 		state.Status, state.Message = "checking", "正在独立查询上游指标"
@@ -60,6 +62,13 @@ func RunUpstreamAutomation(ctx context.Context, id string, force bool, now func(
 		defer finishCancel()
 		finishErr := updateUpstreamAutomationState(finishContext, id, config.Revision, leaseID, func(state *model.UpstreamAutomationState) error {
 			state.LeaseID, state.LeaseUntil = "", 0
+			if errors.Is(runErr, ErrUpstreamAutomationNotDue) {
+				// A different task or balance poll owns the account. Keep this
+				// task due for the next scheduler round without recording failure.
+				state.LastCheck, state.NextCheck = previousState.LastCheck, previousState.NextCheck
+				state.Status, state.Message = previousState.Status, previousState.Message
+				return nil
+			}
 			state.Status, state.Message = status, message
 			if runErr != nil {
 				state.Failures = min(state.Failures+1, 10)
@@ -102,14 +111,6 @@ func RunUpstreamAutomation(ctx context.Context, id string, force bool, now func(
 			defer done()
 			_ = model.ReleaseUpstreamAccountLease(finish, config.AccountID, leaseID)
 		}()
-	} else {
-		for _, channelID := range config.ChannelIDs {
-			monitor, readErr := model.GetChannelRatioMonitorWithContext(runContext, channelID)
-			if readErr == nil && monitor.UpstreamAccountID > 0 &&
-				(config.CustomConfig.Balance.Source != ChannelMonitorCustomSourceAccount || config.CustomConfig.Balance.AccountID != monitor.UpstreamAccountID) {
-				return view, errors.New("关联渠道已使用共享账户，请先在账户管理中合并此任务")
-			}
-		}
 	}
 	ratio, balance, err := fetchUpstreamAutomationMetrics(runContext, config)
 	if err != nil {

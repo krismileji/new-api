@@ -126,7 +126,7 @@ export function UpstreamAutomationMetadata(props: {
       {accountId ? (
         <>
           <FieldDescription>
-            认证和余额查询继承账户配置，关联渠道随账户自动更新。每个账户在同一任务中管理所有规则。
+            认证和余额查询继承账户配置，关联渠道随账户自动更新。
           </FieldDescription>
           <FormField
             control={props.form.control}

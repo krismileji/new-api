@@ -58,7 +58,6 @@ import type { ChannelMonitorItem } from '../types'
 import { ChannelMonitorBalanceCell } from './channel-monitor-balance-cell'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { UpstreamAccountEditor } from './upstream-account-editor'
-import { UpstreamAccountTaskMerge } from './upstream-account-task-merge'
 import { UpstreamConfigDialog } from './upstream-config-dialog'
 
 export default function UpstreamAccountsDialog(props: {
@@ -71,7 +70,6 @@ export default function UpstreamAccountsDialog(props: {
     null
   )
   const [configuring, setConfiguring] = useState<UpstreamAccount | null>(null)
-  const [merging, setMerging] = useState<UpstreamAccount | null>(null)
   const [search, setSearch] = useState('')
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
@@ -167,14 +165,6 @@ export default function UpstreamAccountsDialog(props: {
               />
             ) : (
               <div className='flex flex-col gap-2 pb-1'>
-                {merging ? (
-                  <UpstreamAccountTaskMerge
-                    key={merging.id}
-                    account={merging}
-                    channels={props.channels}
-                    onClose={() => setMerging(null)}
-                  />
-                ) : null}
                 {!query.isPending && !query.isError && accounts.length === 0 ? (
                   <Empty>
                     <EmptyHeader>
@@ -285,14 +275,6 @@ export default function UpstreamAccountsDialog(props: {
                               onClick={() => setConfiguring(account)}
                             >
                               编辑共享配置
-                            </Button>
-                            <Button
-                              size='sm'
-                              variant='outline'
-                              disabled={busy}
-                              onClick={() => setMerging(account)}
-                            >
-                              合并关联任务
                             </Button>
                             <Button
                               size='sm'

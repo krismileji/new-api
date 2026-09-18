@@ -23,7 +23,6 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 		monitorRoute.POST("/upstream_accounts/:id/refresh", controller.RefreshChannelMonitorUpstreamAccount)
 		monitorRoute.GET("/automations", controller.ListUpstreamAutomations)
 		monitorRoute.PUT("/automations", controller.SaveUpstreamAutomation)
-		monitorRoute.POST("/automations/merge", controller.MergeUpstreamAccountAutomations)
 		monitorRoute.POST("/automations/test", controller.TestUpstreamAutomation)
 		monitorRoute.POST("/automations/variable/fetch", controller.FetchUpstreamAutomationDraftVariables)
 		monitorRoute.DELETE("/automations/:id", controller.DeleteUpstreamAutomation)

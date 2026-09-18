@@ -268,7 +268,6 @@ export default function UpstreamAutomationsDialog(props: {
                       )
                     }).length ?? 0
                   let statusText = task.enabled ? '已启用' : '已暂停'
-                  if (task.merged_into) statusText = '已合并，保留历史'
                   if (running) statusText = '正在检查'
                   return (
                     <Collapsible
@@ -304,12 +303,7 @@ export default function UpstreamAutomationsDialog(props: {
                           <Button
                             variant='outline'
                             size='sm'
-                            disabled={
-                              busy ||
-                              running ||
-                              !task.enabled ||
-                              !!task.merged_into
-                            }
+                            disabled={busy || running || !task.enabled}
                             onClick={() => run.mutate(task)}
                           >
                             立即检查
@@ -317,7 +311,7 @@ export default function UpstreamAutomationsDialog(props: {
                           <Button
                             variant='outline'
                             size='sm'
-                            disabled={busy || running || !!task.merged_into}
+                            disabled={busy || running}
                             onClick={() => setEditing(task)}
                           >
                             编辑任务

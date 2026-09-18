@@ -34,23 +34,6 @@ func ListUpstreamAutomations(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"success": true, "data": views, "migration_warning": warning})
 }
 
-func MergeUpstreamAccountAutomations(c *gin.Context) {
-	var input service.UpstreamAccountAutomationMergeRequest
-	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10), &input); err != nil {
-		common.ApiErrorMsg(c, "任务合并参数无效")
-		return
-	}
-	preview, err := service.MergeUpstreamAccountAutomations(c.Request.Context(), input)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if !input.Preview {
-		recordManageAudit(c, "channel.upstream_account_automations_merge", map[string]any{"account_id": input.AccountID, "target_id": input.TargetID})
-	}
-	common.ApiSuccess(c, preview)
-}
-
 func SaveUpstreamAutomation(c *gin.Context) {
 	var input service.UpstreamAutomationConfig
 	if err := common.DecodeJson(http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10), &input); err != nil {
