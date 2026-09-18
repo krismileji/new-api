@@ -151,6 +151,44 @@ func TestRelayFastFailureRetryBudgetLoadsPolicyForSelectedAutoGroup(t *testing.T
 	assert.Equal(t, time.Second, delay)
 }
 
+func TestRelayFastFailureRetryBudgetWithStabilityProtectionDisabled(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		count   int
+		delayMs int
+	}{
+		{name: "configured retries", count: 2, delayMs: 750},
+		{name: "zero disables retries", count: 0, delayMs: 750},
+		{name: "zero delay retries immediately", count: 1, delayMs: 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			policy := channelSmartScheduleTestGroupPolicy(
+				"vip", channelMonitorSmartScheduleStrategySmart, false,
+				channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 5, 80, 30,
+			)
+			fastSeconds, slowSeconds := 15.0, 60.0
+			policy.FastFailureSeconds = &fastSeconds
+			policy.SlowFailureSeconds = &slowSeconds
+			policy.FastFailureSameChannelRetryCount = &test.count
+			policy.FastFailureRetryDelayMs = &test.delayMs
+			useChannelMonitorOptionMap(t, map[string]string{
+				channelMonitorSmartScheduleEnabledOption:       "true",
+				channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
+			})
+
+			budget := &relayFastFailureRetryBudget{}
+			for range test.count {
+				decision, delay := budget.decide("vip", "model-a", 7, 15*time.Second, true, false)
+				require.Equal(t, relayRetryFastFailureSameChannel, decision)
+				assert.Equal(t, time.Duration(test.delayMs)*time.Millisecond, delay)
+			}
+			decision, delay := budget.decide("vip", "model-a", 7, time.Second, true, false)
+			assert.Equal(t, relayRetryNone, decision)
+			assert.Zero(t, delay)
+		})
+	}
+}
+
 func TestWaitForRelayFastFailureRetryHonorsCancellationAndZeroDelay(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

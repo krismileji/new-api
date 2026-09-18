@@ -24,6 +24,12 @@ import { useWatch, type UseFormReturn } from 'react-hook-form'
 import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
 import {
+  FieldDescription,
+  FieldGroup,
+  FieldLegend,
+  FieldSet,
+} from '@/components/ui/field'
+import {
   FormControl,
   FormDescription,
   FormField,
@@ -720,6 +726,121 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
 
       <Separator />
 
+      <FieldSet>
+        <FieldLegend variant='label'>快速失败重试</FieldLegend>
+        <FieldDescription>
+          可重试错误在界限内返回时，先在当前渠道额外重试；独立于稳定性保护，不消耗普通重试次数
+        </FieldDescription>
+        <FieldGroup className='grid items-start gap-4 sm:grid-cols-3'>
+          <FormField
+            control={props.form.control}
+            name='fastFailureSeconds'
+            render={({ field }) => (
+              <FormItem>
+                <ChannelMonitorSettingLabel
+                  label='快速失败界限'
+                  helpKey='fastFailureThreshold'
+                />
+                <InputGroup className='ring-inset'>
+                  <FormControl>
+                    <InputGroupInput
+                      type='number'
+                      min={0.1}
+                      max={59.9}
+                      step={0.1}
+                      inputMode='decimal'
+                      {...field}
+                      aria-invalid={Boolean(
+                        props.form.formState.errors.fastFailureSeconds
+                      )}
+                    />
+                  </FormControl>
+                  <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
+                </InputGroup>
+                <FormDescription>耗时不超过此界限时可触发重试</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={props.form.control}
+            name='fastFailureSameChannelRetryCount'
+            render={({ field }) => (
+              <FormItem>
+                <ChannelMonitorSettingLabel
+                  label='同渠道快速重试'
+                  helpKey='fastFailureSameChannelRetry'
+                />
+                <InputGroup className='ring-inset'>
+                  <FormControl>
+                    <InputGroupInput
+                      type='number'
+                      min={0}
+                      max={
+                        MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_COUNT
+                      }
+                      step={1}
+                      inputMode='numeric'
+                      value={field.value}
+                      onBlur={field.onBlur}
+                      onChange={field.onChange}
+                      name={field.name}
+                      ref={field.ref}
+                      aria-invalid={Boolean(
+                        props.form.formState.errors
+                          .fastFailureSameChannelRetryCount
+                      )}
+                    />
+                  </FormControl>
+                  <InputGroupAddon align='inline-end'>次</InputGroupAddon>
+                </InputGroup>
+                <FormDescription>0 表示关闭，独立于普通重试</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+          <FormField
+            control={props.form.control}
+            name='fastFailureSameChannelRetryDelayMs'
+            render={({ field }) => (
+              <FormItem>
+                <ChannelMonitorSettingLabel
+                  label='快速重试间隔'
+                  helpKey='fastFailureSameChannelRetryDelay'
+                />
+                <InputGroup className='ring-inset'>
+                  <FormControl>
+                    <InputGroupInput
+                      type='number'
+                      min={0}
+                      max={
+                        MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_DELAY_MS
+                      }
+                      step={1}
+                      inputMode='numeric'
+                      value={field.value}
+                      onBlur={field.onBlur}
+                      onChange={field.onChange}
+                      name={field.name}
+                      ref={field.ref}
+                      aria-invalid={Boolean(
+                        props.form.formState.errors
+                          .fastFailureSameChannelRetryDelayMs
+                      )}
+                    />
+                  </FormControl>
+                  <InputGroupAddon align='inline-end'>毫秒</InputGroupAddon>
+                </InputGroup>
+                <FormDescription>每次同渠道快速重试前等待</FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </FieldGroup>
+      </FieldSet>
+
+      <Separator />
+
       <div className='flex flex-col gap-4'>
         <FormField
           control={props.form.control}
@@ -1075,42 +1196,12 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                 </FormItem>
               )}
             />
-            <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6'>
+            <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
               <GroupPolicyPercentField
                 form={props.form}
                 name='fastFailurePenaltyPercent'
                 label='快速失败惩罚'
                 helpKey='fastFailurePenalty'
-              />
-              <FormField
-                control={props.form.control}
-                name='fastFailureSeconds'
-                render={({ field }) => (
-                  <FormItem>
-                    <ChannelMonitorSettingLabel
-                      label='快速失败界限'
-                      helpKey='fastFailureThreshold'
-                    />
-                    <FormControl>
-                      <InputGroup className='ring-inset'>
-                        <InputGroupInput
-                          type='number'
-                          min={0.1}
-                          max={59.9}
-                          step={0.1}
-                          inputMode='decimal'
-                          {...field}
-                          aria-invalid={Boolean(
-                            props.form.formState.errors.fastFailureSeconds
-                          )}
-                        />
-                        <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
-                      </InputGroup>
-                    </FormControl>
-                    <FormDescription>以内按快速失败惩罚计算</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
               />
               <FormField
                 control={props.form.control}
@@ -1138,84 +1229,6 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       </InputGroup>
                     </FormControl>
                     <FormDescription>达到后按完整失败计算</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={props.form.control}
-                name='fastFailureSameChannelRetryCount'
-                render={({ field }) => (
-                  <FormItem>
-                    <ChannelMonitorSettingLabel
-                      label='同渠道快速重试'
-                      helpKey='fastFailureSameChannelRetry'
-                    />
-                    <FormControl>
-                      <InputGroup className='ring-inset'>
-                        <InputGroupInput
-                          type='number'
-                          min={0}
-                          max={
-                            MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_COUNT
-                          }
-                          step={1}
-                          inputMode='numeric'
-                          value={field.value}
-                          onBlur={field.onBlur}
-                          onChange={field.onChange}
-                          name={field.name}
-                          ref={field.ref}
-                          aria-invalid={Boolean(
-                            props.form.formState.errors
-                              .fastFailureSameChannelRetryCount
-                          )}
-                        />
-                        <InputGroupAddon align='inline-end'>次</InputGroupAddon>
-                      </InputGroup>
-                    </FormControl>
-                    <FormDescription>
-                      0 表示关闭，独立于普通重试
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={props.form.control}
-                name='fastFailureSameChannelRetryDelayMs'
-                render={({ field }) => (
-                  <FormItem>
-                    <ChannelMonitorSettingLabel
-                      label='快速重试间隔'
-                      helpKey='fastFailureSameChannelRetryDelay'
-                    />
-                    <FormControl>
-                      <InputGroup className='ring-inset'>
-                        <InputGroupInput
-                          type='number'
-                          min={0}
-                          max={
-                            MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_DELAY_MS
-                          }
-                          step={1}
-                          inputMode='numeric'
-                          value={field.value}
-                          onBlur={field.onBlur}
-                          onChange={field.onChange}
-                          name={field.name}
-                          ref={field.ref}
-                          aria-invalid={Boolean(
-                            props.form.formState.errors
-                              .fastFailureSameChannelRetryDelayMs
-                          )}
-                        />
-                        <InputGroupAddon align='inline-end'>
-                          毫秒
-                        </InputGroupAddon>
-                      </InputGroup>
-                    </FormControl>
-                    <FormDescription>每次同渠道快速重试前等待</FormDescription>
                     <FormMessage />
                   </FormItem>
                 )}

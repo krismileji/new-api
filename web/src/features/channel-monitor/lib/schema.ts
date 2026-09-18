@@ -632,12 +632,11 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
     normalized.minSamples = defaults.minSamples
     normalized.recoveryStabilityScore = defaults.recoveryStabilityScore
     normalized.fastFailurePenaltyPercent = defaults.fastFailurePenaltyPercent
-    normalized.fastFailureSeconds = defaults.fastFailureSeconds
-    normalized.fastFailureSameChannelRetryCount =
-      defaults.fastFailureSameChannelRetryCount
-    normalized.fastFailureSameChannelRetryDelayMs =
-      defaults.fastFailureSameChannelRetryDelayMs
-    normalized.slowFailureSeconds = defaults.slowFailureSeconds
+    // Keep the inactive scoring range valid for independently configured retries.
+    normalized.slowFailureSeconds =
+      Number(policy.fastFailureSeconds) < defaults.slowFailureSeconds
+        ? defaults.slowFailureSeconds
+        : 60
     normalized.burstFailureWindowMinutes = defaults.burstFailureWindowMinutes
     normalized.burstFailureWindowRequests = defaults.burstFailureWindowRequests
     normalized.burstFailureThresholdPercent =

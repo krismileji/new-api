@@ -253,20 +253,22 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     constraints: '最终仍失败的请求始终按一次完整失败计',
   }),
   fastFailureThreshold: smartScheduleSettingHelp({
-    meaning: '定义使用快速失败惩罚的耗时上界。',
+    meaning:
+      '定义可触发同渠道快速重试的失败耗时上界；开启稳定性保护时也用于快速失败惩罚。',
     unit: '秒',
     range: '>0 且 <60',
-    defaultValue: '1',
-    scheduleRelation: NEXT_OBSERVATION,
-    constraints: '必须小于慢失败界限',
+    defaultValue: '3',
+    scheduleRelation: '重试从下一次相关请求使用；评分在下一条有效观测后更新',
+    constraints: '重试不依赖稳定性保护；开启保护时必须小于慢失败界限',
   }),
   fastFailureSameChannelRetry: smartScheduleSettingHelp({
     meaning: '设定可重试快速失败在当前渠道的额外重试次数。',
     unit: '次',
     range: '0–10 的整数',
-    defaultValue: '0（关闭）',
+    defaultValue: '3',
     scheduleRelation: NEXT_REQUEST,
-    constraints: '不消耗普通重试次数，用尽后才进入跨渠道重试',
+    constraints:
+      '0 表示关闭；不依赖稳定性保护，不消耗普通重试次数，用尽后才进入跨渠道重试',
   }),
   fastFailureSameChannelRetryDelay: smartScheduleSettingHelp({
     meaning: '设定每次同渠道快速重试前的固定等待。',
