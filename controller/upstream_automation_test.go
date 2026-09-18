@@ -13,6 +13,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -75,6 +77,14 @@ func TestUpstreamAutomationDatabaseMatrix(t *testing.T) {
 			})
 			t.Run("查询故障恢复后继续执行且多渠道只调用一次", func(t *testing.T) {
 				db := setupChannelMonitorCustomActionRefreshDB(t, engine)
+				// Automatic recovery needs a complete estimate even without a warning threshold.
+				client := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+				originalWrite, originalRead, originalRDB, originalEnabled := common.RDBMonitorWrite, common.RDBMonitorRead, common.RDB, common.RedisEnabled
+				common.RDBMonitorWrite, common.RDBMonitorRead, common.RDB, common.RedisEnabled = client, client, client, true
+				t.Cleanup(func() {
+					common.RDBMonitorWrite, common.RDBMonitorRead, common.RDB, common.RedisEnabled = originalWrite, originalRead, originalRDB, originalEnabled
+					assert.NoError(t, client.Close())
+				})
 				disableChannelMonitorSSRFProtection(t)
 				useChannelMonitorOptionMap(t, map[string]string{channelMonitorAutoEnableOnBalanceRecoveryOption: "true", "GroupRatio": `{"default":1}`})
 				previous := ratio_setting.GroupRatio2JSONString()
@@ -120,6 +130,7 @@ func TestUpstreamAutomationDatabaseMatrix(t *testing.T) {
 					}
 					require.NoError(t, db.Create(&model.ChannelRatioMonitor{ChannelId: id, Ratio: 0.5, UpdatedTime: updatedTime, UpstreamType: "custom", UpstreamBaseURL: server.URL, CustomUpstreamConfig: raw, UpstreamRatioSyncDisabled: true, BalanceConsecutiveFailures: 100, LastBalanceError: "旧查询失败", BalanceAutoDisableThreshold: &threshold}).Error)
 				}
+				require.NoError(t, service.ReloadChannelConcurrencyLimits(t.Context()))
 				view, err := service.SaveUpstreamAutomation(t.Context(), config)
 				require.NoError(t, err)
 				now := time.Date(2026, 9, 17, 4, 0, 0, 0, time.UTC)

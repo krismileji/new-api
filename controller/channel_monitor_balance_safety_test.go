@@ -36,6 +36,7 @@ func TestChannelMonitorBalanceSafetyDatabaseMatrix(t *testing.T) {
 			}{
 				{"snapshot_schema_upgrade", verifyChannelMonitorBalanceSnapshotUpgrade},
 				{"settlement_order", verifyChannelMonitorBalanceSettlementOrder},
+				{"disable_threshold_independent_of_warning", verifyChannelMonitorBalanceDisableThresholdIndependentOfWarning},
 				{"idle_balance_recovery", verifyChannelMonitorBalanceIdleRecovery},
 				{"missing_balance", verifyChannelMonitorMissingSub2APIBalance},
 				{"failed_balance_recovery", verifyChannelMonitorFailedBalanceRecovery},

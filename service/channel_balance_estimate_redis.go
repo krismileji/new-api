@@ -262,12 +262,11 @@ local balance = get('balance')
 local consumption = get('completed') + get('inflight')
 local low = false
 local recover = false
-local warning = tonumber(redis.call('HGET', state, 'warning') or '')
 local threshold = tonumber(redis.call('HGET', state, 'threshold') or '')
 if available and get('enabled') == 1 and threshold then
   local effective = balance
-  if warning and balance < warning and get('coverage') == 1 then effective = balance - consumption end
-  low = (effective + (warning and balance < warning and get('coverage') == 1 and get('uncertain') or 0)) < threshold
+  if get('coverage') == 1 then effective = balance - consumption end
+  low = (effective + (get('coverage') == 1 and get('uncertain') or 0)) < threshold
   recover = complete and effective >= threshold
 end
 local decision = low and 'low' or (recover and 'ok' or 'unknown')
@@ -279,7 +278,7 @@ if #policies > 0 then
     local value = 'unknown'
     if available and policy.enabled and type(policy.threshold) == 'number' then
       local effective = balance
-      local estimating = type(policy.warning) == 'number' and balance < policy.warning and get('coverage') == 1
+      local estimating = get('coverage') == 1
       if estimating then effective = balance - consumption end
       if effective + (estimating and get('uncertain') or 0) < policy.threshold then
         value = 'low'

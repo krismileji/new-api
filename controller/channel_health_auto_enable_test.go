@@ -138,6 +138,11 @@ func TestChannelMonitorAllowsHealthCheckAutoEnable(t *testing.T) {
 				monitor := *test.monitor
 				monitor.ChannelId = channel.Id
 				require.NoError(t, db.Create(&monitor).Error)
+				if monitor.UpstreamBalance != nil && !monitor.UpstreamBalanceSyncDisabled {
+					_, applied, err := recordChannelMonitorBalanceUpdate(t.Context(), monitor, monitor.UpstreamBalance, "")
+					require.NoError(t, err)
+					require.True(t, applied)
+				}
 			}
 
 			allowed, err := channelMonitorAllowsHealthCheckAutoEnable(channel.Id)

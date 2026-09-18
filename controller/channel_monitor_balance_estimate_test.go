@@ -8,7 +8,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -139,13 +141,98 @@ func verifyChannelMonitorBalanceSettlementOrder(t *testing.T, db *gorm.DB) {
 	assert.False(t, ability.Enabled)
 }
 
+func verifyChannelMonitorBalanceDisableThresholdIndependentOfWarning(t *testing.T, db *gorm.DB) {
+	useChannelMonitorOptionMap(t, map[string]string{})
+	originalRatios := ratio_setting.GroupRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"vip":1}`))
+	t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios)) })
+	for index, test := range []struct {
+		name    string
+		warning *float64
+	}{
+		{"未设置预警值", nil},
+		{"余额高于预警值", common.GetPointer(1.0)},
+		{"余额等于预警值", common.GetPointer(24.0)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			channel := model.Channel{Id: 701 + index, Name: test.name, Group: "vip", Models: "model-a", Status: common.ChannelStatusEnabled}
+			require.NoError(t, db.Create(&channel).Error)
+			require.NoError(t, db.Create(&model.Ability{ChannelId: channel.Id, Group: "vip", Model: "model-a", Enabled: true}).Error)
+			monitor := model.ChannelRatioMonitor{ChannelId: channel.Id, UpstreamRevision: 1, UpstreamType: service.NewAPIUpstreamType,
+				Ratio: 1, UpdatedTime: 1, BalanceWarningThreshold: test.warning, BalanceAutoDisableThreshold: common.GetPointer(5.0)}
+			require.NoError(t, db.Create(&monitor).Error)
+			evaluation, applied, err := recordChannelMonitorBalanceUpdate(t.Context(), monitor, common.GetPointer(24.0), "")
+			require.NoError(t, err)
+			require.True(t, applied)
+			require.True(t, evaluation.Complete)
+			t.Cleanup(func() { assert.NoError(t, service.FlushChannelDailyCostEvents()) })
+
+			var crossing *gin.Context
+			for _, price := range []float64{19, 1} {
+				ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+				ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+				service.CaptureChannelDailyCostSnapshot(ctx, channel.Id)
+				service.BeginChannelDailyCostAttempt(ctx, channel.Id)
+				service.PrepareChannelBalanceAttempt(ctx, &relaycommon.RelayInfo{
+					ChannelMeta: &relaycommon.ChannelMeta{ChannelId: channel.Id}, OriginModelName: "model-a",
+					PriceData: types.PriceData{UsePrice: true, ModelPrice: price},
+				})
+				service.MarkChannelDailyCostRequestDispatched(ctx)
+				if price == 19 {
+					evaluation, err := evaluateChannelMonitorBalance(t.Context(), monitor, 24)
+					require.NoError(t, err)
+					assert.Equal(t, 5.0, evaluation.EffectiveBalance)
+					disabled, err := autoDisableChannelMonitorForLowBalanceWithContext(t.Context(), monitor, &channel, 24)
+					require.NoError(t, err)
+					assert.False(t, disabled, "等于禁用阈值时保持启用")
+				}
+				crossing = ctx
+			}
+			config := service.ChannelBalanceConfigForMonitor(monitor)
+			estimate, err := service.GetChannelBalanceEstimate(t.Context(), config)
+			require.NoError(t, err)
+			assert.Equal(t, 4.0, estimate.EstimatedBalance)
+			assert.Equal(t, "low", estimate.Decision)
+			handled, err := applyChannelBalanceRealtimePolicy(t.Context(), config, estimate)
+			require.NoError(t, err)
+			require.True(t, handled)
+			stored, err := model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, common.ChannelStatusAutoDisabled, stored.Status)
+			assert.Contains(t, stored.GetOtherInfo()["status_reason"], "估算余额 4")
+			var ability model.Ability
+			require.NoError(t, db.First(&ability, "channel_id = ?", channel.Id).Error)
+			assert.False(t, ability.Enabled)
+			allowed, err := channelMonitorAllowsHealthCheckAutoEnable(channel.Id)
+			require.NoError(t, err)
+			assert.False(t, allowed, "健康检查不能绕过进行中费用重新启用渠道")
+
+			service.RecordPerCallChannelDailyCost(crossing, channel.Id, "model-a", types.PriceData{UsePrice: true, ModelPrice: 0})
+			estimate, err = service.GetChannelBalanceEstimate(t.Context(), config)
+			require.NoError(t, err)
+			assert.Equal(t, 5.0, estimate.EstimatedBalance)
+			allowed, err = channelMonitorAllowsHealthCheckAutoEnable(channel.Id)
+			require.NoError(t, err)
+			assert.True(t, allowed)
+			handled, err = applyChannelBalanceRealtimePolicy(t.Context(), config, estimate)
+			require.NoError(t, err)
+			require.True(t, handled)
+			stored, err = model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, common.ChannelStatusEnabled, stored.Status)
+			require.NoError(t, db.First(&ability, "channel_id = ?", channel.Id).Error)
+			assert.True(t, ability.Enabled)
+		})
+	}
+}
+
 func TestChannelMonitorBalanceEstimateUnavailableBlocksRecovery(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	channel := model.Channel{Id: 41, Name: "未知预估", Group: "vip", Status: common.ChannelStatusAutoDisabled}
 	channel.SetOtherInfo(map[string]interface{}{"status_reason": channelMonitorBalancePolicyDisableReasonPrefix + "3" + channelMonitorBalancePolicyDisableThresholdMarker + "5"})
 	require.NoError(t, db.Create(&channel).Error)
 	monitor := model.ChannelRatioMonitor{ChannelId: channel.Id, UpstreamType: service.NewAPIUpstreamType, UpstreamRevision: 1,
-		UpstreamBalance: common.GetPointer(10.0), BalanceWarningThreshold: common.GetPointer(20.0), BalanceAutoDisableThreshold: common.GetPointer(5.0)}
+		UpstreamBalance: common.GetPointer(10.0), BalanceAutoDisableThreshold: common.GetPointer(5.0)}
 	require.NoError(t, db.Create(&monitor).Error)
 	allowed, err := channelMonitorAllowsHealthCheckAutoEnable(channel.Id)
 	require.ErrorIs(t, err, service.ErrChannelBalanceUnavailable)

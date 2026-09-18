@@ -86,11 +86,11 @@ Sub2API 配置要求手动 Token 必填，Refresh Token 可选。首次配置时
 
 每个渠道可配置余额预警值和余额自动禁用阈值：
 
-- 余额低于预警值时发送一次通知；恢复到阈值以上后清除通知去重状态，下一次再次跌破时可重新通知。
-- 余额低于自动禁用阈值时，把启用渠道改为系统自动禁用，并记录明确的禁用原因。
+- 余额预警值仅用于页面预警和邮件通知：余额低于预警值时发送一次通知；恢复到阈值以上后清除通知去重状态，下一次再次跌破时可重新通知。
+- 有效余额低于自动禁用阈值时，把启用渠道改为系统自动禁用，并记录明确的禁用原因；该判断不依赖是否配置或触发余额预警。
 - 保存固定余额的自定义上游时也立即执行自动禁用判断。
 
-禁用比较使用严格小于，余额等于阈值时保持启用。配置预警值和禁用阈值后，余额低于预警值时还会扣除尚未被上游余额反映的本地消费估算。对账同时保留“上游先扣款、本地稍后入账”的差额，后续本地入账先抵扣该差额，避免同一笔支出重复扣算；该差额只用于余额估算，不修改用户钱包或实际计费。
+禁用比较使用严格小于，有效余额等于阈值时保持启用。开启余额同步并配置自动禁用阈值后，只要 Redis 估算可用且请求覆盖有效，就按“最近同步的上游余额 − 本轮已完成消费 − 进行中预估”判断，即使没有设置预警值或上游余额尚未低于预警值也生效。余额查询期间完成、可能已被上游扣除的待确认消费会从本次禁用扣算中排除，避免重复扣减；缺少有效估算时只能依据上游余额禁用，不能据此自动恢复。请求开始和结算都会触发异步检查，禁用不主动中断进行中的请求。这些估算不修改用户钱包或实际计费。
 
 Sub2API 账号和 Token 认证的余额响应必须包含有效的 `balance` 数字。字段缺失、`balance: null` 或 `data: null` 都记录为获取失败并保留原余额；明确返回 `0` 时才按零余额执行策略。
 
@@ -166,3 +166,24 @@ $env:MONITOR_BALANCE_POSTGRES_DSN = 'postgres://postgres:balance-test-only@127.0
 - `TestRunChannelSmartScheduleManualPrimaryAllowsStabilityDegrade`
 - `TestUpdateChannelMonitorSettingsValidatesAndPersists`
 - `TestUpdateGroupedChannelAddressValidatesMembersAndAdvancesRevision`
+
+## 禁用阈值独立判断验证（2026-09-18）
+
+修正预警值与余额保护的耦合：普通渠道、共享余额来源的逐渠道策略、健康检查恢复均按自动禁用阈值独立判断。新增回归覆盖未设置预警值、上游余额高于或等于预警值、已完成与进行中消费共同跨过禁用阈值、阈值相等时保持启用、实际消费下降后的恢复，以及估算不可用时阻止恢复。原有恢复测试显式初始化 Redis 和请求覆盖状态，继续验证自动恢复、人工禁用保护和重置接口不重复执行。
+
+使用 Go 1.26.5，余额安全与残留请求恢复矩阵、共享余额来源矩阵、上游自动任务矩阵在真实 SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24 上全部通过。Redis 8.8.0 的现有原子操作回归、定时同步、预警邮件去重、恢复回归及根模块构建通过。没有表结构、迁移、数据库依赖、独立日志库路径或 `relaykit/` 改动；所有修改文件均为下游文件。
+
+以下为隔离测试容器的连接和实际验证命令。两个数据库均为空的专用测试库；密码仅用于本次临时容器，复现时替换映射端口：
+
+```powershell
+$env:MONITOR_BALANCE_MYSQL_DSN = 'root:balance-threshold-test-only@tcp(127.0.0.1:59931)/new_api_monitor_balance_test?parseTime=true&charset=utf8mb4'
+$env:MONITOR_BALANCE_POSTGRES_DSN = 'postgres://postgres:balance-threshold-test-only@127.0.0.1:59934/new_api_monitor_balance_test?sslmode=disable'
+$env:TEST_CUSTOM_ACTION_MYSQL_DSN = 'root:balance-threshold-test-only@tcp(127.0.0.1:59931)/new_api_custom_action_test?parseTime=true&charset=utf8mb4'
+$env:TEST_CUSTOM_ACTION_POSTGRES_DSN = 'postgres://postgres:balance-threshold-test-only@127.0.0.1:59934/new_api_custom_action_test?sslmode=disable'
+$env:TEST_CHANNEL_BALANCE_REDIS_ADDR = '127.0.0.1:59938'
+
+go test ./service ./controller -run 'Test(ChannelBalance|UpstreamAccount.*Balance|ChannelMonitorBalance|ChannelMonitorAllowsHealthCheckAutoEnable)' -count=1 -timeout=180s -v
+go test ./controller -run '^TestChannelMonitorBalanceSource' -count=1 -timeout=120s -v
+go test ./controller -run 'Test(AutoDisableChannelMonitorForLowBalance|RecordChannelMonitorBalanceUpdate|FetchChannelMonitorUpstream|ManualSharedUpstreamRequest|SaveChannelMonitorCustomFixedBalance|RunChannelRatioMonitorTask|CostRatioRecovery|ChannelMonitor.*Recover|UpstreamAutomation)' -count=1 -timeout=180s -v
+go build ./...
+```

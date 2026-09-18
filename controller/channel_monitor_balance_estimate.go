@@ -33,7 +33,7 @@ func evaluateChannelMonitorBalance(ctx context.Context, monitor model.ChannelRat
 	if math.IsNaN(balance) || math.IsInf(balance, 0) {
 		return evaluation, errors.New("上游余额不是有效数字")
 	}
-	if monitor.BalanceWarningThreshold == nil || monitor.BalanceAutoDisableThreshold == nil || monitor.UpstreamBalanceSyncDisabled {
+	if monitor.BalanceAutoDisableThreshold == nil || monitor.UpstreamBalanceSyncDisabled {
 		return evaluation, nil
 	}
 	estimate, err := service.GetChannelBalanceEstimate(ctx, service.ChannelBalanceConfigForMonitor(monitor))
@@ -43,7 +43,7 @@ func evaluateChannelMonitorBalance(ctx context.Context, monitor model.ChannelRat
 	}
 	evaluation.Estimate = &estimate
 	evaluation.Complete = estimate.Complete
-	if balance < *monitor.BalanceWarningThreshold && estimate.Coverage {
+	if estimate.Coverage {
 		// A query-window debit may already be in the raw balance. It can block
 		// recovery, but must not be the only reason to disable the channel.
 		evaluation.EstimatedConsumption = estimate.PolicyConsumption

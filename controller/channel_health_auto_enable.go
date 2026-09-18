@@ -61,20 +61,13 @@ func channelMonitorAllowsHealthCheckAutoEnable(channelId int) (bool, error) {
 			threshold < 0 || threshold > maxChannelMonitorBalanceThreshold {
 			return false, nil
 		}
-		effectiveBalance := *monitor.UpstreamBalance
-		if monitor.BalanceWarningThreshold != nil {
-			evaluation, estimateErr := evaluateChannelMonitorBalance(
-				context.Background(), monitor, effectiveBalance,
-			)
-			if estimateErr != nil {
-				return false, fmt.Errorf("计算余额消费估算失败: %w", estimateErr)
-			}
-			if !evaluation.Complete {
-				return false, nil
-			}
-			effectiveBalance = evaluation.EffectiveBalance
+		evaluation, estimateErr := evaluateChannelMonitorBalance(
+			context.Background(), monitor, *monitor.UpstreamBalance,
+		)
+		if estimateErr != nil {
+			return false, fmt.Errorf("计算余额消费估算失败: %w", estimateErr)
 		}
-		if effectiveBalance < threshold {
+		if !evaluation.Complete || evaluation.EffectiveBalance < threshold {
 			return false, nil
 		}
 	}
