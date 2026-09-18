@@ -1,5 +1,6 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { type ReactElement, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
 
@@ -10,6 +11,7 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
+  DialogTrigger,
 } from '@/components/ui/dialog'
 import {
   Form,
@@ -38,6 +40,26 @@ type Props = {
   channel: ChannelMonitorItem
   open: boolean
   onOpenChange: (open: boolean) => void
+  trigger?: ReactElement
+}
+
+export function ChannelProbePolicyAction(props: {
+  channel: ChannelMonitorItem
+}) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <ChannelProbePolicyDialog
+      channel={props.channel}
+      open={open}
+      onOpenChange={setOpen}
+      trigger={
+        <Button type='button' variant='outline'>
+          探测策略
+        </Button>
+      }
+    />
+  )
 }
 
 export function ChannelProbePolicyDialog(props: Props) {
@@ -49,6 +71,7 @@ export function ChannelProbePolicyDialog(props: Props) {
   })
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      {props.trigger && <DialogTrigger render={props.trigger} />}
       <DialogContent className='max-h-[90dvh] overflow-y-auto sm:max-w-xl'>
         <DialogHeader>
           <DialogTitle>渠道探测策略</DialogTitle>

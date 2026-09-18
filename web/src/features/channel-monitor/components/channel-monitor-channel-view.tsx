@@ -96,7 +96,6 @@ type ChannelMonitorChannelViewProps = {
   onToggleStatus: (channel: ChannelMonitorItem) => void
   onTestConnection: (channel: ChannelMonitorItem) => void
   onEditConcurrency: (channel: ChannelMonitorItem) => void
-  onEditProbePolicy?: (channel: ChannelMonitorItem) => void
   onEditGroups: (channel: ChannelMonitorItem) => void
   onConfigureUpstream: (channel: ChannelMonitorItem) => void
   onViewHistory: (channel: ChannelMonitorItem) => void
@@ -591,13 +590,6 @@ export function ChannelMonitorChannelView(
                       icon={GaugeIcon}
                       onClick={() => props.onEditConcurrency(channel)}
                     />
-                    {props.onEditProbePolicy && (
-                      <ChannelActionButton
-                        label='探测策略'
-                        icon={Settings02Icon}
-                        onClick={() => props.onEditProbePolicy?.(channel)}
-                      />
-                    )}
                     <ChannelActionButton
                       label='更改关联分组'
                       icon={Layers01Icon}

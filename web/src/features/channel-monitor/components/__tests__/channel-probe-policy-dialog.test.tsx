@@ -1,14 +1,18 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, expect, test, vi } from 'vitest'
 
+import { ChannelTestDialogForChannel } from '@/features/channels/components/dialogs/channel-test-dialog'
 import { api } from '@/lib/api'
 
 import type { ChannelMonitorItem, ChannelProbePolicy } from '../../types'
 import type { ChannelPassivePeriod } from '../../types-passive'
 import { ChannelPassivePeriodMetrics } from '../channel-passive-monitor-panel'
-import { ChannelProbePolicyDialog } from '../channel-probe-policy-dialog'
+import {
+  ChannelProbePolicyAction,
+  ChannelProbePolicyDialog,
+} from '../channel-probe-policy-dialog'
 
 const originalAdapter = api.defaults.adapter
 let client: QueryClient
@@ -17,7 +21,7 @@ afterEach(() => {
   client?.clear()
 })
 
-test('加载后保存独立策略，关闭自动禁用会一并关闭小输入响应并保留文本', async () => {
+test('在测试连接中保存策略后保留测试弹窗和筛选条件，关闭自动禁用会关闭小输入响应并保留文本', async () => {
   const policy: ChannelProbePolicy = {
     auto_probe_disabled: true,
     small_input_response_enabled: true,
@@ -43,19 +47,38 @@ test('加载后保存独立策略，关闭自动禁用会一并关闭小输入�
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   const close = vi.fn()
+  const channel = {
+    id: 17,
+    name: '禁探测渠道',
+    models: 'test-model,another-model',
+    test_model: 'test-model',
+  } as ChannelMonitorItem
   render(
     <QueryClientProvider client={client}>
-      <ChannelProbePolicyDialog
+      <ChannelTestDialogForChannel
         open
-        channel={{ id: 17, name: '禁探测渠道' } as ChannelMonitorItem}
+        channel={channel}
         onOpenChange={close}
+        footerActions={<ChannelProbePolicyAction channel={channel} />}
       />
     </QueryClientProvider>
   )
+  const user = userEvent.setup()
+  const testDialog = screen.getByRole('dialog', {
+    name: 'Test Channel Connection:禁探测渠道',
+  })
+  await user.type(
+    within(testDialog).getByPlaceholderText('Filter models...'),
+    'test-model'
+  )
+  const policyButton = within(testDialog).getByRole('button', {
+    name: '探测策略',
+  })
+  policyButton.focus()
+  await user.keyboard('{Enter}')
   expect(await screen.findByLabelText('输入阈值（k tokens）')).toHaveValue(
     '1.001'
   )
-  const user = userEvent.setup()
   await user.click(screen.getByRole('switch', { name: '禁止自动探测' }))
   expect(screen.queryByLabelText('自定义响应内容')).not.toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: '保存策略' }))
@@ -66,7 +89,20 @@ test('加载后保存独立策略，关闭自动禁用会一并关闭小输入�
     small_input_response_text: '第一行\n第二行',
     probe_policy_revision: 4,
   })
-  await waitFor(() => expect(close).toHaveBeenCalledWith(false))
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: '渠道探测策略' })
+    ).not.toBeInTheDocument()
+  )
+  expect(testDialog).toBeVisible()
+  expect(
+    within(testDialog).getByPlaceholderText('Filter models...')
+  ).toHaveValue('test-model')
+  expect(
+    within(testDialog).getByRole('button', { name: 'Test Connection' })
+  ).toBeEnabled()
+  expect(close).not.toHaveBeenCalled()
+  await waitFor(() => expect(policyButton).toHaveFocus())
 })
 
 test('配置读取失败时显示重试入口，不提交默认值覆盖已有配置', async () => {

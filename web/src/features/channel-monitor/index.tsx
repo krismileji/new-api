@@ -113,7 +113,7 @@ import { ChannelMonitorTodaySuccessCard } from './components/channel-monitor-tod
 import { ChannelMonitorVariableGroupsDialog } from './components/channel-monitor-variable-groups-dialog'
 import { ChannelMonitorViewTabs } from './components/channel-monitor-view-tabs'
 import { ChannelPassiveMonitorPanel } from './components/channel-passive-monitor-panel'
-import { ChannelProbePolicyDialog } from './components/channel-probe-policy-dialog'
+import { ChannelProbePolicyAction } from './components/channel-probe-policy-dialog'
 import { ChannelRatioHistoryDialog } from './components/channel-ratio-history-dialog'
 import { EditChannelConcurrencyLimitDialog } from './components/edit-channel-concurrency-limit-dialog'
 import { EditChannelGroupsDialog } from './components/edit-channel-groups-dialog'
@@ -257,7 +257,6 @@ type MonitorView =
   | 'smart-schedule'
 type ChannelUpstreamFilter = 'all' | ChannelMonitorUpstreamType
 type ChannelDialogType =
-  | 'probe-policy'
   | 'concurrency'
   | 'groups'
   | 'upstream'
@@ -1442,12 +1441,6 @@ export function ChannelMonitor() {
                     type: 'concurrency',
                   })
                 }
-                onEditProbePolicy={(channel) =>
-                  setChannelDialog({
-                    channelId: channel.id,
-                    type: 'probe-policy',
-                  })
-                }
                 onEditGroups={(channel) =>
                   setChannelDialog({ channelId: channel.id, type: 'groups' })
                 }
@@ -1782,16 +1775,6 @@ export function ChannelMonitor() {
         {pageContent}
       </ChannelMonitorPageLayout>
 
-      {dialogChannel && channelDialog?.type === 'probe-policy' && (
-        <ChannelProbePolicyDialog
-          key={dialogChannel.id}
-          channel={dialogChannel}
-          open
-          onOpenChange={(open) => {
-            if (!open) setChannelDialog(null)
-          }}
-        />
-      )}
       {dialogChannel && channelDialog?.type === 'concurrency' && (
         <EditChannelConcurrencyLimitDialog
           key={dialogChannel.id}
@@ -1845,6 +1828,7 @@ export function ChannelMonitor() {
             if (!open) setChannelDialog(null)
           }}
           onTestComplete={refreshChannelMonitorAfterAction}
+          footerActions={<ChannelProbePolicyAction channel={dialogChannel} />}
         />
       )}
       {editingGroup && (

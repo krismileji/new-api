@@ -34,6 +34,7 @@ import {
 } from 'lucide-react'
 import {
   type ChangeEvent,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -110,6 +111,7 @@ type ChannelTestDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   onTestComplete?: () => void
+  footerActions?: ReactNode
 }
 
 export type ChannelTestTarget = Pick<
@@ -319,6 +321,7 @@ export function ChannelTestDialog({
   open,
   onOpenChange,
   onTestComplete,
+  footerActions,
 }: ChannelTestDialogProps) {
   const { currentRow } = useChannels()
 
@@ -332,6 +335,7 @@ export function ChannelTestDialog({
       open={open}
       onOpenChange={onOpenChange}
       onTestComplete={onTestComplete}
+      footerActions={footerActions}
     />
   )
 }
@@ -345,6 +349,7 @@ export function ChannelTestDialogForChannel(
       open={props.open}
       onOpenChange={props.onOpenChange}
       onTestComplete={props.onTestComplete}
+      footerActions={props.footerActions}
       currentRow={props.channel}
     />
   )
@@ -354,6 +359,7 @@ function ChannelTestDialogContent({
   open,
   onOpenChange,
   onTestComplete,
+  footerActions,
   currentRow,
 }: ChannelTestDialogContentProps) {
   const { t } = useTranslation()
@@ -1031,9 +1037,12 @@ function ChannelTestDialogContent({
         contentClassName='sm:max-w-4xl'
         bodyClassName='space-y-4'
         footer={
-          <Button variant='outline' onClick={handleClose}>
-            {t('Close')}
-          </Button>
+          <>
+            {footerActions}
+            <Button variant='outline' onClick={handleClose}>
+              {t('Close')}
+            </Button>
+          </>
         }
       >
         <div className='space-y-4 py-4'>
