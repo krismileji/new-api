@@ -713,6 +713,9 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		c.Set(common2.UpstreamRequestIdKey, upID)
 	}
 
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		resp.Body = &clientGoneResponseBody{ReadCloser: resp.Body, requestContext: c.Request.Context()}
+	}
 	_ = req.Body.Close()
 	_ = c.Request.Body.Close()
 	return resp, nil
