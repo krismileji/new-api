@@ -27,6 +27,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Field, FieldError } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import { formatDecimalNumber } from '@/lib/decimal-number'
 
 import { useUpdateOption } from '../hooks/use-update-option'
 
@@ -73,7 +74,7 @@ function objectToRows(prices: Record<string, number>): ToolPriceRow[] {
   return Object.entries(prices).map(([key, price], index) => ({
     id: index + 1,
     key,
-    price: String(price),
+    price: formatDecimalNumber(price),
   }))
 }
 

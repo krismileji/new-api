@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { formatDecimalNumber } from '@/lib/decimal-number'
+
 const DISPLAY_DECIMALS = 12
 const SNAP_DECIMALS = 8
 const SNAP_EPSILON = 1e-12
@@ -57,5 +59,7 @@ export function formatPricingNumber(value: unknown): string {
   if (num === null) return ''
 
   const normalized = snapFloatDrift(num)
-  return Number.parseFloat(normalized.toFixed(DISPLAY_DECIMALS)).toString()
+  return formatDecimalNumber(
+    Number.parseFloat(normalized.toFixed(DISPLAY_DECIMALS))
+  )
 }

@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { splitBillingExprAndRequestRules } from '@/features/pricing/lib/billing-expr'
+import { formatDecimalNumber } from '@/lib/decimal-number'
 
 import { safeJsonParse } from '../utils/json-parser'
 import { formatPricingNumber } from './pricing-format'
@@ -229,15 +230,15 @@ export const buildModelSnapshots = ({
     ...Object.keys(billingExprMap),
   ])
 
-  return Array.from(modelNames).map((name) => {
-    const price = priceMap[name]?.toString() || ''
-    const ratio = ratioMap[name]?.toString() || ''
-    const cache = cacheMap[name]?.toString() || ''
-    const createCache = createCacheMap[name]?.toString() || ''
-    const completion = completionMap[name]?.toString() || ''
-    const image = imageMap[name]?.toString() || ''
-    const audio = audioMap[name]?.toString() || ''
-    const audioCompletion = audioCompletionMap[name]?.toString() || ''
+  return [...modelNames].map((name) => {
+    const price = formatDecimalNumber(priceMap[name])
+    const ratio = formatDecimalNumber(ratioMap[name])
+    const cache = formatDecimalNumber(cacheMap[name])
+    const createCache = formatDecimalNumber(createCacheMap[name])
+    const completion = formatDecimalNumber(completionMap[name])
+    const image = formatDecimalNumber(imageMap[name])
+    const audio = formatDecimalNumber(audioMap[name])
+    const audioCompletion = formatDecimalNumber(audioCompletionMap[name])
 
     const modeForModel = billingModeMap[name]
     if (modeForModel === 'tiered_expr') {

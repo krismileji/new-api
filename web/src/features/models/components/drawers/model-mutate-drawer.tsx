@@ -80,6 +80,7 @@ import { useUpdateOption } from '@/features/system-settings/hooks/use-update-opt
 import { normalizeJsonString } from '@/features/system-settings/models/utils'
 import type { ModelSettings } from '@/features/system-settings/types'
 import { safeJsonParse } from '@/features/system-settings/utils/json-parser'
+import { formatDecimalNumber } from '@/lib/decimal-number'
 
 import { createModel, updateModel, getModel, getVendors } from '../../api'
 import { getNameRuleOptions, ENDPOINT_TEMPLATES } from '../../constants'
@@ -188,7 +189,7 @@ function readPricingConfig(
     return {
       ...EMPTY_PRICING_CONFIG,
       mode: 'per-request',
-      fields: { ...EMPTY_PRICING_FIELDS, price: price.toString() },
+      fields: { ...EMPTY_PRICING_FIELDS, price: formatDecimalNumber(price) },
     }
   }
 
@@ -196,9 +197,9 @@ function readPricingConfig(
   let completionPrice = ''
   if (ratio !== undefined && ratio !== null) {
     const tokenPrice = ratio * 2
-    promptPrice = tokenPrice.toString()
+    promptPrice = formatDecimalNumber(tokenPrice)
     if (completionRatio !== undefined && completionRatio !== null) {
-      completionPrice = (tokenPrice * completionRatio).toString()
+      completionPrice = formatDecimalNumber(tokenPrice * completionRatio)
     }
   }
 
@@ -206,12 +207,12 @@ function readPricingConfig(
     mode: 'per-token',
     fields: {
       price: '',
-      ratio: ratio?.toString() || '',
-      cacheRatio: cacheRatio?.toString() || '',
-      completionRatio: completionRatio?.toString() || '',
-      imageRatio: imageRatio?.toString() || '',
-      audioRatio: audioRatio?.toString() || '',
-      audioCompletionRatio: audioCompletionRatio?.toString() || '',
+      ratio: formatDecimalNumber(ratio),
+      cacheRatio: formatDecimalNumber(cacheRatio),
+      completionRatio: formatDecimalNumber(completionRatio),
+      imageRatio: formatDecimalNumber(imageRatio),
+      audioRatio: formatDecimalNumber(audioRatio),
+      audioCompletionRatio: formatDecimalNumber(audioCompletionRatio),
     },
     promptPrice,
     completionPrice,
@@ -389,7 +390,7 @@ export function ModelMutateDrawer({
     setPromptPrice(value)
     if (value && !Number.isNaN(Number.parseFloat(value))) {
       const ratio = Number.parseFloat(value) / 2
-      form.setValue('ratio', ratio.toString())
+      form.setValue('ratio', formatDecimalNumber(ratio))
     } else {
       form.setValue('ratio', '')
     }
@@ -406,7 +407,7 @@ export function ModelMutateDrawer({
     ) {
       const completionRatio =
         Number.parseFloat(value) / Number.parseFloat(promptPrice)
-      form.setValue('completionRatio', completionRatio.toString())
+      form.setValue('completionRatio', formatDecimalNumber(completionRatio))
     } else {
       form.setValue('completionRatio', '')
     }
@@ -1082,9 +1083,9 @@ export function ModelMutateDrawer({
                                     field.onChange(value)
                                     if (value) {
                                       setPromptPrice(
-                                        (
+                                        formatDecimalNumber(
                                           Number.parseFloat(value) * 2
-                                        ).toString()
+                                        )
                                       )
                                     } else {
                                       setPromptPrice('')
@@ -1125,7 +1126,9 @@ export function ModelMutateDrawer({
                                         Number.parseFloat(ratio) *
                                         2 *
                                         Number.parseFloat(value)
-                                      setCompletionPrice(compPrice.toString())
+                                      setCompletionPrice(
+                                        formatDecimalNumber(compPrice)
+                                      )
                                     } else {
                                       setCompletionPrice('')
                                     }

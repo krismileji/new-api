@@ -61,4 +61,18 @@ describe('tool price validation', () => {
 
     queryClient.clear()
   })
+
+  test('loads small tool prices as editable decimals without rounding', () => {
+    const queryClient = new QueryClient()
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ToolPriceSettings defaultValue='{"web_search":2e-7}' />
+      </QueryClientProvider>
+    )
+
+    expect(
+      screen.getByRole('spinbutton', { name: 'Price ($/1K calls): web_search' })
+    ).toHaveProperty('value', '0.0000002')
+    queryClient.clear()
+  })
 })

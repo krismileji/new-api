@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { Input as InputPrimitive } from '@base-ui/react/input'
 import * as React from 'react'
 
+import { formatDecimalNumber } from '@/lib/decimal-number'
 import { cn } from '@/lib/utils'
 
 function Input({ className, type, ...props }: React.ComponentProps<'input'>) {
@@ -31,6 +32,17 @@ function Input({ className, type, ...props }: React.ComponentProps<'input'>) {
         className
       )}
       {...props}
+      value={
+        typeof props.value === 'number' && String(props.value).includes('e')
+          ? formatDecimalNumber(props.value)
+          : props.value
+      }
+      defaultValue={
+        typeof props.defaultValue === 'number' &&
+        String(props.defaultValue).includes('e')
+          ? formatDecimalNumber(props.defaultValue)
+          : props.defaultValue
+      }
     />
   )
 }

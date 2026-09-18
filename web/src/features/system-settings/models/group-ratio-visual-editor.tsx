@@ -76,6 +76,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { formatDecimalNumber } from '@/lib/decimal-number'
 
 import { safeJsonParse } from '../utils/json-parser'
 
@@ -189,8 +190,10 @@ function buildGroupPricingRows(
     (name) => ({
       _id: createGroupPricingId(),
       name,
-      ratio: String(normalizeRatio(ratioMap[name])),
-      topupRatio: Object.hasOwn(topupMap, name) ? String(topupMap[name]) : '',
+      ratio: formatDecimalNumber(normalizeRatio(ratioMap[name])),
+      topupRatio: Object.hasOwn(topupMap, name)
+        ? formatDecimalNumber(topupMap[name])
+        : '',
       selectable: Object.hasOwn(usableMap, name),
       description: String(usableMap[name] ?? ''),
     })
@@ -1130,7 +1133,7 @@ function GroupOverrideDialog({
     }
 
     setTargetGroup(editData?.targetGroup ?? null)
-    setRatio(editData ? String(editData.ratio) : '')
+    setRatio(editData ? formatDecimalNumber(editData.ratio) : '')
   }, [editData, open])
 
   const baseRatio = targetGroup ? baseRatioByName.get(targetGroup) : undefined
@@ -1197,7 +1200,9 @@ function GroupOverrideDialog({
                 setRatio(val)
               }
             }}
-            placeholder={baseRatio === undefined ? '0.9' : String(baseRatio)}
+            placeholder={
+              baseRatio === undefined ? '0.9' : formatDecimalNumber(baseRatio)
+            }
           />
           <p className='text-muted-foreground text-xs'>
             {baseRatio !== undefined
@@ -1294,7 +1299,9 @@ function GroupDetailSheet(props: GroupDetailSheetProps) {
 
     return {
       ratio: entry?.ratio,
-      topupRatio: Object.hasOwn(topupMap, name) ? String(topupMap[name]) : null,
+      topupRatio: Object.hasOwn(topupMap, name)
+        ? formatDecimalNumber(topupMap[name])
+        : null,
       selectable: Object.hasOwn(usableMap, name),
       description: String(usableMap[name] ?? ''),
       incomingOverrides,
