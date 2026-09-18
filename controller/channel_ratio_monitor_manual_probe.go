@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
 
@@ -105,6 +106,9 @@ func recordChannelSmartScheduleProbeResult(
 ) (bool, string) {
 	if channel == nil {
 		return false, "渠道不可用，未计入智能调度样本"
+	}
+	if service.ShouldExcludeErrorFromSmartScheduling(result.newAPIError) {
+		return false, "命中错误码白名单，未计入智能调度样本"
 	}
 	probeLabel := "手动渠道测试"
 	if source == model.ChannelSmartScheduleSampleSourceStatusProbe {

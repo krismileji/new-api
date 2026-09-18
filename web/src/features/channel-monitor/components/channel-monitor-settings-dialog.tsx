@@ -1273,7 +1273,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                     <h3 className='text-sm font-medium'>错误规则</h3>
                     <ChannelMonitorFieldInfo
                       label='错误规则'
-                      description='统一控制上游错误的用户可见文案和屏蔽关键字。重试状态码请在系统设置中配置。'
+                      description='统一控制上游错误的用户可见文案、屏蔽关键字和白名单调度排除。重试状态码请在系统设置中配置。'
                     />
                   </div>
                   <div className='flex flex-col gap-5'>
@@ -1319,7 +1319,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                             <FormLabel>错误码白名单</FormLabel>
                             <ChannelMonitorFieldInfo
                               label='错误码白名单'
-                              description='命中的上游错误码或 HTTP 状态码不会进行错误映射和关键字屏蔽，原样返回给用户；每行填写一个，也支持逗号分隔，最多 32 个。'
+                              description='命中的上游错误码或 HTTP 状态码原样返回给用户，跳过错误映射和关键字屏蔽；对应失败不参与智能调度评分、保护和冷却，仍计入成功率统计。每行填写一个，也支持逗号分隔，最多 32 个。'
                             />
                           </div>
                           <FormControl>

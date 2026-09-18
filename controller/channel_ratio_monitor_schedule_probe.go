@@ -621,7 +621,7 @@ func runChannelSmartScheduleProbeOnce(
 			protectChannelSmartScheduleScheduledProbeFailure(
 				route.ChannelId, item.requestModel, probeResult.newAPIError,
 			)
-		} else {
+		} else if !service.ShouldExcludeErrorFromSmartScheduling(probeResult.newAPIError) {
 			recoveryRequest, recoveryErr := channelSmartScheduleProbeRecoveryRequest(
 				route.ChannelId,
 				item.requestModel,

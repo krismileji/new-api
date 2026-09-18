@@ -411,7 +411,7 @@ func applyChannelSmartScheduleRuntimeFailureWithSource(
 	effectAt int64,
 	redisEventSequence int64,
 ) error {
-	if err == nil || types.IsSkipRetryError(err) {
+	if err == nil || types.IsSkipRetryError(err) || service.ShouldExcludeErrorFromSmartScheduling(err) {
 		return nil
 	}
 	requestModelName := strings.TrimSpace(modelName)
