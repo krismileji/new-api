@@ -37,10 +37,31 @@ func fetchUpstreamAccountAutomationBalance(ctx context.Context, config service.U
 		return result.Amount, model.RecordUpstreamAccountBalance(ctx, account.ID, account.Revision, config.AccountLeaseID, result.Amount, "")
 	}
 	outcome, err := refreshUpstreamAccountBalanceUnderLease(ctx, account, members[0], config.AccountLeaseID, time.Duration(config.RequestTimeout)*time.Second)
-	return outcome.Result.Balance.Amount, err
+	if err != nil || outcome.Result.Balance.Amount == nil {
+		return outcome.Result.Balance.Amount, err
+	}
+	for _, member := range members {
+		if member.UpstreamBalanceSyncDisabled {
+			continue
+		}
+		channel, err := model.GetChannelById(member.ChannelId, true)
+		if err != nil {
+			return outcome.Result.Balance.Amount, err
+		}
+		if err := recoverUpstreamAutomationChannel(ctx, member, channel, *outcome.Result.Balance.Amount); err != nil {
+			return outcome.Result.Balance.Amount, err
+		}
+	}
+	return outcome.Result.Balance.Amount, nil
 }
 
 type upstreamAccountBalanceRoundKey struct{}
+
+type upstreamAccountBalanceRound struct {
+	results      sync.Map
+	forceRefresh bool
+}
+
 type upstreamAccountBalanceResult struct {
 	done    chan struct{}
 	outcome channelMonitorFetchOutcome
@@ -70,13 +91,13 @@ func mergeUpstreamAccountBalanceWarnings(warnings []channelRatioMonitorBalanceWa
 // Each bulk run owns a memo, so every account is polled once even when its
 // channels run concurrently. Manual refreshes have their own fresh scope.
 func withUpstreamAccountBalanceRound(ctx context.Context) context.Context {
-	return context.WithValue(ctx, upstreamAccountBalanceRoundKey{}, &sync.Map{})
+	return context.WithValue(ctx, upstreamAccountBalanceRoundKey{}, &upstreamAccountBalanceRound{})
 }
 
 func fetchAndRecordUpstreamAccountBalance(ctx context.Context, monitor model.ChannelRatioMonitor, timeout time.Duration) (channelMonitorFetchOutcome, error) {
-	if memo, ok := ctx.Value(upstreamAccountBalanceRoundKey{}).(*sync.Map); ok {
+	if round, ok := ctx.Value(upstreamAccountBalanceRoundKey{}).(*upstreamAccountBalanceRound); ok {
 		entry := &upstreamAccountBalanceResult{done: make(chan struct{})}
-		value, loaded := memo.LoadOrStore(monitor.UpstreamAccountID, entry)
+		value, loaded := round.results.LoadOrStore(monitor.UpstreamAccountID, entry)
 		if loaded {
 			entry = value.(*upstreamAccountBalanceResult)
 			select {
@@ -101,7 +122,9 @@ func pollUpstreamAccountBalance(ctx context.Context, monitor model.ChannelRatioM
 	if account.Revision != monitor.UpstreamAccountRevision {
 		return outcome, model.ErrUpstreamAccountChanged
 	}
-	if _, scheduled := ctx.Value(upstreamAccountBalanceRoundKey{}).(*sync.Map); scheduled && account.RefreshIntervalMinutes == 0 {
+	round, scheduled := ctx.Value(upstreamAccountBalanceRoundKey{}).(*upstreamAccountBalanceRound)
+	scheduled = scheduled && !round.forceRefresh
+	if scheduled && account.RefreshIntervalMinutes == 0 {
 		outcome.Result.Balance.Amount = account.Balance
 		return outcome, nil
 	}
@@ -114,7 +137,7 @@ func pollUpstreamAccountBalance(ctx context.Context, monitor model.ChannelRatioM
 	if err != nil {
 		return outcome, err
 	}
-	if _, scheduled := ctx.Value(upstreamAccountBalanceRoundKey{}).(*sync.Map); scheduled && account.Balance != nil && account.LastBalanceCheck > 0 && (account.RefreshIntervalMinutes == 0 || common.GetTimestamp() < account.LastBalanceCheck+int64(account.RefreshIntervalMinutes)*60) {
+	if scheduled && account.Balance != nil && account.LastBalanceCheck > 0 && (account.RefreshIntervalMinutes == 0 || common.GetTimestamp() < account.LastBalanceCheck+int64(account.RefreshIntervalMinutes)*60) {
 		outcome.Result.Balance.Amount = account.Balance
 		outcome.Result.Balance.Error = account.LastBalanceError
 		if account.LastBalanceError != "" {

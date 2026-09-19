@@ -77,7 +77,7 @@ func TestUpstreamAutomationDatabaseMatrix(t *testing.T) {
 			})
 			t.Run("查询故障恢复后继续执行且多渠道只调用一次", func(t *testing.T) {
 				db := setupChannelMonitorCustomActionRefreshDB(t, engine)
-				// Automatic recovery needs a complete estimate even without a warning threshold.
+				// Also exercise linked recovery with the normal balance estimator available.
 				client := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
 				originalWrite, originalRead, originalRDB, originalEnabled := common.RDBMonitorWrite, common.RDBMonitorRead, common.RDB, common.RedisEnabled
 				common.RDBMonitorWrite, common.RDBMonitorRead, common.RDB, common.RedisEnabled = client, client, client, true

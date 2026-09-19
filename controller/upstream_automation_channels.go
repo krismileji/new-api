@@ -19,7 +19,7 @@ func refreshUpstreamAutomationChannels(ctx context.Context, config service.Upstr
 		_ = requestChannelSmartScheduleRun(ctx)
 		return nil
 	}
-	ctx = withUpstreamAccountBalanceRound(ctx)
+	ctx = context.WithValue(ctx, upstreamAccountBalanceRoundKey{}, &upstreamAccountBalanceRound{forceRefresh: true})
 	var failures []error
 	for _, id := range config.ChannelIDs {
 		if ctx.Err() != nil {
@@ -50,16 +50,7 @@ func refreshUpstreamAutomationChannels(ctx context.Context, config service.Upstr
 			continue
 		}
 		balance := *outcome.Result.Balance.Amount
-		complete := true
-		if outcome.BalanceEvaluation != nil {
-			balance = outcome.BalanceEvaluation.EffectiveBalance
-			complete = outcome.BalanceEvaluation.Complete
-		}
-		if !complete {
-			failures = append(failures, fmt.Errorf("渠道 %d 余额预估尚不完整，暂不自动恢复", id))
-			continue
-		}
-		if _, err := autoDisableChannelMonitorForLowBalanceWithContext(ctx, monitor, channel, *outcome.Result.Balance.Amount); err != nil {
+		if _, err := autoDisableChannelMonitorAtEffectiveBalance(monitor, channel, balance, balance, 0); err != nil {
 			failures = append(failures, err)
 			continue
 		}
@@ -75,42 +66,45 @@ func refreshUpstreamAutomationChannels(ctx context.Context, config service.Upstr
 			failures = append(failures, err)
 			continue
 		}
-		if channelMonitorUpdateFailureRecovered(monitor, channel, &balance) {
-			_, _, _, err = model.UpdateChannelMonitorStatusIfSnapshotRevision(id, monitor.UpstreamRevision, model.CaptureChannelMonitorStatus(channel), common.ChannelStatusEnabled, "")
-			if err != nil {
-				failures = append(failures, err)
-			}
-		}
-		// Balance recovery still requires an actual cost sample, just like the
-		// regular monitor. A zero-value, never-fetched ratio is not evidence.
-		if monitor.UpdatedTime <= 0 {
-			continue
-		}
-		costRatio, _, err := channelMonitorCostRatioFromModel(monitor, monitor.Ratio)
-		if err != nil {
+		if err := recoverUpstreamAutomationChannel(ctx, monitor, channel, balance); err != nil {
 			failures = append(failures, err)
-			continue
-		}
-		inputs := map[int]channelMonitorPolicyInput{id: {
-			UpstreamRevision: monitor.UpstreamRevision, CostRatio: costRatio,
-			BalanceBelowAutoDisableThreshold: monitor.BalanceAutoDisableThreshold != nil && balance < *monitor.BalanceAutoDisableThreshold,
-		}}
-		settings := getChannelMonitorSettings()
-		if settings.AutoEnableOnBalanceRecovery {
-			_, err = autoEnableChannelsAfterBalanceRecovery(ctx, []*model.Channel{channel}, inputs, ratio_setting.GetGroupRatioCopy(), getChannelMonitorGroupCoefficients())
-			if err != nil {
-				failures = append(failures, err)
-			}
-		}
-		if settings.AutoEnableOnCostRatioRecovery {
-			_, err = autoEnableChannelsAfterCostRatioRecovery(ctx, []*model.Channel{channel}, inputs, ratio_setting.GetGroupRatioCopy(), getChannelMonitorGroupCoefficients())
-			if err != nil {
-				failures = append(failures, err)
-			}
 		}
 	}
 	if len(config.ChannelIDs) > 0 {
 		_ = requestChannelSmartScheduleRun(ctx)
 	}
 	return errors.Join(failures...)
+}
+
+// Automation recovery uses the freshly queried upstream balance. Local cost
+// estimates may stay incomplete under traffic and must not block this path.
+func recoverUpstreamAutomationChannel(ctx context.Context, monitor model.ChannelRatioMonitor, channel *model.Channel, balance float64) error {
+	if channelMonitorUpdateFailureRecovered(monitor, channel, &balance) {
+		_, _, _, err := model.UpdateChannelMonitorStatusIfSnapshotRevision(channel.Id, monitor.UpstreamRevision, model.CaptureChannelMonitorStatus(channel), common.ChannelStatusEnabled, "")
+		if err != nil {
+			return err
+		}
+	}
+	// Keep the existing cost policy: an unfetched zero ratio is not evidence.
+	if monitor.UpdatedTime <= 0 {
+		return nil
+	}
+	costRatio, _, err := channelMonitorCostRatioFromModel(monitor, monitor.Ratio)
+	if err != nil {
+		return err
+	}
+	inputs := map[int]channelMonitorPolicyInput{channel.Id: {
+		UpstreamRevision: monitor.UpstreamRevision, CostRatio: costRatio,
+		BalanceBelowAutoDisableThreshold: monitor.BalanceAutoDisableThreshold != nil && balance < *monitor.BalanceAutoDisableThreshold,
+	}}
+	settings := getChannelMonitorSettings()
+	if settings.AutoEnableOnBalanceRecovery {
+		if _, err := autoEnableChannelsAfterBalanceRecovery(ctx, []*model.Channel{channel}, inputs, ratio_setting.GetGroupRatioCopy(), getChannelMonitorGroupCoefficients()); err != nil {
+			return err
+		}
+	}
+	if settings.AutoEnableOnCostRatioRecovery {
+		_, err = autoEnableChannelsAfterCostRatioRecovery(ctx, []*model.Channel{channel}, inputs, ratio_setting.GetGroupRatioCopy(), getChannelMonitorGroupCoefficients())
+	}
+	return err
 }

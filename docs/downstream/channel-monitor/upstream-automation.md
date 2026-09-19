@@ -13,7 +13,9 @@
 
 关联渠道不会把任务查询到的余额直接写入所有渠道，避免不同账户或余额口径混用。关联前需配置好各渠道的上游查询；删除渠道后可在任务编辑器取消对应关联。
 
-余额触发规则使用任务查询到的上游真实余额（按配置提取并应用结果乘数），不使用关联渠道扣减本地预估消耗后的余额。关联渠道余额预估不完整时，仍保留禁止自动恢复渠道的保护。
+余额触发规则和自动任务的渠道恢复判断都使用本轮查询到的上游真实余额（按配置提取并应用结果乘数）。余额不足时执行触发接口，成功后重新查询余额；余额达到自动禁用阈值，并满足已有恢复开关及成本倍率条件后，恢复因余额自动停用的渠道。接口成功但余额仍不足、查询失败或渠道被手动停用时不恢复。
+
+自动任务恢复不再依赖本地费用预估是否完整，也不扣减本地预估消耗；即使仍有进行中的请求或未启用 Redis，成功复查的上游余额也可以用于恢复。共享账户任务复用触发前、触发后的账户余额查询结果，不为每个关联渠道重复查询。旧渠道任务关联共享账户时也会主动复查，跳过账户定时刷新间隔，并在本轮按账户合并查询。常规监控的实时预估保护继续按原策略执行。
 
 关联渠道刷新问题作为附加提示显示在本轮结果和检查记录中，不覆盖“检查完成”或“接口执行成功”，也不累计独立任务的失败次数或延长下次检查间隔。任务自己的指标查询、触发接口或执行后指标复查失败，仍按原有失败规则处理。
 
@@ -36,7 +38,28 @@
 
 数据复用 `system_tasks` 表中的 `upstream_automation_config` 行，不增加表、字段或索引。此类型不排队执行、不参与历史清理，并从通用任务列表中排除；通用详情响应也隐藏其配置和状态。调度记录 `upstream_automation` 使用渠道监控任务的保留天数。旧规则迁移标记保存在原有执行状态行中。
 
+## 上游余额自动恢复验证（2026-09-20）
+
+Go：`go1.26.5 windows/amd64`。真实数据库：SQLite **3.50.4**、MySQL **5.7.44**、PostgreSQL **9.6.24**。恢复回归先在 SQLite 上复现旧逻辑阻止恢复，以及旧任务关联共享账户时跳过复查的问题。
+
+修复后全部上游自动任务和上游账户测试通过（84.803 秒，无跳过），根模块构建通过。新增恢复矩阵覆盖独立渠道、旧任务关联共享账户、共享账户任务三种模式，以及进行中请求导致预估不完整、余额恰好达到阈值、重置后余额仍不足、手动停用、恢复开关关闭、接口失败、余额复查失败；同时检查渠道状态与路由能力一致恢复。已有无 Redis 恢复、查询退避、冷却/次数限制、不重复调用和多渠道恢复回归也通过。
+
+测试使用独立临时容器，创建命令如下；端口由 Docker 分配，本轮 MySQL 为 51635，PostgreSQL 为 58538，未连接现有业务数据库：
+
+```powershell
+docker run --detach --name codex-automation-recovery-mysql-20260920 --pull never -e MYSQL_ROOT_PASSWORD=automation-recovery-test -e MYSQL_DATABASE=new_api_custom_action_test -p 127.0.0.1::3306 mysql:5.7.44 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+docker run --detach --name codex-automation-recovery-postgres-20260920 --pull never -e POSTGRES_PASSWORD=automation-recovery-test -e POSTGRES_DB=new_api_custom_action_test -p 127.0.0.1::5432 postgres:9.6
+$env:TEST_CUSTOM_ACTION_MYSQL_DSN='root:automation-recovery-test@tcp(127.0.0.1:51635)/new_api_custom_action_test?charset=utf8mb4&parseTime=True&loc=Local'
+$env:TEST_CUSTOM_ACTION_POSTGRES_DSN='postgres://postgres:automation-recovery-test@127.0.0.1:58538/new_api_custom_action_test?sslmode=disable'
+& 'D:/Go/sdk/go1.26.5/bin/go.exe' test ./controller -run '^Test(UpstreamAutomation|UpstreamAccount)' -count=1 -timeout=300s -v
+& 'D:/Go/sdk/go1.26.5/bin/go.exe' build ./...
+```
+
+运行输出保存在 `.local-tests/automation-recovery-20260920/`。本次仅修改下游文件，未修改 `upstream/main` 已有文件、表结构、迁移、数据库依赖、日志库访问或 `relaykit`。余额预估测试使用 miniredis 保持一个未结束的请求租约，无需等待或随机并发即可验证持续不完整时的恢复行为。
+
 ## 关联渠道刷新提示修复验证（2026-09-18）
+
+以下为历史验证记录，其中“预估不完整时禁止恢复”的旧规则已由 2026-09-20 的上游余额恢复规则替代。
 
 Go：`go1.26.5 windows/amd64`。真实数据库：SQLite **3.50.4**、MySQL **5.7.44**、PostgreSQL **9.6.24**。修复前新增回归在 SQLite 上复现原错误；修复后全部上游自动任务测试通过，三种数据库均未跳过，根模块构建通过。
 
