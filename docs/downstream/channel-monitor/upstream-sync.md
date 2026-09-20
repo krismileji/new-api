@@ -114,76 +114,8 @@ New API / Sub2API 在倍率成功、余额失败时保留成功倍率，并只�
 
 定时间隔、重试、连续失败阈值、邮件类型和自动启用开关的完整 Option 列表见[配置参考](../configuration-reference.md)。
 
-## 告警配置验证（2026-09-14）
+## 相关能力
 
-使用 Go 1.26.5，在 SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24 上执行配置保存与读取测试，三种数据库均通过。测试覆盖新配置缺失时的默认值、非法值拒绝、边界值保存、重新读取，以及更新其他配置后保留告警次数。本次复用现有 Option 存储，无生产表结构或迁移变更。
+共用余额与换算使用[上游账户](upstream-accounts.md)，认证请求可使用[独立变量](custom-variable-request.md)或[共享变量](shared-variables.md)。请求进行中的余额保护及残留占用处理见[余额预估](balance-estimation.md)。
 
-以下为本次隔离容器的测试连接与实际执行命令，密码仅用于临时测试数据库；复现时使用空的 `new_api_monitor_alert_test` 数据库并替换端口：
-
-```powershell
-$env:MONITOR_ALERT_MYSQL_DSN = 'root:alert-test-only@tcp(127.0.0.1:57656)/new_api_monitor_alert_test?parseTime=true&charset=utf8mb4'
-$env:MONITOR_ALERT_POSTGRES_DSN = 'postgres://postgres:alert-test-only@127.0.0.1:54582/new_api_monitor_alert_test?sslmode=disable'
-& 'D:/Go/sdk/go1.26.5/bin/go.exe' test ./controller -run '^TestChannelMonitorSyncFailureAlertSettingsDatabaseMatrix$' -count=1 -v -timeout=120s
-```
-
-倍率和余额通知回归覆盖配置为 `3` 次、停止次数为 `0` 或 `20` 时的通知发送、持续失败去重、邮件失败重试及恢复后的再次通知。前端四个相关测试文件共 `44` 个用例通过，类型检查、涉及文件 lint、前端构建与根模块构建通过。格式检查仅剩设置弹窗原有的两处 `TabsTrigger` 换行差异。
-
-所有改动均位于下游文件，未修改 `upstream/main` 已有文件。
-
-## 余额保护修复验证（2026-09-15）
-
-使用 Go 1.26.5，`TestChannelMonitorBalanceSafetyDatabaseMatrix` 在真实 SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24 上全部通过。覆盖上游与本地两种记账顺序、差额重新读取和失败后保留、实际后续消费触发渠道及 Ability 禁用、缺失/空/零余额、余额失败阻止倍率恢复及恢复后的启用、部分失败重试和开关、人工禁用保护、认证失败停止重试、重试期间配置变更、禁用邮件及去重。
-
-本次沿用现有有符号浮点列 `balance_pending_consumption` 保存对账差额，没有表结构、迁移、数据库依赖或独立日志库路径变更。仅修改下游文件，未修改 `upstream/main` 已有文件。
-
-隔离测试容器的创建命令如下。测试密码仅用于临时数据库，端口由 Docker 分配，通过 `docker port` 读取：
-
-```powershell
-docker run -d --name codex-balance-mysql-20260915 -e MYSQL_ROOT_PASSWORD=balance-test-only -e MYSQL_DATABASE=new_api_monitor_balance_test -p 127.0.0.1::3306 mysql:5.7.44
-docker run -d --name codex-balance-postgres-20260915 -e POSTGRES_PASSWORD=balance-test-only -e POSTGRES_DB=new_api_monitor_balance_test -p 127.0.0.1::5432 postgres:9.6
-docker exec -e MYSQL_PWD=balance-test-only codex-balance-mysql-20260915 mysql -uroot -e 'ALTER DATABASE new_api_monitor_balance_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci'
-
-$env:MONITOR_BALANCE_MYSQL_DSN = 'root:balance-test-only@tcp(127.0.0.1:63564)/new_api_monitor_balance_test?parseTime=true&charset=utf8mb4'
-$env:MONITOR_BALANCE_POSTGRES_DSN = 'postgres://postgres:balance-test-only@127.0.0.1:63569/new_api_monitor_balance_test?sslmode=disable'
-& 'D:/Go/sdk/go1.26.5/bin/go.exe' test ./controller -run '^TestChannelMonitorBalanceSafetyDatabaseMatrix$' -count=1 -v -timeout=180s
-```
-
-其他验证命令：
-
-```powershell
-& 'D:/Go/sdk/go1.26.5/bin/go.exe' test ./controller ./service -run 'Test(AutoDisableChannelMonitorForLowBalance|RecordChannelMonitorBalanceUpdate|FetchChannelMonitorUpstream|ManualSharedUpstreamRequest|SaveChannelMonitorCustomFixedBalance|ChannelMonitorAllowsHealthCheckAutoEnable|RunChannelRatioMonitorTask|CostRatioRecovery|FetchSub2API|ChannelMonitorCustom.*|FetchNewAPI)' -count=1 -timeout=180s
-& 'D:/Go/sdk/go1.26.5/bin/go.exe' test ./controller ./model ./service -count=1 -timeout=300s
-& 'D:/Go/sdk/go1.26.5/bin/go.exe' build ./...
-```
-
-相关回归、model 全包测试和根模块构建通过。controller / service 全包测试有以下 8 个既有失败；使用 Go overlay 恢复本次修改文件为基线 `9c0574450`、排除新增测试后，全包对照复现了相同失败，本次不修改这些无关路径：
-
-- `TestGetChannelMonitorRecoveryBeforeBackgroundCheck`
-- `TestProtectChannelSmartScheduleRuntimeFailureIgnoresMinimumSamples`
-- `TestProtectChannelSmartScheduleRuntimeFailureDoesNotRecountPersistedErrors`
-- `TestRunChannelSmartSchedulePersistsExecutionTimeScoreDetails`
-- `TestPlanChannelSmartScheduleUsesHysteresisAndForceReset`
-- `TestRunChannelSmartScheduleManualPrimaryAllowsStabilityDegrade`
-- `TestUpdateChannelMonitorSettingsValidatesAndPersists`
-- `TestUpdateGroupedChannelAddressValidatesMembersAndAdvancesRevision`
-
-## 禁用阈值独立判断验证（2026-09-18）
-
-修正预警值与余额保护的耦合：普通渠道、共享余额来源的逐渠道策略、健康检查恢复均按自动禁用阈值独立判断。新增回归覆盖未设置预警值、上游余额高于或等于预警值、已完成与进行中消费共同跨过禁用阈值、阈值相等时保持启用、实际消费下降后的恢复，以及估算不可用时阻止恢复。原有恢复测试显式初始化 Redis 和请求覆盖状态，继续验证自动恢复、人工禁用保护和重置接口不重复执行。
-
-使用 Go 1.26.5，余额安全与残留请求恢复矩阵、共享余额来源矩阵、上游自动任务矩阵在真实 SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24 上全部通过。Redis 8.8.0 的现有原子操作回归、定时同步、预警邮件去重、恢复回归及根模块构建通过。没有表结构、迁移、数据库依赖、独立日志库路径或 `relaykit/` 改动；所有修改文件均为下游文件。
-
-以下为隔离测试容器的连接和实际验证命令。两个数据库均为空的专用测试库；密码仅用于本次临时容器，复现时替换映射端口：
-
-```powershell
-$env:MONITOR_BALANCE_MYSQL_DSN = 'root:balance-threshold-test-only@tcp(127.0.0.1:59931)/new_api_monitor_balance_test?parseTime=true&charset=utf8mb4'
-$env:MONITOR_BALANCE_POSTGRES_DSN = 'postgres://postgres:balance-threshold-test-only@127.0.0.1:59934/new_api_monitor_balance_test?sslmode=disable'
-$env:TEST_CUSTOM_ACTION_MYSQL_DSN = 'root:balance-threshold-test-only@tcp(127.0.0.1:59931)/new_api_custom_action_test?parseTime=true&charset=utf8mb4'
-$env:TEST_CUSTOM_ACTION_POSTGRES_DSN = 'postgres://postgres:balance-threshold-test-only@127.0.0.1:59934/new_api_custom_action_test?sslmode=disable'
-$env:TEST_CHANNEL_BALANCE_REDIS_ADDR = '127.0.0.1:59938'
-
-go test ./service ./controller -run 'Test(ChannelBalance|UpstreamAccount.*Balance|ChannelMonitorBalance|ChannelMonitorAllowsHealthCheckAutoEnable)' -count=1 -timeout=180s -v
-go test ./controller -run '^TestChannelMonitorBalanceSource' -count=1 -timeout=120s -v
-go test ./controller -run 'Test(AutoDisableChannelMonitorForLowBalance|RecordChannelMonitorBalanceUpdate|FetchChannelMonitorUpstream|ManualSharedUpstreamRequest|SaveChannelMonitorCustomFixedBalance|RunChannelRatioMonitorTask|CostRatioRecovery|ChannelMonitor.*Recover|UpstreamAutomation)' -count=1 -timeout=180s -v
-go build ./...
-```
+条件触发接口由[上游自动任务](upstream-automation.md)独立调度；旧渠道内规则会迁移，不能再按“仅在渠道余额/倍率刷新时执行”理解。自动任务恢复使用成功复查的上游原始余额，常规监控则仍遵守估算完整性要求。

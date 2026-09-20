@@ -32,3 +32,5 @@
 运行时使用包含 logical ID、revision、成员 ID、weight 和地址摘要的冻结快照。关系变更不会改写已经运行的调度、探测或检测任务；缓存刷新失败时不会发布半套关系。全局开关 `CHANNEL_LOGICAL_GROUP_ENABLED` 或单组 disabled 时，新请求回退到物理渠道路径，关系和历史保留。
 
 组内选成员时先过滤禁用、冷却、模型不支持和并发不可用渠道，再按 weight 选择；并发仍调用物理渠道租约，不创建逻辑组租约。
+
+逻辑归组不自动建立[共享上游账户](../channel-monitor/upstream-accounts.md)或[共享限流组](../channel-monitor/shared-limits.md)。需要共用余额或额度时分别显式配置。

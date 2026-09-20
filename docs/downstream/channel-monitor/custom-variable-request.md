@@ -35,35 +35,3 @@
 最多配置 8 个请求、合计 32 个变量。变量名在本渠道所有独立请求之间不能重复，支持字母、数字、下划线，以字母或下划线开头，最多 64 个字符。删除请求或重命名变量后，仍引用旧变量的参数会提示校验错误。模板仅支持倍率、余额的查询参数和请求头；独立请求本身不支持引用变量。JSON 映射支持字符串、数字和布尔值，保留 `0`、`false`；空值、对象、数组和包含非法控制字符的值会被拒绝。变量及替换后参数最多 8192 字节，完整配置仍受现有 60 KB 限制。
 
 旧版单请求、单变量配置可直接读取，会在编辑器中呈现为一张请求卡片；原值、取值路径和刷新策略保持不变，保存后写入新的多请求格式。
-
-## 验证记录
-
-本次仅扩展现有 `custom_upstream_config` JSON 内容，无新增表、字段、索引、约束或迁移。自动变量保存仅写主库的渠道监控配置，不涉及独立日志库。修改的已有文件均为下游独有文件，与本地 `upstream/main` 比较后确认未修改上游已有文件。
-
-真实数据库验证：SQLite **3.50.4**、MySQL **5.7.44**（utf8mb4）、PostgreSQL **9.6.24** 均通过。覆盖旧版无变量配置读写、新值保存、重新打开数据库后数据保留、并发倍率/余额刷新、多变量整体保存且不覆盖其他请求、任一映射失败保留原值、配置变更后拒绝覆盖，以及凭据大小写不同不能匹配。测试使用独立表前缀并清理本次测试表。
-
-本次数据库命令（PowerShell；账号与端口均为本次临时测试实例）：
-
-```powershell
-docker exec new-api-variable-test-mysql sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "ALTER DATABASE monitor_variables CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"'
-$env:TEST_CUSTOM_VARIABLE_MYSQL_DSN='root:variable-test-password@tcp(127.0.0.1:56657)/monitor_variables?charset=utf8mb4&parseTime=True&loc=Local'
-$env:TEST_CUSTOM_VARIABLE_POSTGRES_DSN='host=127.0.0.1 port=56667 user=postgres password=variable-test-password dbname=monitor_variables sslmode=disable'
-& D:\go-toolchain-1.25.1\go\bin\go.exe test ./service -run '^TestChannelMonitorCustomVariableDatabaseMatrix$' -count=1 -v
-```
-
-相关后端验证：
-
-```powershell
-& D:\go-toolchain-1.25.1\go\bin\go.exe test ./service ./controller -run 'Test(NormalizeChannelMonitorCustom|ChannelMonitorCustom|FetchChannelMonitorCustom|FetchChannelMonitorUpstream|TestChannelMonitorUpstream|SaveChannelMonitorUpstream|ResolveChannelMonitorUpstream|RunChannelRatioMonitorTaskUpdatesCustomFixedSources)' -count=1
-& D:\go-toolchain-1.25.1\go\bin\go.exe build ./...
-```
-
-前端验证（从 `web/` 运行）：
-
-```powershell
-bun run test src/features/channel-monitor/lib/__tests__/schema.test.ts src/features/channel-monitor/lib/__tests__/upstream-request.test.ts src/features/channel-monitor/lib/__tests__/custom-variable.test.ts src/features/channel-monitor/components/__tests__/custom-variable.test.tsx src/features/channel-monitor/components/__tests__/upstream-config-credentials.test.tsx
-bun run typecheck
-bun run build
-```
-
-另对本次全部前端文件执行 `oxlint` 和保留版权头的 `oxfmt` 检查，对改动执行 `git diff --check`。

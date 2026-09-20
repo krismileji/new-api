@@ -14,7 +14,7 @@ Worker 每个逻辑分组每轮只执行一次探测；上游失败可以在物�
 
 探测请求根据渠道类型使用对应的 API 端点：Anthropic 渠道使用 Messages API (`/v1/messages`)，其他渠道使用 Responses API (`/v1/responses`)。系统自动选择适配的端点类型，无需手动配置。
 
-分组探测执行前检查模型名称是否合法、是否仍在所选渠道的支持范围内，并过滤非文本模型。共享的探测校验已移除渠道类型白名单，解决 Claude 模型可选但执行时返回 `model_not_supported`（“不支持自动文本探测”）的问题。修复后需重新构建并部署后端，历史失败记录会保留。
+分组探测执行前检查模型名称是否合法、是否仍在所选渠道的支持范围内，并过滤非文本模型。探测校验不使用渠道类型白名单，Claude 模型可以通过 Messages 端点参与文本探测。
 
 ## 用户视图
 
@@ -34,34 +34,22 @@ Worker 每个逻辑分组每轮只执行一次探测；上游失败可以在物�
 
 用户 API 为 `GET /api/pricing/group-monitor`。Worker 扫描间隔由 `CHANNEL_GROUP_MONITOR_SCAN_INTERVAL_MS` 控制，默认 `1000` 毫秒，范围 `200..30000`。
 
-## 分类功能验证（2026-09-13）
+## 分组独立启停
 
-分类复用 `groups_json` 的 TEXT 配置，新格式包含 `categories` 和 `groups`，兼容原有分组数组；不新增表、列或数据库迁移，也不涉及单独的日志数据库。实际数据库验证覆盖分类顺序与空分类保存、新配置重读、重复两次 AutoMigrate 后数据保留、没有 `category` 的旧 JSON 配置、添加和移除分类、中文及补充平面 Unicode 字符。
+“分类与分组”中的每个分组有 `enabled` 开关，保存后生效。关闭保留模型、分类、排序和历史，定时及手动探测都跳过；重新启用恢复参与。全部分组关闭时不再安排定时任务，清除排队手动任务并禁用“立即探测”。
 
-| 数据库 | 实际版本 | 结果 |
-| --- | --- | --- |
-| SQLite | 3.50.4 | 通过 |
-| MySQL | 5.7.44 | 通过 |
-| PostgreSQL | 9.6.24 | 通过 |
+全局周期开关只控制定时执行，关闭后仍可手动探测已启用分组；页面状态按当前启停配置展示。已经发送的请求正常收尾。旧配置省略单组 `enabled` 时默认开启，显式 false 保留。
 
-执行环境为 Go 1.25.1、Windows amd64，MySQL 和 PostgreSQL 使用独立临时 Docker 实例。矩阵要求本地空数据库 `new_api_group_category_test`，连接通过 `GROUP_MONITOR_CATEGORY_MYSQL_DSN`、`GROUP_MONITOR_CATEGORY_POSTGRES_DSN` 注入；本次两个外部数据库用例均实际执行，无跳过。
+## 缓存率与展示周期
 
-```powershell
-go test ./model -run 'TestChannelGroupMonitorCategoryDatabaseCompatibility' -count=1 -v
-go test ./model -run 'Test.*(ChannelGroupMonitor|GroupMonitor)' -skip TestChannelGroupMonitorCategoryDatabaseCompatibility -count=1
-go test ./controller -run 'Test.*(ChannelGroupMonitor|PricingGroupMonitor|GroupMonitor)' -count=1
-```
+“展示设置 → 显示缓存率”默认关闭。开启后，管理和用户视图在成功率旁显示请求缓存命中率：有效缓存命中请求数 ÷ 有效缓存样本数，探测不计入业务样本。它与按 token 加权的流式缓存利用率不同。
 
-以上后端测试均通过。前端在 `web/` 执行 `bun run test src/features/group-monitor src/features/channel-monitor/components/__tests__/channel-group-monitor-settings-sheet.test.tsx`，4 个文件、31 个用例通过，覆盖先创建分类再添加分组、分类重命名和排序、分类间移动分组、空分类保存、旧配置恢复、输入校验及保存失败后保留修改；`bun run typecheck`、受影响文件的 oxlint 和 `bun run build` 均通过。
+统计时间跟随配置的分钟/小时/天展示周期。24 小时内使用对应 Redis 分钟窗口；多日窗口合并历史日汇总与今天实时分钟桶，不固定为近 24 小时，也不直接平均各天百分比。
 
-`go test ./model -run 'TestChannelGroupMonitorCategory' -count=1 -v` 同时验证三数据库持久化、空分类不能启动手动探测，以及新格式按原有顺序向周期探测提供分组。
+零命中显示 0.0%，无有效分母、Redis 不可用或窗口不足时显示“暂无数据”。缓存查询失败不阻断分组状态和历史。关闭时不查缓存率、不返回该字段。
 
-后续补充 `TestGetPricingGroupMonitorKeepsVisibleGroupsWhenRoutesUnavailable`，先复现路由失效时用户接口返回空列表，再修复展示过滤。6 个场景覆盖正常路由、手动停用、自动停用、能力关闭、探测模型移除及全局监控停用；均验证历史结果保留，且未加入监控配置的分组不会展示，修复后全部通过。
+保存配置时，省略 `show_cache_rate` 会保留已有值。保存需携带当前 revision，避免覆盖其他人的修改。
 
-同日排查“分类已保存但用户页不显示”：实际配置包含 3 个分类、4 个分组，旧接口因可用分组和倍率过滤仅返回 `default`。`TestGetPricingGroupMonitorDisplaysConfiguredCategoriesForEveryRole` 以该配置复现问题，修复后验证访客、普通用户、管理员和超级管理员均返回相同的 3 个分类、4 个分组；另覆盖仅保存空分类的接口返回。此次修复不更改数据库结构、持久化格式或模型调用授权。
+## 禁止自动探测的成员
 
-此次回归执行 `go test ./controller -run 'Test.*(ChannelGroupMonitor|PricingGroupMonitor|GroupMonitor)' -count=1` 通过；前端执行上述相关测试集，5 个文件、35 个用例通过，新增空分类展示、分类顺序、跨标签刷新及重新进入页面刷新用例。`bun run typecheck`、受影响文件 oxlint、格式检查、`bun run build` 以及包含前端资源的根模块 `go build` 均通过。
-
-补充实际配置验证：使用 MySQL 8.4.10 的只读事务读取本地 revision 5 配置并调用修正后的用户接口处理器，四种角色均完整返回 `88`、`77`、`未分类`，分组数均为 4。验证未写入配置或启动探测任务。运行中的 Go 程序内嵌前端资源，更新后须重新编译运行才能加载修正后的接口及页面。
-
-本次功能变更涉及的既有文件均为下游扩展文件，已与 `upstream/main` 比较，无需修改上游所有的文件。
+开启渠道[探测策略](probe-policy.md)后，自动任务跳过该物理成员，由真实业务构成被动周期数据；混合组并列显示实际探测和禁探测成员业务数据。全禁探测组按最终请求统计，不把重试每次尝试当多个最终结果。

@@ -55,6 +55,16 @@ conflicts are primary engineering constraints.
   editing upstream-owned features. This downstream-only exception overrides
   the root i18n rules only for code and features owned by this fork.
 
+## Downstream Documentation
+
+- Keep `docs/downstream/` limited to feature descriptions: purpose, usage,
+  configuration, API behavior, permissions, and functional limitations.
+- Do not add execution plans, development histories, verification reports,
+  test commands/results, temporary environment details, source-file inventories,
+  or contributor workflow rules to that directory.
+- Record required validation evidence in the task handoff or pull request.
+  Update the relevant feature page and index when behavior changes.
+
 ## Review Before Completion
 
 - Inspect `git diff --stat` and `git diff --check` before finishing.

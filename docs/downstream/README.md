@@ -1,21 +1,20 @@
 # 下游功能文档
 
-本目录只记录当前下游分支新增或改变的功能。每个一级目录对应一个大功能，目录内每个 Markdown 文件对应一个具体功能。功能行为以当前代码为准。
+本目录介绍 new-api 下游分支的功能与用法。上游项目为 QuantumNous/new-api，通用功能参阅项目 README 和官方文档。
+
+## 从这里开始
+
+- [使用指南](integration-guide.md)：功能依赖、启用顺序、多实例限制和关闭后的行为。
+- [配置参考](configuration-reference.md)：环境变量、Option、配置入口与默认值。
 
 ## 功能目录
 
-- [渠道监控](channel-monitor/README.md)：渠道运行管理及其子功能。
-- [逻辑归组](channel-logical-group/README.md)：多物理渠道共享调度、探测和模型检测身份。
-- [使用日志](usage-logs/README.md)：用户侧日志范围、权限和脱敏。
-- [中继可靠性](relay-reliability/README.md)：中继失败切换和错误可见性。
-- [管理员分组访问](admin-group-access/README.md)：管理员分组访问范围。
-- [图像生成定价保护](image-pricing-guard/README.md)：未配置图像倍率时的请求保护。
-
-## 集成与配置
-
-- [集成指南](integration-guide.md)：功能依赖、启用顺序、回退和常见问题。
-- [配置参考](configuration-reference.md)：环境变量、Option、默认值和变更影响。
-- [审查记录](REVIEW.md)：本次文档对照代码的遗漏点和补充清单。
-
-上游功能不在此重复说明；只有下游改变了入口、权限、数据或行为时才记录。
-
+| 功能 | 内容 |
+| --- | --- |
+| [渠道监控](channel-monitor/README.md) | 上游同步与账户、自动任务、变量、余额预估、成本与分析、智能调度、探测和共享限流 |
+| [逻辑归组](channel-logical-group/README.md) | 多个物理渠道共享调度、探测与模型检测身份 |
+| [使用日志](usage-logs/README.md) | 用户侧日志范围、权限和脱敏 |
+| [中继可靠性](relay-reliability/README.md) | 失败切换、快速失败重试、错误可见性和响应头超时 |
+| [管理员分组访问](admin-group-access/README.md) | 管理员可用分组及模型广场的权限过滤 |
+| [分组说明保留](group-pricing-descriptions.md) | 取消用户可选、切换 JSON 或改名后仍保留分组说明 |
+| [图像生成定价保护](image-pricing-guard/README.md) | 原始模型未配置图像倍率时的请求保护 |

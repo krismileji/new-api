@@ -32,86 +32,33 @@
 
 调度器运行或打开任务列表时，会把渠道内已有规则迁移到独立任务。一个来源渠道迁移成一个任务，复制查询、凭据、检查频率和执行规则，保留次数、冷却时间、触发状态。原先暂停自动更新或暂停规则所需指标同步的配置，迁移后保持任务暂停。
 
-迁移在同一数据库事务内创建任务、移除渠道规则、递增渠道配置修订号并记录迁移标记。重复运行不会重复创建；删除独立任务后，旧页面也不能把规则重新写回渠道。旧失败或执行中的记录进入待确认状态。
+迁移完成后，规则通过独立任务管理，不再写回渠道。重复打开不会重复创建；旧失败或执行中的记录进入待确认状态。
 
 多个迁移任务可以对应同一账户，各自按配置独立执行，并保留自己的调用次数、冷却时间和历史。任务的数量及启停由用户管理。单个渠道迁移失败会在列表显示原因，已有独立任务仍正常调度。
 
-数据复用 `system_tasks` 表中的 `upstream_automation_config` 行，不增加表、字段或索引。此类型不排队执行、不参与历史清理，并从通用任务列表中排除；通用详情响应也隐藏其配置和状态。调度记录 `upstream_automation` 使用渠道监控任务的保留天数。旧规则迁移标记保存在原有执行状态行中。
+任务配置长期保存，不随检查历史一起清理；检查记录按渠道监控任务的保留天数清理。凭据与配置不在通用任务详情中展示。
 
-## 上游余额自动恢复验证（2026-09-20）
+## 规则配置与次数管理
 
-Go：`go1.26.5 windows/amd64`。真实数据库：SQLite **3.50.4**、MySQL **5.7.44**、PostgreSQL **9.6.24**。恢复回归先在 SQLite 上复现旧逻辑阻止恢复，以及旧任务关联共享账户时跳过复查的问题。
+每个任务最多 8 条规则，分别配置余额/上游倍率比较、执行时区、每日时段、每日次数、冷却和成功判定。倍率条件使用上游倍率，不包含人民币换算；余额条件使用提取并应用乘数后的上游余额。
 
-修复后全部上游自动任务和上游账户测试通过（84.803 秒，无跳过），根模块构建通过。新增恢复矩阵覆盖独立渠道、旧任务关联共享账户、共享账户任务三种模式，以及进行中请求导致预估不完整、余额恰好达到阈值、重置后余额仍不足、手动停用、恢复开关关闭、接口失败、余额复查失败；同时检查渠道状态与路由能力一致恢复。已有无 Redis 恢复、查询退避、冷却/次数限制、不重复调用和多渠道恢复回归也通过。
+例如余额小于 5 时重置额度，可配置 `Asia/Shanghai`、`00:05` 至 `23:00`、每天最多 1 次、冷却 60 分钟。实际请求和成功判定按上游接口填写。时段包含开始、不包含结束，不支持跨日时段；错过时段不排队补发。
 
-测试使用独立临时容器，创建命令如下；端口由 Docker 分配，本轮 MySQL 为 51635，PostgreSQL 为 58538，未连接现有业务数据库：
+触发请求支持 GET/POST、参数、请求头、JSON/表单及变量。成功判定路径留空按 HTTP 2xx 判断；填写后还需匹配 JSON 标量值。动作不自动跟随重定向或在认证失败后重放，执行结果不保存正文或凭据。
 
-```powershell
-docker run --detach --name codex-automation-recovery-mysql-20260920 --pull never -e MYSQL_ROOT_PASSWORD=automation-recovery-test -e MYSQL_DATABASE=new_api_custom_action_test -p 127.0.0.1::3306 mysql:5.7.44 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
-docker run --detach --name codex-automation-recovery-postgres-20260920 --pull never -e POSTGRES_PASSWORD=automation-recovery-test -e POSTGRES_DB=new_api_custom_action_test -p 127.0.0.1::5432 postgres:9.6
-$env:TEST_CUSTOM_ACTION_MYSQL_DSN='root:automation-recovery-test@tcp(127.0.0.1:51635)/new_api_custom_action_test?charset=utf8mb4&parseTime=True&loc=Local'
-$env:TEST_CUSTOM_ACTION_POSTGRES_DSN='postgres://postgres:automation-recovery-test@127.0.0.1:58538/new_api_custom_action_test?sslmode=disable'
-& 'D:/Go/sdk/go1.26.5/bin/go.exe' test ./controller -run '^Test(UpstreamAutomation|UpstreamAccount)' -count=1 -timeout=300s -v
-& 'D:/Go/sdk/go1.26.5/bin/go.exe' build ./...
-```
+“重置今日次数”只清零选中规则当天的计数，保留冷却、触发状态、最近时间和结果，不保存其他草稿、不执行上游操作。请求校验确认时的日期、次数和最近调用时间，跨日、新调用或执行中会拒绝过期重置。“核对结果并解除触发限制”则用于待确认规则，两项操作用途不同。
 
-运行输出保存在 `.local-tests/automation-recovery-20260920/`。本次仅修改下游文件，未修改 `upstream/main` 已有文件、表结构、迁移、数据库依赖、日志库访问或 `relaykit`。余额预估测试使用 miniredis 保持一个未结束的请求租约，无需等待或随机并发即可验证持续不完整时的恢复行为。
+## 管理接口
 
-## 关联渠道刷新提示修复验证（2026-09-18）
+前缀 `/api/channel_monitor/automations`，统一 Root 权限：
 
-以下为历史验证记录，其中“预估不完整时禁止恢复”的旧规则已由 2026-09-20 的上游余额恢复规则替代。
+| 方法与路径 | 用途 |
+| --- | --- |
+| `GET`、`PUT` 前缀本身 | 列表及保存配置，保存使用当前修订号 |
+| `POST /test`、`POST /variable/fetch` | 测试草稿指标、获取草稿变量，不执行动作 |
+| `POST /:id/run` | 立即检查，仍遵守执行限制 |
+| `DELETE /:id` | 删除独立任务 |
+| `POST /:id/actions/:action_id/acknowledge` | 核对未知结果后解除触发限制 |
+| `POST /:id/actions/:action_id/reset-count` | 重置该规则今日次数 |
 
-Go：`go1.26.5 windows/amd64`。真实数据库：SQLite **3.50.4**、MySQL **5.7.44**、PostgreSQL **9.6.24**。修复前新增回归在 SQLite 上复现原错误；修复后全部上游自动任务测试通过，三种数据库均未跳过，根模块构建通过。
-
-```powershell
-$env:TEST_CUSTOM_ACTION_MYSQL_DSN='root:automation-refresh-test@tcp(127.0.0.1:58386)/new_api_custom_action_test?charset=utf8mb4&parseTime=True&loc=Local'
-$env:TEST_CUSTOM_ACTION_POSTGRES_DSN='postgres://postgres:automation-refresh-test@127.0.0.1:59975/new_api_custom_action_test?sslmode=disable'
-& 'D:/Go/sdk/go1.26.5/bin/go.exe' test ./controller -run '^TestUpstreamAutomation' -count=1 -timeout=240s -v
-& 'D:/Go/sdk/go1.26.5/bin/go.exe' build ./...
-```
-
-MySQL/PostgreSQL 使用本次创建的隔离测试容器，端口由 Docker 分配，验证后移除容器及其测试卷。上述地址和密码仅用于这次临时测试。
-
-新增回归覆盖重置成功但预估不完整、真实余额充足不触发重置、关联渠道查询失败；检查任务从查询故障恢复后清零失败次数、按原间隔继续执行、结果与历史保留、不会重复重置，以及余额预估不完整时禁止恢复渠道。原有查询故障退避、冷却/次数限制、未知执行结果确认、多渠道恢复及迁移回归也通过。
-
-本次仅修改下游自动任务逻辑、提示和文档，并新增回归测试，未修改 `upstream/main` 已有文件、表结构、数据库依赖、日志库访问或 `relaykit`。本地验证输出保存在 `.local-tests/automation-refresh-20260918/`。
-
-## 验证记录（2026-09-17）
-
-Go：`go1.26.5 windows/amd64`。真实数据库：SQLite **3.50.4**、MySQL **5.7.44**、PostgreSQL **9.6.24**。
-
-使用专用、可丢弃的 MySQL/PostgreSQL 数据库 `new_api_custom_action_test`，分别监听本机端口 13393 和 15493，验证后删除测试容器。创建命令：
-
-```powershell
-docker run --detach --name new-api-automation-mysql-test -e MYSQL_ROOT_PASSWORD=automation-test -e MYSQL_DATABASE=new_api_custom_action_test -p 127.0.0.1:13393:3306 mysql:5.7.44 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
-docker run --detach --name new-api-automation-postgres-test -e POSTGRES_PASSWORD=automation-test -e POSTGRES_DB=new_api_custom_action_test -p 127.0.0.1:15493:5432 postgres:9.6.24
-```
-
-以下环境变量与命令从仓库根目录运行：
-
-```powershell
-$env:TEST_CUSTOM_ACTION_MYSQL_DSN='root:automation-test@tcp(127.0.0.1:13393)/new_api_custom_action_test?charset=utf8mb4&parseTime=True&loc=Local'
-$env:TEST_CUSTOM_ACTION_POSTGRES_DSN='postgres://postgres:automation-test@127.0.0.1:15493/new_api_custom_action_test?sslmode=disable'
-$env:TEST_CUSTOM_VARIABLE_MYSQL_DSN=$env:TEST_CUSTOM_ACTION_MYSQL_DSN
-$env:TEST_CUSTOM_VARIABLE_POSTGRES_DSN=$env:TEST_CUSTOM_ACTION_POSTGRES_DSN
-go test -p 1 ./service ./controller ./model -run 'Test(UpstreamAutomation|ChannelMonitorCustomAction|ChannelMonitorCustomVariable|ChannelMonitorVariableGroup|ChannelMonitor.*Retention|.*ChannelMonitorCleanup|.*SystemTask)' -count=1 -timeout=240s
-go test ./controller -run '^TestUpstreamAutomation' -count=1 -timeout=180s
-go build ./...
-```
-
-数据库矩阵覆盖：无渠道独立运行、重复触发的冷却/每日限制、首次满足跨日不重放、查询故障恢复、多渠道只触发一次、禁用渠道余额刷新与策略恢复、手动禁用和缺失成本样本不恢复、并发检查去重、未知结果确认、发送前凭据失败重试、本地及共享凭据持久化、共享引用保护。旧配置迁移和现有表 `AutoMigrate` 各重复两次，检查凭据、调用状态、唯一任务和旧规则移除。此次没有表结构或日志数据库变更。
-
-API 用例覆盖敏感值隐藏、草稿测试不执行动作/不修改已保存状态、旧修订号拒绝保存、暂停任务拒绝手动检查，以及部分迁移失败不阻塞独立调度。
-
-从 `web/` 运行：
-
-```powershell
-bun run test src/features/channel-monitor --maxWorkers=2
-bun run typecheck
-bunx --no-install oxlint -c .oxlintrc.json src/features/channel-monitor
-bun run build
-```
-
-上述后端测试、构建、类型检查和 lint 均通过；三数据库自动任务矩阵共 18 个场景通过，前端 106 个文件、618 个测试通过。首次默认 4 个 worker 与构建并行运行时有一个既有交互用例超过 5 秒超时；降低至 2 个 worker 后完整重跑通过，未修改用例超时设置。
-
-上游文件修改仅涉及 `model/system_task.go`：通用列表排除配置行，并使通用详情响应隐藏敏感配置。这两处是防止其他系统任务入口泄漏凭据的必要改动，其余实现使用下游文件和现有任务注册入口。
+旧渠道动作接口仅用于兼容，不应再作为新规则的配置入口。账户关联与余额来源见[上游账户](upstream-accounts.md)。

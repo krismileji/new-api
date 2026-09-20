@@ -8,7 +8,7 @@
 
 ## 执行
 
-worker 只在主节点运行，按配置的 next_run_at 和 lease 领取到期探测。同一渠道的模型在一轮内串行，不同渠道可以并行。每次上游调用使用渠道并发租约；租约不足时记录 skipped，不发送请求。逻辑归组按冻结的成员快照去重，每个逻辑目标每轮只产生一条逻辑执行结果。
+定时探测由主节点执行。同一渠道的模型在一轮内依次探测，不同渠道可以并行。渠道并发额度不足时记录 skipped，不发送请求。逻辑归组每个目标每轮只产生一条逻辑执行结果。
 
 探测结果包括 success、upstream_failure、rate_limited、local_failure、skipped 和 canceled。启用样本记录时，成功样本异步写入智能调度观测；样本写入失败会重试，但不会重新请求上游。探测请求沿用测试和成本链路，可能产生上游费用。
 
@@ -16,13 +16,13 @@ worker 只在主节点运行，按配置的 next_run_at 和 lease 领取到期�
 
 状态按最近完成结果、配置和数据新鲜度计算：unconfigured、paused、pending、healthy、partial、unhealthy、rate_limited 和 stale。窗口数据按渠道、模型和时间桶返回；无样本不转换为成功或失败。
 
-## Worker
-
-状态探测 worker 只在主节点运行。扫描间隔由 `CHANNEL_STATUS_PROBE_SCAN_INTERVAL_MS` 控制，默认 `1000` 毫秒，有效范围 `200..30000`，超出回退默认值。租约每 `2` 分钟续期。样本写入失败每 `30` 秒重试，最多保留 `24` 小时，每批 `20` 条。
-
-管理接口：
+## 管理接口
 
 - `GET /api/channel_monitor/status`
 - `PUT /api/channel_monitor/status/channel/:id/config`
 - `POST /api/channel_monitor/status/channel/:id/run`
 - `GET /api/channel_monitor/status/channel/:id/executions`
+
+## 探测策略与共享限额
+
+“禁止自动探测”会阻止相应自动请求；手动执行仍真实访问上游。请求始终按实际物理渠道执行准入，加入共享限流组后还受组总额与资源预留约束。禁探测渠道的业务周期数据见[探测策略](probe-policy.md)，限额口径见[共享限流](shared-limits.md)。
