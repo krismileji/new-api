@@ -398,6 +398,10 @@ func runChannelMonitorDailyPersistence(ctx context.Context, now int64) error {
 	if client == nil {
 		return ErrChannelMonitorRedisSharedProjectionUnavailable
 	}
+	cutoff, err := model.GetChannelMonitorDailyRetentionCutoff(ctx, now)
+	if err != nil {
+		return err
+	}
 	today := model.ChannelDailyCostDayStart(now)
 	for _, day := range []int64{today, today - 24*60*60} {
 		if err := ensureChannelMonitorDailyMetrics(ctx, client, day); err != nil {
@@ -413,6 +417,12 @@ func runChannelMonitorDailyPersistence(ctx context.Context, now int64) error {
 		day, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil {
 			return err
+		}
+		if cutoff > 0 && day < cutoff {
+			if err := client.SRem(ctx, channelMonitorDailyDirtyDaysKey, raw).Err(); err != nil {
+				return err
+			}
+			continue
 		}
 		opCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
 		err = ensureChannelMonitorDailyMetrics(opCtx, client, day)

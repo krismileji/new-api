@@ -795,6 +795,7 @@ export type ChannelMonitorSettings = {
   cost_retention_days: number
   route_metric_retention_days: number
   duration_bucket_retention_days: number
+  daily_metric_retention_days: number
   api_key_metric_retention_days: number
   execution_detail_retention_days: number
   task_retention_days: number

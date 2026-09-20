@@ -75,6 +75,7 @@ export async function getChannelGroupMonitorOverview(): Promise<
 export async function updateChannelGroupMonitorSettings(request: {
   enabled: boolean
   showCacheRate?: boolean
+  cacheMinContextK?: number
   groups: ChannelGroupMonitorGroup[]
   categories?: string[]
   intervalSeconds: number
@@ -89,6 +90,7 @@ export async function updateChannelGroupMonitorSettings(request: {
     {
       enabled: request.enabled,
       show_cache_rate: request.showCacheRate,
+      cache_min_context_k: request.cacheMinContextK,
       groups: request.groups,
       categories: request.categories,
       interval_seconds: request.intervalSeconds,

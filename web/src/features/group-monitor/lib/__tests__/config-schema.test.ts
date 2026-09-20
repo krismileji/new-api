@@ -34,6 +34,40 @@ const configuration = {
   revision: 0,
 }
 
+test.each([0, 32, 1000])(
+  '缓存率上下文下限为有效整数 %s K 时允许保存',
+  (cacheMinContextK) => {
+    expect(
+      channelGroupMonitorConfigSchema.parse({
+        ...configuration,
+        cacheMinContextK,
+      }).cacheMinContextK
+    ).toBe(cacheMinContextK)
+  }
+)
+
+test('旧配置未包含上下文下限时默认不限制', () => {
+  expect(
+    channelGroupMonitorConfigSchema.parse(configuration).cacheMinContextK
+  ).toBe(0)
+})
+
+test.each([-1, 0.5, 1001, Number.NaN, Number.POSITIVE_INFINITY])(
+  '缓存率上下文下限为无效值 %s 时返回字段错误',
+  (cacheMinContextK) => {
+    const result = channelGroupMonitorConfigSchema.safeParse({
+      ...configuration,
+      cacheMinContextK,
+    })
+    expect(result.success).toBe(false)
+    if (!result.success) {
+      expect(result.error.issues).toContainEqual(
+        expect.objectContaining({ path: ['cacheMinContextK'] })
+      )
+    }
+  }
+)
+
 test.each(['  编程模型  ', '🚀'.repeat(64)])(
   'accepts category name %s and trims whitespace',
   (name) => {

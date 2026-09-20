@@ -51,6 +51,7 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 		wantRouteMetric            int
 		wantAPIKeyMetric           int
 		wantDurationBucket         int
+		wantDailyMetric            int
 		wantRatioMonitorTask       int
 		wantSmartScheduleTask      int
 		wantSmartScheduleProbeTask int
@@ -71,6 +72,7 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 			wantRouteMetric:            defaultChannelMonitorRouteMetricRetentionDays,
 			wantAPIKeyMetric:           defaultChannelMonitorAPIKeyMetricRetentionDays,
 			wantDurationBucket:         defaultChannelMonitorDurationBucketRetentionDays,
+			wantDailyMetric:            defaultChannelMonitorDailyMetricRetentionDays,
 			wantRatioMonitorTask:       defaultChannelMonitorRatioMonitorTaskRetentionDays,
 			wantSmartScheduleTask:      defaultChannelMonitorSmartScheduleTaskRetentionDays,
 			wantSmartScheduleProbeTask: defaultChannelMonitorSmartScheduleProbeTaskRetentionDays,
@@ -91,6 +93,7 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 				channelMonitorRouteMetricRetentionDaysOption:            "21",
 				channelMonitorAPIKeyMetricRetentionDaysOption:           "5",
 				channelMonitorDurationBucketRetentionDaysOption:         "15",
+				channelMonitorDailyMetricRetentionDaysOption:            "15",
 				channelMonitorRatioMonitorTaskRetentionDaysOption:       "11",
 				channelMonitorSmartScheduleTaskRetentionDaysOption:      "22",
 				channelMonitorSmartScheduleProbeTaskRetentionDaysOption: "33",
@@ -108,6 +111,7 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 			wantRouteMetric:            21,
 			wantAPIKeyMetric:           5,
 			wantDurationBucket:         15,
+			wantDailyMetric:            15,
 			wantRatioMonitorTask:       11,
 			wantSmartScheduleTask:      22,
 			wantSmartScheduleProbeTask: 33,
@@ -144,6 +148,7 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 			wantRouteMetric:            defaultChannelMonitorRouteMetricRetentionDays,
 			wantAPIKeyMetric:           defaultChannelMonitorAPIKeyMetricRetentionDays,
 			wantDurationBucket:         defaultChannelMonitorDurationBucketRetentionDays,
+			wantDailyMetric:            defaultChannelMonitorDailyMetricRetentionDays,
 			wantRatioMonitorTask:       defaultChannelMonitorRatioMonitorTaskRetentionDays,
 			wantSmartScheduleTask:      defaultChannelMonitorSmartScheduleTaskRetentionDays,
 			wantSmartScheduleProbeTask: defaultChannelMonitorSmartScheduleProbeTaskRetentionDays,
@@ -167,6 +172,7 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 			wantRouteMetric:            defaultChannelMonitorRouteMetricRetentionDays,
 			wantAPIKeyMetric:           defaultChannelMonitorAPIKeyMetricRetentionDays,
 			wantDurationBucket:         defaultChannelMonitorDurationBucketRetentionDays,
+			wantDailyMetric:            defaultChannelMonitorDailyMetricRetentionDays,
 			wantRatioMonitorTask:       defaultChannelMonitorRatioMonitorTaskRetentionDays,
 			wantSmartScheduleTask:      defaultChannelMonitorSmartScheduleTaskRetentionDays,
 			wantSmartScheduleProbeTask: defaultChannelMonitorSmartScheduleProbeTaskRetentionDays,
@@ -191,6 +197,7 @@ func TestChannelMonitorHistoryRetentionSettingsUsePersistedDays(t *testing.T) {
 			assert.Equal(t, test.wantRouteMetric, settings.RouteMetricRetentionDays)
 			assert.Equal(t, test.wantAPIKeyMetric, settings.APIKeyMetricRetentionDays)
 			assert.Equal(t, test.wantDurationBucket, settings.DurationBucketRetentionDays)
+			assert.Equal(t, test.wantDailyMetric, settings.DailyMetricRetentionDays)
 			assert.Equal(t, test.wantRatioMonitorTask, settings.RatioMonitorTaskRetentionDays)
 			assert.Equal(t, test.wantSmartScheduleTask, settings.SmartScheduleTaskRetentionDays)
 			assert.Equal(t, test.wantSmartScheduleProbeTask, settings.SmartScheduleProbeTaskRetentionDays)
@@ -376,6 +383,7 @@ func TestLoadChannelMonitorRetentionSettingsUsesDatabaseInsteadOfStaleNodeCache(
 		channelMonitorModelDetectionRetentionDaysOption:     "7",
 		channelMonitorRouteMetricRetentionDaysOption:        "7",
 		channelMonitorDurationBucketRetentionDaysOption:     "7",
+		channelMonitorDailyMetricRetentionDaysOption:        "7",
 		channelMonitorAPIKeyMetricRetentionDaysOption:       "7",
 	})
 	require.NoError(t, db.Create(&[]model.Option{
@@ -387,6 +395,7 @@ func TestLoadChannelMonitorRetentionSettingsUsesDatabaseInsteadOfStaleNodeCache(
 		{Key: channelMonitorModelDetectionRetentionDaysOption, Value: "45"},
 		{Key: channelMonitorRouteMetricRetentionDaysOption, Value: "21"},
 		{Key: channelMonitorDurationBucketRetentionDaysOption, Value: "15"},
+		{Key: channelMonitorDailyMetricRetentionDaysOption, Value: "15"},
 		{Key: channelMonitorAPIKeyMetricRetentionDaysOption, Value: "5"},
 	}).Error)
 
@@ -401,6 +410,7 @@ func TestLoadChannelMonitorRetentionSettingsUsesDatabaseInsteadOfStaleNodeCache(
 	assert.Equal(t, 45, settings.ModelDetectionRetentionDays)
 	assert.Equal(t, 21, settings.RouteMetricRetentionDays)
 	assert.Equal(t, 15, settings.DurationBucketRetentionDays)
+	assert.Equal(t, 15, settings.DailyMetricRetentionDays)
 	assert.Equal(t, 5, settings.APIKeyMetricRetentionDays)
 }
 
@@ -451,6 +461,7 @@ func TestUpdateChannelMonitorSettingsPersistsHistoryRetentionDays(t *testing.T) 
 		"model_detection_retention_days":           45,
 		"route_metric_retention_days":              21,
 		"duration_bucket_retention_days":           15,
+		"daily_metric_retention_days":              15,
 		"api_key_metric_retention_days":            5,
 		"cleanup_enabled":                          false,
 		"cleanup_batch_size":                       2500,
@@ -481,6 +492,7 @@ func TestUpdateChannelMonitorSettingsPersistsHistoryRetentionDays(t *testing.T) 
 	assert.Equal(t, 45, response.Data.ModelDetectionRetentionDays)
 	assert.Equal(t, 21, response.Data.RouteMetricRetentionDays)
 	assert.Equal(t, 15, response.Data.DurationBucketRetentionDays)
+	assert.Equal(t, 15, response.Data.DailyMetricRetentionDays)
 	assert.Equal(t, 5, response.Data.APIKeyMetricRetentionDays)
 	assert.False(t, response.Data.CleanupEnabled)
 	assert.Equal(t, 2500, response.Data.CleanupBatchSize)
@@ -505,6 +517,7 @@ func TestUpdateChannelMonitorSettingsPersistsHistoryRetentionDays(t *testing.T) 
 		channelMonitorModelDetectionRetentionDaysOption:         "45",
 		channelMonitorRouteMetricRetentionDaysOption:            "21",
 		channelMonitorDurationBucketRetentionDaysOption:         "15",
+		channelMonitorDailyMetricRetentionDaysOption:            "15",
 		channelMonitorAPIKeyMetricRetentionDaysOption:           "5",
 		channelMonitorCleanupEnabledOption:                      "false",
 		channelMonitorCleanupBatchSizeOption:                    "2500",
@@ -563,6 +576,8 @@ func TestUpdateChannelMonitorSettingsRejectsInvalidHistoryRetentionDays(t *testi
 		{name: "status probe above maximum", field: "status_probe_history_retention_days", value: 91},
 		{name: "model detection below minimum", field: "model_detection_retention_days", value: 6},
 		{name: "model detection above maximum", field: "model_detection_retention_days", value: 181},
+		{name: "daily metric protects today and yesterday", field: "daily_metric_retention_days", value: 1},
+		{name: "daily metric above maximum", field: "daily_metric_retention_days", value: 3651},
 		{name: "route metric below minimum", field: "route_metric_retention_days", value: 0},
 		{name: "route metric above maximum", field: "route_metric_retention_days", value: 3651},
 		{name: "API Key metric below minimum", field: "api_key_metric_retention_days", value: 0},

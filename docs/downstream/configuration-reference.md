@@ -78,6 +78,7 @@
 | `ChannelMonitorCostRetentionDays` | `30` | 日成本 |
 | `ChannelMonitorRouteMetricRetentionDays` | `30` | 路由分钟 |
 | `ChannelMonitorDurationBucketRetentionDays` | `30` | 首字分桶 |
+| `ChannelMonitorDailyMetricRetentionDays` | `30` | 业务日汇总及恢复检查点，包含分组缓存率历史；范围 `2..3650`，按北京时间整日保留 |
 | `ChannelMonitorApiKeyMetricRetentionDays` | `7` | API Key 分钟 |
 | `ChannelMonitorExecutionDetailRetentionDays` | `3` | 调度执行明细 |
 | `ChannelMonitorTaskRetentionDays` | `7` | 通用任务 |
@@ -90,7 +91,7 @@
 | `ChannelMonitorModelUpdateTaskRetentionDays` | `7` | 模型更新任务 |
 | `ChannelMonitorRatioHistoryRetentionDays` | `365` | 倍率历史 |
 | `ChannelMonitorStatusProbeHistoryRetentionDays` | `7` | 状态探测历史 |
-| `ChannelMonitorGroupMonitorRetentionDays` | `7` | 分组监控历史 |
+| `ChannelMonitorGroupMonitorRetentionDays` | `7` | 分组探测执行明细；缓存率历史随业务日统计清理 |
 | `ChannelMonitorModelDetectionRetentionDays` | `30` | 模型检测历史，范围 `7..180` |
 | `ChannelMonitorCleanupEnabled` | `true` | 清理总开关 |
 | `ChannelMonitorCleanupBatchSize` | `1000` | 单批删除行数 |
@@ -184,7 +185,7 @@
 | 共享限流组 | `/limit-groups` | 最多 128 组、每组 64 渠道/8 等级；在线更新保留渠道当前计数 |
 | 渠道探测策略 | `/channel/:id/probe-policy` | `auto_probe_disabled`、`small_input_response_enabled`、阈值/文本、独立 `probe_policy_revision` |
 | 状态探测 | `/status/channel/:id/config` | 模型、周期、展示窗口、记录样本；周期 30..86400 秒，记录样本至少 60 秒 |
-| 分组监控 | `/group_monitor/settings` | 分类与分组、全局和各组 `enabled`、周期与展示窗口、`show_cache_rate`（默认 false） |
+| 分组监控 | `/group_monitor/settings` | 分类与分组、全局和各组 `enabled`、周期与展示窗口、`show_cache_rate`（默认 false）、`cache_min_context_k`（默认 0，整数 0..1000 K tokens） |
 | API Key 自动禁用 | `/token_protection/settings` | 默认关闭，最多 64 条规则；单实例，关闭不解除已有禁用 |
 
 上表路径均相对 `/api/channel_monitor`。具体请求方法、字段和恢复条件见[功能索引](channel-monitor/README.md)。分组缓存率使用配置的展示周期；渠道小输入响应与全局 `ChannelMonitorProbeResponse*` 配置是两套独立功能。

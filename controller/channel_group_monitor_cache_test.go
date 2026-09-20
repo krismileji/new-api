@@ -20,14 +20,16 @@ func TestChannelGroupMonitorCacheRateSettingsPreserveOmittedAndExplicitFalse(t *
 	db := setupChannelMonitorControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.ChannelGroupMonitorConfig{}))
 	for index, tc := range []struct {
-		name  string
-		value *bool
-		want  bool
+		name    string
+		value   *bool
+		want    bool
+		min     *int
+		wantMin int
 	}{
-		{"legacy default", nil, false},
-		{"enable", common.GetPointer(true), true},
-		{"legacy update preserves enabled", nil, true},
-		{"explicit disable", common.GetPointer(false), false},
+		{"legacy default", nil, false, nil, 0},
+		{"enable", common.GetPointer(true), true, common.GetPointer(32), 32},
+		{"legacy update preserves enabled", nil, true, nil, 32},
+		{"explicit disable and reset", common.GetPointer(false), false, common.GetPointer(0), 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			request := map[string]any{
@@ -36,6 +38,9 @@ func TestChannelGroupMonitorCacheRateSettingsPreserveOmittedAndExplicitFalse(t *
 			}
 			if tc.value != nil {
 				request["show_cache_rate"] = *tc.value
+			}
+			if tc.min != nil {
+				request["cache_min_context_k"] = *tc.min
 			}
 			body, err := common.Marshal(request)
 			require.NoError(t, err)
@@ -49,6 +54,7 @@ func TestChannelGroupMonitorCacheRateSettingsPreserveOmittedAndExplicitFalse(t *
 			}
 			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &saved))
 			assert.Equal(t, tc.want, saved.Data.ShowCacheRate)
+			assert.Equal(t, tc.wantMin, saved.Data.CacheMinContextK)
 
 			recorder = httptest.NewRecorder()
 			c, _ = gin.CreateTestContext(recorder)
@@ -62,6 +68,7 @@ func TestChannelGroupMonitorCacheRateSettingsPreserveOmittedAndExplicitFalse(t *
 			}
 			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &loaded))
 			assert.Equal(t, tc.want, loaded.Data.Settings.ShowCacheRate)
+			assert.Equal(t, tc.wantMin, loaded.Data.Settings.CacheMinContextK)
 		})
 	}
 }
@@ -72,10 +79,15 @@ func TestGetPricingGroupMonitorCacheRateVisibilityAndFallback(t *testing.T) {
 		show           bool
 		redisAvailable bool
 		wantRate       bool
+		minContextK    int
+		stream         bool
 	}{
-		{"enabled", true, true, true},
-		{"disabled hides existing rates", false, true, false},
-		{"unavailable retains monitoring", true, false, false},
+		{"enabled", true, true, true, 0, false},
+		{"disabled hides existing rates", false, true, false, 0, false},
+		{"unavailable retains monitoring", true, false, false, 0, false},
+		{"stream at threshold", true, true, true, 10, true},
+		{"stream below threshold", true, true, false, 11, true},
+		{"non-stream excluded", true, true, false, 10, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			db := setupChannelMonitorControllerTestDB(t)
@@ -85,8 +97,9 @@ func TestGetPricingGroupMonitorCacheRateVisibilityAndFallback(t *testing.T) {
 			now := common.GetTimestamp()
 			_, err := model.SaveChannelGroupMonitorConfig(model.ChannelGroupMonitorConfigInput{
 				Enabled: true, ShowCacheRate: tc.show,
-				Groups:          []model.ChannelGroupMonitorGroup{{GroupName: "vip", ProbeModel: "gpt-4.1"}},
-				IntervalSeconds: 60, DisplayValue: 60, DisplayUnit: model.ChannelStatusProbeDisplayUnitMinute,
+				CacheMinContextK: tc.minContextK,
+				Groups:           []model.ChannelGroupMonitorGroup{{GroupName: "vip", ProbeModel: "gpt-4.1"}},
+				IntervalSeconds:  60, DisplayValue: 60, DisplayUnit: model.ChannelStatusProbeDisplayUnitMinute,
 			}, now)
 			require.NoError(t, err)
 			// Writing the Redis projection alone isolates the response contract from
@@ -98,7 +111,8 @@ func TestGetPricingGroupMonitorCacheRateVisibilityAndFallback(t *testing.T) {
 				OccurredAt: now - 60, CreatedAt: now, ChannelId: 11, GroupName: "vip", ModelName: "gpt-4.1",
 				Source: model.ChannelMonitorEventSourceBusiness, Outcome: model.ChannelMonitorEventOutcomeSuccess,
 				CostStatus: model.ChannelMonitorEventCostNone, RequestDispatched: true, IsFinalAttempt: true,
-				InputTokens: common.GetPointer(int64(100)), CacheReadTokens: common.GetPointer(int64(20)),
+				GroupCacheExcluded: common.GetPointer(tc.minContextK > 0 && (!tc.stream || tc.minContextK > 10)),
+				InputTokens:        common.GetPointer(int64(10000)), CacheReadTokens: common.GetPointer(int64(20)), IsStream: tc.stream,
 			}}))
 			common.RedisEnabled = tc.redisAvailable
 			recorder := httptest.NewRecorder()
@@ -108,12 +122,14 @@ func TestGetPricingGroupMonitorCacheRateVisibilityAndFallback(t *testing.T) {
 			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 			var payload struct {
 				Data struct {
-					ShowCacheRate bool             `json:"show_cache_rate"`
-					Items         []map[string]any `json:"items"`
+					ShowCacheRate    bool             `json:"show_cache_rate"`
+					CacheMinContextK int              `json:"cache_min_context_k"`
+					Items            []map[string]any `json:"items"`
 				} `json:"data"`
 			}
 			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
 			assert.Equal(t, tc.show, payload.Data.ShowCacheRate)
+			assert.Equal(t, tc.minContextK, payload.Data.CacheMinContextK)
 			require.Len(t, payload.Data.Items, 1)
 			assert.Equal(t, "vip", payload.Data.Items[0]["group"])
 			assert.Contains(t, payload.Data.Items[0], "recent_window")
@@ -125,6 +141,27 @@ func TestGetPricingGroupMonitorCacheRateVisibilityAndFallback(t *testing.T) {
 			assert.NotContains(t, payload.Data.Items[0], "channel_id")
 		})
 	}
+}
+
+func TestChannelGroupMonitorCacheRateRejectsInvalidContextThreshold(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.ChannelGroupMonitorConfig{}))
+	for _, value := range []any{-1, 1.5, model.ChannelGroupMonitorMaxCacheContextK + 1, "32", 1e30} {
+		body, err := common.Marshal(map[string]any{
+			"enabled": false, "groups": []model.ChannelGroupMonitorGroup{},
+			"interval_seconds": 60, "display_value": 60, "display_unit": "minute", "revision": 0,
+			"cache_min_context_k": value,
+		})
+		require.NoError(t, err)
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		c.Request = httptest.NewRequest(http.MethodPut, "/api/channel_monitor/group_monitor/settings", bytes.NewReader(body))
+		UpdateChannelGroupMonitorSettings(c)
+		assert.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	}
+	var count int64
+	require.NoError(t, db.Model(&model.ChannelGroupMonitorConfig{}).Count(&count).Error)
+	assert.Zero(t, count)
 }
 
 func TestChannelGroupMonitorCacheRateFollowsDisplayWindow(t *testing.T) {

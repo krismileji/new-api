@@ -66,6 +66,7 @@ export function createChannelMonitorSettingsUpdatePayload(
     cost_retention_days: values.costRetentionDays,
     route_metric_retention_days: values.routeMetricRetentionDays,
     duration_bucket_retention_days: values.durationBucketRetentionDays,
+    daily_metric_retention_days: values.dailyMetricRetentionDays,
     api_key_metric_retention_days: values.apiKeyMetricRetentionDays,
     execution_detail_retention_days: values.executionDetailRetentionDays,
     task_retention_days: values.taskRetentionDays,

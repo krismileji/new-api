@@ -35,6 +35,7 @@ const (
 	channelMonitorCostRetentionDaysOption                      = "ChannelMonitorCostRetentionDays"
 	channelMonitorRouteMetricRetentionDaysOption               = "ChannelMonitorRouteMetricRetentionDays"
 	channelMonitorDurationBucketRetentionDaysOption            = "ChannelMonitorDurationBucketRetentionDays"
+	channelMonitorDailyMetricRetentionDaysOption               = model.ChannelMonitorDailyMetricRetentionDaysOption
 	channelMonitorAPIKeyMetricRetentionDaysOption              = "ChannelMonitorApiKeyMetricRetentionDays"
 	channelMonitorExecutionDetailRetentionDaysOption           = "ChannelMonitorExecutionDetailRetentionDays"
 	channelMonitorTaskRetentionDaysOption                      = "ChannelMonitorTaskRetentionDays"
@@ -139,6 +140,7 @@ const (
 	defaultChannelMonitorCostRetentionDays                     = 30
 	defaultChannelMonitorRouteMetricRetentionDays              = 30
 	defaultChannelMonitorDurationBucketRetentionDays           = 30
+	defaultChannelMonitorDailyMetricRetentionDays              = model.ChannelMonitorDailyMetricDefaultRetentionDays
 	defaultChannelMonitorAPIKeyMetricRetentionDays             = 7
 	defaultChannelMonitorExecutionDetailRetentionDays          = 3
 	defaultChannelMonitorTaskRetentionDays                     = 7
@@ -209,6 +211,7 @@ type channelMonitorSettings struct {
 	CostRetentionDays                     int                        `json:"cost_retention_days"`
 	RouteMetricRetentionDays              int                        `json:"route_metric_retention_days"`
 	DurationBucketRetentionDays           int                        `json:"duration_bucket_retention_days"`
+	DailyMetricRetentionDays              int                        `json:"daily_metric_retention_days"`
 	APIKeyMetricRetentionDays             int                        `json:"api_key_metric_retention_days"`
 	ExecutionDetailRetentionDays          int                        `json:"execution_detail_retention_days"`
 	TaskRetentionDays                     int                        `json:"task_retention_days"`
@@ -275,6 +278,7 @@ type channelMonitorSettingsUpdateRequest struct {
 	CostRetentionDays                     *int                        `json:"cost_retention_days"`
 	RouteMetricRetentionDays              *int                        `json:"route_metric_retention_days"`
 	DurationBucketRetentionDays           *int                        `json:"duration_bucket_retention_days"`
+	DailyMetricRetentionDays              *int                        `json:"daily_metric_retention_days"`
 	APIKeyMetricRetentionDays             *int                        `json:"api_key_metric_retention_days"`
 	ExecutionDetailRetentionDays          *int                        `json:"execution_detail_retention_days"`
 	TaskRetentionDays                     *int                        `json:"task_retention_days"`
@@ -354,6 +358,7 @@ func loadChannelMonitorSettings(ctx context.Context) (channelMonitorSettings, er
 		channelMonitorCostRetentionDaysOption,
 		channelMonitorRouteMetricRetentionDaysOption,
 		channelMonitorDurationBucketRetentionDaysOption,
+		channelMonitorDailyMetricRetentionDaysOption,
 		channelMonitorAPIKeyMetricRetentionDaysOption,
 		channelMonitorExecutionDetailRetentionDaysOption,
 		channelMonitorTaskRetentionDaysOption,
@@ -429,6 +434,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	rawCostRetentionDays := options[channelMonitorCostRetentionDaysOption]
 	rawRouteMetricRetentionDays := options[channelMonitorRouteMetricRetentionDaysOption]
 	rawDurationBucketRetentionDays := options[channelMonitorDurationBucketRetentionDaysOption]
+	rawDailyMetricRetentionDays := options[channelMonitorDailyMetricRetentionDaysOption]
 	rawAPIKeyMetricRetentionDays := options[channelMonitorAPIKeyMetricRetentionDaysOption]
 	rawExecutionDetailRetentionDays := options[channelMonitorExecutionDetailRetentionDaysOption]
 	rawTaskRetentionDays := options[channelMonitorTaskRetentionDaysOption]
@@ -520,6 +526,10 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	durationBucketRetentionDays, err := strconv.Atoi(rawDurationBucketRetentionDays)
 	if err != nil || durationBucketRetentionDays < minChannelMonitorCostRetentionDays || durationBucketRetentionDays > maxChannelMonitorCostRetentionDays {
 		durationBucketRetentionDays = defaultChannelMonitorDurationBucketRetentionDays
+	}
+	dailyMetricRetentionDays, err := strconv.Atoi(rawDailyMetricRetentionDays)
+	if err != nil || dailyMetricRetentionDays < model.ChannelMonitorDailyMetricMinRetentionDays || dailyMetricRetentionDays > maxChannelMonitorCostRetentionDays {
+		dailyMetricRetentionDays = defaultChannelMonitorDailyMetricRetentionDays
 	}
 	apiKeyMetricRetentionDays, err := strconv.Atoi(rawAPIKeyMetricRetentionDays)
 	if err != nil || apiKeyMetricRetentionDays < minChannelMonitorCostRetentionDays || apiKeyMetricRetentionDays > maxChannelMonitorCostRetentionDays {
@@ -646,6 +656,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		CostRetentionDays:                     costRetentionDays,
 		RouteMetricRetentionDays:              routeMetricRetentionDays,
 		DurationBucketRetentionDays:           durationBucketRetentionDays,
+		DailyMetricRetentionDays:              dailyMetricRetentionDays,
 		APIKeyMetricRetentionDays:             apiKeyMetricRetentionDays,
 		ExecutionDetailRetentionDays:          executionDetailRetentionDays,
 		TaskRetentionDays:                     taskRetentionDays,
@@ -984,6 +995,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.CostRetentionDays == nil &&
 		request.RouteMetricRetentionDays == nil &&
 		request.DurationBucketRetentionDays == nil &&
+		request.DailyMetricRetentionDays == nil &&
 		request.APIKeyMetricRetentionDays == nil &&
 		request.ExecutionDetailRetentionDays == nil &&
 		request.TaskRetentionDays == nil &&
@@ -1216,9 +1228,21 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		})
 		return
 	}
+	if request.DailyMetricRetentionDays != nil && (*request.DailyMetricRetentionDays < model.ChannelMonitorDailyMetricMinRetentionDays ||
+		*request.DailyMetricRetentionDays > maxChannelMonitorCostRetentionDays) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "业务日统计保留天数必须在 2 到 3650 天之间",
+		})
+		return
+	}
 	if request.DurationBucketRetentionDays != nil {
 		settings.DurationBucketRetentionDays = *request.DurationBucketRetentionDays
 		values[channelMonitorDurationBucketRetentionDaysOption] = strconv.Itoa(settings.DurationBucketRetentionDays)
+	}
+	if request.DailyMetricRetentionDays != nil {
+		settings.DailyMetricRetentionDays = *request.DailyMetricRetentionDays
+		values[channelMonitorDailyMetricRetentionDaysOption] = strconv.Itoa(settings.DailyMetricRetentionDays)
 	}
 	if request.APIKeyMetricRetentionDays != nil && (*request.APIKeyMetricRetentionDays < minChannelMonitorCostRetentionDays ||
 		*request.APIKeyMetricRetentionDays > maxChannelMonitorCostRetentionDays) {
@@ -1717,6 +1741,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"cost_retention_days":                        settings.CostRetentionDays,
 		"route_metric_retention_days":                settings.RouteMetricRetentionDays,
 		"duration_bucket_retention_days":             settings.DurationBucketRetentionDays,
+		"daily_metric_retention_days":                settings.DailyMetricRetentionDays,
 		"api_key_metric_retention_days":              settings.APIKeyMetricRetentionDays,
 		"execution_detail_retention_days":            settings.ExecutionDetailRetentionDays,
 		"task_retention_days":                        settings.TaskRetentionDays,
@@ -1824,6 +1849,10 @@ func validateChannelMonitorRetentionRequest(request channelMonitorSettingsUpdate
 	}
 	if err := validateDays(request.DurationBucketRetentionDays, minChannelMonitorCostRetentionDays,
 		maxChannelMonitorCostRetentionDays, "延迟分桶保留天数必须在 1 到 3650 天之间"); err != nil {
+		return err
+	}
+	if err := validateDays(request.DailyMetricRetentionDays, model.ChannelMonitorDailyMetricMinRetentionDays,
+		maxChannelMonitorCostRetentionDays, "业务日统计保留天数必须在 2 到 3650 天之间"); err != nil {
 		return err
 	}
 	if err := validateDays(request.APIKeyMetricRetentionDays, minChannelMonitorCostRetentionDays,

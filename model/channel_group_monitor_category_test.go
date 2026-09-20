@@ -73,9 +73,10 @@ func TestChannelGroupMonitorCategoryDatabaseCompatibility(t *testing.T) {
 			require.NoError(t, db.AutoMigrate(&ChannelGroupMonitorConfig{}))
 
 			input := ChannelGroupMonitorConfigInput{
-				Enabled:       true,
-				ShowCacheRate: true,
-				Categories:    []string{"空分类", "编程🚀", "未分类"},
+				Enabled:          true,
+				ShowCacheRate:    true,
+				CacheMinContextK: 32,
+				Categories:       []string{"空分类", "编程🚀", "未分类"},
 				Groups: []ChannelGroupMonitorGroup{
 					{GroupName: "vip", ProbeModel: "gpt-4.1", DisplayInitial: "V", Category: "编程🚀"},
 					{GroupName: "default", ProbeModel: "gpt-4.1-mini"},
@@ -97,6 +98,9 @@ func TestChannelGroupMonitorCategoryDatabaseCompatibility(t *testing.T) {
 				showCacheRate, parseErr := stored.ShowCacheRate()
 				require.NoError(t, parseErr)
 				assert.True(t, showCacheRate)
+				minContextK, parseErr := stored.CacheMinContextK()
+				require.NoError(t, parseErr)
+				assert.Equal(t, 32, minContextK)
 			}
 
 			// Existing installations have the same table with category absent from JSON.
@@ -107,6 +111,9 @@ func TestChannelGroupMonitorCategoryDatabaseCompatibility(t *testing.T) {
 			showCacheRate, err := legacy.ShowCacheRate()
 			require.NoError(t, err)
 			assert.False(t, showCacheRate)
+			minContextK, err := legacy.CacheMinContextK()
+			require.NoError(t, err)
+			assert.Zero(t, minContextK)
 			groups, err := legacy.Groups()
 			require.NoError(t, err)
 			require.Len(t, groups, 2)
@@ -133,6 +140,7 @@ func TestChannelGroupMonitorCategoryDatabaseCompatibility(t *testing.T) {
 
 			input.Groups[0].Category = ""
 			input.ShowCacheRate = false
+			input.CacheMinContextK = 0
 			input.Categories = []string{"未分类"}
 			input.Revision = stored.Revision
 			_, err = SaveChannelGroupMonitorConfig(input, 1_200)
@@ -147,6 +155,9 @@ func TestChannelGroupMonitorCategoryDatabaseCompatibility(t *testing.T) {
 			showCacheRate, err = stored.ShowCacheRate()
 			require.NoError(t, err)
 			assert.False(t, showCacheRate)
+			minContextK, err = stored.CacheMinContextK()
+			require.NoError(t, err)
+			assert.Zero(t, minContextK)
 			input.Categories = []string{"预留分类"}
 			_, err = SaveChannelGroupMonitorConfig(input, 1_300)
 			require.NoError(t, err)

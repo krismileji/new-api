@@ -29,7 +29,9 @@ type channelMonitorCostRetentionTaskResult struct {
 	RouteMetricRetentionDays            int   `json:"route_metric_retention_days"`
 	RouteMetricCutoff                   int64 `json:"route_metric_cutoff"`
 	DurationBucketRetentionDays         int   `json:"duration_bucket_retention_days"`
+	DailyMetricRetentionDays            int   `json:"daily_metric_retention_days"`
 	DurationBucketCutoff                int64 `json:"duration_bucket_cutoff"`
+	DailyMetricCutoff                   int64 `json:"daily_metric_cutoff"`
 	APIKeyMetricRetentionDays           int   `json:"api_key_metric_retention_days"`
 	APIKeyMetricCutoff                  int64 `json:"api_key_metric_cutoff"`
 	ProtectedWindowMinutes              int   `json:"protected_window_minutes"`
@@ -62,6 +64,7 @@ type channelMonitorCostRetentionTaskResult struct {
 	ModelDetectionRetentionDays         int   `json:"model_detection_retention_days"`
 	ModelDetectionCutoff                int64 `json:"model_detection_cutoff"`
 	BudgetExhausted                     bool  `json:"budget_exhausted"`
+	model.ChannelMonitorDailyRetentionResult
 	model.ChannelMonitorCostRetentionResult
 	model.ChannelMonitorHistoryRetentionResult
 	model.ChannelModelDetectionRetentionResult
@@ -205,6 +208,7 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 		CostRetentionDays:                     defaultChannelMonitorCostRetentionDays,
 		RouteMetricRetentionDays:              defaultChannelMonitorRouteMetricRetentionDays,
 		DurationBucketRetentionDays:           defaultChannelMonitorDurationBucketRetentionDays,
+		DailyMetricRetentionDays:              defaultChannelMonitorDailyMetricRetentionDays,
 		APIKeyMetricRetentionDays:             defaultChannelMonitorAPIKeyMetricRetentionDays,
 		ExecutionDetailRetentionDays:          defaultChannelMonitorExecutionDetailRetentionDays,
 		TaskRetentionDays:                     defaultChannelMonitorTaskRetentionDays,
@@ -226,6 +230,7 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 		channelMonitorCostRetentionDaysOption,
 		channelMonitorRouteMetricRetentionDaysOption,
 		channelMonitorDurationBucketRetentionDaysOption,
+		channelMonitorDailyMetricRetentionDaysOption,
 		channelMonitorAPIKeyMetricRetentionDaysOption,
 		channelMonitorExecutionDetailRetentionDaysOption,
 		channelMonitorTaskRetentionDaysOption,
@@ -269,6 +274,12 @@ func loadChannelMonitorRetentionSettings(ctx context.Context) (channelMonitorSet
 				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
 			}
 			settings.DurationBucketRetentionDays = days
+		case channelMonitorDailyMetricRetentionDaysOption:
+			days, err := strconv.Atoi(option.Value)
+			if err != nil || days < model.ChannelMonitorDailyMetricMinRetentionDays || days > maxChannelMonitorCostRetentionDays {
+				return channelMonitorSettings{}, fmt.Errorf("渠道监控保留配置 %s 无效", option.Key)
+			}
+			settings.DailyMetricRetentionDays = days
 		case channelMonitorAPIKeyMetricRetentionDaysOption:
 			days, err := strconv.Atoi(option.Value)
 			if err != nil || days < minChannelMonitorCostRetentionDays || days > maxChannelMonitorCostRetentionDays {
@@ -413,6 +424,7 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		settings.SmartScheduleGroupPolicies.maxStabilityWindowMinutes(),
 	)
 	durationBucketConfiguredCutoff := channelMonitorHistoryRetentionCutoff(now, settings.DurationBucketRetentionDays)
+	dailyMetricCutoff := channelMonitorCostRetentionCutoff(now, settings.DailyMetricRetentionDays)
 	durationBucketCutoff, _ := channelMonitorMinuteRetentionCutoff(
 		now,
 		durationBucketConfiguredCutoff,
@@ -443,7 +455,9 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		RouteMetricRetentionDays:            settings.RouteMetricRetentionDays,
 		RouteMetricCutoff:                   routeMetricCutoff,
 		DurationBucketRetentionDays:         settings.DurationBucketRetentionDays,
+		DailyMetricRetentionDays:            settings.DailyMetricRetentionDays,
 		DurationBucketCutoff:                durationBucketCutoff,
+		DailyMetricCutoff:                   dailyMetricCutoff,
 		APIKeyMetricRetentionDays:           settings.APIKeyMetricRetentionDays,
 		APIKeyMetricCutoff:                  apiKeyMetricCutoff,
 		ProtectedWindowMinutes:              protectedWindowMinutes,
@@ -478,7 +492,7 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		ctx,
 		modelDetectionCutoff,
 		batchSize,
-		cleanupBudget.Slice(4),
+		cleanupBudget.Slice(5),
 	)
 	result.ChannelModelDetectionRetentionResult = modelDetectionDeleted
 	if err != nil {
@@ -517,7 +531,7 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 			channelMonitorCostRetentionTaskType:       cleanupTaskCutoff,
 		},
 		batchSize,
-		cleanupBudget.Slice(3),
+		cleanupBudget.Slice(4),
 	)
 	result.ChannelMonitorHistoryRetentionResult = historyDeleted
 	if err != nil {
@@ -549,6 +563,13 @@ func (channelMonitorCostRetentionTaskHandler) Run(ctx context.Context, task *mod
 		return
 	}
 	result.BudgetExhausted = result.BudgetExhausted || statusProbeBudget.Exhausted()
+	dailyDeleted, err := model.DeleteChannelMonitorDailyMetricsBefore(ctx, dailyMetricCutoff, batchSize, cleanupBudget.Slice(2))
+	result.ChannelMonitorDailyRetentionResult = dailyDeleted
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, result, err)
+		return
+	}
+	result.BudgetExhausted = result.BudgetExhausted || dailyDeleted.Incomplete
 	costDeleted, err := model.DeleteChannelMonitorCostsBeforeWithDurationBucketCutoff(
 		ctx, costCutoff, routeMetricCutoff, durationBucketCutoff, apiKeyMetricCutoff, batchSize, cleanupBudget.Slice(1),
 	)

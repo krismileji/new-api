@@ -85,6 +85,8 @@ type ChannelMonitorEvent struct {
 	Outcome    ChannelMonitorEventOutcome    `json:"outcome"`
 	CostStatus ChannelMonitorEventCostStatus `json:"cost_status"`
 
+	GroupCacheExcluded *bool `json:"group_cache_excluded,omitempty"`
+
 	IsStream                  bool `json:"is_stream"`
 	IsRetryAttempt            bool `json:"is_retry_attempt"`
 	IsFinalAttempt            bool `json:"is_final_attempt"`
@@ -264,6 +266,10 @@ func (event ChannelMonitorEvent) Marshal() ([]byte, error) {
 // Clone freezes pointer-backed optional measurements before an event crosses
 // the asynchronous queue boundary.
 func (event ChannelMonitorEvent) Clone() ChannelMonitorEvent {
+	if event.GroupCacheExcluded != nil {
+		value := *event.GroupCacheExcluded
+		event.GroupCacheExcluded = &value
+	}
 	event.PassiveTargets = append([]ChannelPassiveTarget(nil), event.PassiveTargets...)
 	if event.StatusCode != nil {
 		value := *event.StatusCode

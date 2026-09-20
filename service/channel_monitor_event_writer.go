@@ -110,6 +110,11 @@ func StartChannelMonitorEventWriter() (*channelMonitorEventWriter, error) {
 			OverflowPublishTimeout: channelMonitorEventWriterOverflowTimeout,
 		},
 	)
+	configCtx, configCancel := context.WithTimeout(context.Background(), 4*time.Second)
+	if err := refreshChannelGroupMonitorCachePolicy(configCtx); err != nil {
+		common.SysError("读取分组缓存率配置失败: " + err.Error())
+	}
+	configCancel()
 	writer.passiveDone = make(chan struct{})
 	channelMonitorEventWriterState.Lock()
 	previous := channelMonitorEventWriterState.writer
@@ -266,6 +271,7 @@ func newChannelMonitorEventWriter(
 func EnqueueChannelMonitorEvent(event model.ChannelMonitorEvent) (ChannelMonitorEventPublishStatus, error) {
 	event = event.Clone()
 	captureChannelPassiveTargets(&event)
+	captureChannelGroupMonitorCachePolicy(&event)
 	payload, err := event.Marshal()
 	if err != nil {
 		channelMonitorEventPublisherStatsState.invalidEvents.Add(1)

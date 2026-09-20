@@ -78,6 +78,13 @@ func TestDailyPersistenceWaitsForHolesAndReplaysRetainedTailWithoutDoubleCountin
 		sequence, err := channelMonitorRedisEventSequenceFromStreamID(id)
 		require.NoError(t, err)
 		events[index].EventSequence = sequence
+		events[index].InputTokens = common.GetPointer(int64(10000))
+		events[index].CacheReadTokens = common.GetPointer(int64(0))
+		if index != 1 {
+			events[index].CacheReadTokens = common.GetPointer(int64(5000))
+		}
+		events[index].GroupCacheExcluded = common.GetPointer(index == 2)
+
 		payload, err := common.Marshal(events[index])
 		require.NoError(t, err)
 		require.NoError(t, client.XAdd(ctx, &redis.XAddArgs{Stream: ChannelMonitorRedisEventStream, ID: id, Values: map[string]any{
@@ -104,6 +111,10 @@ func TestDailyPersistenceWaitsForHolesAndReplaysRetainedTailWithoutDoubleCountin
 	view, err := queryChannelMonitorRedisDailySuccessWithClient(ctx, client, day, nil)
 	require.NoError(t, err)
 	assert.False(t, view.CoveragePartial)
+	counts, err := model.GetChannelGroupMonitorHistoricalCacheCounts(ctx, []string{"vip"}, day, day+24*60*60)
+	require.NoError(t, err)
+	assert.Equal(t, []model.ChannelGroupMonitorCacheCounts{{GroupName: "vip", CacheHitCount: 1, CacheSampleCount: 2}}, counts,
+		"tail replay preserves the original excluded sample and does not count it twice")
 }
 
 func TestReliableDailyCostModelDetectionResolvesOnlyOnce(t *testing.T) {

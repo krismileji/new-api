@@ -50,6 +50,7 @@ function CostRetentionFieldFixture() {
       costRetentionDays: 30,
       routeMetricRetentionDays: 30,
       durationBucketRetentionDays: 30,
+      dailyMetricRetentionDays: 30,
       apiKeyMetricRetentionDays: 7,
       executionDetailRetentionDays: 3,
       taskRetentionDays: 7,
@@ -373,6 +374,11 @@ describe('channel monitor settings dialog', () => {
     )?.[0]
     assert.ok(retentionHelpButton)
     assert.ok(markup.includes('路由分钟指标保留天数'))
+    assert.ok(markup.includes('业务日统计保留天数'))
+    assert.match(
+      markup,
+      /<input(?=[^>]*name="dailyMetricRetentionDays")(?=[^>]*min="2")[^>]*>/
+    )
     assert.ok(markup.includes('API Key 分钟指标保留天数'))
     assert.ok(markup.includes('调度执行明细保留天数'))
     assert.ok(markup.includes('监控任务保留天数'))

@@ -68,6 +68,7 @@ import {
 } from '@/features/group-monitor/api'
 import {
   CHANNEL_GROUP_MONITOR_DEFAULT_INTERVAL_SECONDS,
+  CHANNEL_GROUP_MONITOR_MAX_CACHE_CONTEXT_K,
   CHANNEL_GROUP_MONITOR_DISPLAY_LIMITS,
   channelGroupMonitorConfigSchema,
   type ChannelGroupMonitorConfigFormValues,
@@ -122,6 +123,7 @@ function dataToFormValues(
   return {
     enabled: settings?.enabled ?? false,
     showCacheRate: settings?.show_cache_rate ?? false,
+    cacheMinContextK: settings?.cache_min_context_k ?? 0,
     categories,
     groups:
       settings?.groups.map((group) => ({
@@ -162,6 +164,7 @@ export function ChannelGroupMonitorSettingsSheet(
     defaultValues: dataToFormValues(props.data),
   })
   const displayUnit = form.watch('displayUnit')
+  const showCacheRate = form.watch('showCacheRate')
   const displayValue = form.watch('displayValue')
   const intervalSeconds = form.watch('intervalSeconds')
   const groupValues = form.watch('groups')
@@ -187,6 +190,7 @@ export function ChannelGroupMonitorSettingsSheet(
       updateChannelGroupMonitorSettings({
         enabled: values.enabled,
         showCacheRate: values.showCacheRate,
+        cacheMinContextK: values.cacheMinContextK,
         categories: values.categories.map((category) => category.name),
         groups: values.categories.flatMap((category) =>
           values.groups
@@ -485,6 +489,36 @@ export function ChannelGroupMonitorSettingsSheet(
                         aria-label='显示缓存率'
                       />
                     </FormControl>
+                  </FormItem>
+                )}
+              />
+              <FormField
+                control={form.control}
+                name='cacheMinContextK'
+                render={({ field }) => (
+                  <FormItem data-disabled={controlsDisabled || !showCacheRate}>
+                    <FormLabel>缓存率最小上下文（K tokens）</FormLabel>
+                    <FormControl>
+                      <Input
+                        {...field}
+                        type='number'
+                        min={0}
+                        max={CHANNEL_GROUP_MONITOR_MAX_CACHE_CONTEXT_K}
+                        step={1}
+                        value={Number.isFinite(field.value) ? field.value : ''}
+                        onChange={(event) =>
+                          field.onChange(event.target.valueAsNumber)
+                        }
+                        disabled={controlsDisabled || !showCacheRate}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      0 沿用全部有效请求；大于 0
+                      时，只统计输入上下文达到此下限的流式请求，包含等于下限的请求。1
+                      K = 1000 tokens，输入包含缓存读取与写入，不含输出。
+                      配置变更只影响后续采集的请求，历史数据保留原统计口径。
+                    </FormDescription>
+                    <FormMessage />
                   </FormItem>
                 )}
               />

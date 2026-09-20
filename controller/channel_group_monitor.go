@@ -32,6 +32,7 @@ const (
 type channelGroupMonitorConfigResponse struct {
 	Enabled           bool                             `json:"enabled"`
 	ShowCacheRate     bool                             `json:"show_cache_rate"`
+	CacheMinContextK  int                              `json:"cache_min_context_k"`
 	Groups            []model.ChannelGroupMonitorGroup `json:"groups"`
 	Categories        []string                         `json:"categories"`
 	IntervalSeconds   int                              `json:"interval_seconds"`
@@ -48,14 +49,15 @@ type channelGroupMonitorConfigResponse struct {
 }
 
 type channelGroupMonitorConfigRequest struct {
-	Enabled         *bool                             `json:"enabled"`
-	ShowCacheRate   *bool                             `json:"show_cache_rate"`
-	Groups          *[]model.ChannelGroupMonitorGroup `json:"groups"`
-	Categories      *[]string                         `json:"categories"`
-	IntervalSeconds *int                              `json:"interval_seconds"`
-	DisplayValue    *int                              `json:"display_value"`
-	DisplayUnit     *string                           `json:"display_unit"`
-	Revision        *int64                            `json:"revision"`
+	Enabled          *bool                             `json:"enabled"`
+	ShowCacheRate    *bool                             `json:"show_cache_rate"`
+	CacheMinContextK *int                              `json:"cache_min_context_k"`
+	Groups           *[]model.ChannelGroupMonitorGroup `json:"groups"`
+	Categories       *[]string                         `json:"categories"`
+	IntervalSeconds  *int                              `json:"interval_seconds"`
+	DisplayValue     *int                              `json:"display_value"`
+	DisplayUnit      *string                           `json:"display_unit"`
+	Revision         *int64                            `json:"revision"`
 }
 
 type channelGroupMonitorItemResponse struct {
@@ -129,6 +131,10 @@ type channelGroupMonitorOverviewResponse struct {
 }
 
 func channelGroupMonitorConfigToResponse(config model.ChannelGroupMonitorConfig) (channelGroupMonitorConfigResponse, error) {
+	cacheMinContextK, err := config.CacheMinContextK()
+	if err != nil {
+		return channelGroupMonitorConfigResponse{}, err
+	}
 	showCacheRate, err := config.ShowCacheRate()
 	if err != nil {
 		return channelGroupMonitorConfigResponse{}, err
@@ -143,8 +149,9 @@ func channelGroupMonitorConfigToResponse(config model.ChannelGroupMonitorConfig)
 	}
 	displayValue, displayUnit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
 	return channelGroupMonitorConfigResponse{
-		ShowCacheRate: showCacheRate,
-		Enabled:       config.Enabled, Groups: groups, Categories: categories, IntervalSeconds: config.IntervalSeconds,
+		CacheMinContextK: cacheMinContextK,
+		ShowCacheRate:    showCacheRate,
+		Enabled:          config.Enabled, Groups: groups, Categories: categories, IntervalSeconds: config.IntervalSeconds,
 		DisplayValue: displayValue, DisplayUnit: displayUnit, NextRunAt: config.NextRunAt,
 		ManualRequestId: config.ManualRequestId, ManualRequestedAt: config.ManualRequestedAt,
 		Revision: config.Revision, RunningTrigger: config.RunningTrigger, RunningRunId: config.RunningRunId,
@@ -626,6 +633,10 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "分组监控配置参数不完整"})
 		return
 	}
+	if request.CacheMinContextK != nil && (*request.CacheMinContextK < 0 || *request.CacheMinContextK > model.ChannelGroupMonitorMaxCacheContextK) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "缓存率最小上下文必须为 0 到 1000 K 的整数"})
+		return
+	}
 	if *request.IntervalSeconds < model.ChannelGroupMonitorMinIntervalSeconds || *request.IntervalSeconds > model.ChannelGroupMonitorMaxIntervalSeconds {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "探测间隔必须在 30 到 86400 秒之间"})
 		return
@@ -696,9 +707,18 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 	if request.ShowCacheRate != nil {
 		showCacheRate = *request.ShowCacheRate
 	}
+	cacheMinContextK, err := currentConfig.CacheMinContextK()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if request.CacheMinContextK != nil {
+		cacheMinContextK = *request.CacheMinContextK
+	}
 	saved, err := model.SaveChannelGroupMonitorConfig(model.ChannelGroupMonitorConfigInput{
-		ShowCacheRate: showCacheRate,
-		Enabled:       *request.Enabled, Groups: groups, IntervalSeconds: *request.IntervalSeconds,
+		CacheMinContextK: cacheMinContextK,
+		ShowCacheRate:    showCacheRate,
+		Enabled:          *request.Enabled, Groups: groups, IntervalSeconds: *request.IntervalSeconds,
 		Categories:   categories,
 		DisplayValue: *request.DisplayValue, DisplayUnit: *request.DisplayUnit, Revision: *request.Revision,
 	}, common.GetTimestamp())
@@ -710,14 +730,18 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if err := service.UpdateChannelGroupMonitorCachePolicy(saved); err != nil {
+		common.SysError("更新分组缓存率配置失败: " + err.Error())
+	}
 	response, err := channelGroupMonitorConfigToResponse(saved)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	recordManageAudit(c, "channel.group_monitor_config_changed", map[string]any{
-		"show_cache_rate": showCacheRate,
-		"enabled":         *request.Enabled, "groups": groups, "group_count": len(groups),
+		"cache_min_context_k": cacheMinContextK,
+		"show_cache_rate":     showCacheRate,
+		"enabled":             *request.Enabled, "groups": groups, "group_count": len(groups),
 		"categories":       categories,
 		"interval_seconds": *request.IntervalSeconds, "display_value": *request.DisplayValue,
 		"display_unit": *request.DisplayUnit,
@@ -823,6 +847,11 @@ func GetPricingGroupMonitor(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	cacheMinContextK, err := config.CacheMinContextK()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	userGroup := ""
 	if userId, exists := c.Get("id"); exists {
 		if user, userErr := model.GetUserCache(userId.(int)); userErr == nil {
@@ -872,8 +901,9 @@ func GetPricingGroupMonitor(c *gin.Context) {
 	displayValue, displayUnit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{
 		"enabled": config.Enabled, "server_now": now,
-		"show_cache_rate": showCacheRate,
-		"data_cutoff_at":  now - channelGroupMonitorDisplaySeconds(displayValue, displayUnit),
-		"display_value":   displayValue, "display_unit": displayUnit, "items": publicItems, "categories": categories,
+		"cache_min_context_k": cacheMinContextK,
+		"show_cache_rate":     showCacheRate,
+		"data_cutoff_at":      now - channelGroupMonitorDisplaySeconds(displayValue, displayUnit),
+		"display_value":       displayValue, "display_unit": displayUnit, "items": publicItems, "categories": categories,
 	}})
 }

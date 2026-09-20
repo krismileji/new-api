@@ -136,14 +136,15 @@ type ChannelGroupMonitorExecutionSummary struct {
 }
 
 type ChannelGroupMonitorConfigInput struct {
-	Enabled         bool
-	ShowCacheRate   bool
-	Groups          []ChannelGroupMonitorGroup
-	Categories      []string
-	IntervalSeconds int
-	DisplayValue    int
-	DisplayUnit     string
-	Revision        int64
+	Enabled          bool
+	ShowCacheRate    bool
+	CacheMinContextK int
+	Groups           []ChannelGroupMonitorGroup
+	Categories       []string
+	IntervalSeconds  int
+	DisplayValue     int
+	DisplayUnit      string
+	Revision         int64
 }
 
 type ChannelGroupMonitorClaim struct {
@@ -250,11 +251,15 @@ func GetChannelGroupMonitorCandidateAbilities(ctx context.Context, channelIDs []
 }
 
 func SaveChannelGroupMonitorConfig(input ChannelGroupMonitorConfigInput, now int64) (ChannelGroupMonitorConfig, error) {
+	if input.CacheMinContextK < 0 || input.CacheMinContextK > ChannelGroupMonitorMaxCacheContextK {
+		return ChannelGroupMonitorConfig{}, errors.New("缓存率最小上下文必须为 0 到 1000 K 的整数")
+	}
 	hasEnabledGroups := slices.ContainsFunc(input.Groups, ChannelGroupMonitorGroup.IsEnabled)
 	var groupConfiguration any = input.Groups
-	if input.Categories != nil || input.ShowCacheRate {
+	if input.Categories != nil || input.ShowCacheRate || input.CacheMinContextK > 0 {
 		groupConfiguration = channelGroupMonitorGroupConfiguration{
 			Categories: input.Categories, Groups: input.Groups, ShowCacheRate: input.ShowCacheRate,
+			CacheMinContextK: input.CacheMinContextK,
 		}
 	}
 	groupsJSON, err := common.Marshal(groupConfiguration)

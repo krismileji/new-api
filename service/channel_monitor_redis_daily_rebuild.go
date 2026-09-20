@@ -472,6 +472,8 @@ func encodeChannelMonitorRedisDailySuccessAggregates(
 			channelMonitorRedisSharedMetricActualFailure:          aggregate.ActualFailureCount,
 			channelMonitorRedisSharedMetricFinalSuccess:           aggregate.FinalSuccessCount,
 			channelMonitorRedisSharedMetricFinalFailure:           aggregate.FinalFailureCount,
+			channelMonitorRedisSharedMetricGroupCacheSkipHits:     aggregate.GroupCacheExcludedHits,
+			channelMonitorRedisSharedMetricGroupCacheSkipSamples:  aggregate.GroupCacheExcludedSamples,
 			channelMonitorRedisSharedMetricCacheHits:              aggregate.CacheHitCount,
 			channelMonitorRedisSharedMetricCacheSamples:           aggregate.CacheSampleCount,
 			channelMonitorRedisSharedMetricCacheReadTokens:        aggregate.CacheReadTokens,

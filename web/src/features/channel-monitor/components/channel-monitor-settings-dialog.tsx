@@ -186,6 +186,7 @@ type ChannelMonitorRetentionFieldName =
   | 'costRetentionDays'
   | 'routeMetricRetentionDays'
   | 'durationBucketRetentionDays'
+  | 'dailyMetricRetentionDays'
   | 'apiKeyMetricRetentionDays'
   | 'executionDetailRetentionDays'
   | 'taskRetentionDays'
@@ -346,6 +347,14 @@ export function ChannelMonitorRetentionFields(props: {
           description='保留首字延迟分布的分桶统计，用于观察延迟趋势；智能调度使用的最长窗口会额外保护这段数据。'
           min={MIN_CHANNEL_MONITOR_DURATION_BUCKET_RETENTION_DAYS}
           max={MAX_CHANNEL_MONITOR_DURATION_BUCKET_RETENTION_DAYS}
+        />
+        <ChannelMonitorRetentionDayField
+          form={props.form}
+          name='dailyMetricRetentionDays'
+          label='业务日统计保留天数'
+          description='保留业务请求的成功率、性能与缓存日汇总，包含分组缓存率历史。按北京时间整日清理，至少保留今天和昨天；已清理的数据无法恢复。'
+          min={2}
+          max={MAX_CHANNEL_MONITOR_COST_RETENTION_DAYS}
         />
         <ChannelMonitorRetentionDayField
           form={props.form}
@@ -817,6 +826,8 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       routeMetricRetentionDays: props.settings.route_metric_retention_days,
       durationBucketRetentionDays:
         props.settings.duration_bucket_retention_days,
+      dailyMetricRetentionDays:
+        props.settings.daily_metric_retention_days ?? 30,
       apiKeyMetricRetentionDays: props.settings.api_key_metric_retention_days,
       executionDetailRetentionDays:
         props.settings.execution_detail_retention_days,

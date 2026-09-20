@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { z } from 'zod'
 
 export const CHANNEL_GROUP_MONITOR_DEFAULT_INTERVAL_SECONDS = 60
+export const CHANNEL_GROUP_MONITOR_MAX_CACHE_CONTEXT_K = 1000
 
 export const CHANNEL_GROUP_MONITOR_DISPLAY_LIMITS = {
   minute: 60,
@@ -39,6 +40,15 @@ export const channelGroupMonitorConfigSchema = z
   .object({
     enabled: z.boolean(),
     showCacheRate: z.boolean().default(false),
+    cacheMinContextK: z
+      .number('请填写有效的缓存率最小上下文')
+      .int('缓存率最小上下文必须是整数')
+      .min(0, '缓存率最小上下文不能小于 0 K')
+      .max(
+        CHANNEL_GROUP_MONITOR_MAX_CACHE_CONTEXT_K,
+        '缓存率最小上下文不能超过 1000 K'
+      )
+      .default(0),
     categories: z
       .array(
         z.object({

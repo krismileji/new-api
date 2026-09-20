@@ -118,6 +118,17 @@ test('修改状态展示范围后缓存率说明同步更新', () => {
   ).toBeVisible()
 })
 
+test('设置上下文下限后缓存率说明显示包含边界的流式筛选口径', () => {
+  const result = categoryMonitorResult([{ group: 'vip' }])
+  result.show_cache_rate = true
+  result.cache_min_context_k = 32
+  render(<GroupMonitorContent result={result} />)
+  expect(
+    screen.getByTitle(/仅统计输入上下文 ≥ 32 K tokens 的流式请求/)
+  ).toBeVisible()
+  expect(screen.getByTitle(/历史数据保留采集时的统计口径/)).toBeVisible()
+})
+
 test('groups interleaved categories in first appearance order and keeps each category’s group order', () => {
   render(
     <GroupMonitorContent

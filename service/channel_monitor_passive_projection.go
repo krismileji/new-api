@@ -196,6 +196,9 @@ func runChannelPassiveMonitor(ctx context.Context) {
 	node := common.GetUUID()
 	for {
 		opCtx, cancel := context.WithTimeout(ctx, 4*time.Second)
+		if err := refreshChannelGroupMonitorCachePolicy(opCtx); err != nil {
+			common.SysError("刷新分组缓存率配置失败: " + err.Error())
+		}
 		err := RefreshChannelPassiveTargets(opCtx)
 		client := common.RedisMonitorConsumerClient()
 		now := time.Now().Unix()

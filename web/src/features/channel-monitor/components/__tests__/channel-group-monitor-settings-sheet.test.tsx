@@ -28,6 +28,7 @@ import { ChannelGroupMonitorSettingsSheet } from '../channel-group-monitor-setti
 
 type SaveRequest = {
   show_cache_rate?: boolean
+  cache_min_context_k?: number
   categories: string[]
   groups: ChannelGroupMonitorSettingsResponse['settings']['groups']
   revision: number
@@ -50,12 +51,14 @@ function renderSettings(
     vip: ['gpt-4.1'],
   },
   groupOrder: readonly string[] = [],
-  showCacheRate?: boolean
+  showCacheRate?: boolean,
+  cacheMinContextK?: number
 ) {
   const data: ChannelGroupMonitorSettingsResponse = {
     settings: {
       enabled: false,
       show_cache_rate: showCacheRate,
+      cache_min_context_k: cacheMinContextK,
       groups,
       categories,
       interval_seconds: 60,
@@ -138,6 +141,65 @@ test('保存缓存率开关失败时保留修改供重试', async () => {
   await waitFor(() => expect(requests).toHaveLength(1))
   expect(requests[0].show_cache_rate).toBe(true)
   expect(toggle).toHaveAttribute('aria-checked', 'true')
+})
+
+test('缓存率上下文下限恢复配置，保存新值并支持归零', async () => {
+  const user = userEvent.setup()
+  const { requests } = renderSettings([], [], undefined, [], true, 32)
+  const input = screen.getByRole('spinbutton', {
+    name: '缓存率最小上下文（K tokens）',
+  })
+  expect(input).toHaveValue(32)
+  await user.clear(input)
+  await user.type(input, '64')
+  await user.click(screen.getByRole('button', { name: '保存配置' }))
+  await waitFor(() => expect(requests).toHaveLength(1))
+  expect(requests[0].cache_min_context_k).toBe(64)
+  expect(input).toHaveValue(64)
+  await user.clear(input)
+  await user.type(input, '0')
+  await user.click(screen.getByRole('button', { name: '保存配置' }))
+  await waitFor(() => expect(requests).toHaveLength(2))
+  expect(requests[1].cache_min_context_k).toBe(0)
+})
+
+test('关闭缓存率时禁用上下文输入，再开启保留原值', async () => {
+  const user = userEvent.setup()
+  const { requests } = renderSettings([], [], undefined, [], false, 32)
+  const input = screen.getByRole('spinbutton', {
+    name: '缓存率最小上下文（K tokens）',
+  })
+  const toggle = screen.getByRole('switch', { name: '显示缓存率' })
+  expect(input).toBeDisabled()
+  await user.click(toggle)
+  expect(input).toBeEnabled()
+  expect(input).toHaveValue(32)
+  await user.click(toggle)
+  expect(input).toBeDisabled()
+  expect(input).toHaveValue(32)
+  await user.click(screen.getByRole('button', { name: '保存配置' }))
+  await waitFor(() => expect(requests).toHaveLength(1))
+  expect(requests[0].cache_min_context_k).toBe(32)
+})
+
+test('上下文下限保存失败保留输入供重试', async () => {
+  const user = userEvent.setup()
+  const { requests, network } = renderSettings([], [], undefined, [], true)
+  network.fail = true
+  const input = screen.getByRole('spinbutton', {
+    name: '缓存率最小上下文（K tokens）',
+  })
+  expect(input).toHaveValue(0)
+  await user.clear(input)
+  await user.type(input, '16')
+  await user.click(screen.getByRole('button', { name: '保存配置' }))
+  await waitFor(() => expect(requests).toHaveLength(1))
+  expect(requests[0].cache_min_context_k).toBe(16)
+  expect(input).toHaveValue(16)
+  network.fail = false
+  await user.click(screen.getByRole('button', { name: '保存配置' }))
+  await waitFor(() => expect(requests).toHaveLength(2))
+  expect(requests[1].cache_min_context_k).toBe(16)
 })
 
 test('候选分组按全局顺序排列，切换选项后保留顺序并更新探测模型', async () => {

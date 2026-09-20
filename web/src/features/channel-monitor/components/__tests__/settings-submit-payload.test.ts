@@ -32,6 +32,7 @@ type StorageSettingKeys =
   | 'cost_retention_days'
   | 'route_metric_retention_days'
   | 'duration_bucket_retention_days'
+  | 'daily_metric_retention_days'
   | 'api_key_metric_retention_days'
   | 'execution_detail_retention_days'
   | 'task_retention_days'
@@ -77,6 +78,7 @@ const formValues = {
   costRetentionDays: 90,
   routeMetricRetentionDays: 30,
   durationBucketRetentionDays: 30,
+  dailyMetricRetentionDays: 30,
   apiKeyMetricRetentionDays: 7,
   executionDetailRetentionDays: 14,
   taskRetentionDays: 90,
@@ -397,6 +399,7 @@ describe('channel monitor settings submit payload', () => {
       'cleanup_interval_minutes',
       'cleanup_task_retention_days',
       'cost_retention_days',
+      'daily_metric_retention_days',
       'duration_bucket_retention_days',
       'email_notification_enabled',
       'email_notification_types',
@@ -436,6 +439,7 @@ describe('channel monitor settings submit payload', () => {
     assert.equal(payload.execution_detail_retention_days, 14)
     assert.equal(payload.route_metric_retention_days, 30)
     assert.equal(payload.duration_bucket_retention_days, 30)
+    assert.equal(payload.daily_metric_retention_days, 30)
     assert.equal(payload.api_key_metric_retention_days, 7)
     assert.equal(payload.task_retention_days, 90)
     assert.equal(payload.ratio_monitor_task_retention_days, 90)

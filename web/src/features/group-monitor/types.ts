@@ -74,6 +74,7 @@ export type ChannelGroupMonitorBucket = {
 export type ChannelGroupMonitorSettings = {
   enabled: boolean
   show_cache_rate?: boolean
+  cache_min_context_k?: number
   groups: ChannelGroupMonitorGroup[]
   categories?: string[]
   interval_seconds: number
@@ -154,6 +155,7 @@ export type ChannelGroupMonitorOverview = {
 export type PricingGroupMonitor = {
   enabled: boolean
   show_cache_rate?: boolean
+  cache_min_context_k?: number
   categories?: string[]
   server_now: number
   data_cutoff_at: number
