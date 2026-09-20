@@ -31,7 +31,9 @@ import { resetModelRatios } from '../api'
 import { SettingsPageTitleStatusPortal } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { safeJsonParse } from '../utils/json-parser'
 import { positiveIntegerSchema } from '../utils/numeric-field'
+import { mergeGroupDescriptions } from './group-descriptions'
 import { GroupRatioForm } from './group-ratio-form'
 import { ModelRatioForm } from './model-ratio-form'
 import { ToolPriceSettings } from './tool-price-settings'
@@ -121,6 +123,7 @@ const createModelSchema = (t: Translate) =>
 
 const createGroupSchema = (t: Translate) =>
   z.object({
+    GroupDescriptions: createJsonStringField(t),
     GroupRatio: createJsonStringField(t),
     GroupOrder: createJsonStringField(t, {
       predicate: (parsed) =>
@@ -207,6 +210,7 @@ export function RatioSettingsCard({
   )
 
   const groupNormalizedDefaults = useRef({
+    GroupDescriptions: normalizeJsonString(groupDefaults.GroupDescriptions),
     GroupRatio: normalizeJsonString(groupDefaults.GroupRatio),
     GroupOrder: normalizeJsonString(groupDefaults.GroupOrder),
     TopupGroupRatio: normalizeJsonString(groupDefaults.TopupGroupRatio),
@@ -247,6 +251,10 @@ export function RatioSettingsCard({
     mode: 'onChange',
     defaultValues: {
       ...groupDefaults,
+      GroupDescriptions: mergeGroupDescriptions(
+        groupDefaults.GroupDescriptions,
+        groupDefaults.UserUsableGroups
+      ),
       GroupRatio: formatJsonForTextarea(groupDefaults.GroupRatio),
       GroupOrder: formatJsonForTextarea(groupDefaults.GroupOrder),
       TopupGroupRatio: formatJsonForTextarea(groupDefaults.TopupGroupRatio),
@@ -296,6 +304,7 @@ export function RatioSettingsCard({
 
   useEffect(() => {
     groupNormalizedDefaults.current = {
+      GroupDescriptions: normalizeJsonString(groupDefaults.GroupDescriptions),
       GroupRatio: normalizeJsonString(groupDefaults.GroupRatio),
       GroupOrder: normalizeJsonString(groupDefaults.GroupOrder),
       TopupGroupRatio: normalizeJsonString(groupDefaults.TopupGroupRatio),
@@ -311,6 +320,10 @@ export function RatioSettingsCard({
 
     groupForm.reset({
       ...groupDefaults,
+      GroupDescriptions: mergeGroupDescriptions(
+        groupDefaults.GroupDescriptions,
+        groupDefaults.UserUsableGroups
+      ),
       GroupRatio: formatJsonForTextarea(groupDefaults.GroupRatio),
       GroupOrder: formatJsonForTextarea(groupDefaults.GroupOrder),
       TopupGroupRatio: formatJsonForTextarea(groupDefaults.TopupGroupRatio),
@@ -368,7 +381,33 @@ export function RatioSettingsCard({
 
   const saveGroupRatios = useCallback(
     async (values: GroupFormValues) => {
+      const descriptions = JSON.parse(
+        mergeGroupDescriptions(
+          values.GroupDescriptions,
+          values.UserUsableGroups
+        )
+      ) as Record<string, string>
+      const groupNames = new Set(
+        [
+          values.GroupRatio,
+          values.TopupGroupRatio,
+          values.UserUsableGroups,
+        ].flatMap((value) =>
+          Object.keys(
+            safeJsonParse<Record<string, unknown>>(value, {
+              fallback: {},
+              silent: true,
+            }) ?? {}
+          )
+        )
+      )
+      for (const name of Object.keys(descriptions)) {
+        if (!groupNames.has(name)) delete descriptions[name]
+      }
+
       const normalized = {
+        // Persist descriptions before removing entries from UserUsableGroups.
+        GroupDescriptions: JSON.stringify(descriptions),
         GroupRatio: normalizeJsonString(values.GroupRatio),
         GroupOrder: normalizeJsonString(values.GroupOrder),
         TopupGroupRatio: normalizeJsonString(values.TopupGroupRatio),
@@ -396,7 +435,11 @@ export function RatioSettingsCard({
 
       for (const key of updates) {
         const apiKey = apiKeyMap[key] || key
-        await updateOption.mutateAsync({ key: apiKey, value: normalized[key] })
+        const result = await updateOption.mutateAsync({
+          key: apiKey,
+          value: normalized[key],
+        })
+        if (!result.success) return
       }
 
       groupNormalizedDefaults.current = normalized

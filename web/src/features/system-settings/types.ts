@@ -281,6 +281,7 @@ export type BillingSettings = {
   TopupGroupRatio: string
   GroupRatio: string
   GroupOrder: string
+  GroupDescriptions: string
   UserUsableGroups: string
   GroupGroupRatio: string
   AutoGroups: string

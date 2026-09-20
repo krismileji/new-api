@@ -62,12 +62,14 @@ import {
 import { SettingsPageActionsPortal } from '../components/settings-page-context'
 import { safeJsonParse } from '../utils/json-parser'
 import { safeNumberFieldProps } from '../utils/numeric-field'
+import { mergeGroupDescriptions } from './group-descriptions'
 import { GroupRatioVisualEditor } from './group-ratio-visual-editor'
 import { GroupSpecialUsableRulesEditor } from './group-special-usable-editor'
 
 type GroupFormValues = {
   GroupRatio: string
   GroupOrder: string
+  GroupDescriptions: string
   TopupGroupRatio: string
   UserUsableGroups: string
   GroupGroupRatio: string
@@ -183,6 +185,7 @@ export const GroupRatioForm = memo(function GroupRatioForm({
             <GroupRatioVisualEditor
               groupRatio={form.watch('GroupRatio')}
               groupOrder={form.watch('GroupOrder')}
+              groupDescriptions={form.watch('GroupDescriptions')}
               topupGroupRatio={form.watch('TopupGroupRatio')}
               userUsableGroups={form.watch('UserUsableGroups')}
               groupGroupRatio={form.watch('GroupGroupRatio')}
@@ -339,7 +342,17 @@ export const GroupRatioForm = memo(function GroupRatioForm({
                   <FormControl>
                     <JsonCodeEditor
                       value={field.value}
-                      onChange={field.onChange}
+                      onChange={(value) => {
+                        handleFieldChange(
+                          'GroupDescriptions',
+                          mergeGroupDescriptions(
+                            form.getValues('GroupDescriptions'),
+                            field.value,
+                            value
+                          )
+                        )
+                        field.onChange(value)
+                      }}
                       name={field.name}
                       onBlur={field.onBlur}
                       textareaRef={field.ref}

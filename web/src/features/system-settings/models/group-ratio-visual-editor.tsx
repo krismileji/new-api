@@ -83,6 +83,7 @@ import { safeJsonParse } from '../utils/json-parser'
 type GroupRatioVisualEditorProps = {
   groupRatio: string
   groupOrder: string
+  groupDescriptions?: string
   topupGroupRatio: string
   userUsableGroups: string
   groupGroupRatio: string
@@ -175,10 +176,12 @@ function buildGroupPricingRows(
   groupRatio: string,
   userUsableGroups: string,
   topupGroupRatio: string,
-  groupOrder: string
+  groupOrder: string,
+  groupDescriptions: string
 ): GroupPricingRow[] {
   const ratioMap = parseRatioMap(groupRatio)
   const usableMap = parseUsableMap(userUsableGroups)
+  const descriptions = parseUsableMap(groupDescriptions)
   const topupMap = parseRatioMap(topupGroupRatio)
   const names = new Set([
     ...Object.keys(ratioMap),
@@ -195,13 +198,14 @@ function buildGroupPricingRows(
         ? formatDecimalNumber(topupMap[name])
         : '',
       selectable: Object.hasOwn(usableMap, name),
-      description: String(usableMap[name] ?? ''),
+      description: String(usableMap[name] ?? descriptions[name] ?? ''),
     })
   )
 }
 
 function serializeGroupPricingRows(rows: GroupPricingRow[]) {
   const groupRatio: Record<string, number> = {}
+  const groupDescriptions: Record<string, string> = {}
   const userUsableGroups: Record<string, string> = {}
   const topupGroupRatio: Record<string, number> = {}
 
@@ -209,6 +213,7 @@ function serializeGroupPricingRows(rows: GroupPricingRow[]) {
     const name = row.name.trim()
     if (!name) continue
     groupRatio[name] = normalizeRatio(row.ratio)
+    groupDescriptions[name] = row.description
     if (row.selectable) {
       userUsableGroups[name] = row.description
     }
@@ -220,6 +225,7 @@ function serializeGroupPricingRows(rows: GroupPricingRow[]) {
 
   return {
     GroupRatio: JSON.stringify(groupRatio, null, 2),
+    GroupDescriptions: JSON.stringify(groupDescriptions, null, 2),
     GroupOrder: JSON.stringify(
       rows.map((row) => row.name.trim()).filter(Boolean),
       null,
@@ -235,6 +241,7 @@ function groupPricingSignature(rows: GroupPricingRow[]): string {
   return JSON.stringify({
     groupRatio: parseRatioMap(serialized.GroupRatio),
     groupOrder: parseGroupOrder(serialized.GroupOrder),
+    groupDescriptions: parseUsableMap(serialized.GroupDescriptions),
     userUsableGroups: parseUsableMap(serialized.UserUsableGroups),
     topupGroupRatio: parseRatioMap(serialized.TopupGroupRatio),
   })
@@ -244,11 +251,13 @@ function sourceGroupPricingSignature(
   groupRatio: string,
   groupOrder: string,
   userUsableGroups: string,
-  topupGroupRatio: string
+  topupGroupRatio: string,
+  groupDescriptions: string
 ): string {
   return JSON.stringify({
     groupRatio: parseRatioMap(groupRatio),
     groupOrder: parseGroupOrder(groupOrder),
+    groupDescriptions: parseUsableMap(groupDescriptions),
     userUsableGroups: parseUsableMap(userUsableGroups),
     topupGroupRatio: parseRatioMap(topupGroupRatio),
   })
@@ -306,6 +315,7 @@ function GroupNameSelect(props: GroupNameSelectProps) {
 export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
   groupRatio,
   groupOrder,
+  groupDescriptions = '{}',
   topupGroupRatio,
   userUsableGroups,
   groupGroupRatio,
@@ -384,6 +394,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
       <GroupPricingTable
         groupRatio={groupRatio}
         groupOrder={groupOrder}
+        groupDescriptions={groupDescriptions}
         userUsableGroups={userUsableGroups}
         topupGroupRatio={topupGroupRatio}
         onChange={onChange}
@@ -466,6 +477,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
         registry={registry}
         topupGroupRatio={topupGroupRatio}
         userUsableGroups={userUsableGroups}
+        groupDescriptions={groupDescriptions}
         groupGroupRatio={groupGroupRatio}
         autoGroups={autoGroupsList}
         groupSpecialUsableGroup={groupSpecialUsableGroup}
@@ -477,6 +489,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
 type GroupPricingTableProps = {
   groupRatio: string
   groupOrder: string
+  groupDescriptions: string
   userUsableGroups: string
   topupGroupRatio: string
   onChange: (field: string, value: string) => void
@@ -486,6 +499,7 @@ type GroupPricingTableProps = {
 function GroupPricingTable({
   groupRatio,
   groupOrder,
+  groupDescriptions,
   userUsableGroups,
   topupGroupRatio,
   onChange,
@@ -497,7 +511,8 @@ function GroupPricingTable({
       groupRatio,
       userUsableGroups,
       topupGroupRatio,
-      groupOrder
+      groupOrder,
+      groupDescriptions
     )
   )
 
@@ -506,7 +521,8 @@ function GroupPricingTable({
       groupRatio,
       groupOrder,
       userUsableGroups,
-      topupGroupRatio
+      topupGroupRatio,
+      groupDescriptions
     )
     setRows((currentRows) => {
       if (groupPricingSignature(currentRows) === incomingSignature) {
@@ -516,10 +532,17 @@ function GroupPricingTable({
         groupRatio,
         userUsableGroups,
         topupGroupRatio,
-        groupOrder
+        groupOrder,
+        groupDescriptions
       )
     })
-  }, [groupRatio, groupOrder, userUsableGroups, topupGroupRatio])
+  }, [
+    groupRatio,
+    groupOrder,
+    userUsableGroups,
+    topupGroupRatio,
+    groupDescriptions,
+  ])
 
   const emitRows = useCallback(
     (nextRows: GroupPricingRow[]) => {
@@ -527,6 +550,7 @@ function GroupPricingTable({
       const serialized = serializeGroupPricingRows(nextRows)
       onChange('GroupRatio', serialized.GroupRatio)
       onChange('GroupOrder', serialized.GroupOrder)
+      onChange('GroupDescriptions', serialized.GroupDescriptions)
       onChange('UserUsableGroups', serialized.UserUsableGroups)
       onChange('TopupGroupRatio', serialized.TopupGroupRatio)
     },
@@ -694,20 +718,16 @@ function GroupPricingTable({
                 id: 'description',
                 header: t('Description'),
                 className: 'min-w-56',
-                cell: (row) =>
-                  row.selectable ? (
-                    <Input
-                      value={row.description}
-                      placeholder={t('Group description')}
-                      onChange={(event) =>
-                        updateRow(row._id, 'description', event.target.value)
-                      }
-                    />
-                  ) : (
-                    <span className='text-muted-foreground px-3 text-sm'>
-                      -
-                    </span>
-                  ),
+                cell: (row) => (
+                  <Input
+                    value={row.description}
+                    disabled={!row.selectable}
+                    placeholder={t('Group description')}
+                    onChange={(event) =>
+                      updateRow(row._id, 'description', event.target.value)
+                    }
+                  />
+                ),
               },
               {
                 id: 'actions',
@@ -1227,6 +1247,7 @@ type GroupDetailSheetProps = {
   registry: RegistryEntry[]
   topupGroupRatio: string
   userUsableGroups: string
+  groupDescriptions: string
   groupGroupRatio: string
   autoGroups: string[]
   groupSpecialUsableGroup: string
@@ -1261,6 +1282,7 @@ function GroupDetailSheet(props: GroupDetailSheetProps) {
     const entry = props.registry.find((item) => item.name === name)
     const topupMap = parseRatioMap(props.topupGroupRatio)
     const usableMap = parseUsableMap(props.userUsableGroups)
+    const descriptions = parseUsableMap(props.groupDescriptions)
     const overrideMap = parseNestedRatioMap(props.groupGroupRatio)
     const specialMap = safeJsonParse<Record<string, Record<string, string>>>(
       props.groupSpecialUsableGroup,
@@ -1303,7 +1325,7 @@ function GroupDetailSheet(props: GroupDetailSheetProps) {
         ? formatDecimalNumber(topupMap[name])
         : null,
       selectable: Object.hasOwn(usableMap, name),
-      description: String(usableMap[name] ?? ''),
+      description: String(usableMap[name] ?? descriptions[name] ?? ''),
       incomingOverrides,
       outgoingOverrides,
       visibilityRules,
@@ -1314,6 +1336,7 @@ function GroupDetailSheet(props: GroupDetailSheetProps) {
     props.registry,
     props.topupGroupRatio,
     props.userUsableGroups,
+    props.groupDescriptions,
     props.groupGroupRatio,
     props.autoGroups,
     props.groupSpecialUsableGroup,
@@ -1358,7 +1381,7 @@ function GroupDetailSheet(props: GroupDetailSheetProps) {
                     {detail.selectable ? t('Yes') : t('No')}
                   </dd>
                 </div>
-                {detail.selectable && detail.description && (
+                {detail.description && (
                   <div className='flex justify-between gap-4'>
                     <dt className='text-muted-foreground'>
                       {t('Description')}
