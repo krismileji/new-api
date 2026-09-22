@@ -18,16 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   Analytics01Icon,
-  Activity01Icon,
   ArrangeIcon,
-  HistoryIcon,
   MoneyBag02Icon,
-  Refresh01Icon,
-  Route01Icon,
   Search01Icon,
-  Settings02Icon,
-  TestTubeIcon,
-  WorkflowSquare06Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -73,11 +66,6 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent } from '@/components/ui/tabs'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import { ChannelTestDialogForChannel } from '@/features/channels/components/dialogs/channel-test-dialog'
 import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { getChannelGroupMonitorSettings } from '@/features/group-monitor/api'
@@ -110,6 +98,7 @@ import {
 } from './components/channel-monitor-settings-dialog'
 import { ChannelMonitorSmartScheduleBoard } from './components/channel-monitor-smart-schedule-board'
 import { ChannelMonitorTodaySuccessCard } from './components/channel-monitor-today-success-card'
+import { ChannelMonitorToolbar } from './components/channel-monitor-toolbar'
 import { ChannelMonitorVariableGroupsDialog } from './components/channel-monitor-variable-groups-dialog'
 import { useChannelLimitGroups } from './api-limit-groups'
 import { ChannelMonitorViewTabs } from './components/channel-monitor-view-tabs'
@@ -1623,166 +1612,40 @@ export function ChannelMonitor() {
     <>
       <ChannelMonitorPageLayout
         actions={
-          <>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant='outline'
-                    size='icon'
-                    onClick={() => setBatchTestOpen(true)}
-                    aria-label='渠道连通性测试'
-                  >
-                    <HugeiconsIcon icon={TestTubeIcon} />
-                  </Button>
-                }
-              />
-              <TooltipContent>
-                批量测试渠道，或对单个渠道和模型进行并发循环测试
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant='outline'
-                    size='icon'
-                    onMouseEnter={() => {
-                      void loadChannelMonitorTaskHistoryDialog()
-                    }}
-                    onFocus={() => {
-                      void loadChannelMonitorTaskHistoryDialog()
-                    }}
-                    onClick={() => setTaskHistoryOpen(true)}
-                    aria-label='倍率与余额更新记录'
-                  >
-                    <HugeiconsIcon icon={HistoryIcon} />
-                  </Button>
-                }
-              />
-              <TooltipContent>倍率与余额更新记录</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant='outline'
-                    size='icon'
-                    onMouseEnter={() => {
-                      void loadChannelMonitorSmartScheduleExecutionDialog()
-                    }}
-                    onFocus={() => {
-                      void loadChannelMonitorSmartScheduleExecutionDialog()
-                    }}
-                    onClick={() => setSmartScheduleHistoryOpen(true)}
-                    aria-label='智能调度执行记录'
-                  >
-                    <HugeiconsIcon icon={WorkflowSquare06Icon} />
-                  </Button>
-                }
-              />
-              <TooltipContent>智能调度执行记录</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant='outline'
-                    size='icon'
-                    onClick={() => setSettingsOpen(true)}
-                    aria-label='渠道监控设置'
-                  >
-                    <HugeiconsIcon icon={Settings02Icon} />
-                  </Button>
-                }
-              />
-              <TooltipContent>{autoUpdateLabel}</TooltipContent>
-            </Tooltip>
-            <Button
-              variant='outline'
-              onClick={() => setVariableGroupsOpen(true)}
-            >
-              共享请求与变量
-            </Button>
-            <Button variant='outline' onClick={() => setLimitGroupsOpen(true)}>
-              共享限流组
-            </Button>
-            <Button
-              variant='outline'
-              onClick={() => setUpstreamAccountsOpen(true)}
-            >
-              上游账户
-            </Button>
-            <Button variant='outline' onClick={() => setAutomationsOpen(true)}>
-              上游自动任务
-            </Button>
-            <Button
-              variant='outline'
-              onClick={() => setTokenProtectionOpen(true)}
-            >
-              API Key 自动禁用
-            </Button>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant='outline'
-                    size='icon'
-                    onClick={() => setGroupMonitorSettingsOpen(true)}
-                    aria-label='分组监控设置'
-                  >
-                    <HugeiconsIcon icon={Activity01Icon} />
-                  </Button>
-                }
-              />
-              <TooltipContent>分组监控设置</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant='outline'
-                    size='icon'
-                    onClick={openSmartScheduleSettings}
-                    aria-label='智能调度设置'
-                  >
-                    <HugeiconsIcon icon={Route01Icon} />
-                  </Button>
-                }
-              />
-              <TooltipContent>{smartScheduleLabel}</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant='outline'
-                    size='icon'
-                    onClick={() => void refreshChannelMonitor()}
-                    disabled={
-                      manualRefreshPending ||
-                      query.isFetching ||
-                      performanceQuery.isFetching ||
-                      costQuery.isFetching ||
-                      todaySuccessQuery.isFetching ||
-                      smartScheduleSummaryQuery.isFetching ||
-                      (view === 'smart-schedule' &&
-                        smartScheduleDetailQuery.isFetching)
-                    }
-                    aria-label='刷新'
-                  >
-                    <HugeiconsIcon
-                      icon={Refresh01Icon}
-                      className={
-                        manualRefreshPending ? 'animate-spin' : undefined
-                      }
-                    />
-                  </Button>
-                }
-              />
-              <TooltipContent>刷新</TooltipContent>
-            </Tooltip>
-          </>
+          <ChannelMonitorToolbar
+            actions={{
+              batchTest: () => setBatchTestOpen(true),
+              taskHistory: () => setTaskHistoryOpen(true),
+              smartScheduleHistory: () => setSmartScheduleHistoryOpen(true),
+              settings: () => setSettingsOpen(true),
+              variableGroups: () => setVariableGroupsOpen(true),
+              limitGroups: () => setLimitGroupsOpen(true),
+              upstreamAccounts: () => setUpstreamAccountsOpen(true),
+              automations: () => setAutomationsOpen(true),
+              tokenProtection: () => setTokenProtectionOpen(true),
+              groupMonitorSettings: () => setGroupMonitorSettingsOpen(true),
+              smartScheduleSettings: openSmartScheduleSettings,
+              refresh: () => void refreshChannelMonitor(),
+            }}
+            autoUpdateLabel={autoUpdateLabel}
+            smartScheduleLabel={smartScheduleLabel}
+            refreshPending={manualRefreshPending}
+            refreshDisabled={
+              query.isFetching ||
+              performanceQuery.isFetching ||
+              costQuery.isFetching ||
+              todaySuccessQuery.isFetching ||
+              smartScheduleSummaryQuery.isFetching ||
+              (view === 'smart-schedule' &&
+                smartScheduleDetailQuery.isFetching)
+            }
+            onPrefetchTaskHistory={() => {
+              void loadChannelMonitorTaskHistoryDialog()
+            }}
+            onPrefetchSmartScheduleHistory={() => {
+              void loadChannelMonitorSmartScheduleExecutionDialog()
+            }}
+          />
         }
         realtimeStatus={
           <ChannelMonitorHealthStatus metadata={pageRealtimeMetadata} />
