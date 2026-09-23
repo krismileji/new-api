@@ -730,6 +730,7 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
   group: string
   strategy: ChannelMonitorSmartScheduleStrategy
   stability_enabled: boolean
+  immediate_ejection_enabled?: boolean
   stability_window_minutes: number
   jitter_enabled: boolean
   jitter_tolerance_percent: number

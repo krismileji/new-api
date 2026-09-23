@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
-import { describe, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
 import type { ChannelMonitorSmartSchedulePolicyFormValues } from '../schema'
 import {
@@ -31,6 +31,7 @@ import {
 const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
   strategy: 'smart',
   stabilityEnabled: true,
+  immediateEjectionEnabled: true,
   stabilityWindowMinutes: 15,
   jitterEnabled: true,
   jitterTolerancePercent: 5,
@@ -89,6 +90,27 @@ const defaultPolicy: ChannelMonitorSmartSchedulePolicyFormValues = {
 }
 
 describe('smart schedule group policy', () => {
+  test('preserves the independent ejection switch across API mapping and defaults legacy policies to enabled', () => {
+    const policies = channelMonitorSmartScheduleGroupPoliciesToApi([
+      createChannelMonitorSmartScheduleGroupPolicy('vip', {
+        ...defaultPolicy,
+        immediateEjectionEnabled: false,
+      }),
+    ])
+    expect(policies[0].immediate_ejection_enabled).toBe(false)
+    expect(
+      channelMonitorSmartScheduleGroupPoliciesToForm(policies)[0]
+    ).toMatchObject({
+      stabilityEnabled: true,
+      immediateEjectionEnabled: false,
+    })
+    delete policies[0].immediate_ejection_enabled
+    expect(
+      channelMonitorSmartScheduleGroupPoliciesToForm(policies)[0]
+        .immediateEjectionEnabled
+    ).toBe(true)
+  })
+
   test('creates a complete independent policy', () => {
     assert.deepEqual(
       createChannelMonitorSmartScheduleGroupPolicy('vip', defaultPolicy),

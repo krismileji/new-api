@@ -108,6 +108,9 @@ export function channelMonitorSmartScheduleGroupPoliciesToForm(
     group: policy.group,
     strategy: policy.strategy,
     stabilityEnabled: policy.stability_enabled,
+    immediateEjectionEnabled:
+      policy.immediate_ejection_enabled ??
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.immediateEjectionEnabled,
     stabilityWindowMinutes: policy.stability_window_minutes,
     jitterEnabled: policy.jitter_enabled,
     jitterTolerancePercent: policy.jitter_tolerance_percent,
@@ -207,6 +210,7 @@ export function channelMonitorSmartScheduleGroupPoliciesToApi(
     group: policy.group,
     strategy: policy.strategy,
     stability_enabled: policy.stabilityEnabled,
+    immediate_ejection_enabled: policy.immediateEjectionEnabled,
     stability_window_minutes: policy.stabilityWindowMinutes,
     jitter_enabled: policy.jitterEnabled,
     jitter_tolerance_percent: policy.jitterTolerancePercent,
@@ -274,6 +278,7 @@ export function createChannelMonitorSmartScheduleGroupPolicy(
     group,
     strategy: policy.strategy,
     stabilityEnabled: policy.stabilityEnabled,
+    immediateEjectionEnabled: policy.immediateEjectionEnabled,
     stabilityWindowMinutes: policy.stabilityWindowMinutes,
     jitterEnabled: policy.jitterEnabled,
     jitterTolerancePercent: policy.jitterTolerancePercent,

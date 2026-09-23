@@ -41,6 +41,7 @@ export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_SCORING: ChannelMonitorSmart
   }
 
 export const DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS = {
+  immediateEjectionEnabled: true,
   stabilityWindowMinutes: 5,
   jitterTolerancePercent: 5,
   jitterSlowThresholdSeconds: 10,

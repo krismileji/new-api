@@ -530,6 +530,11 @@ const smartScheduleAdaptiveSamplingComparableChannelsSchema = z.preprocess(
 const smartSchedulePolicyShape = {
   strategy: z.enum(channelMonitorSmartScheduleStrategies),
   stabilityEnabled: z.boolean(),
+  immediateEjectionEnabled: z
+    .boolean()
+    .default(
+      DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.immediateEjectionEnabled
+    ),
   stabilityWindowMinutes: smartScheduleStabilityWindowMinutesSchema,
   jitterEnabled: z.boolean(),
   jitterTolerancePercent: smartScheduleJitterToleranceSchema,
@@ -614,6 +619,32 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
   const normalized: Record<string, unknown> = { ...policy }
   const defaults = DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS
 
+  if (policy.immediateEjectionEnabled === false) {
+    const inactiveThresholds = [
+      [
+        'burstFailureWindowMinutes',
+        smartScheduleBurstFailureWindowMinutesSchema,
+      ],
+      [
+        'burstFailureWindowRequests',
+        smartScheduleBurstFailureWindowRequestsSchema,
+      ],
+      [
+        'burstFailureThresholdPercent',
+        smartScheduleBurstFailureThresholdPercentSchema,
+      ],
+      [
+        'consecutiveFailureThreshold',
+        smartScheduleRuntimeFailureThresholdSchema,
+      ],
+    ] as const
+    for (const [name, schema] of inactiveThresholds) {
+      if (!schema.safeParse(policy[name]).success) {
+        normalized[name] = defaults[name]
+      }
+    }
+  }
+
   if (policy.sampleMode !== 'traffic') {
     normalized.explorationTrafficPercent = defaults.explorationTrafficPercent
     normalized.explorationMaxPromptKTokens =
@@ -638,17 +669,10 @@ function normalizeInactiveSmartSchedulePolicy(value: unknown): unknown {
       Number(policy.fastFailureSeconds) < defaults.slowFailureSeconds
         ? defaults.slowFailureSeconds
         : 60
-    normalized.burstFailureWindowMinutes = defaults.burstFailureWindowMinutes
-    normalized.burstFailureWindowRequests = defaults.burstFailureWindowRequests
-    normalized.burstFailureThresholdPercent =
-      defaults.burstFailureThresholdPercent
-    normalized.consecutiveFailureThreshold =
-      defaults.consecutiveFailureThreshold
     normalized.recoverySuccessThreshold = defaults.recoverySuccessThreshold
     normalized.cooldownMinutes = defaults.cooldownMinutes
     normalized.stabilityReleaseMaxPromptKTokens =
       defaults.stabilityReleaseMaxPromptKTokens
-    normalized.degradedProbeEnabled = defaults.degradedProbeEnabled
     if (
       typeof policy.scoring === 'object' &&
       policy.scoring !== null &&

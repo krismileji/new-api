@@ -582,8 +582,8 @@ func applyChannelSmartScheduleRuntimeFailureWithSource(
 			windowReached = float64(failureCount)*100 >=
 				float64(requestCount)*policy.BurstFailureThresholdPercent
 		}
-		thresholdReached := consecutiveFailures >= policy.ConsecutiveFailureThreshold ||
-			windowReached
+		thresholdReached := policy.ImmediateEjectionEnabled &&
+			(consecutiveFailures >= policy.ConsecutiveFailureThreshold || windowReached)
 		probing := matched.route.StabilityState == model.ChannelSmartScheduleStabilityProbing
 		temporaryTraffic := matched.route.TemporaryTrafficKind != ""
 		degradedProbe := scheduledProbe &&

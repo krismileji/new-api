@@ -121,6 +121,7 @@ const formValues = {
       group: 'vip',
       strategy: 'smart',
       stabilityEnabled: true,
+      immediateEjectionEnabled: false,
       stabilityWindowMinutes: 15,
       jitterEnabled: true,
       jitterTolerancePercent: 5,
@@ -210,6 +211,10 @@ describe('channel monitor settings submit payload', () => {
     ])
     assert.equal(payload.smart_schedule_control_revision, 'revision-a')
     assert.equal(payload.smart_schedule_group_policies?.[0]?.group, 'vip')
+    assert.equal(
+      payload.smart_schedule_group_policies?.[0]?.immediate_ejection_enabled,
+      false
+    )
     assert.equal(
       payload.smart_schedule_group_policies?.[0]?.scoring
         ?.primary_traffic_percent,

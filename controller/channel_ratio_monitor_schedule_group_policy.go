@@ -47,6 +47,7 @@ type channelSmartScheduleGroupPolicy struct {
 	Group                                           string                       `json:"group"`
 	Strategy                                        *string                      `json:"strategy,omitempty"`
 	StabilityEnabled                                *bool                        `json:"stability_enabled,omitempty"`
+	ImmediateEjectionEnabled                        *bool                        `json:"immediate_ejection_enabled,omitempty"`
 	StabilityWindowMinutes                          *int                         `json:"stability_window_minutes,omitempty"`
 	Scoring                                         *channelSmartScheduleScoring `json:"scoring,omitempty"`
 	ApplyMode                                       *string                      `json:"apply_mode,omitempty"`
@@ -197,6 +198,7 @@ func channelSmartScheduleMinutesFromSeconds(seconds int) int {
 type channelSmartSchedulePolicy struct {
 	Strategy                                        string
 	StabilityEnabled                                bool
+	ImmediateEjectionEnabled                        bool
 	StabilityWindowMinutes                          int
 	Scoring                                         channelSmartScheduleScoring
 	ApplyMode                                       string
@@ -281,6 +283,9 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 			return nil, errors.New("同一分组不能配置多个调度策略")
 		}
 		seenGroups[policy.Group] = struct{}{}
+		if policy.ImmediateEjectionEnabled == nil {
+			policy.ImmediateEjectionEnabled = common.GetPointer(true)
+		}
 		policy.legacyBurstFailureWindow = policy.BurstFailureWindowMinutes == nil &&
 			policy.BurstFailureWindowSeconds != nil
 		policy.legacyBurstFailureThreshold = policy.BurstFailureThresholdPercent == nil &&
@@ -584,6 +589,10 @@ func normalizeChannelSmartScheduleGroupPolicies(policies []channelSmartScheduleG
 }
 
 func (configured channelSmartScheduleGroupPolicy) policy() channelSmartSchedulePolicy {
+	immediateEjectionEnabled := true
+	if configured.ImmediateEjectionEnabled != nil {
+		immediateEjectionEnabled = *configured.ImmediateEjectionEnabled
+	}
 	fastFailureSameChannelRetryCount := defaultChannelMonitorSmartScheduleFastFailureSameChannelRetryCount
 	if configured.FastFailureSameChannelRetryCount != nil {
 		fastFailureSameChannelRetryCount = *configured.FastFailureSameChannelRetryCount
@@ -650,6 +659,7 @@ func (configured channelSmartScheduleGroupPolicy) policy() channelSmartScheduleP
 	return channelSmartSchedulePolicy{
 		Strategy:                                        *configured.Strategy,
 		StabilityEnabled:                                *configured.StabilityEnabled,
+		ImmediateEjectionEnabled:                        immediateEjectionEnabled,
 		StabilityWindowMinutes:                          *configured.StabilityWindowMinutes,
 		Scoring:                                         *configured.Scoring,
 		ApplyMode:                                       *configured.ApplyMode,

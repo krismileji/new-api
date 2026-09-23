@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Refresh01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { useWatch, type UseFormReturn } from 'react-hook-form'
 
 import { MultiSelect } from '@/components/multi-select'
@@ -49,10 +49,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 
+import { DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS } from '../constants'
 import {
   MAX_SMART_SCHEDULE_COOLDOWN_MINUTES,
   MAX_SMART_SCHEDULE_ADAPTIVE_MIN_COMPARABLE_CHANNELS,
@@ -287,6 +287,10 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
     control: props.form.control,
     name: 'stabilityEnabled',
   })
+  const immediateEjectionEnabled = useWatch({
+    control: props.form.control,
+    name: 'immediateEjectionEnabled',
+  })
   const degradedProbeEnabled = useWatch({
     control: props.form.control,
     name: 'degradedProbeEnabled',
@@ -307,6 +311,23 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
     control: props.form.control,
     name: 'adaptiveSamplingEnabled',
   })
+  const fastFailureRetryCount = useWatch({
+    control: props.form.control,
+    name: 'fastFailureSameChannelRetryCount',
+  })
+  // Keep an emptied input editable while the user enters a replacement count.
+  const fastFailureRetryEnabled =
+    fastFailureRetryCount != null &&
+    (String(fastFailureRetryCount) === '' ||
+      Number(fastFailureRetryCount) !== 0)
+  const lastRetryCount = useRef(
+    fastFailureRetryCount > 0
+      ? fastFailureRetryCount
+      : DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS.fastFailureSameChannelRetryCount
+  )
+  const lastSampleMode = useRef<'traffic' | 'probe'>(
+    sampleMode === 'probe' ? 'probe' : 'traffic'
+  )
   const selectedModels = useWatch({
     control: props.form.control,
     name: 'models',
@@ -362,217 +383,245 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
 
   return (
     <div className='flex flex-col gap-5'>
-      <div className='grid gap-4 md:grid-cols-2'>
-        <FormField
-          control={props.form.control}
-          name='strategy'
-          render={({ field }) => (
-            <FormItem>
-              <ChannelMonitorSettingLabel label='调度方式' helpKey='strategy' />
-              <Select
-                items={CHANNEL_MONITOR_SMART_SCHEDULE_STRATEGY_OPTIONS}
-                value={field.value}
-                onValueChange={(value) =>
-                  value !== null && field.onChange(value)
-                }
-              >
-                <FormControl>
-                  <SelectTrigger className='w-full'>
-                    <SelectValue />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent alignItemWithTrigger={false}>
-                  <SelectGroup>
-                    {CHANNEL_MONITOR_SMART_SCHEDULE_STRATEGY_OPTIONS.map(
-                      (option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      )
-                    )}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              <FormDescription>
-                {
-                  CHANNEL_MONITOR_SMART_SCHEDULE_STRATEGY_OPTIONS.find(
-                    (option) => option.value === field.value
-                  )?.description
-                }
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={props.form.control}
-          name='applyMode'
-          render={({ field }) => (
-            <FormItem>
-              <ChannelMonitorSettingLabel
-                label='调整方式'
-                helpKey='applyMode'
-              />
-              <Select
-                items={CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS}
-                value={field.value}
-                onValueChange={(value) => {
-                  if (value === null) return
-                  field.onChange(value)
-                  if (value === 'weight' && sampleMode === 'traffic') {
-                    props.form.setValue('sampleMode', 'off', {
-                      shouldDirty: true,
-                      shouldValidate: true,
-                    })
+      <FieldSet className='min-w-0 rounded-lg border p-4'>
+        <FieldLegend variant='label'>基础调度</FieldLegend>
+        <FieldDescription>
+          设置调度方式、参与模型和展示顺序，作为各功能组共用的基础配置
+        </FieldDescription>
+        <div className='grid gap-4 md:grid-cols-2'>
+          <FormField
+            control={props.form.control}
+            name='strategy'
+            render={({ field }) => (
+              <FormItem>
+                <ChannelMonitorSettingLabel
+                  label='调度方式'
+                  helpKey='strategy'
+                />
+                <Select
+                  items={CHANNEL_MONITOR_SMART_SCHEDULE_STRATEGY_OPTIONS}
+                  value={field.value}
+                  onValueChange={(value) =>
+                    value !== null && field.onChange(value)
                   }
-                  if (value === 'weight' && adaptiveSamplingEnabled === true) {
-                    props.form.setValue('adaptiveSamplingEnabled', false, {
-                      shouldDirty: true,
-                      shouldValidate: true,
-                    })
-                  }
-                }}
-              >
-                <FormControl>
-                  <SelectTrigger className='w-full'>
-                    <SelectValue />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent alignItemWithTrigger={false}>
-                  <SelectGroup>
-                    {CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS.map(
-                      (option) => (
-                        <SelectItem key={option.value} value={option.value}>
-                          {option.label}
-                        </SelectItem>
-                      )
-                    )}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-              <FormDescription>
-                {
-                  CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS.find(
-                    (option) => option.value === field.value
-                  )?.description
-                }
-              </FormDescription>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      </div>
-
-      <FormField
-        control={props.form.control}
-        name='models'
-        render={({ field }) => (
-          <FormItem className='min-w-0'>
-            <ChannelMonitorSettingLabel label='参与模型' helpKey='models' />
-            <FormControl>
-              <MultiSelect
-                options={modelSelectOptions}
-                selected={field.value}
-                onChange={(models) => {
-                  field.onChange(models)
-                  props.form.setValue(
-                    'modelOrder',
-                    mergeChannelMonitorSmartScheduleModelOrder(
-                      models,
-                      props.form.getValues('modelOrder')
-                    ),
-                    { shouldDirty: true, shouldValidate: true }
-                  )
-                }}
-                placeholder='全部模型'
-                emptyText='没有匹配的模型'
-                maxVisibleChips={4}
-              />
-            </FormControl>
-            <FormDescription>不选择表示该分组的全部模型</FormDescription>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-
-      <FormField
-        control={props.form.control}
-        name='modelOrder'
-        render={({ field }) => (
-          <FormItem className='min-w-0'>
-            <div className='flex min-h-8 flex-wrap items-center justify-between gap-2'>
-              <ChannelMonitorSettingLabel
-                label='模型卡片顺序'
-                helpKey='modelOrder'
-              />
-              {field.value.length > 0 ? (
-                <Button
-                  type='button'
-                  variant='ghost'
-                  size='sm'
-                  onClick={() => field.onChange([])}
                 >
-                  <HugeiconsIcon
-                    icon={Refresh01Icon}
-                    data-icon='inline-start'
-                    aria-hidden='true'
-                  />
-                  恢复名称排序
-                </Button>
-              ) : null}
-            </div>
-            <ChannelMonitorSmartScheduleModelOrder
-              models={
-                selectedModels.length > 0 ? selectedModels : props.modelOptions
-              }
-              value={field.value}
-              onChange={field.onChange}
-            />
-            <FormDescription>
-              仅影响智能调度看板展示，不改变模型范围和调度计算
-            </FormDescription>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
+                  <FormControl>
+                    <SelectTrigger className='w-full'>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {CHANNEL_MONITOR_SMART_SCHEDULE_STRATEGY_OPTIONS.map(
+                        (option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        )
+                      )}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  {
+                    CHANNEL_MONITOR_SMART_SCHEDULE_STRATEGY_OPTIONS.find(
+                      (option) => option.value === field.value
+                    )?.description
+                  }
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
 
-      <div className='bg-muted/30 flex flex-col gap-4 rounded-md border p-4'>
+          <FormField
+            control={props.form.control}
+            name='applyMode'
+            render={({ field }) => (
+              <FormItem>
+                <ChannelMonitorSettingLabel
+                  label='调整方式'
+                  helpKey='applyMode'
+                />
+                <Select
+                  items={CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS}
+                  value={field.value}
+                  onValueChange={(value) => {
+                    if (value === null) return
+                    field.onChange(value)
+                    if (value === 'weight' && sampleMode === 'traffic') {
+                      props.form.setValue('sampleMode', 'off', {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      })
+                    }
+                    if (
+                      value === 'weight' &&
+                      adaptiveSamplingEnabled === true
+                    ) {
+                      props.form.setValue('adaptiveSamplingEnabled', false, {
+                        shouldDirty: true,
+                        shouldValidate: true,
+                      })
+                    }
+                  }}
+                >
+                  <FormControl>
+                    <SelectTrigger className='w-full'>
+                      <SelectValue />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS.map(
+                        (option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        )
+                      )}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+                <FormDescription>
+                  {
+                    CHANNEL_MONITOR_SMART_SCHEDULE_APPLY_MODE_OPTIONS.find(
+                      (option) => option.value === field.value
+                    )?.description
+                  }
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </div>
+
+        <FormField
+          control={props.form.control}
+          name='models'
+          render={({ field }) => (
+            <FormItem className='min-w-0'>
+              <ChannelMonitorSettingLabel label='参与模型' helpKey='models' />
+              <FormControl>
+                <MultiSelect
+                  options={modelSelectOptions}
+                  selected={field.value}
+                  onChange={(models) => {
+                    field.onChange(models)
+                    props.form.setValue(
+                      'modelOrder',
+                      mergeChannelMonitorSmartScheduleModelOrder(
+                        models,
+                        props.form.getValues('modelOrder')
+                      ),
+                      { shouldDirty: true, shouldValidate: true }
+                    )
+                  }}
+                  placeholder='全部模型'
+                  emptyText='没有匹配的模型'
+                  maxVisibleChips={4}
+                />
+              </FormControl>
+              <FormDescription>不选择表示该分组的全部模型</FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        <FormField
+          control={props.form.control}
+          name='modelOrder'
+          render={({ field }) => (
+            <FormItem className='min-w-0'>
+              <div className='flex min-h-8 flex-wrap items-center justify-between gap-2'>
+                <ChannelMonitorSettingLabel
+                  label='模型卡片顺序'
+                  helpKey='modelOrder'
+                />
+                {field.value.length > 0 ? (
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='sm'
+                    onClick={() => field.onChange([])}
+                  >
+                    <HugeiconsIcon
+                      icon={Refresh01Icon}
+                      data-icon='inline-start'
+                      aria-hidden='true'
+                    />
+                    恢复名称排序
+                  </Button>
+                ) : null}
+              </div>
+              <ChannelMonitorSmartScheduleModelOrder
+                models={
+                  selectedModels.length > 0
+                    ? selectedModels
+                    : props.modelOptions
+                }
+                value={field.value}
+                onChange={field.onChange}
+              />
+              <FormDescription>
+                仅影响智能调度看板展示，不改变模型范围和调度计算
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      </FieldSet>
+
+      <FieldSet className='min-w-0 rounded-lg border p-4'>
+        <FieldLegend variant='label'>样本补充</FieldLegend>
         <FormField
           control={props.form.control}
           name='sampleMode'
           render={({ field }) => (
             <FormItem>
-              <div>
-                <ChannelMonitorSettingLabel
-                  label='样本补充方式'
-                  helpKey='sampleMode'
+              <div className='flex items-center justify-between gap-4'>
+                <div>
+                  <ChannelMonitorSettingLabel
+                    label='样本补充方式'
+                    helpKey='sampleMode'
+                  />
+                  <FormDescription className='mt-1'>
+                    为样本不足的渠道选择补充数据的方式
+                  </FormDescription>
+                </div>
+                <Switch
+                  checked={field.value !== 'off'}
+                  aria-label='启用样本补充'
+                  onCheckedChange={(enabled) => {
+                    if (!enabled) {
+                      if (field.value !== 'off') {
+                        lastSampleMode.current = field.value
+                      }
+                      field.onChange('off')
+                      return
+                    }
+                    field.onChange(
+                      applyMode === 'weight' ? 'probe' : lastSampleMode.current
+                    )
+                  }}
                 />
-                <FormDescription className='mt-1'>
-                  为样本不足的渠道选择补充数据的方式
-                </FormDescription>
               </div>
               <FormControl>
                 <ToggleGroup
-                  value={[field.value]}
+                  value={field.value === 'off' ? [] : [field.value]}
+                  disabled={field.value === 'off'}
                   onValueChange={(values) => {
                     const value = values.find((item) => item !== field.value)
-                    if (
-                      value === 'off' ||
-                      value === 'traffic' ||
-                      value === 'probe'
-                    ) {
+                    if (value === 'traffic' || value === 'probe') {
+                      lastSampleMode.current = value
                       field.onChange(value)
                     }
                   }}
                   variant='outline'
                   spacing={2}
                   aria-label='分组样本补充方式'
-                  className='grid w-full grid-cols-3'
+                  className='grid w-full grid-cols-2'
                 >
-                  <ToggleGroupItem value='off' className='w-full'>
-                    关闭
-                  </ToggleGroupItem>
                   <ToggleGroupItem
                     value='traffic'
                     disabled={applyMode === 'weight'}
@@ -722,15 +771,29 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
         ) : null}
 
         {sampleMode === 'probe' ? probeIntervalField : null}
-      </div>
+      </FieldSet>
 
-      <Separator />
-
-      <FieldSet>
+      <FieldSet className='min-w-0 rounded-lg border p-4'>
         <FieldLegend variant='label'>快速失败重试</FieldLegend>
-        <FieldDescription>
-          可重试错误在界限内返回时，先在当前渠道额外重试；独立于稳定性保护，不消耗普通重试次数
-        </FieldDescription>
+        <div className='flex items-center justify-between gap-4'>
+          <FieldDescription>
+            可重试错误在界限内返回时，先在当前渠道额外重试；独立于稳定性保护，不消耗普通重试次数
+          </FieldDescription>
+          <Switch
+            checked={fastFailureRetryEnabled}
+            aria-label='启用快速失败重试'
+            onCheckedChange={(enabled) => {
+              if (!enabled && Number(fastFailureRetryCount) > 0) {
+                lastRetryCount.current = Number(fastFailureRetryCount)
+              }
+              props.form.setValue(
+                'fastFailureSameChannelRetryCount',
+                enabled ? lastRetryCount.current : 0,
+                { shouldDirty: true, shouldValidate: true }
+              )
+            }}
+          />
+        </div>
         <FieldGroup className='grid items-start gap-4 sm:grid-cols-3'>
           <FormField
             control={props.form.control}
@@ -757,7 +820,9 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   </FormControl>
                   <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
                 </InputGroup>
-                <FormDescription>耗时不超过此界限时可触发重试</FormDescription>
+                <FormDescription>
+                  此界限也用于稳定性评分；关闭重试后仍可调整
+                </FormDescription>
                 <FormMessage />
               </FormItem>
             )}
@@ -766,7 +831,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
             control={props.form.control}
             name='fastFailureSameChannelRetryCount'
             render={({ field }) => (
-              <FormItem>
+              <FormItem data-disabled={!fastFailureRetryEnabled}>
                 <ChannelMonitorSettingLabel
                   label='同渠道快速重试'
                   helpKey='fastFailureSameChannelRetry'
@@ -782,8 +847,15 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       step={1}
                       inputMode='numeric'
                       value={field.value}
+                      disabled={!fastFailureRetryEnabled}
                       onBlur={field.onBlur}
-                      onChange={field.onChange}
+                      onChange={(event) => {
+                        const count = Number(event.target.value)
+                        if (Number.isFinite(count) && count > 0) {
+                          lastRetryCount.current = count
+                        }
+                        field.onChange(event)
+                      }}
                       name={field.name}
                       ref={field.ref}
                       aria-invalid={Boolean(
@@ -803,7 +875,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
             control={props.form.control}
             name='fastFailureSameChannelRetryDelayMs'
             render={({ field }) => (
-              <FormItem>
+              <FormItem data-disabled={!fastFailureRetryEnabled}>
                 <ChannelMonitorSettingLabel
                   label='快速重试间隔'
                   helpKey='fastFailureSameChannelRetryDelay'
@@ -819,6 +891,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                       step={1}
                       inputMode='numeric'
                       value={field.value}
+                      disabled={!fastFailureRetryEnabled}
                       onBlur={field.onBlur}
                       onChange={field.onChange}
                       name={field.name}
@@ -839,9 +912,8 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
         </FieldGroup>
       </FieldSet>
 
-      <Separator />
-
-      <div className='flex flex-col gap-4'>
+      <FieldSet className='min-w-0 rounded-lg border p-4'>
+        <FieldLegend className='sr-only'>稳定性保护</FieldLegend>
         <FormField
           control={props.form.control}
           name='stabilityEnabled'
@@ -853,7 +925,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   helpKey='stability'
                 />
                 <FormDescription>
-                  稳定性信号同时用于软降级采样和硬保护；软降级只增加备援验证，硬保护才会摘除渠道
+                  稳定性信号用于评分、软降级采样和保护恢复；失败阈值触发的摘除由“立即摘除”独立控制
                 </FormDescription>
               </div>
               <FormControl>
@@ -866,214 +938,8 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
             </FormItem>
           )}
         />
-
-        <div className='border-muted-foreground/20 flex flex-col gap-4 rounded-md border border-dashed p-4'>
-          <div className='flex flex-col gap-1'>
-            <h4 className='text-sm font-medium'>软降级与自适应备援采样</h4>
-            <FormDescription>
-              主渠道逐渐变差时增加备用渠道样本；它与硬保护独立，关闭硬保护不会自动清除该开关
-            </FormDescription>
-          </div>
-          <FormField
-            control={props.form.control}
-            name='adaptiveSamplingEnabled'
-            render={({ field }) => (
-              <FormItem className='flex items-center justify-between gap-4'>
-                <div className='flex flex-col gap-1'>
-                  <ChannelMonitorSettingLabel
-                    label='自适应备援采样'
-                    helpKey='adaptiveSampling'
-                  />
-                  <FormDescription>
-                    主渠道错误率或首字持续变差时，逐步切出有限流量验证备用渠道；健康时优先保持主渠道分配
-                  </FormDescription>
-                </div>
-                <FormControl>
-                  <Switch
-                    checked={field.value === true}
-                    disabled={applyMode !== 'priority_weight'}
-                    onCheckedChange={field.onChange}
-                    aria-label='自适应备援采样'
-                  />
-                </FormControl>
-              </FormItem>
-            )}
-          />
-          {applyMode !== 'priority_weight' ? (
-            <FormDescription>
-              自适应备援采样需要先将调整方式设为“优先级分层 + 权重”
-            </FormDescription>
-          ) : null}
-          {applyMode === 'priority_weight' &&
-          adaptiveSamplingEnabled === true ? (
-            <>
-              <div className='grid items-start gap-4 sm:grid-cols-2'>
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingBasePercent'
-                  label='基础备援预算'
-                  min={0}
-                  max={MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_BASE_PERCENT}
-                  step={0.1}
-                  unit='%'
-                  helpKey='adaptiveSamplingBasePercent'
-                  description='主渠道刚进入压力时的起始采样上限'
-                />
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingMaxPercent'
-                  label='最大备援预算'
-                  min={1}
-                  max={MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_PERCENT}
-                  step={0.1}
-                  unit='%'
-                  helpKey='adaptiveSamplingMaxPercent'
-                  description='池级最高采样比例，主渠道最低保留 100% - 本值'
-                />
-              </div>
-              <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingErrorWarningPercent'
-                  label='错误告警阈值'
-                  min={0}
-                  max={100}
-                  step={0.1}
-                  unit='%'
-                  helpKey='adaptiveSamplingErrorWarningPercent'
-                />
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingErrorCriticalPercent'
-                  label='错误高风险阈值'
-                  min={0}
-                  max={100}
-                  step={0.1}
-                  unit='%'
-                  helpKey='adaptiveSamplingErrorCriticalPercent'
-                />
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingFirstTokenWarningSeconds'
-                  label='首字告警阈值'
-                  min={0}
-                  max={60}
-                  step={0.1}
-                  unit='秒'
-                  helpKey='adaptiveSamplingFirstTokenWarningSeconds'
-                />
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingFirstTokenCriticalSeconds'
-                  label='首字高风险阈值'
-                  min={0}
-                  max={60}
-                  step={0.1}
-                  unit='秒'
-                  helpKey='adaptiveSamplingFirstTokenCriticalSeconds'
-                />
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingFirstTokenWarningRequestPercent'
-                  label='首字告警请求占比'
-                  min={0.1}
-                  max={100}
-                  step={0.1}
-                  unit='%'
-                  helpKey='adaptiveSamplingFirstTokenWarningRequestPercent'
-                  description='窗口内有效请求中，成功且首字达到告警秒数的请求占比阈值'
-                />
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingRecoverRequestPercent'
-                  label='恢复健康请求占比'
-                  min={0.1}
-                  max={100}
-                  step={0.1}
-                  unit='%'
-                  helpKey='adaptiveSamplingRecoverRequestPercent'
-                  description='错误和首字进入信号解除后，窗口内健康请求达到该比例才恢复'
-                />
-              </div>
-              <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingWindowMinutes'
-                  label='请求比例窗口分钟数'
-                  min={MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_MINUTES}
-                  max={MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_MINUTES}
-                  step={1}
-                  unit='分钟'
-                  helpKey='adaptiveSamplingWindowMinutes'
-                  description='只统计最近这段时间内的有效请求'
-                />
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingWindowRequests'
-                  label='请求比例窗口请求数'
-                  min={1}
-                  max={MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_REQUESTS}
-                  step={1}
-                  unit='次'
-                  helpKey='adaptiveSamplingWindowRequests'
-                  description='时间范围内只取最近这些业务、手动测试和定时探测请求'
-                />
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingSwitchConfirmRequestPercent'
-                  label='切换确认请求占比'
-                  min={0.1}
-                  max={100}
-                  step={0.1}
-                  unit='%'
-                  helpKey='adaptiveSamplingSwitchConfirmRequestPercent'
-                  description='备用渠道窗口内健康请求达到该比例后才可接管'
-                />
-                <AdaptiveSamplingNumberField
-                  form={props.form}
-                  name='adaptiveSamplingMinComparableChannels'
-                  label='最少可比渠道数'
-                  min={2}
-                  max={MAX_SMART_SCHEDULE_ADAPTIVE_MIN_COMPARABLE_CHANNELS}
-                  step={1}
-                  unit='条'
-                  helpKey='adaptiveSamplingMinComparableChannels'
-                  description='首字和 TPS 达到该数量后才进行相对比较'
-                />
-              </div>
-            </>
-          ) : null}
-        </div>
-
         {stabilityEnabled && (
           <div className='flex flex-col gap-4'>
-            <FormField
-              control={props.form.control}
-              name='degradedProbeEnabled'
-              render={({ field }) => (
-                <FormItem className='flex items-center justify-between gap-4'>
-                  <div className='flex flex-col gap-1'>
-                    <ChannelMonitorSettingLabel
-                      label='降级期间定时探测'
-                      helpKey='degradedProbe'
-                    />
-                    <FormDescription>
-                      降级期间主动探测渠道，达到恢复探测成功次数后可提前恢复
-                    </FormDescription>
-                  </div>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                      aria-label='降级期间定时探测'
-                    />
-                  </FormControl>
-                </FormItem>
-              )}
-            />
-            {degradedProbeEnabled && sampleMode !== 'probe'
-              ? probeIntervalField
-              : null}
             <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
               <FormField
                 control={props.form.control}
@@ -1269,153 +1135,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                 )}
               />
             </div>
-            <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
-              <FormField
-                control={props.form.control}
-                name='burstFailureWindowMinutes'
-                render={({ field }) => (
-                  <FormItem>
-                    <ChannelMonitorSettingLabel
-                      label='保护失败窗口分钟数'
-                      helpKey='burstFailureWindowMinutes'
-                    />
-                    <FormControl>
-                      <InputGroup className='ring-inset'>
-                        <InputGroupInput
-                          type='number'
-                          min={MIN_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES}
-                          max={MAX_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES}
-                          step={1}
-                          inputMode='numeric'
-                          value={field.value}
-                          onBlur={field.onBlur}
-                          onChange={field.onChange}
-                          name={field.name}
-                          ref={field.ref}
-                          aria-invalid={Boolean(
-                            props.form.formState.errors
-                              .burstFailureWindowMinutes
-                          )}
-                        />
-                        <InputGroupAddon align='inline-end'>
-                          分钟
-                        </InputGroupAddon>
-                      </InputGroup>
-                    </FormControl>
-                    <FormDescription>只统计最近这段时间</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={props.form.control}
-                name='burstFailureWindowRequests'
-                render={({ field }) => (
-                  <FormItem>
-                    <ChannelMonitorSettingLabel
-                      label='保护失败窗口请求数'
-                      helpKey='burstFailureWindowRequests'
-                    />
-                    <FormControl>
-                      <InputGroup className='ring-inset'>
-                        <InputGroupInput
-                          type='number'
-                          min={1}
-                          max={MAX_SMART_SCHEDULE_BURST_FAILURE_WINDOW_REQUESTS}
-                          step={1}
-                          inputMode='numeric'
-                          value={field.value}
-                          onBlur={field.onBlur}
-                          onChange={field.onChange}
-                          name={field.name}
-                          ref={field.ref}
-                          aria-invalid={Boolean(
-                            props.form.formState.errors
-                              .burstFailureWindowRequests
-                          )}
-                        />
-                        <InputGroupAddon align='inline-end'>次</InputGroupAddon>
-                      </InputGroup>
-                    </FormControl>
-                    <FormDescription>
-                      时间范围内只取最近这些请求
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={props.form.control}
-                name='consecutiveFailureThreshold'
-                render={({ field }) => (
-                  <FormItem>
-                    <ChannelMonitorSettingLabel
-                      label='连续失败阈值'
-                      helpKey='consecutiveFailureThreshold'
-                    />
-                    <FormControl>
-                      <InputGroup className='ring-inset'>
-                        <InputGroupInput
-                          type='number'
-                          min={1}
-                          max={100}
-                          step={1}
-                          inputMode='numeric'
-                          value={field.value}
-                          onBlur={field.onBlur}
-                          onChange={field.onChange}
-                          name={field.name}
-                          ref={field.ref}
-                          aria-invalid={Boolean(
-                            props.form.formState.errors
-                              .consecutiveFailureThreshold
-                          )}
-                        />
-                        <InputGroupAddon align='inline-end'>次</InputGroupAddon>
-                      </InputGroup>
-                    </FormControl>
-                    <FormDescription>连续错误立即摘除</FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={props.form.control}
-                name='burstFailureThresholdPercent'
-                render={({ field }) => (
-                  <FormItem>
-                    <ChannelMonitorSettingLabel
-                      label='窗口失败阈值'
-                      helpKey='burstFailureThresholdPercent'
-                    />
-                    <FormControl>
-                      <InputGroup className='ring-inset'>
-                        <InputGroupInput
-                          type='number'
-                          min={0.1}
-                          max={100}
-                          step={0.1}
-                          inputMode='decimal'
-                          value={field.value}
-                          onBlur={field.onBlur}
-                          onChange={field.onChange}
-                          name={field.name}
-                          ref={field.ref}
-                          aria-invalid={Boolean(
-                            props.form.formState.errors
-                              .burstFailureThresholdPercent
-                          )}
-                        />
-                        <InputGroupAddon align='inline-end'>%</InputGroupAddon>
-                      </InputGroup>
-                    </FormControl>
-                    <FormDescription>
-                      窗口内失败请求占比达标即摘除
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
+            <div className='max-w-72'>
               <FormField
                 control={props.form.control}
                 name='recoverySuccessThreshold'
@@ -1424,10 +1144,12 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                     <ChannelMonitorSettingLabel
                       label='恢复探测成功次数'
                       helpKey='recoverySuccessThreshold'
+                      htmlFor='channel-monitor-recoverySuccessThreshold'
                     />
                     <FormControl>
                       <InputGroup className='ring-inset'>
                         <InputGroupInput
+                          id='channel-monitor-recoverySuccessThreshold'
                           type='number'
                           min={1}
                           max={100}
@@ -1451,124 +1173,528 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                 )}
               />
             </div>
-            <div className='border-border/60 bg-muted/30 flex flex-col gap-4 rounded-md border p-4'>
-              <FormField
-                control={props.form.control}
-                name='jitterEnabled'
-                render={({ field }) => (
-                  <FormItem className='flex items-center justify-between gap-4'>
-                    <div className='flex flex-col gap-1'>
-                      <ChannelMonitorSettingLabel
-                        label='成功延迟抖动'
-                        helpKey='jitter'
-                      />
-                      <FormDescription>
-                        允许偶发的慢成功；超过容忍范围的慢请求会降低稳定性得分
-                      </FormDescription>
-                    </div>
-                    <FormControl>
-                      <Switch
-                        checked={field.value}
-                        onCheckedChange={field.onChange}
-                        aria-label='成功延迟抖动'
-                      />
-                    </FormControl>
-                  </FormItem>
-                )}
-              />
-
-              {jitterEnabled ? (
-                <div className='grid items-start gap-4 sm:grid-cols-2'>
-                  <FormField
-                    control={props.form.control}
-                    name='jitterTolerancePercent'
-                    render={({ field }) => (
-                      <FormItem>
-                        <ChannelMonitorSettingLabel
-                          label='允许抖动'
-                          helpKey='jitterTolerance'
-                        />
-                        <FormControl>
-                          <InputGroup className='ring-inset'>
-                            <InputGroupInput
-                              type='number'
-                              min={0}
-                              max={MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT}
-                              step={0.1}
-                              inputMode='decimal'
-                              value={field.value}
-                              onBlur={field.onBlur}
-                              onChange={field.onChange}
-                              name={field.name}
-                              ref={field.ref}
-                              aria-invalid={Boolean(
-                                props.form.formState.errors
-                                  .jitterTolerancePercent
-                              )}
-                            />
-                            <InputGroupAddon align='inline-end'>
-                              %
-                            </InputGroupAddon>
-                          </InputGroup>
-                        </FormControl>
-                        <FormDescription>
-                          慢成功免罚比例，窗口内至少容忍 1 次
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                  <FormField
-                    control={props.form.control}
-                    name='jitterSlowThresholdSeconds'
-                    render={({ field }) => (
-                      <FormItem>
-                        <ChannelMonitorSettingLabel
-                          label='慢成功阈值'
-                          helpKey='jitterSlowThreshold'
-                        />
-                        <FormControl>
-                          <InputGroup className='ring-inset'>
-                            <InputGroupInput
-                              type='number'
-                              min={0}
-                              max={
-                                MAX_SMART_SCHEDULE_JITTER_SLOW_THRESHOLD_SECONDS
-                              }
-                              step={0.1}
-                              inputMode='decimal'
-                              value={field.value}
-                              onBlur={field.onBlur}
-                              onChange={field.onChange}
-                              name={field.name}
-                              ref={field.ref}
-                              aria-invalid={Boolean(
-                                props.form.formState.errors
-                                  .jitterSlowThresholdSeconds
-                              )}
-                            />
-                            <InputGroupAddon align='inline-end'>
-                              秒
-                            </InputGroupAddon>
-                          </InputGroup>
-                        </FormControl>
-                        <FormDescription>
-                          首字时间达到该值即记为慢成功
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-                </div>
-              ) : null}
-            </div>
           </div>
         )}
-      </div>
+      </FieldSet>
 
-      <Separator />
+      <FieldSet className='min-w-0 rounded-lg border p-4'>
+        <FieldLegend className='sr-only'>立即摘除</FieldLegend>
+        <FormField
+          control={props.form.control}
+          name='immediateEjectionEnabled'
+          render={({ field }) => (
+            <FormItem className='flex items-center justify-between gap-4'>
+              <div className='flex flex-col gap-1'>
+                <ChannelMonitorSettingLabel
+                  label='立即摘除'
+                  helpKey='immediateEjection'
+                />
+                <FormDescription>
+                  连续失败或窗口失败率达到阈值时立即摘除；关闭后仍保留稳定性评分及已有保护的恢复流程
+                </FormDescription>
+              </div>
+              <FormControl>
+                <Switch
+                  checked={field.value}
+                  onCheckedChange={field.onChange}
+                  aria-label='立即摘除'
+                />
+              </FormControl>
+            </FormItem>
+          )}
+        />
+        {!stabilityEnabled && (
+          <FieldDescription>
+            常规流量需要先开启稳定性保护；临时流量仍使用此开关和阈值
+          </FieldDescription>
+        )}
+        {immediateEjectionEnabled && (
+          <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
+            <FormField
+              control={props.form.control}
+              name='burstFailureWindowMinutes'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='保护失败窗口分钟数'
+                    helpKey='burstFailureWindowMinutes'
+                    htmlFor='channel-monitor-burstFailureWindowMinutes'
+                  />
+                  <FormControl>
+                    <InputGroup className='ring-inset'>
+                      <InputGroupInput
+                        id='channel-monitor-burstFailureWindowMinutes'
+                        type='number'
+                        min={MIN_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES}
+                        max={MAX_SMART_SCHEDULE_BURST_FAILURE_WINDOW_MINUTES}
+                        step={1}
+                        inputMode='numeric'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors.burstFailureWindowMinutes
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>分钟</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>只统计最近这段时间</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name='burstFailureWindowRequests'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='保护失败窗口请求数'
+                    helpKey='burstFailureWindowRequests'
+                    htmlFor='channel-monitor-burstFailureWindowRequests'
+                  />
+                  <FormControl>
+                    <InputGroup className='ring-inset'>
+                      <InputGroupInput
+                        id='channel-monitor-burstFailureWindowRequests'
+                        type='number'
+                        min={1}
+                        max={MAX_SMART_SCHEDULE_BURST_FAILURE_WINDOW_REQUESTS}
+                        step={1}
+                        inputMode='numeric'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors.burstFailureWindowRequests
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>次</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>时间范围内只取最近这些请求</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name='consecutiveFailureThreshold'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='连续失败阈值'
+                    helpKey='consecutiveFailureThreshold'
+                    htmlFor='channel-monitor-consecutiveFailureThreshold'
+                  />
+                  <FormControl>
+                    <InputGroup className='ring-inset'>
+                      <InputGroupInput
+                        id='channel-monitor-consecutiveFailureThreshold'
+                        type='number'
+                        min={1}
+                        max={100}
+                        step={1}
+                        inputMode='numeric'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors
+                            .consecutiveFailureThreshold
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>次</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>连续错误立即摘除</FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name='burstFailureThresholdPercent'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='窗口失败阈值'
+                    helpKey='burstFailureThresholdPercent'
+                    htmlFor='channel-monitor-burstFailureThresholdPercent'
+                  />
+                  <FormControl>
+                    <InputGroup className='ring-inset'>
+                      <InputGroupInput
+                        id='channel-monitor-burstFailureThresholdPercent'
+                        type='number'
+                        min={0.1}
+                        max={100}
+                        step={0.1}
+                        inputMode='decimal'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors
+                            .burstFailureThresholdPercent
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>%</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>
+                    窗口内失败请求占比达标即摘除
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+        )}
+      </FieldSet>
 
-      <div className='flex flex-col gap-4'>
+      <FieldSet className='min-w-0 rounded-lg border p-4'>
+        <FieldLegend className='sr-only'>降级期间定时探测</FieldLegend>
+        <FormField
+          control={props.form.control}
+          name='degradedProbeEnabled'
+          render={({ field }) => (
+            <FormItem className='flex items-center justify-between gap-4'>
+              <div className='flex flex-col gap-1'>
+                <ChannelMonitorSettingLabel
+                  label='降级期间定时探测'
+                  helpKey='degradedProbe'
+                />
+                <FormDescription>
+                  降级期间主动探测渠道，达到恢复探测成功次数后可提前恢复
+                </FormDescription>
+              </div>
+              <FormControl>
+                <Switch
+                  checked={field.value}
+                  disabled={!stabilityEnabled}
+                  onCheckedChange={field.onChange}
+                  aria-label='降级期间定时探测'
+                />
+              </FormControl>
+            </FormItem>
+          )}
+        />
+        {stabilityEnabled && degradedProbeEnabled && sampleMode !== 'probe'
+          ? probeIntervalField
+          : null}
+        {!stabilityEnabled && (
+          <FieldDescription>
+            需要先开启稳定性保护；当前探测开关选择会保留
+          </FieldDescription>
+        )}
+        {stabilityEnabled && degradedProbeEnabled && sampleMode === 'probe' && (
+          <FieldDescription>
+            探测间隔与“样本补充”中的定时探测共用
+          </FieldDescription>
+        )}
+      </FieldSet>
+
+      <FieldSet className='min-w-0 rounded-lg border p-4'>
+        <FieldLegend className='sr-only'>成功延迟抖动</FieldLegend>
+        <FormField
+          control={props.form.control}
+          name='jitterEnabled'
+          render={({ field }) => (
+            <FormItem className='flex items-center justify-between gap-4'>
+              <div className='flex flex-col gap-1'>
+                <ChannelMonitorSettingLabel
+                  label='成功延迟抖动'
+                  helpKey='jitter'
+                />
+                <FormDescription>
+                  允许偶发的慢成功；超过容忍范围的慢请求会降低稳定性得分
+                </FormDescription>
+              </div>
+              <FormControl>
+                <Switch
+                  checked={field.value}
+                  disabled={!stabilityEnabled}
+                  onCheckedChange={field.onChange}
+                  aria-label='成功延迟抖动'
+                />
+              </FormControl>
+            </FormItem>
+          )}
+        />
+
+        {stabilityEnabled && jitterEnabled ? (
+          <div className='grid items-start gap-4 sm:grid-cols-2'>
+            <FormField
+              control={props.form.control}
+              name='jitterTolerancePercent'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='允许抖动'
+                    helpKey='jitterTolerance'
+                  />
+                  <FormControl>
+                    <InputGroup className='ring-inset'>
+                      <InputGroupInput
+                        type='number'
+                        min={0}
+                        max={MAX_SMART_SCHEDULE_JITTER_TOLERANCE_PERCENT}
+                        step={0.1}
+                        inputMode='decimal'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors.jitterTolerancePercent
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>%</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>
+                    慢成功免罚比例，窗口内至少容忍 1 次
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={props.form.control}
+              name='jitterSlowThresholdSeconds'
+              render={({ field }) => (
+                <FormItem>
+                  <ChannelMonitorSettingLabel
+                    label='慢成功阈值'
+                    helpKey='jitterSlowThreshold'
+                  />
+                  <FormControl>
+                    <InputGroup className='ring-inset'>
+                      <InputGroupInput
+                        type='number'
+                        min={0}
+                        max={MAX_SMART_SCHEDULE_JITTER_SLOW_THRESHOLD_SECONDS}
+                        step={0.1}
+                        inputMode='decimal'
+                        value={field.value}
+                        onBlur={field.onBlur}
+                        onChange={field.onChange}
+                        name={field.name}
+                        ref={field.ref}
+                        aria-invalid={Boolean(
+                          props.form.formState.errors.jitterSlowThresholdSeconds
+                        )}
+                      />
+                      <InputGroupAddon align='inline-end'>秒</InputGroupAddon>
+                    </InputGroup>
+                  </FormControl>
+                  <FormDescription>
+                    首字时间达到该值即记为慢成功
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </div>
+        ) : null}
+        {!stabilityEnabled && (
+          <FieldDescription>
+            需要先开启稳定性保护；当前抖动开关选择会保留
+          </FieldDescription>
+        )}
+      </FieldSet>
+
+      <FieldSet className='min-w-0 rounded-lg border p-4'>
+        <FieldLegend className='sr-only'>自适应备援采样</FieldLegend>
+        <div className='flex flex-col gap-1'>
+          <h4 className='text-sm font-medium'>软降级与自适应备援采样</h4>
+          <FormDescription>
+            主渠道逐渐变差时增加备用渠道样本；它与硬保护独立，关闭硬保护不会自动清除该开关
+          </FormDescription>
+        </div>
+        <FormField
+          control={props.form.control}
+          name='adaptiveSamplingEnabled'
+          render={({ field }) => (
+            <FormItem className='flex items-center justify-between gap-4'>
+              <div className='flex flex-col gap-1'>
+                <ChannelMonitorSettingLabel
+                  label='自适应备援采样'
+                  helpKey='adaptiveSampling'
+                />
+                <FormDescription>
+                  主渠道错误率或首字持续变差时，逐步切出有限流量验证备用渠道；健康时优先保持主渠道分配
+                </FormDescription>
+              </div>
+              <FormControl>
+                <Switch
+                  checked={field.value === true}
+                  disabled={applyMode !== 'priority_weight'}
+                  onCheckedChange={field.onChange}
+                  aria-label='自适应备援采样'
+                />
+              </FormControl>
+            </FormItem>
+          )}
+        />
+        {applyMode !== 'priority_weight' ? (
+          <FormDescription>
+            自适应备援采样需要先将调整方式设为“优先级分层 + 权重”
+          </FormDescription>
+        ) : null}
+        {applyMode === 'priority_weight' && adaptiveSamplingEnabled === true ? (
+          <>
+            <div className='grid items-start gap-4 sm:grid-cols-2'>
+              <AdaptiveSamplingNumberField
+                form={props.form}
+                name='adaptiveSamplingBasePercent'
+                label='基础备援预算'
+                min={0}
+                max={MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_BASE_PERCENT}
+                step={0.1}
+                unit='%'
+                helpKey='adaptiveSamplingBasePercent'
+                description='主渠道刚进入压力时的起始采样上限'
+              />
+              <AdaptiveSamplingNumberField
+                form={props.form}
+                name='adaptiveSamplingMaxPercent'
+                label='最大备援预算'
+                min={1}
+                max={MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_PERCENT}
+                step={0.1}
+                unit='%'
+                helpKey='adaptiveSamplingMaxPercent'
+                description='池级最高采样比例，主渠道最低保留 100% - 本值'
+              />
+            </div>
+            <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
+              <AdaptiveSamplingNumberField
+                form={props.form}
+                name='adaptiveSamplingErrorWarningPercent'
+                label='错误告警阈值'
+                min={0}
+                max={100}
+                step={0.1}
+                unit='%'
+                helpKey='adaptiveSamplingErrorWarningPercent'
+              />
+              <AdaptiveSamplingNumberField
+                form={props.form}
+                name='adaptiveSamplingErrorCriticalPercent'
+                label='错误高风险阈值'
+                min={0}
+                max={100}
+                step={0.1}
+                unit='%'
+                helpKey='adaptiveSamplingErrorCriticalPercent'
+              />
+              <AdaptiveSamplingNumberField
+                form={props.form}
+                name='adaptiveSamplingFirstTokenWarningSeconds'
+                label='首字告警阈值'
+                min={0}
+                max={60}
+                step={0.1}
+                unit='秒'
+                helpKey='adaptiveSamplingFirstTokenWarningSeconds'
+              />
+              <AdaptiveSamplingNumberField
+                form={props.form}
+                name='adaptiveSamplingFirstTokenCriticalSeconds'
+                label='首字高风险阈值'
+                min={0}
+                max={60}
+                step={0.1}
+                unit='秒'
+                helpKey='adaptiveSamplingFirstTokenCriticalSeconds'
+              />
+              <AdaptiveSamplingNumberField
+                form={props.form}
+                name='adaptiveSamplingFirstTokenWarningRequestPercent'
+                label='首字告警请求占比'
+                min={0.1}
+                max={100}
+                step={0.1}
+                unit='%'
+                helpKey='adaptiveSamplingFirstTokenWarningRequestPercent'
+                description='窗口内有效请求中，成功且首字达到告警秒数的请求占比阈值'
+              />
+              <AdaptiveSamplingNumberField
+                form={props.form}
+                name='adaptiveSamplingRecoverRequestPercent'
+                label='恢复健康请求占比'
+                min={0.1}
+                max={100}
+                step={0.1}
+                unit='%'
+                helpKey='adaptiveSamplingRecoverRequestPercent'
+                description='错误和首字进入信号解除后，窗口内健康请求达到该比例才恢复'
+              />
+            </div>
+            <div className='grid items-start gap-4 sm:grid-cols-2 lg:grid-cols-3'>
+              <AdaptiveSamplingNumberField
+                form={props.form}
+                name='adaptiveSamplingWindowMinutes'
+                label='请求比例窗口分钟数'
+                min={MIN_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_MINUTES}
+                max={MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_MINUTES}
+                step={1}
+                unit='分钟'
+                helpKey='adaptiveSamplingWindowMinutes'
+                description='只统计最近这段时间内的有效请求'
+              />
+              <AdaptiveSamplingNumberField
+                form={props.form}
+                name='adaptiveSamplingWindowRequests'
+                label='请求比例窗口请求数'
+                min={1}
+                max={MAX_SMART_SCHEDULE_ADAPTIVE_SAMPLING_WINDOW_REQUESTS}
+                step={1}
+                unit='次'
+                helpKey='adaptiveSamplingWindowRequests'
+                description='时间范围内只取最近这些业务、手动测试和定时探测请求'
+              />
+              <AdaptiveSamplingNumberField
+                form={props.form}
+                name='adaptiveSamplingSwitchConfirmRequestPercent'
+                label='切换确认请求占比'
+                min={0.1}
+                max={100}
+                step={0.1}
+                unit='%'
+                helpKey='adaptiveSamplingSwitchConfirmRequestPercent'
+                description='备用渠道窗口内健康请求达到该比例后才可接管'
+              />
+              <AdaptiveSamplingNumberField
+                form={props.form}
+                name='adaptiveSamplingMinComparableChannels'
+                label='最少可比渠道数'
+                min={2}
+                max={MAX_SMART_SCHEDULE_ADAPTIVE_MIN_COMPARABLE_CHANNELS}
+                step={1}
+                unit='条'
+                helpKey='adaptiveSamplingMinComparableChannels'
+                description='首字和 TPS 达到该数量后才进行相对比较'
+              />
+            </div>
+          </>
+        ) : null}
+      </FieldSet>
+
+      <FieldSet className='min-w-0 rounded-lg border p-4'>
+        <FieldLegend className='sr-only'>评分与流量</FieldLegend>
         <div>
           <h3 className='text-sm font-medium'>评分与流量</h3>
           <p className='text-muted-foreground mt-1 text-sm'>
@@ -1670,7 +1796,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
             )}
           />
         </div>
-      </div>
+      </FieldSet>
     </div>
   )
 }
