@@ -1854,6 +1854,26 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				return err
 			}
 		}
+		var redisEffectState *ChannelMonitorRedisEffectState
+		if redisRuntimeEventSequence > 0 {
+			var effectErr error
+			redisEffectState, effectErr = lockChannelMonitorRedisEffectStateTx(
+				tx,
+				channelMonitorRedisAdaptiveEffectKey(group, modelName),
+			)
+			if effectErr != nil {
+				return effectErr
+			}
+		}
+		controlRevision := ""
+		economicRevision := ""
+		var err error
+		// Settings cleanup takes the control lock before deleting logical state.
+		// Use the same order so a concurrent policy removal cannot deadlock here.
+		controlRevision, economicRevision, err = lockChannelSmartScheduleRevisionsTx(tx)
+		if err != nil {
+			return err
+		}
 		type logicalRouteMutation struct {
 			stored  ChannelLogicalSmartScheduleRouteState
 			payload channelLogicalSmartScheduleRoutePayload
@@ -1894,29 +1914,11 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 			payload.State.ModelName = key.model
 			logicalRoutes[key] = &logicalRouteMutation{stored: stored, payload: payload}
 		}
-		var redisEffectState *ChannelMonitorRedisEffectState
-		if redisRuntimeEventSequence > 0 {
-			var effectErr error
-			redisEffectState, effectErr = lockChannelMonitorRedisEffectStateTx(
-				tx,
-				channelMonitorRedisAdaptiveEffectKey(group, modelName),
-			)
-			if effectErr != nil {
-				return effectErr
+		if redisEffectState != nil && redisRuntimeEventSequence <= redisEffectState.EventSequence {
+			for index := range outcomes {
+				outcomes[index].Applied = true
 			}
-			if redisRuntimeEventSequence <= redisEffectState.EventSequence {
-				for index := range outcomes {
-					outcomes[index].Applied = true
-				}
-				return nil
-			}
-		}
-		controlRevision := ""
-		economicRevision := ""
-		var err error
-		controlRevision, economicRevision, err = lockChannelSmartScheduleRevisionsTx(tx)
-		if err != nil {
-			return err
+			return nil
 		}
 		resultChannelIds := make([]int, 0, len(results))
 		for _, result := range results {

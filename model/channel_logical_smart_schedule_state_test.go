@@ -39,13 +39,13 @@ func TestSaveLogicalChannelSmartScheduleModelSampleSharesMembersAndFreezesRevisi
 	_, err := SaveLogicalChannelSmartScheduleModelSample(identity, "vip", ChannelSmartScheduleModelSampleResult{
 		ChannelId: 9501, Model: "model-a", Source: ChannelSmartScheduleSampleSourceStatusProbe,
 		SampleId: "a", Time: now, WindowStart: now - 1, Success: true, FirstTokenMs: &firstTokenA,
-	})
+	}, "")
 	require.NoError(t, err)
 	identity.ChannelID = 9502
 	view, err := SaveLogicalChannelSmartScheduleModelSample(identity, "vip", ChannelSmartScheduleModelSampleResult{
 		ChannelId: 9502, Model: "model-a", Source: ChannelSmartScheduleSampleSourceStatusProbe,
 		SampleId: "b", Time: now + 1, WindowStart: now - 1, Success: true, FirstTokenMs: &firstTokenB,
-	})
+	}, "")
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), view.SampleCount)
 	require.NotNil(t, view.AverageFirstTokenMs)
@@ -61,7 +61,7 @@ func TestSaveLogicalChannelSmartScheduleModelSampleSharesMembersAndFreezesRevisi
 	require.NoError(t, DB.Model(&ChannelLogicalGroup{}).Where("id = ?", group.Id).Update("revision", group.Revision+1).Error)
 	_, err = SaveLogicalChannelSmartScheduleModelSample(identity, "vip", ChannelSmartScheduleModelSampleResult{
 		ChannelId: 9502, Model: "model-a", SampleId: "stale", Time: now + 2, Success: true,
-	})
+	}, "")
 	assert.ErrorIs(t, err, ErrChannelLogicalGroupRevisionConflict)
 }
 
@@ -116,7 +116,7 @@ func TestCoalesceChannelSmartScheduleSchedulingRoutesCreatesOneDecisionState(t *
 		Order("channel_id ASC").Find(&physicalStatesBefore).Error)
 	routes, err := GetChannelSmartScheduleRoutes()
 	require.NoError(t, err)
-	logicalRoutes, err := CoalesceChannelSmartScheduleSchedulingRoutes(routes)
+	logicalRoutes, err := CoalesceChannelSmartScheduleSchedulingRoutes(routes, "")
 	require.NoError(t, err)
 	require.Len(t, logicalRoutes, 1)
 	route := logicalRoutes[0]
@@ -162,7 +162,7 @@ func TestCoalesceChannelSmartScheduleSchedulingRoutesCreatesOneDecisionState(t *
 	decodedDetails, err := state.LastScheduleScoreDetails.Decode()
 	require.NoError(t, err)
 	assert.Equal(t, details, decodedDetails)
-	logicalRoutes, err = CoalesceChannelSmartScheduleSchedulingRoutes(routes)
+	logicalRoutes, err = CoalesceChannelSmartScheduleSchedulingRoutes(routes, "")
 	require.NoError(t, err)
 	require.Len(t, logicalRoutes, 1)
 	decodedDetails, err = logicalRoutes[0].State.LastScheduleScoreDetails.Decode()
@@ -202,7 +202,7 @@ func TestLogicalSmartScheduleRuntimeProtectionAndProbeRecoveryProjectMembers(t *
 	}).Error)
 	routes, err := GetChannelSmartScheduleRoutes()
 	require.NoError(t, err)
-	_, err = CoalesceChannelSmartScheduleSchedulingRoutes(routes)
+	_, err = CoalesceChannelSmartScheduleSchedulingRoutes(routes, "")
 	require.NoError(t, err)
 	var abilitiesBefore []Ability
 	require.NoError(t, DB.Where(&Ability{Group: "vip", Model: "model-a"}).
@@ -243,7 +243,7 @@ func TestLogicalSmartScheduleRuntimeProtectionAndProbeRecoveryProjectMembers(t *
 	_, err = SaveLogicalChannelSmartScheduleModelSample(identity, "vip", ChannelSmartScheduleModelSampleResult{
 		ChannelId: 9501, Model: "model-a", Source: ChannelSmartScheduleSampleSourceStatusProbe,
 		SampleId: "recover", Time: now + 1, WindowStart: now, Success: true, ProbeRecovery: recovery,
-	})
+	}, controlRevision)
 	require.NoError(t, err)
 	assert.True(t, recovery.Result.Applied)
 	require.Len(t, recovery.Result.Recovered, 1)

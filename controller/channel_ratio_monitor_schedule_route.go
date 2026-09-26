@@ -320,7 +320,7 @@ func runChannelSmartScheduleByRouteOnce(
 	for _, route := range physicalSelectedRoutes {
 		physicalRouteByKey[channelSmartScheduleRouteKey{channelId: route.ChannelId, group: route.Group, model: route.Model}] = route
 	}
-	selectedRoutes, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(selectedRoutes)
+	selectedRoutes, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(selectedRoutes, controlRevision)
 	if err != nil {
 		return result, err
 	}

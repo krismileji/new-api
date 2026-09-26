@@ -303,8 +303,8 @@ func MergeChannelMonitorGroupOptionsIfCurrent(
 	return ratioUpdatesApplied, nil
 }
 
-// UpdateChannelMonitorSettingsOptions commits setting changes and temporary
-// traffic cleanup as one database transaction.
+// UpdateChannelMonitorSettingsOptions commits setting changes and reconciles
+// affected scheduling state and routing in one database transaction.
 func UpdateChannelMonitorSettingsOptions(
 	values map[string]string,
 	clearTemporaryTraffic bool,
@@ -357,13 +357,24 @@ func UpdateChannelMonitorSettingsOptions(
 			if saveErr := saveLockedChannelMonitorOptionsTx(tx, committedValues); saveErr != nil {
 				return saveErr
 			}
+			if policies, exists := values[ChannelMonitorSmartScheduleGroupPoliciesOption]; exists {
+				removed, cleanupErr := clearRemovedChannelSmartSchedulePolicyRoutesTx(
+					tx,
+					options[ChannelMonitorSmartScheduleGroupPoliciesOption].Value,
+					policies,
+				)
+				if cleanupErr != nil {
+					return cleanupErr
+				}
+				routingChanged = routingChanged || removed
+			}
 		}
 		if clearTemporaryTraffic {
-			var clearErr error
-			routingChanged, clearErr = clearChannelSmartScheduleTemporaryTrafficTx(tx)
+			cleared, clearErr := clearChannelSmartScheduleTemporaryTrafficTx(tx)
 			if clearErr != nil {
 				return clearErr
 			}
+			routingChanged = routingChanged || cleared
 		}
 		if policies, exists := values[ChannelMonitorSmartScheduleGroupPoliciesOption]; exists {
 			cleared, clearErr := clearDisabledChannelSmartScheduleStabilityTx(tx, policies)

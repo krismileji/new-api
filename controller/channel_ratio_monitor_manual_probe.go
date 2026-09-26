@@ -239,8 +239,11 @@ func recordChannelSmartScheduleProbeResult(
 		FirstTokenMs:  result.firstResponseMilliseconds,
 		TPS:           result.tokensPerSecond,
 		ProbeRecovery: recoveryRequest,
-	})
+	}, settings.SmartScheduleControlRevision)
 	if err != nil {
+		if errors.Is(err, model.ErrChannelMonitorSettingsChanged) {
+			return false, "智能调度策略已变化，旧探测样本已丢弃"
+		}
 		if frozenIdentity != nil && (errors.Is(err, model.ErrChannelLogicalGroupRevisionConflict) ||
 			errors.Is(err, model.ErrLogicalChannelSelectionGroupDisabled)) {
 			return false, "逻辑渠道关系已变化，旧 revision 探测样本已丢弃"

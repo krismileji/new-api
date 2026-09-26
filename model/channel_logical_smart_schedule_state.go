@@ -106,6 +106,7 @@ func SaveLogicalChannelSmartScheduleModelSample(
 	identity LogicalChannelIdentity,
 	groupName string,
 	result ChannelSmartScheduleModelSampleResult,
+	expectedControlRevision string,
 ) (ChannelSmartScheduleModelSampleState, error) {
 	if !IsLogicalChannelGroupingEnabled() || identity.Revision == 0 ||
 		identity.LogicalChannelID == int64(identity.ChannelID) {
@@ -123,6 +124,13 @@ func SaveLogicalChannelSmartScheduleModelSample(
 		group, err := lockLogicalSmartScheduleIdentityTx(tx, identity)
 		if err != nil {
 			return err
+		}
+		controlRevision, err := lockChannelSmartScheduleControlRevisionTx(tx)
+		if err != nil {
+			return err
+		}
+		if controlRevision != expectedControlRevision {
+			return ErrChannelMonitorSettingsChanged
 		}
 		conditions := ChannelLogicalSmartScheduleSampleState{
 			LogicalGroupID: identity.LogicalChannelID, LogicalRevision: identity.Revision,
@@ -344,6 +352,7 @@ func loadOrCreateLogicalSmartScheduleRouteState(
 	seed ChannelSmartScheduleRouteState,
 	seedPriority int64,
 	seedWeight uint,
+	expectedControlRevision string,
 ) (ChannelSmartScheduleRouteState, int64, uint, error) {
 	groupName, modelName, err := normalizeLogicalSmartScheduleIdentity(identity, groupName, modelName)
 	if err != nil {
@@ -356,6 +365,14 @@ func loadOrCreateLogicalSmartScheduleRouteState(
 		group, err := lockLogicalSmartScheduleIdentityTx(tx, identity)
 		if err != nil {
 			return err
+		}
+		// Serialize creation with policy removal before locking logical state.
+		controlRevision, err := lockChannelSmartScheduleControlRevisionTx(tx)
+		if err != nil {
+			return err
+		}
+		if controlRevision != expectedControlRevision {
+			return ErrChannelMonitorSettingsChanged
 		}
 		conditions := ChannelLogicalSmartScheduleRouteState{
 			LogicalGroupID: identity.LogicalChannelID, LogicalRevision: identity.Revision,
@@ -809,6 +826,7 @@ func ApplyLogicalChannelSmartScheduleProbeRecovery(
 // execution. Management APIs keep their original physical route rows.
 func CoalesceChannelSmartScheduleSchedulingRoutes(
 	routes []ChannelSmartScheduleRoute,
+	expectedControlRevision string,
 ) ([]ChannelSmartScheduleRoute, error) {
 	if len(routes) < 2 || !IsLogicalChannelGroupingEnabled() {
 		return routes, nil
@@ -877,6 +895,7 @@ func CoalesceChannelSmartScheduleSchedulingRoutes(
 		}
 		state, priority, weight, err := loadOrCreateLogicalSmartScheduleRouteState(
 			identity, route.Group, route.Model, route.State, route.Priority, route.Weight,
+			expectedControlRevision,
 		)
 		if err != nil {
 			return nil, err

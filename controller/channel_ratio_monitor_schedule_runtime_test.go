@@ -165,7 +165,7 @@ func TestAdaptiveRefreshTreatsLogicalMembersAsOneSharedSubject(t *testing.T) {
 
 	routes, err := model.GetChannelSmartScheduleRoutePool("vip", "model-a")
 	require.NoError(t, err)
-	routes, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(routes)
+	routes, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(routes, getChannelMonitorSettings().SmartScheduleControlRevision)
 	require.NoError(t, err)
 	require.Len(t, routes, 1)
 	beforeRevision := routes[0].State.Revision
@@ -205,7 +205,7 @@ func TestAdaptiveRefreshTreatsLogicalMembersAsOneSharedSubject(t *testing.T) {
 
 	routes, err = model.GetChannelSmartScheduleRoutePool("vip", "model-a")
 	require.NoError(t, err)
-	routes, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(routes)
+	routes, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(routes, getChannelMonitorSettings().SmartScheduleControlRevision)
 	require.NoError(t, err)
 	require.Len(t, routes, 1)
 	assert.Equal(t, beforeRevision+1, routes[0].State.Revision)

@@ -289,7 +289,7 @@ func runChannelSmartScheduleProbeOnce(
 			)
 		}
 	}
-	schedulingRoutes, err := model.CoalesceChannelSmartScheduleSchedulingRoutes(routesForSchedulingSnapshot)
+	schedulingRoutes, err := model.CoalesceChannelSmartScheduleSchedulingRoutes(routesForSchedulingSnapshot, settings.SmartScheduleControlRevision)
 	if err != nil {
 		return result, err
 	}
@@ -650,7 +650,7 @@ func runChannelSmartScheduleProbeOnce(
 					frozenIdentity := item.identity
 					frozenIdentity.ChannelID = route.ChannelId
 					_, saveErr = model.SaveLogicalChannelSmartScheduleModelSample(
-						frozenIdentity, route.Group, sample,
+						frozenIdentity, route.Group, sample, settings.SmartScheduleControlRevision,
 					)
 				}
 			} else {
@@ -659,7 +659,8 @@ func runChannelSmartScheduleProbeOnce(
 			if saveErr != nil {
 				if item.logicalSnapshot == nil ||
 					(!errors.Is(saveErr, model.ErrChannelLogicalGroupRevisionConflict) &&
-						!errors.Is(saveErr, model.ErrLogicalChannelSelectionGroupDisabled)) {
+						!errors.Is(saveErr, model.ErrLogicalChannelSelectionGroupDisabled) &&
+						!errors.Is(saveErr, model.ErrChannelMonitorSettingsChanged)) {
 					return result, saveErr
 				}
 				writeApplied = false

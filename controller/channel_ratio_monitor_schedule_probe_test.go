@@ -1217,7 +1217,7 @@ func TestRunChannelSmartScheduleProbeUsesLogicalStateInsteadOfPhysicalMemberStat
 	})
 	routes, err := model.GetChannelSmartScheduleRoutes()
 	require.NoError(t, err)
-	_, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(routes)
+	_, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(routes, getChannelMonitorSettings().SmartScheduleControlRevision)
 	require.NoError(t, err)
 	require.NoError(t, db.Model(&model.ChannelSmartScheduleRouteState{}).Where(
 		"channel_id IN ?", []int{1441, 1442},

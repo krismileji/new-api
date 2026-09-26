@@ -21,7 +21,7 @@ Root 管理入口为 `/channel-monitor`，API 前缀为 `/api/channel_monitor`�
 
 ## 路由与限流
 
-- [智能调度](smart-scheduling.md)：准入、稳定性保护与立即摘除开关、关闭保护后的状态恢复、运行快照、固定主渠道、重试和写回冲突。
+- [智能调度](smart-scheduling.md)：准入、删除策略后的状态清理与默认选路恢复、稳定性保护与立即摘除开关、关闭保护后的状态恢复、运行快照、固定主渠道、重试和写回冲突。
 - [调度算法](scheduling-algorithm.md)：评分、经济分类、稳定性、429 冷却、采样与探索。
 - [渠道并发与 RPM](channel-concurrency.md)：物理渠道租约、用量、满载重选与等待。
 - [共享上游限流](shared-limits.md)：组总额、资源等级预留、优先级等待与在线配置。

@@ -1113,7 +1113,7 @@ func refreshChannelSmartScheduleAdaptivePoolWithMetricReader(
 	for _, route := range physicalRoutes {
 		physicalRouteByChannel[route.ChannelId] = route
 	}
-	routes, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(routes)
+	routes, err = model.CoalesceChannelSmartScheduleSchedulingRoutes(routes, expectedControlRevision)
 	if err != nil {
 		return false, err
 	}
