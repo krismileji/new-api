@@ -214,13 +214,13 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     constraints: '需开启稳定性保护，复用探测间隔，429 冷却期禁止探测',
   }),
   stability: smartScheduleSettingHelp({
-    meaning: '启用稳定性评分、软健康采样和保护恢复，立即摘除由独立开关控制。',
+    meaning: '启用稳定性评分与降级保护，失败阈值摘除还需开启立即摘除。',
     unit: '开关',
     range: '开启或关闭',
     defaultValue: '开启',
     scheduleRelation: NEXT_OBSERVATION,
     constraints:
-      '关闭时常规流量的稳定性评分与保护不生效；临时流量的立即摘除仍由独立开关控制',
+      '关闭后常规和临时流量均不触发稳定性降级；保存策略会解除已有保护，自适应备援采样仍由独立开关控制',
   }),
   immediateEjection: smartScheduleSettingHelp({
     meaning: '连续失败或窗口失败率达到阈值时立即摘除渠道。',
@@ -229,7 +229,7 @@ const CHANNEL_MONITOR_SMART_SCHEDULE_SETTING_HELP = {
     defaultValue: '开启',
     scheduleRelation: NEXT_OBSERVATION,
     constraints:
-      '常规流量需开启稳定性保护；关闭后临时流量也不按失败阈值摘除，已有降级的恢复流程及试放失败回退继续生效',
+      '常规和临时流量都需开启稳定性保护；仅关闭立即摘除仍保留已有降级的恢复流程及试放失败回退',
   }),
   stabilityPercent: smartScheduleSettingHelp({
     meaning: '设定稳定性得分在最终得分中的占比。',

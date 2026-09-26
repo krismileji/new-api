@@ -510,8 +510,7 @@ func applyChannelSmartScheduleRuntimeFailureWithSource(
 			continue
 		}
 		policy := configured.policy()
-		if !policy.StabilityEnabled && route.StabilityState != model.ChannelSmartScheduleStabilityProbing &&
-			route.TemporaryTrafficKind == "" {
+		if !policy.StabilityEnabled {
 			continue
 		}
 		if len(policy.Models) > 0 {

@@ -358,12 +358,21 @@ func UpdateChannelMonitorSettingsOptions(
 				return saveErr
 			}
 		}
-		if !clearTemporaryTraffic {
-			return nil
+		if clearTemporaryTraffic {
+			var clearErr error
+			routingChanged, clearErr = clearChannelSmartScheduleTemporaryTrafficTx(tx)
+			if clearErr != nil {
+				return clearErr
+			}
 		}
-		var clearErr error
-		routingChanged, clearErr = clearChannelSmartScheduleTemporaryTrafficTx(tx)
-		return clearErr
+		if policies, exists := values[ChannelMonitorSmartScheduleGroupPoliciesOption]; exists {
+			cleared, clearErr := clearDisabledChannelSmartScheduleStabilityTx(tx, policies)
+			if clearErr != nil {
+				return clearErr
+			}
+			routingChanged = routingChanged || cleared
+		}
+		return nil
 	})
 	if err != nil {
 		if errors.Is(err, ErrChannelMonitorSettingsChanged) {

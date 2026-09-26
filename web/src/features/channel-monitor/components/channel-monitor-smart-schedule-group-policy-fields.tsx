@@ -925,7 +925,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
                   helpKey='stability'
                 />
                 <FormDescription>
-                  稳定性信号用于评分、软降级采样和保护恢复；失败阈值触发的摘除由“立即摘除”独立控制
+                  开启后参与稳定性评分与降级保护；关闭并保存后解除已有保护，“立即摘除”同时停止生效
                 </FormDescription>
               </div>
               <FormControl>
@@ -1205,7 +1205,7 @@ export function ChannelMonitorSmartScheduleGroupPolicyFields(
         />
         {!stabilityEnabled && (
           <FieldDescription>
-            常规流量需要先开启稳定性保护；临时流量仍使用此开关和阈值
+            需要先开启稳定性保护；关闭后临时流量也不会按失败阈值摘除
           </FieldDescription>
         )}
         {immediateEjectionEnabled && (

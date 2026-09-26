@@ -178,7 +178,7 @@ describe('smart schedule policy sections', () => {
     })
   })
 
-  test('stability disabled still allows configuring immediate ejection for temporary traffic', async () => {
+  test('stability disabled explains that temporary traffic cannot be ejected while preserving the ejection configuration', async () => {
     const user = userEvent.setup()
     const onSubmit = vi.fn()
     render(
@@ -193,7 +193,11 @@ describe('smart schedule policy sections', () => {
     )
 
     const group = screen.getByRole('group', { name: '立即摘除' })
-    expect(within(group).getByText(/临时流量仍使用此开关和阈值/)).toBeVisible()
+    expect(
+      within(group).getByText(
+        '需要先开启稳定性保护；关闭后临时流量也不会按失败阈值摘除'
+      )
+    ).toBeVisible()
     await user.click(within(group).getByRole('switch', { name: '立即摘除' }))
     await user.click(screen.getByRole('button', { name: '保存策略' }))
     await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce())

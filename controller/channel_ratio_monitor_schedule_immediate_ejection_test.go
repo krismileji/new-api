@@ -72,6 +72,7 @@ func setupImmediateEjectionDatabase(t *testing.T, engine string) *gorm.DB {
 		&model.Option{}, &model.Channel{}, &model.Ability{}, &model.ChannelRatioMonitor{},
 		&model.ChannelSmartScheduleRouteState{}, &model.ChannelSmartScheduleGroupPause{},
 		&model.ChannelSmartScheduleModelSampleState{}, &model.ChannelMonitorRedisEffectState{},
+		&model.ChannelLogicalSmartScheduleRouteState{},
 	}
 	for _, table := range tables {
 		require.False(t, db.Migrator().HasTable(table), "use an empty disposable database")
@@ -110,7 +111,10 @@ func TestChannelSmartScheduleImmediateEjectionDatabaseMatrix(t *testing.T) {
 				{name: "disabled failure rate preserves routing", enabled: common.GetPointer(false), windowRate: true},
 				{name: "disabled legacy failure count preserves routing", enabled: common.GetPointer(false), legacyThreshold: true},
 				{name: "normal traffic still requires stability", enabled: common.GetPointer(true), stabilityOff: true},
-				{name: "temporary traffic can eject without stability", enabled: common.GetPointer(true), stabilityOff: true, temporaryTraffic: true, wantProtection: true},
+				{name: "temporary traffic requires stability", enabled: common.GetPointer(true), stabilityOff: true, temporaryTraffic: true},
+				{name: "temporary failure rate requires stability", enabled: common.GetPointer(true), stabilityOff: true, temporaryTraffic: true, windowRate: true},
+				{name: "enabled temporary traffic ejects", enabled: common.GetPointer(true), temporaryTraffic: true, wantProtection: true},
+				{name: "disabled stability does not renew trial protection", enabled: common.GetPointer(true), stabilityOff: true, initialState: model.ChannelSmartScheduleStabilityProbing},
 				{name: "disabled temporary traffic preserves routing", enabled: common.GetPointer(false), stabilityOff: true, temporaryTraffic: true},
 				{name: "disabled ejection preserves trial failure protection", enabled: common.GetPointer(false), initialState: model.ChannelSmartScheduleStabilityProbing, wantProtection: true},
 				{name: "disabled ejection preserves degraded probe renewal", enabled: common.GetPointer(false), initialState: model.ChannelSmartScheduleStabilityDegraded, scheduledProbe: true, wantProtection: true},
@@ -190,9 +194,13 @@ func TestChannelSmartScheduleImmediateEjectionDatabaseMatrix(t *testing.T) {
 						health.RequestEvents = []channelSmartScheduleRuntimeRequestEvent{{Timestamp: now - 1, Failure: true}}
 						request, err := channelSmartScheduleProbeRecoveryRequest(channelID, "model-a", now, tc.scheduledProbe, "")
 						require.NoError(t, err)
-						require.NotNil(t, request, "disabling ejection must still allow recovery of existing protection")
-						require.Len(t, request.Routes, 1)
-						assert.Equal(t, *policy.RecoverySuccessThreshold, request.Routes[0].RecoverySuccessThreshold)
+						if tc.stabilityOff {
+							assert.Nil(t, request)
+						} else {
+							require.NotNil(t, request, "disabling ejection must still allow recovery of existing protection")
+							require.Len(t, request.Routes, 1)
+							assert.Equal(t, *policy.RecoverySuccessThreshold, request.Routes[0].RecoverySuccessThreshold)
+						}
 					}
 					runtimeError := types.NewErrorWithStatusCode(errors.New("上游返回 503"), types.ErrorCodeGetChannelFailed, 503)
 					require.NoError(t, applyChannelSmartScheduleRuntimeFailureWithSource(
