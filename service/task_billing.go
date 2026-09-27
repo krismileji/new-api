@@ -205,6 +205,10 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 			task.PrivateData.BillingContext.ChannelCostNanoCNY = settledCost
 			task.PrivateData.BillingContext.ChannelCostResolved = true
 		}
+		if incomeErr := model.CompleteChannelMonitorTaskIncome(channelMonitorPublishContext(c), info.RequestId, task.SubmitTime, err == nil && resolved); incomeErr != nil {
+			model.MarkChannelMonitorIncomeGap(channelMonitorPublishContext(c))
+			logger.LogWarn(c, "更新任务收入日期或成本状态失败: "+incomeErr.Error())
+		}
 	} else {
 		RecordPerCallChannelDailyCost(c, info.ChannelId, info.OriginModelName, info.PriceData)
 	}

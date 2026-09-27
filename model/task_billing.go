@@ -278,6 +278,9 @@ func applyTaskBillingOnce(ctx context.Context, requested *Task, operation TaskBi
 				return errors.New("resolved task cost event is missing")
 			}
 		}
+		if err := correctTaskChannelMonitorIncome(tx, &task, targetQuota); err != nil {
+			return err
+		}
 		// Persist the task quota and the cost-resolution marker together, after
 		// every accounting leg has succeeded. If either update fails the outer
 		// transaction rolls back funding, usage, and the cost ledger as one unit.

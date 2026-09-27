@@ -4,7 +4,14 @@ import {
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
@@ -29,6 +36,7 @@ import type { ChannelMonitorAnalyticsExpansionContext } from '../lib/analytics-e
 import { formatChannelMonitorBeijingDate } from '../lib/cost-date'
 import { isChannelMonitorAnalyticsCoverageIncomplete } from '../lib/coverage'
 import { formatChannelMonitorCost } from '../lib/format'
+import { formatProfitMoney, formatProfitRate } from '../lib/profit-format'
 import type { ChannelMonitorSuccessMode } from '../types'
 import type {
   ChannelMonitorAnalyticsChannel,
@@ -46,6 +54,7 @@ import {
 } from './channel-monitor-analytics-performance'
 import { ChannelMonitorAnalyticsExpandableTable } from './channel-monitor-analytics-table'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
+import { ChannelMonitorProfitValue } from './channel-monitor-profit'
 
 type ChannelMonitorAnalyticsDialogProps = {
   open: boolean
@@ -66,9 +75,16 @@ type ChannelMonitorAnalyticsDialogProps = {
 
 type AnalyticsTab = 'channels' | 'api_keys'
 
+const ChannelMonitorProfitTrend = lazy(() =>
+  import('./channel-monitor-profit-trend').then((module) => ({
+    default: module.ChannelMonitorProfitTrend,
+  }))
+)
+
 function getDefaultAnalyticsSort(
   metric: ChannelMonitorAnalyticsMetric
 ): ChannelMonitorAnalyticsSort {
+  if (metric === 'profit') return 'profit'
   return metric === 'cost' ? 'cost' : 'samples'
 }
 
@@ -247,6 +263,13 @@ function AnalyticsSummary(props: {
         />,
       ]
     )
+  } else if (props.metric === 'profit') {
+    values.push(
+      ['用户扣费', formatProfitMoney(summary.income_nano_cny)],
+      ['总成本', formatProfitMoney(summary.cost_nano_cny)],
+      ['利润', <ChannelMonitorProfitValue key='profit' summary={summary} />],
+      ['利润率', formatProfitRate(summary.profit_rate)]
+    )
   } else if (props.metric === 'success') {
     const final = props.successMode === 'final'
     const sampleCount = final
@@ -318,6 +341,7 @@ export function ChannelMonitorAnalyticsDialog(
   const [searchInput, setSearchInput] = useState('')
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
+  const [onlyLoss, setOnlyLoss] = useState(false)
   const [sort, setSort] = useState<ChannelMonitorAnalyticsSort>(() =>
     getDefaultAnalyticsSort(props.metric)
   )
@@ -355,6 +379,7 @@ export function ChannelMonitorAnalyticsDialog(
     direction,
     page,
     pageSize: 20,
+    onlyLoss: props.metric === 'profit' && onlyLoss ? true : undefined,
   }
   const rootQuery = useChannelMonitorAnalytics(rootRequest, props.open)
   const rootQueryResponse = rootQuery.data?.data
@@ -388,10 +413,11 @@ export function ChannelMonitorAnalyticsDialog(
 
   useEffect(() => {
     setPage(1)
-  }, [rootGroupBy, dateFrom, dateThrough, search, sort, direction])
+  }, [rootGroupBy, dateFrom, dateThrough, search, sort, direction, onlyLoss])
 
   useEffect(() => {
     setSort(getDefaultAnalyticsSort(props.metric))
+    setOnlyLoss(false)
     setDirection('desc')
     const today = formatChannelMonitorBeijingDate(new Date())
     setDateFrom(today)
@@ -453,6 +479,10 @@ export function ChannelMonitorAnalyticsDialog(
     title = '性能分析'
     description =
       '首字延迟越低越快，TPS 越高越快。首字按有效样本平均；TPS = 总输出 Token ÷ 总生成时间。仅统计业务上游调用，重试分别计数；缺失指标的请求不计入对应平均值。'
+  } else if (props.metric === 'profit') {
+    title = '渠道利润分析'
+    description =
+      '账面毛利 = 用户最终扣费 − 渠道总成本（含探测和模型检测）。钱包与订阅消耗按结算快照换算人民币；退款、补扣修正原记录。未确认成本或收入不会按零认定利润。'
   } else if (props.metric === 'success') {
     title = '成功率与缓存分析'
     description = `${props.successMode === 'final' ? '成功率按请求最终结果统计。' : '成功率按实际派发的上游尝试统计，包含重试。'}缓存利用率按流式请求的输入 Token 加权；缓存写入次数包含流式和非流式请求。`
@@ -565,6 +595,46 @@ export function ChannelMonitorAnalyticsDialog(
             }
           />
           <p className='text-muted-foreground text-xs'>{description}</p>
+          {props.metric === 'profit' && response ? (
+            <>
+              <p className='text-muted-foreground text-xs'>
+                钱包扣费{' '}
+                {formatProfitMoney(
+                  response.scope_summary.wallet_income_nano_cny
+                )}{' '}
+                · 订阅消耗{' '}
+                {formatProfitMoney(
+                  response.scope_summary.subscription_income_nano_cny
+                )}{' '}
+                · 探测成本{' '}
+                {formatProfitMoney(response.scope_summary.probe_cost_nano_cny)}{' '}
+                · 模型检测{' '}
+                {formatProfitMoney(
+                  response.scope_summary.model_detection_cost_nano_cny
+                )}{' '}
+                · 待确认扣费/退款{' '}
+                {response.scope_summary.pending_income_count ?? 0} 笔 · 未解析成本{' '}
+                {response.scope_summary.unresolved_count ?? 0} 笔
+              </p>
+              {response.scope_summary.income_started_at ? (
+                <p className='text-muted-foreground text-xs'>
+                  收入统计开始于{' '}
+                  {new Date(
+                    response.scope_summary.income_started_at * 1000
+                  ).toLocaleString('zh-CN', {
+                    timeZone: 'Asia/Shanghai',
+                    hour12: false,
+                  })}
+                  （北京时间）
+                </p>
+              ) : null}
+            </>
+          ) : null}
+          {props.metric === 'profit' && props.open ? (
+            <Suspense fallback={<Skeleton className='h-48 w-full' />}>
+              <ChannelMonitorProfitTrend request={rootRequest} />
+            </Suspense>
+          ) : null}
           {rootQuery.isError && response ? (
             <Alert variant='destructive'>
               <AlertTitle>统计更新失败，保留上次结果</AlertTitle>
@@ -588,6 +658,17 @@ export function ChannelMonitorAnalyticsDialog(
               aria-label='搜索分析明细'
               className='sm:max-w-xs'
             />
+            {props.metric === 'profit' ? (
+              <Button
+                variant={onlyLoss ? 'secondary' : 'outline'}
+                size='sm'
+                aria-pressed={onlyLoss}
+                title='仅显示已确认的亏损行；待确认或未解析的行不计入筛选。顶部汇总和趋势仍展示完整范围。'
+                onClick={() => setOnlyLoss((value) => !value)}
+              >
+                仅展示亏损行
+              </Button>
+            ) : null}
             <div className='text-muted-foreground flex items-center gap-2 text-xs'>
               <span>
                 {sourceLabel}

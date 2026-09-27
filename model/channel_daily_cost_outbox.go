@@ -253,6 +253,9 @@ func ApplyClaimedChannelDailyCostOutboxEventsWithResult(ctx context.Context, own
 		if err := addChannelDailyCostBatch(tx, deltas, batchDimensions); err != nil {
 			return err
 		}
+		if err := ConfirmChannelMonitorCostIncome(tx, rows); err != nil {
+			return err
+		}
 		updated := tx.Model(&ChannelDailyCostOutbox{}).
 			Where("id IN ? AND lease_owner = ? AND processed_at = ?", rowIDs, owner, 0).
 			Updates(map[string]interface{}{

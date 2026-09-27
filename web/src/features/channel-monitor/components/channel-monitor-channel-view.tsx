@@ -62,12 +62,14 @@ import type {
   ChannelMonitorSuccessSummary,
   ChannelMonitorSmartScheduleRoute,
 } from '../types'
+import type { ChannelMonitorAnalyticsSummary } from '../types-analytics'
 import { ChannelMonitorBalanceCell } from './channel-monitor-balance-cell'
 import { ChannelMonitorPerformanceDetailButton } from './channel-monitor-performance-detail-button'
 import {
   ChannelMonitorFirstTokenValue,
   ChannelMonitorTPSValue,
 } from './channel-monitor-performance-value'
+import { ChannelMonitorProfitCell } from './channel-monitor-profit'
 import { ChannelMonitorSmartScheduleCell } from './channel-monitor-smart-schedule-cell'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 import { ChannelMonitorSuccessRateValue } from './channel-monitor-success-rate-value'
@@ -102,6 +104,9 @@ type ChannelMonitorChannelViewProps = {
   onConfigureUpstream: (channel: ChannelMonitorItem) => void
   onViewHistory: (channel: ChannelMonitorItem) => void
   onOpenCostHistory: (channel: ChannelMonitorItem) => void
+  onOpenProfitHistory?: (channel: ChannelMonitorItem) => void
+  profitByChannel?: ReadonlyMap<number, ChannelMonitorAnalyticsSummary>
+  profitHasMore?: boolean
   onOpenSuccessDetail: (channel: ChannelMonitorItem) => void
   onOpenPerformanceDetail: (channel: ChannelMonitorItem) => void
   fetchingBalanceChannelId: number | null
@@ -307,6 +312,7 @@ export function ChannelMonitorChannelView(
           <TableRow className='[&_th]:text-left'>
             <TableHead>渠道</TableHead>
             <TableHead className='min-w-[224px] pl-[34px]'>上游余额</TableHead>
+            {props.onOpenProfitHistory ? <TableHead>今日利润</TableHead> : null}
             <TableHead className='pl-[34px]'>成本倍率</TableHead>
             <TableHead>关联分组</TableHead>
             <TableHead>性能（{props.performanceRangeLabel}）</TableHead>
@@ -420,6 +426,20 @@ export function ChannelMonitorChannelView(
                     </div>
                   </div>
                 </TableCell>
+                {props.onOpenProfitHistory ? (
+                  <TableCell>
+                    <ChannelMonitorProfitCell
+                      channelId={channel.id}
+                      channelName={channel.name}
+                      summary={props.profitByChannel?.get(channel.id)}
+                      needsQuery={
+                        props.profitHasMore &&
+                        !props.profitByChannel?.has(channel.id)
+                      }
+                      onOpen={() => props.onOpenProfitHistory?.(channel)}
+                    />
+                  </TableCell>
+                ) : null}
                 <TableCell className='whitespace-normal'>
                   <div className='grid w-max grid-cols-[24px_max-content] items-start gap-x-0.5'>
                     {channel.upstream ? (

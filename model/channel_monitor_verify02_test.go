@@ -42,12 +42,18 @@ func TestVerify02SQLiteColdStartCreatesFinalChannelMonitorSchema(t *testing.T) {
 	})
 
 	require.NoError(t, migrateDB())
+	require.NoError(t, db.Create(&ChannelDailyCost{
+		ChannelId: 90201, DayStart: 1_750_000_000, CostNanoCNY: 17, SettledCount: 1,
+	}).Error)
+	require.NoError(t, migrateDB())
 
 	finalTables := []string{
 		"channel_ratio_monitors",
 		"channel_ratio_histories",
 		"channel_daily_costs",
 		"channel_daily_api_key_costs",
+		"channel_monitor_incomes",
+		"channel_monitor_income_states",
 		"channel_monitor_event_outboxes",
 		"channel_monitor_minute_route_metrics",
 		"channel_monitor_minute_api_key_metrics",
@@ -110,4 +116,8 @@ func TestVerify02SQLiteColdStartCreatesFinalChannelMonitorSchema(t *testing.T) {
 	for _, index := range indexes {
 		assert.True(t, db.Migrator().HasIndex(index.model, index.name), index.name)
 	}
+	assert.True(t, db.Migrator().HasIndex(&ChannelMonitorIncome{}, "idx_channel_monitor_incomes_settlement_key"))
+	var preserved ChannelDailyCost
+	require.NoError(t, db.Where("channel_id = ? AND day_start = ?", 90201, 1_750_000_000).First(&preserved).Error)
+	assert.Equal(t, int64(17), preserved.CostNanoCNY)
 }

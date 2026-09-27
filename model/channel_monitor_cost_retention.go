@@ -61,6 +61,11 @@ func DeleteChannelMonitorCostsBeforeWithDurationBucketCutoff(
 		return result, errors.New("channel monitor cost cleanup batch size must be positive")
 	}
 
+	var err error
+	result.Incomplete, err = DeleteChannelMonitorIncomeBefore(ctx, costCutoff, batchSize, budget.Slice(8))
+	if err != nil {
+		return result, err
+	}
 	durationBudget := budget.Slice(7)
 	if DB.Migrator().HasTable(&ChannelMonitorMinuteDurationBucket{}) {
 		for {

@@ -28,8 +28,34 @@ func TestChannelMonitorAnalyticsDatabaseMatrix(t *testing.T) {
 	db := model.DB
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
+	startedAt := int64(1750000000)
+	const incomeKey = "cm-income-migration-preserve"
+	require.NoError(t, db.Where("settlement_key = ?", incomeKey).Delete(&model.ChannelMonitorIncome{}).Error)
+	income := model.ChannelMonitorIncome{
+		SettlementKey: incomeKey, DayStart: model.ChannelDailyCostDayStart(startedAt), ChannelID: 900299,
+		UserID: 900102, APIKeyID: 900202, APIKeyKey: "migration-key", APIKeyName: "迁移 Key",
+		ModelKey: "migration-model", ModelName: "migration-model", BillingSource: "wallet",
+		QuotaPerUnit: "500000", USDToCNY: "7", Quota: 10, IncomeNanoCNY: 140_000,
+		Status: "settled", CostEventID: "migration-cost", CostRecorded: 1, CreatedAt: startedAt, UpdatedAt: startedAt,
+	}
+	require.NoError(t, db.Create(&income).Error)
+	require.NoError(t, db.Model(&model.ChannelMonitorIncomeState{}).Where("id = ?", 1).Update("gap_since", startedAt).Error)
+	require.NoError(t, model.InitDB())
+	db = model.DB
+	assert.Equal(t, startedAt, model.ChannelMonitorIncomeGapSince(), "repeated startup must restore the durable gap marker")
+	var preservedIncome model.ChannelMonitorIncome
+	require.NoError(t, db.Where("settlement_key = ?", incomeKey).First(&preservedIncome).Error)
+	assert.Equal(t, income.IncomeNanoCNY, preservedIncome.IncomeNanoCNY)
+	duplicateIncome := income
+	duplicateIncome.ID = 0
+	assert.Error(t, db.Create(&duplicateIncome).Error, "settlement key remains unique after a repeated migration")
+	secondSQLDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, db.Model(&model.ChannelMonitorIncomeState{}).Where("id = ?", 1).Update("gap_since", 0).Error)
+	require.NoError(t, model.InitializeChannelMonitorIncome(db, false))
 	t.Cleanup(func() {
 		assert.NoError(t, sqlDB.Close())
+		assert.NoError(t, secondSQLDB.Close())
 		model.DB, model.LOG_DB, common.IsMasterNode, common.RedisEnabled, common.SQLitePath = oldDB, oldLogDB, oldMaster, oldRedis, oldPath
 		common.SetDatabaseTypes(oldMainType, oldLogType)
 	})
@@ -67,4 +93,5 @@ func TestChannelMonitorAnalyticsDatabaseMatrix(t *testing.T) {
 	result, err = queryChannelMonitorHistoricalSuccessAnalytics(ctx, query)
 	require.NoError(t, err)
 	assert.Contains(t, result.Coverage.Reasons, "daily_replay_incomplete", "recovery gaps must remain visible after the day becomes historical")
+	runChannelMonitorProfitAnalyticsCases(t, db, day+7*86400)
 }

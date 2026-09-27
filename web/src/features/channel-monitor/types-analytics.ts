@@ -3,7 +3,7 @@ import type {
   ChannelMonitorSuccessMode,
 } from './types'
 
-export type ChannelMonitorAnalyticsMetric = 'success' | 'cost' | 'performance'
+export type ChannelMonitorAnalyticsMetric = 'success' | 'cost' | 'performance' | 'profit'
 export type ChannelMonitorAnalyticsSort =
   | 'samples'
   | 'success'
@@ -13,6 +13,9 @@ export type ChannelMonitorAnalyticsSort =
   | 'cache_utilization'
   | 'cache_write'
   | 'cost'
+  | 'income'
+  | 'profit'
+  | 'profit_rate'
   | 'settled'
   | 'unresolved'
   | 'resolution_rate'
@@ -52,6 +55,7 @@ export type ChannelMonitorAnalyticsQuery = {
   direction?: 'asc' | 'desc'
   page?: number
   pageSize?: number
+  onlyLoss?: boolean
 }
 
 export type ChannelMonitorAnalyticsSummary = {
@@ -79,6 +83,16 @@ export type ChannelMonitorAnalyticsSummary = {
   cost_nano_cny?: number
   settled_count?: number
   unresolved_count?: number
+  income_nano_cny?: number
+  wallet_income_nano_cny?: number
+  subscription_income_nano_cny?: number
+  probe_cost_nano_cny?: number
+  model_detection_cost_nano_cny?: number
+  profit_nano_cny?: number
+  profit_rate?: number | null
+  profit_confirmed?: boolean
+  pending_income_count?: number
+  income_started_at?: number
 }
 
 export type ChannelMonitorAnalyticsItem = ChannelMonitorAnalyticsSummary & {

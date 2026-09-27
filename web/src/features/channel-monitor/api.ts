@@ -129,6 +129,7 @@ function channelMonitorAnalyticsParams(request: ChannelMonitorAnalyticsQuery) {
     direction: request.direction,
     page: request.page,
     page_size: request.pageSize,
+    only_loss: request.onlyLoss,
   }
 }
 

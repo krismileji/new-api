@@ -14,6 +14,7 @@ Root 管理入口为 `/channel-monitor`，API 前缀为 `/api/channel_monitor`�
 ## 统计与运行状态
 
 - [成本统计](cost-statistics.md)：金额口径、费用分类、结算状态与历史查询。
+- [利润统计](profit.md)：用户扣费、渠道成本、利润确认状态、筛选与历史范围。
 - [分析与下钻](analytics.md)：渠道、用户、API Key、模型、分页、指标分母与历史回填。
 - [刷新与数据状态](realtime-monitoring.md)：刷新方式、统计时间和覆盖提示。
 - [统计口径与完整性](data-consistency.md)：跨日、数据缺口、清理与不同共享关系的边界。

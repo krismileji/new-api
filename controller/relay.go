@@ -1162,8 +1162,8 @@ func executeTaskSubmissionWith(
 		diagnostics.failed("settle", "billing_error", taskErr, true)
 		return nil, taskErr
 	}
-	service.FinalizeChannelDailyCostAttempt(c, successfulChannelID, false)
 	service.LogTaskConsumption(c, relayInfo, task)
+	service.FinalizeChannelDailyCostAttempt(c, successfulChannelID, false)
 	diagnostics.complete(task, result.Quota)
 
 	return &taskSubmissionOutcome{Result: result, Task: task, RelayInfo: relayInfo}, nil

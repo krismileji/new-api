@@ -146,7 +146,11 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 		return fmt.Errorf("token quota is not enough, token remain quota: %s, need quota: %s", logger.FormatQuota(token.RemainQuota), logger.FormatQuota(quota))
 	}
 
-	err = PostConsumeQuota(relayInfo, quota, 0, false)
+	income := prepareChannelMonitorIncome(ctx, relayInfo, quota, "realtime:"+common.GetUUID())
+	result, err := postConsumeQuotaWithResult(relayInfo, quota, 0, false)
+	if result.FundingApplied {
+		confirmChannelMonitorIncome(ctx, income)
+	}
 	if err != nil {
 		return err
 	}

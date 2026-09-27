@@ -51,6 +51,7 @@ import {
   ChannelMonitorAnalyticsPerformanceMeasurement,
   ChannelMonitorAnalyticsPerformanceOutput,
 } from './channel-monitor-analytics-performance'
+import { ChannelMonitorProfitCells } from './channel-monitor-profit'
 import {
   ChannelMonitorSortableTableHead,
   type ChannelMonitorSortDirection,
@@ -207,6 +208,14 @@ function AnalyticsTableHeaderRow(props: AnalyticsTableHeaderProps) {
           {metricHead('解析率', 'resolution_rate')}
         </>
       ) : null}
+      {props.metric === 'profit' ? (
+        <>
+          {metricHead('用户扣费', 'income')}
+          {metricHead('总成本', 'cost')}
+          {metricHead('利润', 'profit')}
+          {metricHead('利润率', 'profit_rate')}
+        </>
+      ) : null}
     </TableRow>
   )
 }
@@ -284,6 +293,9 @@ function AnalyticsTableMetricCells(props: {
   item: ChannelMonitorAnalyticsItem
   successMode?: ChannelMonitorSuccessMode
 }) {
+  if (props.metric === 'profit') {
+    return <ChannelMonitorProfitCells summary={props.item} />
+  }
   if (props.metric === 'performance') {
     return (
       <>

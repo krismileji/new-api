@@ -5,15 +5,20 @@ import (
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"gorm.io/gorm"
 )
 
 // Reconcile each physical channel/day before calling attributed history
 // complete. A global SUM alone can hide opposite gaps on two channels.
 func channelMonitorHistoricalCostDetailCoverage(ctx context.Context, query channelMonitorAnalyticsQuery) (service.ChannelMonitorCoverage, error) {
+	return channelMonitorHistoricalCostDetailCoverageWithDB(ctx, model.DB, query)
+}
+
+func channelMonitorHistoricalCostDetailCoverageWithDB(ctx context.Context, db *gorm.DB, query channelMonitorAnalyticsQuery) (service.ChannelMonitorCoverage, error) {
 	columns := "channel_id, day_start, SUM(cost_nano_cny) AS cost, SUM(settled_count) AS settled, SUM(unresolved_count) AS unresolved, SUM(probe_cost_nano_cny) AS probe, SUM(group_probe_cost_nano_cny) AS group_probe"
-	ledger := model.DB.WithContext(ctx).Model(&model.ChannelDailyCost{}).
+	ledger := db.WithContext(ctx).Model(&model.ChannelDailyCost{}).
 		Where("day_start >= ? AND day_start < ?", query.From, query.To)
-	detail := model.DB.WithContext(ctx).Model(&model.ChannelMonitorDailyCostDetail{}).
+	detail := db.WithContext(ctx).Model(&model.ChannelMonitorDailyCostDetail{}).
 		Where("day_start >= ? AND day_start < ?", query.From, query.To)
 	if query.Channel > 0 {
 		ledger = ledger.Where("channel_id = ?", query.Channel)
@@ -22,7 +27,7 @@ func channelMonitorHistoricalCostDetailCoverage(ctx context.Context, query chann
 	ledger = ledger.Select(columns).Group("channel_id, day_start")
 	detail = detail.Select(columns).Group("channel_id, day_start")
 	var gaps int64
-	err := model.DB.WithContext(ctx).Table("(?) AS ledger", ledger).
+	err := db.WithContext(ctx).Table("(?) AS ledger", ledger).
 		Joins("LEFT JOIN (?) AS detail ON detail.channel_id = ledger.channel_id AND detail.day_start = ledger.day_start", detail).
 		Where("ledger.cost <> COALESCE(detail.cost, 0) OR ledger.settled <> COALESCE(detail.settled, 0) OR ledger.unresolved <> COALESCE(detail.unresolved, 0) OR ledger.probe <> COALESCE(detail.probe, 0) OR ledger.group_probe <> COALESCE(detail.group_probe, 0)").
 		Count(&gaps).Error
@@ -30,7 +35,7 @@ func channelMonitorHistoricalCostDetailCoverage(ctx context.Context, query chann
 		return service.ChannelMonitorCoverage{}, err
 	}
 	if gaps == 0 {
-		err = model.DB.WithContext(ctx).Table("(?) AS detail", detail).
+		err = db.WithContext(ctx).Table("(?) AS detail", detail).
 			Joins("LEFT JOIN (?) AS ledger ON detail.channel_id = ledger.channel_id AND detail.day_start = ledger.day_start", ledger).
 			Where("ledger.channel_id IS NULL AND (detail.cost <> 0 OR detail.settled <> 0 OR detail.unresolved <> 0 OR detail.probe <> 0 OR detail.group_probe <> 0)").
 			Count(&gaps).Error

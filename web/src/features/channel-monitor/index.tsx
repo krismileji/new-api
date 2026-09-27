@@ -92,6 +92,7 @@ import { ChannelMonitorOrderDialog } from './components/channel-monitor-order-di
 import { ChannelMonitorPageLayout } from './components/channel-monitor-page-layout'
 import { ChannelMonitorPerformanceCoverageAlert } from './components/channel-monitor-performance-coverage-alert'
 import { ChannelMonitorPerformanceRangeControl } from './components/channel-monitor-performance-range-control'
+import { ChannelMonitorProfitValue } from './components/channel-monitor-profit'
 import {
   ChannelMonitorSettingsDialog,
   ChannelMonitorSmartScheduleSettingsSheet,
@@ -111,6 +112,7 @@ import { EditGroupChannelsDialog } from './components/edit-group-channels-dialog
 import { EditGroupRatioDialog } from './components/edit-group-ratio-dialog'
 import { SyncGroupRatioDialog } from './components/sync-group-ratio-dialog'
 import { UpstreamConfigDialog } from './components/upstream-config-dialog'
+import { useChannelMonitorTodayProfit } from './hooks/use-channel-monitor-profit'
 import { DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES } from './lib/email-notification'
 import { handleChannelMonitorMutationError } from './lib/error'
 import {
@@ -120,6 +122,7 @@ import {
 } from './lib/format'
 import { isChannelModelDetectionRunActive } from './lib/model-detection'
 import { aggregateChannelMonitorPerformanceByChannel } from './lib/performance'
+import { formatProfitMoney, formatProfitRate } from './lib/profit-format'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
@@ -196,6 +199,10 @@ import type {
   ChannelMonitorUpstreamType,
   GroupMonitorItem,
 } from './types'
+import type {
+  ChannelMonitorAnalyticsItem,
+  ChannelMonitorAnalyticsSummary,
+} from './types-analytics'
 
 const ChannelLimitGroupsDialog = lazy(() =>
   import('./components/channel-limit-groups-dialog').then((module) => ({
@@ -428,9 +435,20 @@ export function ChannelMonitor() {
     useState(false)
   const [analyticsOpen, setAnalyticsOpen] = useState(false)
   const [analyticsMetric, setAnalyticsMetric] = useState<
-    'cost' | 'success' | 'performance'
+    'cost' | 'success' | 'performance' | 'profit'
   >('cost')
   const [analyticsChannelId, setAnalyticsChannelId] = useState<number>()
+  const profitQuery = useChannelMonitorTodayProfit()
+  const profitOverview = profitQuery.data?.data
+  const profitByChannel = useMemo(
+    () =>
+      new Map<number, ChannelMonitorAnalyticsSummary>(
+        (profitOverview?.items ?? []).map(
+          (item: ChannelMonitorAnalyticsItem) => [item.channel_id ?? 0, item]
+        )
+      ),
+    [profitOverview?.items]
+  )
   const [smartScheduleDisplaySelection, setSmartScheduleDisplaySelection] =
     useState<SmartScheduleDisplaySelection>(() => {
       try {
@@ -1080,6 +1098,13 @@ export function ChannelMonitor() {
     setAnalyticsOpen(true)
   }
 
+  const openProfitHistory = (channel?: ChannelMonitorItem) => {
+    setAnalyticsDetailTarget(null)
+    setAnalyticsMetric('profit')
+    setAnalyticsChannelId(channel?.id)
+    setAnalyticsOpen(true)
+  }
+
   const openSuccessAnalytics = (target?: ChannelMonitorSuccessDetailTarget) => {
     setAnalyticsDetailTarget(target ?? null)
     setAnalyticsMetric('success')
@@ -1136,17 +1161,47 @@ export function ChannelMonitor() {
           <MonitorStatCard
             label='今日已结算成本'
             value={
-              costQuery.isLoading && !todayCostSummary ? (
-                <Skeleton className='h-7 w-24' />
-              ) : (
-                formatChannelMonitorCost(todayCostOverview?.today_cost_cny)
-              )
+              <div className='flex min-w-0 flex-col items-start gap-0.5'>
+                <div className='flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5'>
+                  {costQuery.isLoading && !todayCostSummary ? (
+                    <Skeleton className='h-7 w-24' aria-label='成本加载中' />
+                  ) : (
+                    <span>
+                      {formatChannelMonitorCost(
+                        todayCostOverview?.today_cost_cny
+                      )}
+                    </span>
+                  )}
+                  <span className='inline-flex items-baseline gap-1 text-base font-normal'>
+                    <span className='text-muted-foreground text-xs'>利润</span>
+                    {profitQuery.isLoading && !profitOverview ? (
+                      <Skeleton className='h-5 w-16' aria-label='利润加载中' />
+                    ) : (
+                      <ChannelMonitorProfitValue
+                        summary={profitOverview?.scope_summary}
+                        className='text-base font-normal'
+                      />
+                    )}
+                  </span>
+                </div>
+                <span className='text-muted-foreground text-xs font-normal'>
+                  扣费{' '}
+                  {formatProfitMoney(
+                    profitOverview?.scope_summary.income_nano_cny
+                  )}{' '}
+                  · 利润率{' '}
+                  {formatProfitRate(profitOverview?.scope_summary.profit_rate)}
+                  {profitQuery.isError && !profitOverview
+                    ? ' · 利润加载失败'
+                    : ''}
+                </span>
+              </div>
             }
             description={costDescription}
             secondaryDescription={costSecondaryDescription}
             icon={MoneyBag02Icon}
-            ariaLabel='查看每日成本'
-            onClick={openCostHistory}
+            ariaLabel='查看今日成本与利润'
+            onClick={() => openProfitHistory()}
           />
           <ChannelMonitorTodaySuccessCard
             result={todaySuccessQuery.data?.data}
@@ -1453,6 +1508,12 @@ export function ChannelMonitor() {
                   setChannelDialog({ channelId: channel.id, type: 'history' })
                 }
                 onOpenCostHistory={openCostHistory}
+                onOpenProfitHistory={openProfitHistory}
+                profitByChannel={profitByChannel}
+                profitHasMore={
+                  (profitOverview?.total ?? 0) >
+                  (profitOverview?.items.length ?? 0)
+                }
                 onOpenPerformanceDetail={openPerformanceAnalytics}
                 onOpenSuccessDetail={(channel) =>
                   openSuccessAnalytics({

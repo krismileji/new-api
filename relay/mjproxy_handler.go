@@ -273,7 +273,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 	if err != nil {
 		return service.MidjourneyErrorWrapper(constant.MjRequestError, "insert_midjourney_task_failed")
 	}
-	billingApplied, billingErr := service.SettleMidjourneyTaskBilling(info, midjourneyTask, billingPrepared)
+	billingApplied, billingErr := service.SettleMonitoredMidjourneyBilling(c, info, midjourneyTask, billingPrepared)
 	if billingErr != nil {
 		common.SysLog("error settling Midjourney quota: " + billingErr.Error())
 	}
@@ -655,7 +655,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			Description: "insert_midjourney_task_failed",
 		}
 	}
-	billingApplied, billingErr := service.SettleMidjourneyTaskBilling(relayInfo, midjourneyTask, billingPrepared)
+	billingApplied, billingErr := service.SettleMonitoredMidjourneyBilling(c, relayInfo, midjourneyTask, billingPrepared)
 	if billingErr != nil {
 		common.SysLog("error settling Midjourney quota: " + billingErr.Error())
 	}

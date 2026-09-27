@@ -100,10 +100,13 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 		return true
 	}
 
+	refundIncomePending := markChannelMonitorMidjourneyIncomeRefundPending(ctx, task)
 	if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
+		cancelChannelMonitorMidjourneyIncomeRefund(ctx, task, refundIncomePending)
 		logger.LogWarn(ctx, fmt.Sprintf("退还 Midjourney 用户额度失败 task %s: %s", task.MjId, err.Error()))
 		return false
 	}
+	refundChannelMonitorMidjourneyIncome(ctx, task)
 
 	if task.TokenId > 0 {
 		tokenKey := resolveTokenKey(ctx, task.TokenId, task.MjId)

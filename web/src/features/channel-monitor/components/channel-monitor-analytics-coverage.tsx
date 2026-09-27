@@ -3,6 +3,13 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import type { ChannelMonitorAnalyticsResponse } from '../types-analytics'
 
 const coverageReasons: Record<string, string> = {
+  income_history_unavailable: '所选范围包含收入统计启用前的记录，历史收入不能还原',
+  income_recording_gap: '收入或成本记录出现缺口，需要核对结算记录',
+  income_settlement_pending: '部分扣费或退款记录尚未确认',
+  profit_cost_unresolved: '部分成本未解析，利润暂不能确认',
+  profit_cost_queue_unavailable: '无法确认成本队列是否已全部入账',
+  profit_cost_not_durable: '可靠成本记录已关闭，无法保证利润完整性',
+  profit_history_expired: '所选日期超出成本保留范围',
   cost_attribution_incomplete: '历史或未归属成本明细尚未与渠道日账对平',
   cost_detail_unavailable: '成本明细尚未准备完成',
   cost_projection_pending: '部分已记录成本正在更新到统计中',

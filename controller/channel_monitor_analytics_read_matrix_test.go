@@ -74,6 +74,7 @@ func TestChannelMonitorAnalyticsReadDatabaseMatrix(t *testing.T) {
 		&model.User{}, &model.Channel{}, &model.ChannelDailyCost{},
 		&model.ChannelMonitorDailyCostDetail{}, &model.ChannelMonitorDailySuccessLedger{},
 		&model.ChannelMonitorDailyCheckpoint{},
+		&model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeState{}, &model.ChannelDailyCostOutbox{},
 	}
 	require.NoError(t, db.AutoMigrate(tables...))
 	for _, table := range tables {
@@ -85,4 +86,5 @@ func TestChannelMonitorAnalyticsReadDatabaseMatrix(t *testing.T) {
 	runChannelMonitorAnalyticsCostCoverageCases(t, db, day)
 	runChannelMonitorAnalyticsSuccessCoverageCases(t, db, day)
 	runChannelMonitorCostAPIKeyGroupingCases(t, db, day)
+	runChannelMonitorProfitAnalyticsCases(t, db, day-14*86400)
 }

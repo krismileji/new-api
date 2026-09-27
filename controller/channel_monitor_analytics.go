@@ -38,6 +38,7 @@ type channelMonitorAnalyticsQuery struct {
 	Direction        string
 	Page             int
 	PageSize         int
+	OnlyLoss         bool
 }
 
 type channelMonitorAnalyticsResponse struct {
@@ -165,12 +166,22 @@ func parseChannelMonitorAnalyticsQuery(c *gin.Context) (channelMonitorAnalyticsQ
 		Page:      1,
 		PageSize:  50,
 	}
-	if query.Metric != "success" && query.Metric != "cost" && query.Metric != "performance" {
-		return query, &channelMonitorAnalyticsQueryError{"metric 必须为 success、cost 或 performance"}
+	if query.Metric != "success" && query.Metric != "cost" && query.Metric != "performance" && query.Metric != "profit" {
+		return query, &channelMonitorAnalyticsQueryError{"metric 必须为 success、cost、profit 或 performance"}
 	}
 	defaultSort := "samples"
 	if query.Metric == "cost" {
 		defaultSort = "cost"
+	}
+	if query.Metric == "profit" {
+		defaultSort = "profit"
+	}
+	if raw := c.Query("only_loss"); raw != "" {
+		var parseErr error
+		query.OnlyLoss, parseErr = strconv.ParseBool(raw)
+		if parseErr != nil || query.Metric != "profit" {
+			return query, &channelMonitorAnalyticsQueryError{"only_loss 仅支持利润指标的布尔值"}
+		}
 	}
 	query.Sort = strings.TrimSpace(c.DefaultQuery("sort", defaultSort))
 	if !channelMonitorAnalyticsSortAllowed(query.Metric, query.Sort) {
@@ -214,7 +225,7 @@ func parseChannelMonitorAnalyticsQuery(c *gin.Context) (channelMonitorAnalyticsQ
 		if err != nil || query.Minutes < minChannelMonitorPerformanceMinutes || query.Minutes > maxChannelMonitorPerformanceMinutes {
 			return query, &channelMonitorAnalyticsQueryError{"性能与成功率统计范围必须在 1 到 1440 分钟之间"}
 		}
-		if query.Metric == "cost" || query.GroupBy == "day" || query.From != 0 || query.To != 0 {
+		if query.Metric == "cost" || query.Metric == "profit" || query.GroupBy == "day" || query.From != 0 || query.To != 0 {
 			return query, &channelMonitorAnalyticsQueryError{"分钟统计仅支持成功率和性能明细，不能同时指定日期范围或按日分组"}
 		}
 	}
@@ -264,6 +275,14 @@ func channelMonitorAnalyticsGroupByAllowed(groupBy string) bool {
 }
 
 func channelMonitorAnalyticsSortAllowed(metric, sortKey string) bool {
+	if metric == "profit" {
+		switch sortKey {
+		case "profit", "income", "cost", "profit_rate":
+			return true
+		default:
+			return false
+		}
+	}
 	if metric == "performance" {
 		switch sortKey {
 		case "samples", "first_token", "tps", "output_tokens":
@@ -325,6 +344,9 @@ func queryChannelMonitorHistoricalAnalytics(ctx context.Context, query channelMo
 	query, err = prepareChannelMonitorAnalyticsSearch(ctx, query)
 	if err != nil {
 		return channelMonitorAnalyticsResponse{}, err
+	}
+	if query.Metric == "profit" {
+		return queryChannelMonitorProfitAnalytics(ctx, query)
 	}
 	today := model.ChannelDailyCostDayStart(common.GetTimestamp())
 	if query.From < today && query.To > today && common.RedisEnabled {

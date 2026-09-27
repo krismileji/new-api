@@ -74,6 +74,7 @@ var (
 // before an upstream request starts. Settlement uses this snapshot even if an
 // administrator updates the ratio while the request is in flight.
 func CaptureChannelDailyCostSnapshot(ctx *gin.Context, channelId int) {
+	captureChannelMonitorIncomeConversion(ctx)
 	snapshot, err := getChannelDailyCostSnapshot(channelId)
 	if err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("读取渠道 #%d 成本配置失败: %s", channelId, err.Error()))
@@ -501,6 +502,9 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 		persisted = enqueueChannelDailyCost(delta)
 	}
 	if !persisted {
+		if model.ChannelMonitorIncomeReady.Load() {
+			model.MarkChannelMonitorIncomeGap(channelMonitorPublishContext(ctx))
+		}
 		logger.LogError(ctx, fmt.Sprintf("记录渠道 #%d 每日成本失败，本次请求未标记为已记录", snapshot.ChannelId))
 		return false
 	}
@@ -533,6 +537,15 @@ func channelDailyCostEventId(ctx *gin.Context, channelId int) string {
 				return state.CostEventId
 			}
 		}
+	}
+	if ctx != nil {
+		key := "channel_daily_cost_fallback_" + strconv.Itoa(channelId)
+		if id := ctx.GetString(key); id != "" {
+			return id
+		}
+		id := common.GetUUID()
+		ctx.Set(key, id)
+		return id
 	}
 	return common.GetUUID()
 }

@@ -227,13 +227,16 @@ func InitDB() (err error) {
 		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
 
 		if !common.IsMasterNode {
-			return nil
+			return InitializeChannelMonitorIncome(DB, false)
 		}
 		if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
 			//_, _ = sqlDB.Exec("ALTER TABLE channels MODIFY model_mapping TEXT;") // TODO: delete this line when most users have upgraded
 		}
 		common.SysLog("database migration started")
 		err = migrateDB()
+		if err == nil {
+			err = InitializeChannelMonitorIncome(DB, true)
+		}
 		return err
 	} else {
 		common.FatalLog(err)
@@ -460,6 +463,8 @@ func migrateDB() error {
 		&ChannelSmartScheduleExecutionDetail{},
 		&ChannelRatioHistory{},
 		&ChannelDailyCost{},
+		&ChannelMonitorIncome{},
+		&ChannelMonitorIncomeState{},
 		&ChannelDailyAPIKeyCost{},
 		&ChannelDailyCostOutbox{},
 		&ChannelMonitorEventOutbox{},
