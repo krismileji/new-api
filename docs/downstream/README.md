@@ -11,7 +11,7 @@
 
 | 功能 | 内容 |
 | --- | --- |
-| [渠道监控](channel-monitor/README.md) | 上游同步与账户、自动任务、变量、余额预估、成本与分析、智能调度、探测和共享限流 |
+| [渠道监控](channel-monitor/README.md) | 上游同步与账户、自动任务、变量、余额预估、成本、利润与分析、智能调度、探测和共享限流 |
 | [逻辑归组](channel-logical-group/README.md) | 多个物理渠道共享调度、探测与模型检测身份 |
 | [使用日志](usage-logs/README.md) | 用户侧日志范围、权限和脱敏 |
 | [中继可靠性](relay-reliability/README.md) | 失败切换、快速失败重试、错误可见性和响应头超时 |
