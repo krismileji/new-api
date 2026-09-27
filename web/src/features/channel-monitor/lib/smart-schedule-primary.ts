@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
+import { channelMonitorSmartScheduleUntilIsPermanent } from './smart-schedule-display'
 
 export type ChannelMonitorSmartSchedulePrimaryFormState = {
   durationMinutes: string
@@ -35,12 +36,16 @@ export function createChannelMonitorSmartSchedulePrimaryFormState(
   }
 
   return {
-    durationMinutes: String(
-      Math.max(
-        1,
-        Math.ceil((route.state.manual_primary_until - nowSeconds) / 60)
-      )
-    ),
+    durationMinutes: channelMonitorSmartScheduleUntilIsPermanent(
+      route.state.manual_primary_until
+    )
+      ? ''
+      : String(
+          Math.max(
+            1,
+            Math.ceil((route.state.manual_primary_until - nowSeconds) / 60)
+          )
+        ),
     allowStabilityDegrade: route.state.manual_primary_allow_stability_degrade,
   }
 }

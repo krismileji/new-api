@@ -289,6 +289,33 @@ func TestChannelRateLimitBypassClearsAndPreventsCooldown(t *testing.T) {
 	assert.Zero(t, ChannelRateLimitCooldownUntilMatching(33, "model-a"))
 }
 
+func TestChannelRateLimitBypassSupportsPermanentDuration(t *testing.T) {
+	stopChannelRateLimitCooldownRedisSync()
+	resetChannelRateLimitCooldownLocalState()
+	ClearChannelRateLimitBypasses()
+	originalEnabled := common.RedisEnabled
+	originalClient := common.RDB
+	common.RedisEnabled = false
+	common.RDB = nil
+	t.Cleanup(func() {
+		common.RedisEnabled = originalEnabled
+		common.RDB = originalClient
+		resetChannelRateLimitCooldownLocalState()
+		ClearChannelRateLimitBypasses()
+	})
+
+	result, err := UpdateChannelRateLimitBypass(
+		context.Background(), 36, "model-a", ChannelRateLimitBypassPermanentDurationSeconds,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelMonitorSmartSchedulePermanentUntil, result.BypassUntil)
+	assert.True(t, ChannelRateLimitBypassActive(context.Background(), 36, "model-a"))
+
+	_, err = UpdateChannelRateLimitBypass(context.Background(), 36, "model-a", 0)
+	require.NoError(t, err)
+	assert.False(t, ChannelRateLimitBypassActive(context.Background(), 36, "model-a"))
+}
+
 func TestChannelRateLimitBypassUsesSharedRedisStateBeforeCooldown(t *testing.T) {
 	useChannelRateLimitCooldownRedis(t)
 	ClearChannelRateLimitCooldowns()
@@ -306,6 +333,32 @@ func TestChannelRateLimitBypassUsesSharedRedisStateBeforeCooldown(t *testing.T) 
 	assert.True(t, ChannelRateLimitBypassActive(context.Background(), 34, "model-a"))
 	StartChannelRateLimitCooldown(34, "model-a", 60)
 	assert.Zero(t, ChannelRateLimitCooldownUntilMatching(34, "model-a"))
+}
+
+func TestChannelRateLimitBypassPermanentDurationSurvivesRedisSync(t *testing.T) {
+	useChannelRateLimitCooldownRedis(t)
+	ClearChannelRateLimitBypasses()
+	t.Cleanup(ClearChannelRateLimitBypasses)
+
+	_, err := UpdateChannelRateLimitBypass(context.Background(), 36, "model-a",
+		ChannelRateLimitBypassPermanentDurationSeconds)
+	require.NoError(t, err)
+	stopChannelRateLimitCooldownRedisSync()
+	channelRateLimitBypasses.Lock()
+	channelRateLimitBypasses.untilByRoute = make(map[channelRateLimitCooldownKey]int64)
+	channelRateLimitBypassGeneration.Add(1)
+	channelRateLimitBypasses.Unlock()
+	syncChannelRateLimitBypassesFromRedis(context.Background(), common.RDB)
+
+	assert.Equal(t, common.ChannelMonitorSmartSchedulePermanentUntil,
+		ChannelRateLimitBypassUntilMatching(36, "model-a"))
+	StartChannelRateLimitCooldown(36, "model-a", 60)
+	assert.Zero(t, ChannelRateLimitCooldownUntilMatching(36, "model-a"))
+
+	_, err = UpdateChannelRateLimitBypass(context.Background(), 36, "model-a", 0)
+	require.NoError(t, err)
+	syncChannelRateLimitBypassesFromRedis(context.Background(), common.RDB)
+	assert.False(t, ChannelRateLimitBypassActive(context.Background(), 36, "model-a"))
 }
 
 func TestChannelRateLimitBypassUpdateFailurePreservesExistingCooldown(t *testing.T) {

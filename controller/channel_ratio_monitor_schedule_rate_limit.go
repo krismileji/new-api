@@ -32,16 +32,20 @@ func UpdateChannelMonitorSmartScheduleRateLimitCooldown(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if request.DurationMinutes == nil || *request.DurationMinutes < 0 ||
-		*request.DurationMinutes > maxChannelMonitorSmartScheduleManualRateLimitCooldownMinutes {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "429 限制暂停时间必须在 0 到 300 分钟之间",
-		})
-		return
+	durationSeconds := service.ChannelRateLimitBypassPermanentDurationSeconds
+	if request.DurationMinutes != nil {
+		if *request.DurationMinutes < 0 ||
+			*request.DurationMinutes > maxChannelMonitorSmartScheduleManualRateLimitCooldownMinutes {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "429 限制暂停时间必须在 0 到 300 分钟之间",
+			})
+			return
+		}
+		durationSeconds = *request.DurationMinutes * 60
 	}
 	result, err := service.UpdateChannelRateLimitBypass(
-		c.Request.Context(), channelId, modelName, *request.DurationMinutes*60,
+		c.Request.Context(), channelId, modelName, durationSeconds,
 	)
 	if err != nil {
 		common.ApiError(c, err)
@@ -54,7 +58,8 @@ func UpdateChannelMonitorSmartScheduleRateLimitCooldown(c *gin.Context) {
 			"id":               channelId,
 			"group":            group,
 			"model":            modelName,
-			"duration_minutes": *request.DurationMinutes,
+			"duration_minutes": request.DurationMinutes,
+			"duration_label":   channelSmartScheduleDurationAuditValue(request.DurationMinutes),
 			"bypass_until":     result.BypassUntil,
 		})
 	}
@@ -62,7 +67,7 @@ func UpdateChannelMonitorSmartScheduleRateLimitCooldown(c *gin.Context) {
 		"channel_id":       channelId,
 		"group":            group,
 		"model":            modelName,
-		"duration_minutes": *request.DurationMinutes,
+		"duration_minutes": request.DurationMinutes,
 		"bypass_until":     result.BypassUntil,
 		"changed":          result.Changed,
 	})

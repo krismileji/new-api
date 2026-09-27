@@ -141,6 +141,17 @@ describe('smart schedule primary form state', () => {
     assert.equal(state.allowStabilityDegrade, true)
   })
 
+  test('leaves the duration empty when an active fixed route is permanent', () => {
+    const state = createChannelMonitorSmartSchedulePrimaryFormState(
+      createRoute({
+        manual_primary_until: 2 ** 52,
+      }),
+      1_000
+    )
+
+    assert.equal(state.durationMinutes, '')
+  })
+
   test('requires confirmation before fixing a route under stability protection', () => {
     assert.equal(
       channelMonitorSmartSchedulePrimaryRequiresConfirmation(

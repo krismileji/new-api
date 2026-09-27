@@ -1349,6 +1349,7 @@ func TestUpdateChannelMonitorSmartScheduleRoutePrimaryDefaultsAndPersistsStabili
 	type primaryResponse struct {
 		Success bool `json:"success"`
 		Data    struct {
+			DurationMinutes       *int  `json:"duration_minutes"`
 			AllowStabilityDegrade bool  `json:"allow_stability_degrade"`
 			ManualPrimaryUntil    int64 `json:"manual_primary_until"`
 		} `json:"data"`
@@ -1389,6 +1390,20 @@ func TestUpdateChannelMonitorSmartScheduleRoutePrimaryDefaultsAndPersistsStabili
 		ChannelId: 1211, GroupName: "vip", ModelName: "model-a",
 	}).First(&state).Error)
 	assert.False(t, state.ManualPrimaryAllowStabilityDegrade)
+
+	ctx, recorder = newChannelMonitorControllerContext(
+		t,
+		http.MethodPut,
+		"/api/channel_monitor/channel/1211/schedule/route/primary",
+		map[string]any{"group": "vip", "model": "model-a"},
+	)
+	ctx.AddParam("id", "1211")
+	UpdateChannelMonitorSmartScheduleRoutePrimary(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	response = primaryResponse{}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.Nil(t, response.Data.DurationMinutes)
+	assert.Equal(t, common.ChannelMonitorSmartSchedulePermanentUntil, response.Data.ManualPrimaryUntil)
 }
 
 func TestUpdateChannelMonitorSmartScheduleRoutePrimaryQueuesSuccessorBehindRunningSchedule(t *testing.T) {

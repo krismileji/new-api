@@ -42,6 +42,10 @@ import { formatTimestampToDate } from '@/lib/format'
 
 import { formatMonitorRatio } from '../lib/format'
 import {
+  channelMonitorSmartScheduleUntilIsPermanent,
+  formatChannelMonitorSmartScheduleUntil,
+} from '../lib/smart-schedule-display'
+import {
   channelMonitorSmartScheduleRouteIsBreakEvenFallback,
   channelMonitorSmartScheduleRouteIsAvailable,
   channelMonitorSmartScheduleRouteIsRateLimitCoolingDown,
@@ -74,6 +78,7 @@ type SmartScheduleStatusBadge = {
 }
 
 function formatRemainingTime(until: number, now: number) {
+  if (channelMonitorSmartScheduleUntilIsPermanent(until)) return '永久'
   const minutes = Math.ceil((until - now) / 60)
   if (minutes <= 0) return ''
   if (minutes < 60) return `${minutes} 分钟`
@@ -263,7 +268,9 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
   if (trafficPaused) {
     details.push({
       label: '暂停至',
-      value: formatTimestampToDate(route.traffic_paused_until ?? 0),
+      value: formatChannelMonitorSmartScheduleUntil(
+        route.traffic_paused_until
+      ),
     })
   }
   if (rateLimitCoolingDown) {
@@ -275,7 +282,9 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
   if (rateLimitBypassed) {
     details.push({
       label: '429 限制暂停至',
-      value: formatTimestampToDate(route.rate_limit_bypass_until ?? 0),
+      value: formatChannelMonitorSmartScheduleUntil(
+        route.rate_limit_bypass_until
+      ),
     })
   }
   if (breakEvenFallback) {
@@ -329,7 +338,9 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
     details.push(
       {
         label: '固定到期',
-        value: formatTimestampToDate(runtimeState.manual_primary_until),
+        value: formatChannelMonitorSmartScheduleUntil(
+          runtimeState.manual_primary_until
+        ),
       },
       {
         label: '稳定性策略',

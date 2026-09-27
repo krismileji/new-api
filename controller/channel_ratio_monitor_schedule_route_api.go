@@ -37,6 +37,13 @@ type channelSmartScheduleRoutePrimaryRequest struct {
 	ConfirmStabilityOverride bool   `json:"confirm_stability_override"`
 }
 
+func channelSmartScheduleDurationAuditValue(durationMinutes *int) string {
+	if durationMinutes == nil {
+		return "永久"
+	}
+	return strconv.Itoa(*durationMinutes) + " 分钟"
+}
+
 func GetChannelMonitorSmartScheduleRoutes(c *gin.Context) {
 	getChannelMonitorSmartScheduleRoutes(c, channelSmartScheduleRealtimeRouteMetricViews)
 }
@@ -329,8 +336,12 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if request.DurationMinutes == nil || *request.DurationMinutes < 0 ||
-		*request.DurationMinutes > model.ChannelSmartScheduleManualPrimaryMaxMinutes {
+	durationMinutes := model.ChannelSmartSchedulePermanentDurationMinutes
+	if request.DurationMinutes != nil {
+		durationMinutes = *request.DurationMinutes
+	}
+	if request.DurationMinutes != nil &&
+		(durationMinutes < 0 || durationMinutes > model.ChannelSmartScheduleManualPrimaryMaxMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "主渠道固定时间必须在 0 到 525600 分钟之间",
@@ -347,7 +358,7 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 	}
 	result, err := model.SaveChannelSmartScheduleRoutePrimary(
 		channelId, group, modelName, model.ChannelSmartScheduleRoutePrimaryOptions{
-			DurationMinutes:           *request.DurationMinutes,
+			DurationMinutes:           durationMinutes,
 			AllowStabilityDegrade:     allowStabilityDegrade,
 			ConfirmStabilityOverride:  request.ConfirmStabilityOverride,
 			StabilityFallbackPriority: channelMonitorSmartScheduleBaselinePriority,
@@ -376,10 +387,11 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 			taskResponse = task.ToResponse()
 		}
 	}
-	if *request.DurationMinutes > 0 || result.RoutingChanged || result.StabilityProtectionCleared {
+	if request.DurationMinutes == nil || *request.DurationMinutes > 0 || result.RoutingChanged || result.StabilityProtectionCleared {
 		recordManageAudit(c, "channel.monitor_smart_schedule_config_update", map[string]interface{}{
 			"id": channelId, "group": group, "model": modelName,
-			"duration_minutes":             *request.DurationMinutes,
+			"duration_minutes":             request.DurationMinutes,
+			"duration_label":               channelSmartScheduleDurationAuditValue(request.DurationMinutes),
 			"allow_stability_degrade":      allowStabilityDegrade,
 			"stability_protection_cleared": result.StabilityProtectionCleared,
 			"manual_primary_until":         result.State.ManualPrimaryUntil,
@@ -389,7 +401,7 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 		"channel_id":                   channelId,
 		"group":                        group,
 		"model":                        modelName,
-		"duration_minutes":             *request.DurationMinutes,
+		"duration_minutes":             request.DurationMinutes,
 		"allow_stability_degrade":      result.State.ManualPrimaryAllowStabilityDegrade,
 		"manual_primary_until":         result.State.ManualPrimaryUntil,
 		"stability_protection_cleared": result.StabilityProtectionCleared,

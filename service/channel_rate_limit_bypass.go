@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	channelRateLimitBypassRedisKey         = "channelRateLimitBypass:v1:routes"
-	maxChannelRateLimitBypassDuration      = 300 * 60
-	channelRateLimitBypassSecondsPerMinute = 60
+	channelRateLimitBypassRedisKey                 = "channelRateLimitBypass:v1:routes"
+	maxChannelRateLimitBypassDuration              = 300 * 60
+	channelRateLimitBypassSecondsPerMinute         = 60
+	ChannelRateLimitBypassPermanentDurationSeconds = -1
 )
 
 const channelRateLimitBypassRedisUpdateScript = `
@@ -100,8 +101,9 @@ func UpdateChannelRateLimitBypass(
 	if channelId <= 0 || modelName == "" {
 		return ChannelRateLimitBypassUpdateResult{}, errors.New("渠道或模型无效")
 	}
-	if durationSeconds < 0 || durationSeconds > maxChannelRateLimitBypassDuration ||
-		durationSeconds%channelRateLimitBypassSecondsPerMinute != 0 {
+	if durationSeconds != ChannelRateLimitBypassPermanentDurationSeconds &&
+		(durationSeconds < 0 || durationSeconds > maxChannelRateLimitBypassDuration ||
+			durationSeconds%channelRateLimitBypassSecondsPerMinute != 0) {
 		return ChannelRateLimitBypassUpdateResult{}, errors.New("429 限制暂停时间必须在 0 到 300 分钟之间")
 	}
 	if ctx == nil {
@@ -109,7 +111,9 @@ func UpdateChannelRateLimitBypass(
 	}
 
 	until := int64(0)
-	if durationSeconds > 0 {
+	if durationSeconds == ChannelRateLimitBypassPermanentDurationSeconds {
+		until = common.ChannelMonitorSmartSchedulePermanentUntil
+	} else if durationSeconds > 0 {
 		until = common.GetTimestamp() + int64(durationSeconds)
 	}
 	sharedRedis := common.RedisEnabled && common.RDB != nil

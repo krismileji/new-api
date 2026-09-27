@@ -76,6 +76,46 @@ func TestUpdateChannelMonitorSmartScheduleRateLimitCooldownAndClear(t *testing.T
 	assert.Zero(t, service.ChannelRateLimitBypassUntilMatching(2801, "model-a"))
 }
 
+func TestUpdateChannelMonitorSmartScheduleRateLimitCooldownAllowsPermanentDuration(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	originalRedisEnabled := common.RedisEnabled
+	originalRedisClient := common.RDB
+	common.RedisEnabled = false
+	common.RDB = nil
+	service.ClearChannelRateLimitBypasses()
+	t.Cleanup(func() {
+		common.RedisEnabled = originalRedisEnabled
+		common.RDB = originalRedisClient
+		service.ClearChannelRateLimitBypasses()
+	})
+
+	context, recorder := newChannelMonitorControllerContext(
+		t,
+		http.MethodPut,
+		"/api/channel_monitor/channel/2804/schedule/route/rate-limit-cooldown",
+		map[string]any{"group": "vip", "model": "model-a"},
+	)
+	context.AddParam("id", "2804")
+	UpdateChannelMonitorSmartScheduleRateLimitCooldown(context)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			DurationMinutes *int  `json:"duration_minutes"`
+			BypassUntil     int64 `json:"bypass_until"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.True(t, response.Success)
+	assert.Nil(t, response.Data.DurationMinutes)
+	assert.Equal(t, common.ChannelMonitorSmartSchedulePermanentUntil, response.Data.BypassUntil)
+	assert.True(t, service.ChannelRateLimitBypassActive(nil, 2804, "model-a"))
+
+	_, err := service.UpdateChannelRateLimitBypass(nil, 2804, "model-a", 0)
+	require.NoError(t, err)
+}
+
 func TestUpdateChannelMonitorSmartScheduleRateLimitCooldownRejectsInvalidDuration(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
 	for _, durationMinutes := range []int{-1, maxChannelMonitorSmartScheduleManualRateLimitCooldownMinutes + 1} {

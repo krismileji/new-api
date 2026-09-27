@@ -50,7 +50,8 @@ func SaveChannelSmartScheduleGroupPause(
 	if channelId <= 0 || group == "" || modelName == "" {
 		return result, gorm.ErrRecordNotFound
 	}
-	if durationMinutes < 0 || durationMinutes > ChannelSmartScheduleGroupPauseMaxMinutes {
+	if durationMinutes != ChannelSmartSchedulePermanentDurationMinutes &&
+		(durationMinutes < 0 || durationMinutes > ChannelSmartScheduleGroupPauseMaxMinutes) {
 		return result, fmt.Errorf(
 			"路由流量暂停时间必须在 0 到 %d 分钟之间",
 			ChannelSmartScheduleGroupPauseMaxMinutes,
@@ -59,7 +60,9 @@ func SaveChannelSmartScheduleGroupPause(
 
 	now := common.GetTimestamp()
 	pausedUntil := int64(0)
-	if durationMinutes > 0 {
+	if durationMinutes == ChannelSmartSchedulePermanentDurationMinutes {
+		pausedUntil = common.ChannelMonitorSmartSchedulePermanentUntil
+	} else if durationMinutes > 0 {
 		pausedUntil = now + int64(durationMinutes)*60
 	}
 	result = ChannelSmartScheduleGroupPauseResult{

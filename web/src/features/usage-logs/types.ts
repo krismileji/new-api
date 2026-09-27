@@ -162,7 +162,7 @@ export interface LogOtherData {
   // Frontend renders localized content from action + params via i18n templates.
   op?: {
     action?: string
-    params?: Record<string, string | number | boolean | string[]>
+    params?: Record<string, string | number | boolean | string[] | null>
   }
   // Operation audit details written by the admin-audit fallback in authHelper (type=3, admin only)
   audit_info?: {

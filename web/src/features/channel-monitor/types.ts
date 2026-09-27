@@ -1228,7 +1228,7 @@ export type ChannelMonitorSmartSchedulePrimaryUpdateResult = {
   channel_id: number
   group: string
   model: string
-  duration_minutes: number
+  duration_minutes: number | null
   allow_stability_degrade: boolean
   manual_primary_until: number
   stability_protection_cleared: boolean
@@ -1240,7 +1240,7 @@ export type ChannelMonitorSmartScheduleGroupPauseResult = {
   channel_id: number
   group: string
   model: string
-  duration_minutes: number
+  duration_minutes: number | null
   paused_until: number
   affected_routes: number
   changed: boolean
@@ -1250,7 +1250,7 @@ export type ChannelMonitorSmartScheduleRateLimitCooldownResult = {
   channel_id: number
   group: string
   model: string
-  duration_minutes: number
+  duration_minutes: number | null
   bypass_until: number
   changed: boolean
 }

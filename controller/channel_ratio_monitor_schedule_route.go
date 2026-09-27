@@ -703,8 +703,11 @@ func runChannelSmartScheduleByRouteOnce(
 			}
 			message := ""
 			if route := routeByKey[key]; route.State.ManualPrimaryUntil > now {
-				message = fmt.Sprintf("管理员已固定为主渠道，固定至 %s",
-					time.Unix(route.State.ManualPrimaryUntil, 0).Format("2006-01-02 15:04:05"))
+				message = "管理员已永久固定为主渠道"
+				if route.State.ManualPrimaryUntil < common.ChannelMonitorSmartSchedulePermanentUntil {
+					message = fmt.Sprintf("管理员已固定为主渠道，固定至 %s",
+						time.Unix(route.State.ManualPrimaryUntil, 0).Format("2006-01-02 15:04:05"))
+				}
 			}
 			update := channelSmartScheduleRouteStatusUpdate(
 				key, model.ChannelSmartScheduleStatusSucceeded, message, score,

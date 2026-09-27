@@ -16,7 +16,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { formatTimestampToDate } from '@/lib/format'
+
 import type { ChannelMonitorSmartScheduleRoutePlacement } from './smart-schedule-summary'
+
+export const CHANNEL_MONITOR_SMART_SCHEDULE_PERMANENT_UNTIL = 2 ** 52
+
+export function channelMonitorSmartScheduleUntilIsPermanent(
+  until?: number
+): boolean {
+  return until != null && until >= CHANNEL_MONITOR_SMART_SCHEDULE_PERMANENT_UNTIL
+}
+
+export function formatChannelMonitorSmartScheduleUntil(until?: number): string {
+  if (channelMonitorSmartScheduleUntilIsPermanent(until)) return '永久'
+  return formatTimestampToDate(until)
+}
 
 export type ChannelMonitorSmartScheduleTemporaryTrafficKind =
   | ''

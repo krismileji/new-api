@@ -50,6 +50,27 @@ describe('channel monitor audit content', () => {
       renderAuditContent(
         {
           op: {
+            action: 'channel.monitor_smart_schedule_group_pause_update',
+            params: {
+              id: 7,
+              channel_name: '测试渠道',
+              channel_label: '测试渠道（ID: 7）',
+              group: 'vip',
+              model: 'gpt-test',
+              duration_minutes: null,
+              duration_label: '永久',
+            },
+          },
+        },
+        passthrough
+      ),
+      '已将渠道 测试渠道（ID: 7）在分组 vip、模型 gpt-test 的流量暂停时间更新为 永久'
+    )
+
+    assert.equal(
+      renderAuditContent(
+        {
+          op: {
             action: 'channel.model_detection_config_update',
             params: {
               channel_id: 7,

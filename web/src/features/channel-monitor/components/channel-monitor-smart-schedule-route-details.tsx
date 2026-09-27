@@ -85,7 +85,7 @@ type ChannelMonitorSmartScheduleRouteDetailsProps = {
   onClearPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
   onGroupPauseChange: (
     route: ChannelMonitorSmartScheduleRoute,
-    durationMinutes: number
+    durationMinutes: number | null
   ) => void
 }
 

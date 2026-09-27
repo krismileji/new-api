@@ -308,7 +308,7 @@ async function renderPool(options?: {
   onClearPrimary?: (route: ChannelMonitorSmartScheduleRoute) => void
   onGroupPauseChange?: (
     route: ChannelMonitorSmartScheduleRoute,
-    durationMinutes: number
+    durationMinutes: number | null
   ) => void
   onRateLimitCooldownChange?: (route: ChannelMonitorSmartScheduleRoute) => void
 }) {
@@ -533,7 +533,7 @@ primaryToggle.container.remove()
 
 const groupPauseActions: Array<{
   route: ChannelMonitorSmartScheduleRoute
-  durationMinutes: number
+  durationMinutes: number | null
 }> = []
 const groupPause = await renderPool({
   onGroupPauseChange: (route, durationMinutes) =>

@@ -46,7 +46,6 @@ import {
 } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
-import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS } from '../constants'
@@ -54,6 +53,7 @@ import { formatMonitorRatio } from '../lib/format'
 import {
   formatChannelMonitorSmartScheduleEstimatedShare,
   formatChannelMonitorSmartScheduleTemporaryTraffic,
+  formatChannelMonitorSmartScheduleUntil,
   getChannelMonitorSmartScheduleTemporaryTrafficLabel,
 } from '../lib/smart-schedule-display'
 import { getChannelMonitorSmartScheduleSamplingOrderLabel } from '../lib/smart-schedule-options'
@@ -129,7 +129,7 @@ type ChannelMonitorSmartSchedulePoolProps = {
   onClearPrimary: (route: ChannelMonitorSmartScheduleRoute) => void
   onGroupPauseChange: (
     route: ChannelMonitorSmartScheduleRoute,
-    durationMinutes: number
+    durationMinutes: number | null
   ) => void
   onRateLimitCooldownChange: (route: ChannelMonitorSmartScheduleRoute) => void
 }
@@ -370,7 +370,7 @@ function ManualPrimaryIndicator(props: {
   const degradeLabel = runtimeState.manual_primary_allow_stability_degrade
     ? '允许稳定性降级'
     : '固定期间不降级'
-  const label = `管理员固定至 ${formatTimestampToDate(runtimeState.manual_primary_until)} · ${degradeLabel}`
+  const label = `管理员固定至 ${formatChannelMonitorSmartScheduleUntil(runtimeState.manual_primary_until)} · ${degradeLabel}`
   return (
     <span className='text-primary shrink-0' title={label} aria-label={label}>
       <HugeiconsIcon icon={PinIcon} className='size-3.5' aria-hidden='true' />

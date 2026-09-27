@@ -29,8 +29,11 @@ import {
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
-import { formatTimestampToDate } from '@/lib/format'
 
+import {
+  channelMonitorSmartScheduleUntilIsPermanent,
+  formatChannelMonitorSmartScheduleUntil,
+} from '../lib/smart-schedule-display'
 import { channelMonitorSmartScheduleRouteIsTrafficPaused } from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
 
@@ -42,7 +45,7 @@ type ChannelMonitorSmartScheduleGroupPauseProps = {
   disabled: boolean
   onUpdate: (
     route: ChannelMonitorSmartScheduleRoute,
-    durationMinutes: number
+    durationMinutes: number | null
   ) => void
 }
 
@@ -62,12 +65,14 @@ export function ChannelMonitorSmartScheduleGroupPause(
             {paused ? <Badge variant='warning'>流量已暂停</Badge> : null}
           </div>
           <p className='text-muted-foreground mt-1 text-xs leading-5'>
-            {`暂停后，该渠道在“${props.route.group}”分组使用“${props.route.model}”模型的路由不会承接流量。当前优先级和权重保持不变，到期后自动恢复。`}
+            {`暂停后，该渠道在“${props.route.group}”分组使用“${props.route.model}”模型的路由不会承接流量。填写时长则到期自动恢复，留空则保持暂停，直到手动恢复。`}
           </p>
           {paused ? (
             <p className='text-warning mt-1 text-xs font-medium tabular-nums'>
               暂停至{' '}
-              {formatTimestampToDate(props.route.traffic_paused_until ?? 0)}
+              {formatChannelMonitorSmartScheduleUntil(
+                props.route.traffic_paused_until
+              )}
             </p>
           ) : null}
         </div>
@@ -96,11 +101,16 @@ export function ChannelMonitorSmartScheduleGroupPause(
         onSubmit={(event) => {
           event.preventDefault()
           const formData = new FormData(event.currentTarget)
-          const durationMinutes = Number(formData.get('duration_minutes'))
+          const rawDuration = String(
+            formData.get('duration_minutes') ?? ''
+          ).trim()
+          const durationMinutes =
+            rawDuration === '' ? null : Number(rawDuration)
           if (
-            !Number.isInteger(durationMinutes) ||
-            durationMinutes < 1 ||
-            durationMinutes > MAX_ROUTE_PAUSE_MINUTES
+            durationMinutes !== null &&
+            (!Number.isInteger(durationMinutes) ||
+              durationMinutes < 1 ||
+              durationMinutes > MAX_ROUTE_PAUSE_MINUTES)
           ) {
             return
           }
@@ -117,13 +127,19 @@ export function ChannelMonitorSmartScheduleGroupPause(
               min={1}
               max={MAX_ROUTE_PAUSE_MINUTES}
               step={1}
-              defaultValue={60}
+              defaultValue={
+                channelMonitorSmartScheduleUntilIsPermanent(
+                  props.route.traffic_paused_until
+                )
+                  ? ''
+                  : 60
+              }
+              placeholder='留空表示永久'
               disabled={props.disabled}
               aria-describedby={descriptionId}
-              required
             />
             <FieldDescription id={descriptionId} className='text-xs'>
-              最长可设置 525600 分钟
+              最长可设置 525600 分钟，留空表示永久暂停
             </FieldDescription>
           </Field>
         </FieldGroup>

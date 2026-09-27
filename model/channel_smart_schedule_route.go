@@ -73,7 +73,10 @@ type ChannelSmartScheduleRouteState struct {
 	ManualPrimarySavedWeight           uint  `json:"-"`
 }
 
-const ChannelSmartScheduleManualPrimaryMaxMinutes = 525600
+const (
+	ChannelSmartScheduleManualPrimaryMaxMinutes  = 525600
+	ChannelSmartSchedulePermanentDurationMinutes = -1
+)
 
 var ErrChannelSmartScheduleRouteStabilityProtected = errors.New("该分组和模型路由处于稳定性保护状态，需要管理员确认后才能固定为主渠道")
 
@@ -902,7 +905,8 @@ func SaveChannelSmartScheduleRoutePrimary(
 	options ChannelSmartScheduleRoutePrimaryOptions,
 ) (result ChannelSmartScheduleRoutePrimaryResult, err error) {
 	durationMinutes := options.DurationMinutes
-	if durationMinutes < 0 || durationMinutes > ChannelSmartScheduleManualPrimaryMaxMinutes {
+	if durationMinutes != ChannelSmartSchedulePermanentDurationMinutes &&
+		(durationMinutes < 0 || durationMinutes > ChannelSmartScheduleManualPrimaryMaxMinutes) {
 		return result, fmt.Errorf("主渠道固定时间必须在 0 到 %d 分钟之间", ChannelSmartScheduleManualPrimaryMaxMinutes)
 	}
 	channelStatusLock.Lock()
@@ -1008,7 +1012,11 @@ func SaveChannelSmartScheduleRoutePrimary(
 			if targetState.Revision == math.MaxInt64 {
 				return errors.New("智能调度路由修订号已达上限")
 			}
-			targetState.ManualPrimaryUntil = now + int64(durationMinutes)*60
+			if durationMinutes == ChannelSmartSchedulePermanentDurationMinutes {
+				targetState.ManualPrimaryUntil = common.ChannelMonitorSmartSchedulePermanentUntil
+			} else {
+				targetState.ManualPrimaryUntil = now + int64(durationMinutes)*60
+			}
 			targetState.ManualPrimaryAllowStabilityDegrade = options.AllowStabilityDegrade
 			targetState.Revision++
 			if err := saveChannelSmartScheduleRouteStateTx(tx, targetState); err != nil {
@@ -1107,7 +1115,11 @@ func SaveChannelSmartScheduleRoutePrimary(
 		if targetState.Revision == math.MaxInt64 {
 			return errors.New("智能调度路由修订号已达上限")
 		}
-		targetState.ManualPrimaryUntil = now + int64(durationMinutes)*60
+		if durationMinutes == ChannelSmartSchedulePermanentDurationMinutes {
+			targetState.ManualPrimaryUntil = common.ChannelMonitorSmartSchedulePermanentUntil
+		} else {
+			targetState.ManualPrimaryUntil = now + int64(durationMinutes)*60
+		}
 		targetState.ManualPrimaryAllowStabilityDegrade = options.AllowStabilityDegrade
 		targetState.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
 		targetState.LastScheduleError = "管理员已固定该路由为主渠道"

@@ -95,6 +95,7 @@ import {
   orderChannelMonitorTasksByExecutionTime,
   saveChannelMonitorSmartScheduleExecutionSelection,
 } from '../lib/smart-schedule-execution'
+import { formatChannelMonitorSmartScheduleUntil } from '../lib/smart-schedule-display'
 import { isActiveChannelMonitorTask } from '../lib/task-status'
 import type {
   ChannelMonitorTask,
@@ -316,7 +317,9 @@ export function ChannelMonitorSmartScheduleAdjustmentRow(props: {
           <span className='text-muted-foreground'>
             固定到期：
             {adjustment.manual_primary_until
-              ? formatTimestampToDate(adjustment.manual_primary_until)
+              ? formatChannelMonitorSmartScheduleUntil(
+                  adjustment.manual_primary_until
+                )
               : '未记录'}
           </span>
         </div>

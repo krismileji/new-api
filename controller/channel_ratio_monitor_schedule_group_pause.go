@@ -29,8 +29,12 @@ func UpdateChannelMonitorSmartScheduleGroupPause(c *gin.Context) {
 	if !ok {
 		return
 	}
-	if request.DurationMinutes == nil || *request.DurationMinutes < 0 ||
-		*request.DurationMinutes > model.ChannelSmartScheduleGroupPauseMaxMinutes {
+	durationMinutes := model.ChannelSmartSchedulePermanentDurationMinutes
+	if request.DurationMinutes != nil {
+		durationMinutes = *request.DurationMinutes
+	}
+	if request.DurationMinutes != nil &&
+		(durationMinutes < 0 || durationMinutes > model.ChannelSmartScheduleGroupPauseMaxMinutes) {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "路由流量暂停时间必须在 0 到 525600 分钟之间",
@@ -45,7 +49,7 @@ func UpdateChannelMonitorSmartScheduleGroupPause(c *gin.Context) {
 		channelId,
 		group,
 		modelName,
-		*request.DurationMinutes,
+		durationMinutes,
 	)
 	if err != nil {
 		common.ApiError(c, err)
@@ -56,7 +60,8 @@ func UpdateChannelMonitorSmartScheduleGroupPause(c *gin.Context) {
 		_ = requestChannelSmartScheduleRun(c.Request.Context())
 		recordManageAudit(c, "channel.monitor_smart_schedule_group_pause_update", map[string]interface{}{
 			"id": channelId, "group": group, "model": modelName,
-			"duration_minutes": *request.DurationMinutes,
+			"duration_minutes": request.DurationMinutes,
+			"duration_label":   channelSmartScheduleDurationAuditValue(request.DurationMinutes),
 			"paused_until":     result.PausedUntil,
 			"affected_routes":  result.AffectedRoutes,
 		})
@@ -65,7 +70,7 @@ func UpdateChannelMonitorSmartScheduleGroupPause(c *gin.Context) {
 		"channel_id":       channelId,
 		"group":            group,
 		"model":            modelName,
-		"duration_minutes": *request.DurationMinutes,
+		"duration_minutes": request.DurationMinutes,
 		"paused_until":     result.PausedUntil,
 		"affected_routes":  result.AffectedRoutes,
 		"changed":          result.Changed,

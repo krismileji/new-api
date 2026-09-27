@@ -88,6 +88,52 @@ func TestUpdateChannelMonitorSmartScheduleGroupPauseAndResume(t *testing.T) {
 	assert.Zero(t, remaining)
 }
 
+func TestUpdateChannelMonitorSmartScheduleGroupPauseAllowsPermanentDuration(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	priority := int64(80)
+	weight := uint(100)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 2704, Name: "permanent pause api", Status: common.ChannelStatusEnabled,
+		Group: "vip", Models: "model-a", Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		ChannelId: 2704, Group: "vip", Model: "model-a", Enabled: true,
+		Priority: &priority, Weight: weight,
+	}).Error)
+
+	context, recorder := newChannelMonitorControllerContext(
+		t,
+		http.MethodPut,
+		"/api/channel_monitor/channel/2704/schedule/route/pause",
+		map[string]any{"group": "vip", "model": "model-a"},
+	)
+	context.AddParam("id", "2704")
+	UpdateChannelMonitorSmartScheduleGroupPause(context)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			DurationMinutes *int  `json:"duration_minutes"`
+			PausedUntil     int64 `json:"paused_until"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.True(t, response.Success)
+	assert.Nil(t, response.Data.DurationMinutes)
+	assert.Equal(t, common.ChannelMonitorSmartSchedulePermanentUntil, response.Data.PausedUntil)
+
+	resumeContext, resumeRecorder := newChannelMonitorControllerContext(
+		t,
+		http.MethodPut,
+		"/api/channel_monitor/channel/2704/schedule/route/pause",
+		map[string]any{"group": "vip", "model": "model-a", "duration_minutes": 0},
+	)
+	resumeContext.AddParam("id", "2704")
+	UpdateChannelMonitorSmartScheduleGroupPause(resumeContext)
+	require.Equal(t, http.StatusOK, resumeRecorder.Code)
+}
+
 func TestUpdateChannelMonitorSmartScheduleGroupPauseRejectsInvalidDuration(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
 	for _, durationMinutes := range []int{-1, model.ChannelSmartScheduleGroupPauseMaxMinutes + 1} {

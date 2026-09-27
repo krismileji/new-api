@@ -61,11 +61,11 @@ var channelMonitorAuditContentTemplates = map[string]string{
 	"channel.status_changed":                                 "已${status_label}渠道 ${channel_label}",
 	"channel.status_changed_batch":                           "已${status_label} ${count} 个渠道",
 	"channel.monitor_concurrency_limit_update":               "已将渠道 ${channel_label} 的并发限制更新为 ${concurrency_limit}、RPM 限制更新为 ${rpm_limit}（0 表示不限制）",
-	"channel.monitor_smart_schedule_config_update":           "已将渠道 ${channel_label} 在分组 ${group}、模型 ${model} 的主渠道固定时间更新为 ${duration_minutes} 分钟",
+	"channel.monitor_smart_schedule_config_update":           "已将渠道 ${channel_label} 在分组 ${group}、模型 ${model} 的主渠道固定时间更新为 ${duration_label}",
 	"channel.monitor_smart_schedule_stability_clear":         "已手动解除渠道 ${channel_label} 的稳定性保护，恢复优先级 ${priority}、权重 ${weight}",
 	"channel.monitor_smart_schedule_channel_config_update":   "已更新渠道 ${channel_label} 的智能调度参与设置（影响 ${updated} 条路由）",
 	"channel.monitor_smart_schedule_route_config_update":     "已更新渠道 ${channel_label} 在分组 ${group}、模型 ${model} 的智能调度参与设置",
-	"channel.monitor_smart_schedule_group_pause_update":      "已将渠道 ${channel_label} 在分组 ${group}、模型 ${model} 的流量暂停时间更新为 ${duration_minutes} 分钟",
+	"channel.monitor_smart_schedule_group_pause_update":      "已将渠道 ${channel_label} 在分组 ${group}、模型 ${model} 的流量暂停时间更新为 ${duration_label}",
 	"channel.monitor_smart_schedule_route_stability_clear":   "已解除渠道 ${channel_label} 在分组 ${group}、模型 ${model} 的稳定性保护，恢复优先级 ${priority}、权重 ${weight}",
 	"channel.monitor_smart_schedule_route_exploration_clear": "已解除渠道 ${channel_label} 在分组 ${group}、模型 ${model} 的临时探索状态，恢复优先级 ${priority}、权重 ${weight}",
 	"channel.monitor_group_ratio_sync":                       "已根据成本倍率 ${cost_ratio}（上游倍率 ${upstream_ratio} × 换算系数 ${conversion_factor}）和分组系数 ${coefficient}，将分组 ${group} 的倍率更新为 ${ratio}",
@@ -89,7 +89,7 @@ var channelMonitorAuditContentTemplates = map[string]string{
 }
 
 var channelMonitorRateLimitAuditContentTemplates = map[string]string{
-	"channel.monitor_smart_schedule_rate_limit_cooldown_update": "已将渠道 ${channel_label} 在分组 ${group}、模型 ${model} 的 429 限制暂停时间更新为 ${duration_minutes} 分钟",
+	"channel.monitor_smart_schedule_rate_limit_cooldown_update": "已将渠道 ${channel_label} 在分组 ${group}、模型 ${model} 的 429 限制暂停时间更新为 ${duration_label}",
 }
 
 // auditContentEN 渲染日志兜底文本；渠道监控使用固定中文，其余操作使用英文基线。
@@ -109,6 +109,12 @@ func auditContentEN(action string, params map[string]interface{}) string {
 		tmpl = strings.ReplaceAll(tmpl, "${channel_label} ", "${channel_label}")
 	}
 	return os.Expand(tmpl, func(key string) string {
+		if key == "duration_label" && params[key] == nil {
+			if durationMinutes := params["duration_minutes"]; durationMinutes != nil {
+				return fmt.Sprintf("%v 分钟", durationMinutes)
+			}
+			return "永久"
+		}
 		if v, ok := params[key]; ok {
 			return fmt.Sprintf("%v", v)
 		}

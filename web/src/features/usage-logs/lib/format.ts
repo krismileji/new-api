@@ -480,7 +480,7 @@ const CHANNEL_MONITOR_AUDIT_TEMPLATES: Record<string, string> = {
   'channel.monitor_concurrency_limit_update':
     '已将渠道 {{channel_label}} 的并发限制更新为 {{concurrency_limit}}、RPM 限制更新为 {{rpm_limit}}（0 表示不限制）',
   'channel.monitor_smart_schedule_config_update':
-    '已将渠道 {{channel_label}} 在分组 {{group}}、模型 {{model}} 的主渠道固定时间更新为 {{duration_minutes}} 分钟',
+    '已将渠道 {{channel_label}} 在分组 {{group}}、模型 {{model}} 的主渠道固定时间更新为 {{duration_label}}',
   'channel.monitor_smart_schedule_stability_clear':
     '已手动解除渠道 {{channel_label}} 的稳定性保护，恢复优先级 {{priority}}、权重 {{weight}}',
   'channel.monitor_smart_schedule_channel_config_update':
@@ -488,7 +488,9 @@ const CHANNEL_MONITOR_AUDIT_TEMPLATES: Record<string, string> = {
   'channel.monitor_smart_schedule_route_config_update':
     '已更新渠道 {{channel_label}} 在分组 {{group}}、模型 {{model}} 的智能调度参与设置',
   'channel.monitor_smart_schedule_group_pause_update':
-    '已将渠道 {{channel_label}} 在分组 {{group}}、模型 {{model}} 的流量暂停时间更新为 {{duration_minutes}} 分钟',
+    '已将渠道 {{channel_label}} 在分组 {{group}}、模型 {{model}} 的流量暂停时间更新为 {{duration_label}}',
+  'channel.monitor_smart_schedule_rate_limit_cooldown_update':
+    '已将渠道 {{channel_label}} 在分组 {{group}}、模型 {{model}} 的 429 限制暂停时间更新为 {{duration_label}}',
   'channel.monitor_smart_schedule_route_stability_clear':
     '已解除渠道 {{channel_label}} 在分组 {{group}}、模型 {{model}} 的稳定性保护，恢复优先级 {{priority}}、权重 {{weight}}',
   'channel.monitor_smart_schedule_route_exploration_clear':
@@ -541,6 +543,16 @@ export function renderAuditContent(
   const fixedChineseTemplate = CHANNEL_MONITOR_AUDIT_TEMPLATES[op.action]
   if (fixedChineseTemplate) {
     const params = { ...op.params }
+    if (
+      fixedChineseTemplate.includes('{{duration_label}}') &&
+      params.duration_label == null
+    ) {
+      let durationLabel = '永久'
+      if (params.duration_minutes != null) {
+        durationLabel = `${String(params.duration_minutes)} 分钟`
+      }
+      params.duration_label = durationLabel
+    }
     if (
       op.action === 'channel.monitor_concurrency_limit_update' &&
       params.rpm_limit == null

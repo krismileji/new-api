@@ -503,7 +503,7 @@ export async function updateChannelMonitorSmartScheduleGroupPause(request: {
   channelId: number
   group: string
   model: string
-  durationMinutes: number
+  durationMinutes: number | null
 }) {
   const response = await api.put<
     ChannelMonitorApiResponse<ChannelMonitorSmartScheduleGroupPauseResult>
@@ -523,7 +523,7 @@ export async function updateChannelMonitorSmartScheduleRateLimitCooldown(request
   channelId: number
   group: string
   model: string
-  durationMinutes: number
+  durationMinutes: number | null
 }) {
   const response = await api.put<
     ChannelMonitorApiResponse<ChannelMonitorSmartScheduleRateLimitCooldownResult>
@@ -543,7 +543,7 @@ export type ChannelMonitorSmartSchedulePrimaryUpdateRequest = {
   channelId: number
   group: string
   model: string
-  durationMinutes: number
+  durationMinutes: number | null
   allowStabilityDegrade: boolean
   confirmStabilityOverride?: boolean
 }

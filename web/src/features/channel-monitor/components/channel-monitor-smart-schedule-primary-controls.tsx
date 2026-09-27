@@ -28,8 +28,7 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { Switch } from '@/components/ui/switch'
-import { formatTimestampToDate } from '@/lib/format'
-
+import { formatChannelMonitorSmartScheduleUntil } from '../lib/smart-schedule-display'
 import { channelMonitorSmartScheduleRouteParticipates } from '../lib/smart-schedule-summary'
 import type { ChannelMonitorSmartScheduleRoute } from '../types'
 
@@ -90,7 +89,7 @@ export function ChannelMonitorSmartSchedulePrimaryControls(
     )
   }
 
-  const fixedUntil = formatTimestampToDate(
+  const fixedUntil = formatChannelMonitorSmartScheduleUntil(
     props.route.state.manual_primary_until
   )
   return (

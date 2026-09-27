@@ -44,7 +44,12 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from '@/components/ui/empty'
-import { Field, FieldGroup, FieldLabel } from '@/components/ui/field'
+import {
+  Field,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Spinner } from '@/components/ui/spinner'
@@ -63,6 +68,10 @@ import {
 } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
 import { formatMonitorRatio } from '../lib/format'
+import {
+  channelMonitorSmartScheduleUntilIsPermanent,
+  formatChannelMonitorSmartScheduleUntil,
+} from '../lib/smart-schedule-display'
 import { compareChannelMonitorSmartScheduleModels } from '../lib/smart-schedule-model-order'
 import {
   channelMonitorSmartSchedulePrimaryRequiresConfirmation,
@@ -127,6 +136,25 @@ function channelMonitorSmartScheduleSampleKey(
   model: string
 ) {
   return `${channelId}\u0000${model}`
+}
+
+function formatChannelMonitorSmartScheduleDuration(
+  duration: number | null
+): string {
+  return duration == null ? '永久' : `${duration} 分钟`
+}
+
+function parseOptionalChannelMonitorSmartScheduleDuration(
+  value: string,
+  maxMinutes: number
+): number | null | undefined {
+  const trimmed = value.trim()
+  if (trimmed === '') return null
+  const duration = Number(trimmed)
+  if (!Number.isInteger(duration) || duration < 1 || duration > maxMinutes) {
+    return undefined
+  }
+  return duration
 }
 
 export function ChannelMonitorSmartScheduleBoard(
@@ -361,12 +389,15 @@ export function ChannelMonitorSmartScheduleBoard(
       handleChannelMonitorMutationError(error)
     },
     onSuccess: async (response) => {
+      const duration = response.data.duration_minutes
       let successMessage = '已解除主渠道固定'
-      if (response.data.duration_minutes > 0) {
-        successMessage = `主渠道已固定 ${response.data.duration_minutes} 分钟`
+      if (duration === null) {
+        successMessage = '主渠道已永久固定'
+      } else if (duration > 0) {
+        successMessage = `主渠道已固定 ${formatChannelMonitorSmartScheduleDuration(duration)}`
       }
       if (response.data.stability_protection_cleared) {
-        successMessage = `已解除稳定性保护，主渠道固定 ${response.data.duration_minutes} 分钟`
+        successMessage = `已解除稳定性保护，主渠道固定 ${formatChannelMonitorSmartScheduleDuration(response.data.duration_minutes)}`
       }
       toast.success(successMessage)
       closePrimaryDialog()
@@ -377,11 +408,14 @@ export function ChannelMonitorSmartScheduleBoard(
     mutationFn: updateChannelMonitorSmartScheduleGroupPause,
     onError: handleChannelMonitorMutationError,
     onSuccess: async (response) => {
-      toast.success(
-        response.data.duration_minutes > 0
-          ? `已暂停“${response.data.group} / ${response.data.model}”路由流量 ${response.data.duration_minutes} 分钟`
-          : `已恢复“${response.data.group} / ${response.data.model}”路由流量`
-      )
+      const duration = response.data.duration_minutes
+      let message = `已恢复“${response.data.group} / ${response.data.model}”路由流量`
+      if (duration == null) {
+        message = `已永久暂停“${response.data.group} / ${response.data.model}”路由流量`
+      } else if (duration > 0) {
+        message = `已暂停“${response.data.group} / ${response.data.model}”路由流量 ${formatChannelMonitorSmartScheduleDuration(duration)}`
+      }
+      toast.success(message)
       await props.onActionComplete()
     },
   })
@@ -389,11 +423,14 @@ export function ChannelMonitorSmartScheduleBoard(
     mutationFn: updateChannelMonitorSmartScheduleRateLimitCooldown,
     onError: handleChannelMonitorMutationError,
     onSuccess: async (response) => {
-      toast.success(
-        response.data.duration_minutes > 0
-          ? `已暂停“${response.data.group} / ${response.data.model}”路由的 429 限制 ${response.data.duration_minutes} 分钟`
-          : `已恢复“${response.data.group} / ${response.data.model}”路由的 429 限制`
-      )
+      const duration = response.data.duration_minutes
+      let message = `已恢复“${response.data.group} / ${response.data.model}”路由的 429 限制`
+      if (duration == null) {
+        message = `已永久暂停“${response.data.group} / ${response.data.model}”路由的 429 限制`
+      } else if (duration > 0) {
+        message = `已暂停“${response.data.group} / ${response.data.model}”路由的 429 限制 ${formatChannelMonitorSmartScheduleDuration(duration)}`
+      }
+      toast.success(message)
       setRateLimitTarget(null)
       await props.onActionComplete()
     },
@@ -412,11 +449,14 @@ export function ChannelMonitorSmartScheduleBoard(
   })
   const submitPrimary = () => {
     if (!primaryTarget) return
+    const durationMinutes =
+      parseOptionalChannelMonitorSmartScheduleDuration(primaryDuration, 525600)
+    if (durationMinutes === undefined) return
     const request: ChannelMonitorSmartSchedulePrimaryUpdateRequest = {
       channelId: primaryTarget.channel_id,
       group: primaryTarget.group,
       model: primaryTarget.model,
-      durationMinutes: Number(primaryDuration),
+      durationMinutes,
       allowStabilityDegrade: allowPrimaryStabilityDegrade,
     }
     if (
@@ -839,18 +879,27 @@ export function ChannelMonitorSmartScheduleBoard(
                   })
                 }
                 onRateLimitCooldownChange={(route) => {
-                  const remainingMinutes = Math.ceil(
-                    ((route.rate_limit_bypass_until ?? 0) - Date.now() / 1000) /
-                      60
-                  )
-                  setRateLimitDuration(
-                    String(
-                      Math.min(
-                        MAX_RATE_LIMIT_COOLDOWN_MINUTES,
-                        Math.max(1, remainingMinutes)
+                  if (
+                    channelMonitorSmartScheduleUntilIsPermanent(
+                      route.rate_limit_bypass_until
+                    )
+                  ) {
+                    setRateLimitDuration('')
+                  } else {
+                    const remainingMinutes = Math.ceil(
+                      ((route.rate_limit_bypass_until ?? 0) -
+                        Date.now() / 1000) /
+                        60
+                    )
+                    setRateLimitDuration(
+                      String(
+                        Math.min(
+                          MAX_RATE_LIMIT_COOLDOWN_MINUTES,
+                          Math.max(1, remainingMinutes)
+                        )
                       )
                     )
-                  )
+                  }
                   setRateLimitTarget(route)
                 }}
               />
@@ -904,7 +953,7 @@ export function ChannelMonitorSmartScheduleBoard(
             <FieldGroup className='gap-3'>
               <Field>
                 <FieldLabel htmlFor='channel-monitor-rate-limit-duration'>
-                  暂停时长
+                  暂停时长（可选）
                 </FieldLabel>
                 <div className='flex items-center gap-2'>
                   <Input
@@ -913,6 +962,7 @@ export function ChannelMonitorSmartScheduleBoard(
                     min={1}
                     max={MAX_RATE_LIMIT_COOLDOWN_MINUTES}
                     step={1}
+                    placeholder='留空表示永久'
                     value={rateLimitDuration}
                     onChange={(event) =>
                       setRateLimitDuration(event.target.value)
@@ -921,6 +971,9 @@ export function ChannelMonitorSmartScheduleBoard(
                   />
                   <span className='text-muted-foreground text-sm'>分钟</span>
                 </div>
+                <FieldDescription>
+                  留空表示永久暂停，可随时手动恢复。
+                </FieldDescription>
               </Field>
             </FieldGroup>
             <DialogFooter>
@@ -952,18 +1005,25 @@ export function ChannelMonitorSmartScheduleBoard(
               <Button
                 disabled={
                   rateLimitCooldownMutation.isPending ||
-                  !Number.isInteger(Number(rateLimitDuration)) ||
-                  Number(rateLimitDuration) < 1 ||
-                  Number(rateLimitDuration) > MAX_RATE_LIMIT_COOLDOWN_MINUTES
+                  parseOptionalChannelMonitorSmartScheduleDuration(
+                    rateLimitDuration,
+                    MAX_RATE_LIMIT_COOLDOWN_MINUTES
+                  ) === undefined
                 }
-                onClick={() =>
+                onClick={() => {
+                  const durationMinutes =
+                    parseOptionalChannelMonitorSmartScheduleDuration(
+                      rateLimitDuration,
+                      MAX_RATE_LIMIT_COOLDOWN_MINUTES
+                    )
+                  if (durationMinutes === undefined) return
                   rateLimitCooldownMutation.mutate({
                     channelId: rateLimitTarget.channel_id,
                     group: rateLimitTarget.group,
                     model: rateLimitTarget.model,
-                    durationMinutes: Number(rateLimitDuration),
+                    durationMinutes,
                   })
-                }
+                }}
               >
                 {rateLimitCooldownMutation.isPending ? (
                   <Spinner data-icon='inline-start' />
@@ -994,14 +1054,14 @@ export function ChannelMonitorSmartScheduleBoard(
                 {primaryTarget.channel_name}{' '}
                 将在当前分组和模型中优先承接请求。固定期间仍会继续采集和计算评分；渠道禁用或退出参与仍会立即停止该路由接收请求。
                 {primaryTarget.state.manual_primary_until > 0
-                  ? ` 当前固定至 ${formatTimestampToDate(primaryTarget.state.manual_primary_until)}。`
+                  ? ` 当前固定至 ${formatChannelMonitorSmartScheduleUntil(primaryTarget.state.manual_primary_until)}。`
                   : null}
               </DialogDescription>
             </DialogHeader>
             <FieldGroup className='gap-3'>
               <Field>
                 <FieldLabel htmlFor='channel-monitor-manual-primary-duration'>
-                  固定时长
+                  固定时长（可选）
                 </FieldLabel>
                 <div className='flex items-center gap-2'>
                   <Input
@@ -1009,12 +1069,17 @@ export function ChannelMonitorSmartScheduleBoard(
                     type='number'
                     min={1}
                     max={525600}
+                    step={1}
+                    placeholder='留空表示永久'
                     value={primaryDuration}
                     onChange={(event) => setPrimaryDuration(event.target.value)}
                     aria-label='固定时长（分钟）'
                   />
                   <span className='text-muted-foreground text-sm'>分钟</span>
                 </div>
+                <FieldDescription>
+                  留空表示永久固定，可随时解除。
+                </FieldDescription>
               </Field>
               <ChannelMonitorSmartSchedulePrimaryStabilityField
                 checked={allowPrimaryStabilityDegrade}
@@ -1033,9 +1098,10 @@ export function ChannelMonitorSmartScheduleBoard(
               <Button
                 disabled={
                   primaryMutation.isPending ||
-                  !Number.isInteger(Number(primaryDuration)) ||
-                  Number(primaryDuration) < 1 ||
-                  Number(primaryDuration) > 525600
+                  parseOptionalChannelMonitorSmartScheduleDuration(
+                    primaryDuration,
+                    525600
+                  ) === undefined
                 }
                 onClick={submitPrimary}
               >
