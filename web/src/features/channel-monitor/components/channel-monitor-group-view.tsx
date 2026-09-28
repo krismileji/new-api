@@ -61,6 +61,7 @@ import type {
   ChannelMonitorGroupSuccessMetric,
   GroupMonitorItem,
 } from '../types'
+import { ChannelMonitorPrivate } from './channel-monitor-privacy'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 import { ChannelMonitorSuccessRateValue } from './channel-monitor-success-rate-value'
 
@@ -214,7 +215,9 @@ export function ChannelMonitorGroupView(props: ChannelMonitorGroupViewProps) {
                 <TableRow key={group.name}>
                   <TableCell>
                     <div className='flex min-w-36 flex-col gap-0.5'>
-                      <span className='font-medium'>{group.name}</span>
+                      <ChannelMonitorPrivate>
+                        <span className='font-medium'>{group.name}</span>
+                      </ChannelMonitorPrivate>
                       <span className='text-muted-foreground text-xs'>
                         {group.channels.length} 个渠道 · {enabledChannelCount}{' '}
                         个启用
@@ -222,16 +225,18 @@ export function ChannelMonitorGroupView(props: ChannelMonitorGroupViewProps) {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <div className='flex min-w-28 flex-col gap-0.5'>
-                      <span
-                        className={`font-mono font-semibold ${groupRatioClassName}`}
-                      >
-                        {formatMonitorRatio(group.ratio)}
-                      </span>
-                      <span className='text-muted-foreground text-xs'>
-                        系数 × {formatMonitorRatio(group.coefficient)}
-                      </span>
-                    </div>
+                    <ChannelMonitorPrivate>
+                      <div className='flex min-w-28 flex-col gap-0.5'>
+                        <span
+                          className={`font-mono font-semibold ${groupRatioClassName}`}
+                        >
+                          {formatMonitorRatio(group.ratio)}
+                        </span>
+                        <span className='text-muted-foreground text-xs'>
+                          系数 × {formatMonitorRatio(group.coefficient)}
+                        </span>
+                      </div>
+                    </ChannelMonitorPrivate>
                   </TableCell>
                   <TableCell>
                     <ChannelMonitorSuccessRateValue
@@ -264,59 +269,61 @@ export function ChannelMonitorGroupView(props: ChannelMonitorGroupViewProps) {
                     />
                   </TableCell>
                   <TableCell className='min-w-72 whitespace-normal'>
-                    {group.channels.length === 0 ? (
-                      <span className='text-muted-foreground'>-</span>
-                    ) : (
-                      <div className='flex max-h-36 flex-wrap content-start gap-1.5 overflow-y-auto overscroll-contain py-0.5 pr-1'>
-                        {groupEntry.channels.map((channel) => {
-                          const channelEnabled =
-                            channel.status === CHANNEL_STATUS.ENABLED
-                          const ratio = formatMonitorRatio(channel.cost_ratio)
-                          const upstreamRatio = formatMonitorRatio(
-                            channel.ratio
-                          )
-                          const conversionFactor = formatMonitorRatio(
-                            channel.conversion_factor
-                          )
+                    <ChannelMonitorPrivate>
+                      {group.channels.length === 0 ? (
+                        <span className='text-muted-foreground'>-</span>
+                      ) : (
+                        <div className='flex max-h-36 flex-wrap content-start gap-1.5 overflow-y-auto overscroll-contain py-0.5 pr-1'>
+                          {groupEntry.channels.map((channel) => {
+                            const channelEnabled =
+                              channel.status === CHANNEL_STATUS.ENABLED
+                            const ratio = formatMonitorRatio(channel.cost_ratio)
+                            const upstreamRatio = formatMonitorRatio(
+                              channel.ratio
+                            )
+                            const conversionFactor = formatMonitorRatio(
+                              channel.conversion_factor
+                            )
 
-                          return (
-                            <div
-                              key={channel.id}
-                              className='flex max-w-72 min-w-0 items-center gap-1'
-                            >
-                              <Badge
-                                variant={
-                                  channelEnabled ? 'secondary' : 'outline'
-                                }
-                                className='max-w-56'
-                                title={`${channel.name}（${getChannelMonitorStatusLabel(channel.status)}）：成本倍率 ${ratio}（上游 ${upstreamRatio} × 换算 ${conversionFactor}）`}
+                            return (
+                              <div
+                                key={channel.id}
+                                className='flex max-w-72 min-w-0 items-center gap-1'
                               >
-                                <span
-                                  className={cn(
-                                    'max-w-32 truncate',
-                                    !channelEnabled &&
-                                      'text-muted-foreground line-through'
-                                  )}
+                                <Badge
+                                  variant={
+                                    channelEnabled ? 'secondary' : 'outline'
+                                  }
+                                  className='max-w-56'
+                                  title={`${channel.name}（${getChannelMonitorStatusLabel(channel.status)}）：成本倍率 ${ratio}（上游 ${upstreamRatio} × 换算 ${conversionFactor}）`}
                                 >
-                                  {channel.name}
-                                </span>
-                                <span aria-hidden='true'>×</span>
-                                <span className='shrink-0 font-mono tabular-nums'>
-                                  {ratio}
-                                </span>
-                              </Badge>
-                              {!channelEnabled && (
-                                <ChannelMonitorStatusBadge
-                                  status={channel.status}
-                                  reason={channel.status_reason}
-                                  className='shrink-0'
-                                />
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    )}
+                                  <span
+                                    className={cn(
+                                      'max-w-32 truncate',
+                                      !channelEnabled &&
+                                        'text-muted-foreground line-through'
+                                    )}
+                                  >
+                                    {channel.name}
+                                  </span>
+                                  <span aria-hidden='true'>×</span>
+                                  <span className='shrink-0 font-mono tabular-nums'>
+                                    {ratio}
+                                  </span>
+                                </Badge>
+                                {!channelEnabled && (
+                                  <ChannelMonitorStatusBadge
+                                    status={channel.status}
+                                    reason={channel.status_reason}
+                                    className='shrink-0'
+                                  />
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </ChannelMonitorPrivate>
                   </TableCell>
                   <TableCell>
                     <div className='flex justify-end gap-0.5'>

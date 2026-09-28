@@ -36,6 +36,8 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
+import { ChannelMonitorPrivacyToggle } from './channel-monitor-privacy'
+
 type ChannelMonitorToolbarProps = {
   actions: {
     batchTest: () => void
@@ -178,6 +180,7 @@ export function ChannelMonitorToolbar(props: ChannelMonitorToolbarProps) {
         </DropdownMenu>
       </div>
       <div className='flex items-center gap-2'>
+        <ChannelMonitorPrivacyToggle />
         <Tooltip>
           <TooltipTrigger
             render={

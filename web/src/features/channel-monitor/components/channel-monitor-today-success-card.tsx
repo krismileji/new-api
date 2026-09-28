@@ -39,10 +39,12 @@ import {
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatTokens } from '@/features/rankings/lib/format'
 
+import { useChannelMonitorPrivacy } from '../hooks/use-channel-monitor-privacy'
 import type {
   ChannelMonitorSuccessAPIKeyMetric,
   ChannelMonitorTodaySuccessResult,
 } from '../types'
+import { ChannelMonitorPrivate } from './channel-monitor-privacy'
 
 type ChannelMonitorTodaySuccessCardProps = {
   result: ChannelMonitorTodaySuccessResult | undefined
@@ -89,6 +91,7 @@ function getAPIKeyOptionLabel(item: ChannelMonitorSuccessAPIKeyMetric) {
 export function ChannelMonitorTodaySuccessCard(
   props: ChannelMonitorTodaySuccessCardProps
 ) {
+  const privateMode = useChannelMonitorPrivacy()
   const summary = props.result?.summary
   const apiKeyItems = props.result?.api_key_items ?? EMPTY_API_KEY_ITEMS
   const [selectedAPIKeyValue, setSelectedAPIKeyValue] =
@@ -109,10 +112,11 @@ export function ChannelMonitorTodaySuccessCard(
   const effectiveAPIKeyValue = selectedAPIKeyMetric
     ? selectedAPIKeyValue
     : ALL_API_KEYS_VALUE
-  const cacheMetric = selectedAPIKeyMetric ?? summary
-  const cacheScopeLabel = selectedAPIKeyMetric
-    ? getAPIKeyName(selectedAPIKeyMetric)
-    : '全部 API Key'
+  const cacheMetric = privateMode ? summary : (selectedAPIKeyMetric ?? summary)
+  const cacheScopeLabel =
+    !privateMode && selectedAPIKeyMetric
+      ? getAPIKeyName(selectedAPIKeyMetric)
+      : '全部 API Key'
   const metricsAvailable = props.result?.success_metrics_available ?? false
   const successRate =
     !props.isLoading && !props.isError && metricsAvailable && summary
@@ -241,36 +245,44 @@ export function ChannelMonitorTodaySuccessCard(
           <span className='text-muted-foreground shrink-0 text-[11px] font-medium'>
             缓存口径
           </span>
-          <Select
-            items={apiKeyOptions}
-            value={effectiveAPIKeyValue}
-            disabled={
-              props.isLoading ||
-              props.isError ||
-              !metricsAvailable ||
-              apiKeyItems.length === 0
+          <ChannelMonitorPrivate
+            fallback={
+              <span className='text-muted-foreground text-xs'>
+                全部 API Key
+              </span>
             }
-            onValueChange={(value) => {
-              if (value) setSelectedAPIKeyValue(value)
-            }}
           >
-            <SelectTrigger
-              size='sm'
-              className='min-w-0 flex-1'
-              aria-label='选择缓存利用率 API Key'
+            <Select
+              items={apiKeyOptions}
+              value={effectiveAPIKeyValue}
+              disabled={
+                props.isLoading ||
+                props.isError ||
+                !metricsAvailable ||
+                apiKeyItems.length === 0
+              }
+              onValueChange={(value) => {
+                if (value) setSelectedAPIKeyValue(value)
+              }}
             >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent align='end' alignItemWithTrigger={false}>
-              <SelectGroup>
-                {apiKeyOptions.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+              <SelectTrigger
+                size='sm'
+                className='min-w-0 flex-1'
+                aria-label='选择缓存利用率 API Key'
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align='end' alignItemWithTrigger={false}>
+                <SelectGroup>
+                  {apiKeyOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </ChannelMonitorPrivate>
         </div>
       </CardFooter>
     </Card>

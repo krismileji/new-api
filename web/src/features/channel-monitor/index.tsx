@@ -93,6 +93,12 @@ import { ChannelMonitorOrderDialog } from './components/channel-monitor-order-di
 import { ChannelMonitorPageLayout } from './components/channel-monitor-page-layout'
 import { ChannelMonitorPerformanceCoverageAlert } from './components/channel-monitor-performance-coverage-alert'
 import { ChannelMonitorPerformanceRangeControl } from './components/channel-monitor-performance-range-control'
+import {
+  ChannelMonitorPrivate,
+  ChannelMonitorPrivacyDialogGuard,
+  ChannelMonitorPrivacyNotice,
+  ChannelMonitorPrivacyProvider,
+} from './components/channel-monitor-privacy'
 import { ChannelMonitorProfitValue } from './components/channel-monitor-profit'
 import {
   ChannelMonitorSettingsDialog,
@@ -113,6 +119,7 @@ import { EditGroupChannelsDialog } from './components/edit-group-channels-dialog
 import { EditGroupRatioDialog } from './components/edit-group-ratio-dialog'
 import { SyncGroupRatioDialog } from './components/sync-group-ratio-dialog'
 import { UpstreamConfigDialog } from './components/upstream-config-dialog'
+import { useChannelMonitorPrivacy } from './hooks/use-channel-monitor-privacy'
 import { useChannelMonitorTodayProfit } from './hooks/use-channel-monitor-profit'
 import { DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES } from './lib/email-notification'
 import { handleChannelMonitorMutationError } from './lib/error'
@@ -387,6 +394,15 @@ const CHANNEL_MONITOR_SORT_OPTIONS: Array<{
   { value: 'tps_asc', label: 'TPS：从低到高' },
 ]
 export function ChannelMonitor() {
+  return (
+    <ChannelMonitorPrivacyProvider>
+      <ChannelMonitorContent />
+    </ChannelMonitorPrivacyProvider>
+  )
+}
+
+function ChannelMonitorContent() {
+  const privateMode = useChannelMonitorPrivacy()
   const groupOrderQuery = useQuery({
     queryKey: ['user-groups'],
     queryFn: getUserGroups,
@@ -1159,50 +1175,66 @@ export function ChannelMonitor() {
             secondaryDescription={`New API ${newAPIChannelCount} · Sub2API ${sub2APIChannelCount} · 自定义 ${customUpstreamChannelCount}`}
             icon={Analytics01Icon}
           />
-          <MonitorStatCard
-            label='今日已结算成本'
-            value={
-              <div className='flex min-w-0 flex-col items-start gap-0.5'>
-                <div className='flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5'>
-                  {costQuery.isLoading && !todayCostSummary ? (
-                    <Skeleton className='h-7 w-24' aria-label='成本加载中' />
-                  ) : (
-                    <span>
-                      {formatChannelMonitorCost(
-                        todayCostOverview?.today_cost_cny
+          <ChannelMonitorPrivate
+            fallback={
+              <MonitorStatCard
+                label='今日成本与利润'
+                value='••••'
+                description='截图隐私模式已隐藏金额'
+                icon={MoneyBag02Icon}
+              />
+            }
+          >
+            <MonitorStatCard
+              label='今日已结算成本'
+              value={
+                <div className='flex min-w-0 flex-col items-start gap-0.5'>
+                  <div className='flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5'>
+                    {costQuery.isLoading && !todayCostSummary ? (
+                      <Skeleton className='h-7 w-24' aria-label='成本加载中' />
+                    ) : (
+                      <span>
+                        {formatChannelMonitorCost(
+                          todayCostOverview?.today_cost_cny
+                        )}
+                      </span>
+                    )}
+                    <span className='inline-flex items-baseline gap-1 text-base font-normal'>
+                      <span className='text-muted-foreground text-xs'>
+                        利润
+                      </span>
+                      {profitQuery.isLoading && !profitOverview ? (
+                        <Skeleton
+                          className='h-5 w-16'
+                          aria-label='利润加载中'
+                        />
+                      ) : (
+                        <ChannelMonitorProfitValue
+                          summary={profitOverview?.scope_summary}
+                          className='text-base font-normal'
+                        />
                       )}
                     </span>
-                  )}
-                  <span className='inline-flex items-baseline gap-1 text-base font-normal'>
-                    <span className='text-muted-foreground text-xs'>利润</span>
-                    {profitQuery.isLoading && !profitOverview ? (
-                      <Skeleton className='h-5 w-16' aria-label='利润加载中' />
-                    ) : (
-                      <ChannelMonitorProfitValue
-                        summary={profitOverview?.scope_summary}
-                        className='text-base font-normal'
-                      />
-                    )}
+                  </div>
+                  <span className='text-muted-foreground text-xs font-normal'>
+                    扣费{' '}
+                    {formatProfitMoney(
+                      profitOverview?.scope_summary.income_nano_cny
+                    )}{' '}
+                    · 利润率 {formatProfitRate(profitOverview?.scope_summary)}
+                    {profitQuery.isError && !profitOverview
+                      ? ' · 利润加载失败'
+                      : ''}
                   </span>
                 </div>
-                <span className='text-muted-foreground text-xs font-normal'>
-                  扣费{' '}
-                  {formatProfitMoney(
-                    profitOverview?.scope_summary.income_nano_cny
-                  )}{' '}
-                  · 利润率 {formatProfitRate(profitOverview?.scope_summary)}
-                  {profitQuery.isError && !profitOverview
-                    ? ' · 利润加载失败'
-                    : ''}
-                </span>
-              </div>
-            }
-            description={costDescription}
-            secondaryDescription={costSecondaryDescription}
-            icon={MoneyBag02Icon}
-            ariaLabel='查看今日成本与利润'
-            onClick={() => openProfitHistory()}
-          />
+              }
+              description={costDescription}
+              secondaryDescription={costSecondaryDescription}
+              icon={MoneyBag02Icon}
+              ariaLabel='查看今日成本与利润'
+              onClick={() => openProfitHistory()}
+            />
+          </ChannelMonitorPrivate>
           <ChannelMonitorTodaySuccessCard
             result={todaySuccessQuery.data?.data}
             isLoading={todaySuccessQuery.isLoading}
@@ -1273,68 +1305,77 @@ export function ChannelMonitor() {
 
                 {view === 'channels' && (
                   <div className='flex w-full flex-col gap-2 sm:w-auto sm:flex-row'>
-                    <Select
-                      items={smartScheduleDisplayGroups}
-                      value={activeSmartScheduleDisplayGroup || null}
-                      onValueChange={(value) => {
-                        if (value === null) return
-                        const nextModel =
-                          smartScheduleDisplayModelsByGroup.get(value)?.[0] ??
-                          ''
-                        saveSmartScheduleDisplaySelection({
-                          group: value,
-                          model: nextModel,
-                        })
-                      }}
-                    >
-                      <SelectTrigger
-                        className='w-full sm:w-48'
-                        aria-label='选择智能调度分组'
-                        disabled={smartScheduleDisplayGroups.length === 0}
+                    <ChannelMonitorPrivate>
+                      <Select
+                        items={smartScheduleDisplayGroups}
+                        value={activeSmartScheduleDisplayGroup || null}
+                        onValueChange={(value) => {
+                          if (value === null) return
+                          const nextModel =
+                            smartScheduleDisplayModelsByGroup.get(value)?.[0] ??
+                            ''
+                          saveSmartScheduleDisplaySelection({
+                            group: value,
+                            model: nextModel,
+                          })
+                        }}
                       >
-                        <SelectValue placeholder='选择分组' />
-                      </SelectTrigger>
-                      <SelectContent alignItemWithTrigger={false}>
-                        <SelectGroup>
-                          {smartScheduleDisplayGroups.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                    <Select
-                      items={activeSmartScheduleDisplayModels.map((model) => ({
-                        value: model,
-                        label: model,
-                      }))}
-                      value={activeSmartScheduleDisplayModel || null}
-                      onValueChange={(value) => {
-                        if (value === null) return
-                        saveSmartScheduleDisplaySelection({
-                          group: activeSmartScheduleDisplayGroup,
-                          model: value,
-                        })
-                      }}
-                    >
-                      <SelectTrigger
-                        className='w-full sm:w-60'
-                        aria-label='选择智能调度模型'
-                        disabled={activeSmartScheduleDisplayModels.length === 0}
+                        <SelectTrigger
+                          className='w-full sm:w-48'
+                          aria-label='选择智能调度分组'
+                          disabled={smartScheduleDisplayGroups.length === 0}
+                        >
+                          <SelectValue placeholder='选择分组' />
+                        </SelectTrigger>
+                        <SelectContent alignItemWithTrigger={false}>
+                          <SelectGroup>
+                            {smartScheduleDisplayGroups.map((option) => (
+                              <SelectItem
+                                key={option.value}
+                                value={option.value}
+                              >
+                                {option.label}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                      <Select
+                        items={activeSmartScheduleDisplayModels.map(
+                          (model) => ({
+                            value: model,
+                            label: model,
+                          })
+                        )}
+                        value={activeSmartScheduleDisplayModel || null}
+                        onValueChange={(value) => {
+                          if (value === null) return
+                          saveSmartScheduleDisplaySelection({
+                            group: activeSmartScheduleDisplayGroup,
+                            model: value,
+                          })
+                        }}
                       >
-                        <SelectValue placeholder='选择模型' />
-                      </SelectTrigger>
-                      <SelectContent alignItemWithTrigger={false}>
-                        <SelectGroup>
-                          {activeSmartScheduleDisplayModels.map((model) => (
-                            <SelectItem key={model} value={model}>
-                              {model}
-                            </SelectItem>
-                          ))}
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
+                        <SelectTrigger
+                          className='w-full sm:w-60'
+                          aria-label='选择智能调度模型'
+                          disabled={
+                            activeSmartScheduleDisplayModels.length === 0
+                          }
+                        >
+                          <SelectValue placeholder='选择模型' />
+                        </SelectTrigger>
+                        <SelectContent alignItemWithTrigger={false}>
+                          <SelectGroup>
+                            {activeSmartScheduleDisplayModels.map((model) => (
+                              <SelectItem key={model} value={model}>
+                                {model}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        </SelectContent>
+                      </Select>
+                    </ChannelMonitorPrivate>
                     <Select
                       items={CHANNEL_MONITOR_SORT_OPTIONS}
                       value={channelSortMode}
@@ -1422,21 +1463,23 @@ export function ChannelMonitor() {
                   onApply={applyPerformanceRange}
                 />
 
-                <InputGroup className='w-full sm:max-w-sm'>
-                  <InputGroupAddon>
-                    <HugeiconsIcon icon={Search01Icon} />
-                  </InputGroupAddon>
-                  <InputGroupInput
-                    value={search}
-                    onChange={(event) => setSearch(event.target.value)}
-                    placeholder={
-                      view === 'models' ? '搜索渠道' : '搜索渠道或分组'
-                    }
-                    aria-label={
-                      view === 'models' ? '搜索渠道' : '搜索渠道或分组'
-                    }
-                  />
-                </InputGroup>
+                <ChannelMonitorPrivate>
+                  <InputGroup className='w-full sm:max-w-sm'>
+                    <InputGroupAddon>
+                      <HugeiconsIcon icon={Search01Icon} />
+                    </InputGroupAddon>
+                    <InputGroupInput
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder={
+                        view === 'models' ? '搜索渠道' : '搜索渠道或分组'
+                      }
+                      aria-label={
+                        view === 'models' ? '搜索渠道' : '搜索渠道或分组'
+                      }
+                    />
+                  </InputGroup>
+                </ChannelMonitorPrivate>
               </div>
             ) : null}
           </div>
@@ -1444,11 +1487,13 @@ export function ChannelMonitor() {
           {view !== 'smart-schedule' &&
           view !== 'status-probe' &&
           view !== 'model-detection' ? (
-            <ChannelMonitorPerformanceCoverageAlert
-              coverage={performanceQuery.data?.data.metric_coverage}
-              metadata={performanceQuery.data?.data}
-              rangeLabel={performanceRangeLabel}
-            />
+            <ChannelMonitorPrivate fallback={null}>
+              <ChannelMonitorPerformanceCoverageAlert
+                coverage={performanceQuery.data?.data.metric_coverage}
+                metadata={performanceQuery.data?.data}
+                rangeLabel={performanceRangeLabel}
+              />
+            </ChannelMonitorPrivate>
           ) : null}
 
           <TabsContent value='channels'>
@@ -1595,78 +1640,90 @@ export function ChannelMonitor() {
             />
           </TabsContent>
           <TabsContent value='status-probe'>
-            {view === 'status-probe' && (
-              <ChannelPassiveMonitorPanel scope='status' />
-            )}
-            {view === 'status-probe' && (
-              <Suspense
-                fallback={
-                  <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
-                    {Array.from({ length: 6 }, (_, index) => (
-                      <Skeleton key={index} className='h-[25rem] rounded-lg' />
-                    ))}
-                  </div>
-                }
-              >
-                <LazyChannelStatusProbeView
-                  channelOrder={channelDisplayOrder}
-                  groupOrder={groupOrder}
-                  onActionComplete={refreshChannelMonitorAfterAction}
-                />
-              </Suspense>
-            )}
+            <ChannelMonitorPrivate fallback={<ChannelMonitorPrivacyNotice />}>
+              {view === 'status-probe' && (
+                <ChannelPassiveMonitorPanel scope='status' />
+              )}
+              {view === 'status-probe' && (
+                <Suspense
+                  fallback={
+                    <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
+                      {Array.from({ length: 6 }, (_, index) => (
+                        <Skeleton
+                          key={index}
+                          className='h-[25rem] rounded-lg'
+                        />
+                      ))}
+                    </div>
+                  }
+                >
+                  <LazyChannelStatusProbeView
+                    channelOrder={channelDisplayOrder}
+                    groupOrder={groupOrder}
+                    onActionComplete={refreshChannelMonitorAfterAction}
+                  />
+                </Suspense>
+              )}
+            </ChannelMonitorPrivate>
           </TabsContent>
           <TabsContent value='model-detection'>
-            {view === 'model-detection' && (
-              <Suspense
-                fallback={
-                  <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
-                    {Array.from({ length: 6 }, (_, index) => (
-                      <Skeleton key={index} className='h-[25rem] rounded-lg' />
-                    ))}
-                  </div>
-                }
-              >
-                <LazyChannelModelDetectionView
-                  channelOrder={channelDisplayOrder}
-                  groupOrder={groupOrder}
-                  onActionComplete={refreshChannelMonitorAfterAction}
-                  overview={modelDetectionQuery.data?.data}
-                  loading={modelDetectionQuery.isLoading}
-                  refreshing={modelDetectionQuery.isFetching}
-                  error={
-                    modelDetectionQuery.isError
-                      ? '模型检测数据加载失败，请稍后重试'
-                      : null
+            <ChannelMonitorPrivate fallback={<ChannelMonitorPrivacyNotice />}>
+              {view === 'model-detection' && (
+                <Suspense
+                  fallback={
+                    <div className='grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3'>
+                      {Array.from({ length: 6 }, (_, index) => (
+                        <Skeleton
+                          key={index}
+                          className='h-[25rem] rounded-lg'
+                        />
+                      ))}
+                    </div>
                   }
-                  onRefresh={() => {
-                    void modelDetectionQuery.refetch()
-                  }}
-                />
-              </Suspense>
-            )}
+                >
+                  <LazyChannelModelDetectionView
+                    channelOrder={channelDisplayOrder}
+                    groupOrder={groupOrder}
+                    onActionComplete={refreshChannelMonitorAfterAction}
+                    overview={modelDetectionQuery.data?.data}
+                    loading={modelDetectionQuery.isLoading}
+                    refreshing={modelDetectionQuery.isFetching}
+                    error={
+                      modelDetectionQuery.isError
+                        ? '模型检测数据加载失败，请稍后重试'
+                        : null
+                    }
+                    onRefresh={() => {
+                      void modelDetectionQuery.refetch()
+                    }}
+                  />
+                </Suspense>
+              )}
+            </ChannelMonitorPrivate>
           </TabsContent>
           <TabsContent value='smart-schedule'>
-            <ChannelMonitorSmartScheduleBoard
-              active={view === 'smart-schedule'}
-              result={smartScheduleResult}
-              channels={orderedChannels}
-              groupPolicies={settings.smart_schedule_group_policies}
-              groupRatios={groupRatios}
-              groupOrder={groupOrder}
-              isLoading={smartScheduleDetailQuery.isLoading}
-              isError={smartScheduleDetailQuery.isError}
-              selection={{
-                group: activeSmartScheduleDisplayGroup,
-                model: activeSmartScheduleDisplayModel,
-              }}
-              onSelectionChange={saveSmartScheduleDisplaySelection}
-              onOpenHistory={() => {
-                setSmartScheduleHistoryOpen(true)
-              }}
-              onActionComplete={refreshChannelMonitorAfterAction}
-              onOpenSettings={openSmartScheduleSettings}
-            />
+            <ChannelMonitorPrivate fallback={<ChannelMonitorPrivacyNotice />}>
+              <ChannelMonitorSmartScheduleBoard
+                active={view === 'smart-schedule'}
+                result={smartScheduleResult}
+                channels={orderedChannels}
+                groupPolicies={settings.smart_schedule_group_policies}
+                groupRatios={groupRatios}
+                groupOrder={groupOrder}
+                isLoading={smartScheduleDetailQuery.isLoading}
+                isError={smartScheduleDetailQuery.isError}
+                selection={{
+                  group: activeSmartScheduleDisplayGroup,
+                  model: activeSmartScheduleDisplayModel,
+                }}
+                onSelectionChange={saveSmartScheduleDisplaySelection}
+                onOpenHistory={() => {
+                  setSmartScheduleHistoryOpen(true)
+                }}
+                onActionComplete={refreshChannelMonitorAfterAction}
+                onOpenSettings={openSmartScheduleSettings}
+              />
+            </ChannelMonitorPrivate>
           </TabsContent>
         </Tabs>
       </div>
@@ -1713,232 +1770,283 @@ export function ChannelMonitor() {
           />
         }
         realtimeStatus={
-          <ChannelMonitorHealthStatus metadata={pageRealtimeMetadata} />
+          <ChannelMonitorPrivate fallback={null}>
+            <ChannelMonitorHealthStatus metadata={pageRealtimeMetadata} />
+          </ChannelMonitorPrivate>
         }
       >
+        {privateMode ? (
+          <p role='status' className='text-muted-foreground text-xs'>
+            截图隐私模式已开启：敏感信息及详情已隐藏，开关状态仅保存在当前浏览器。
+          </p>
+        ) : null}
         {pageContent}
       </ChannelMonitorPageLayout>
 
-      {dialogChannel && channelDialog?.type === 'concurrency' && (
-        <EditChannelConcurrencyLimitDialog
-          key={dialogChannel.id}
-          channel={dialogChannel}
-          open
-          onOpenChange={(open) => {
-            if (!open) setChannelDialog(null)
-          }}
-        />
-      )}
-      {dialogChannel && channelDialog?.type === 'groups' && (
-        <EditChannelGroupsDialog
-          key={dialogChannel.id}
-          channel={dialogChannel}
-          groupOrder={groupOrder}
-          open
-          onOpenChange={(open) => {
-            if (!open) setChannelDialog(null)
-          }}
-        />
-      )}
-      {dialogChannel && channelDialog?.type === 'upstream' && (
-        <UpstreamConfigDialog
-          onManageAccounts={() => {
-            setChannelDialog(null)
-            setUpstreamAccountsOpen(true)
-          }}
-          key={dialogChannel.id}
-          channel={dialogChannel}
-          open
-          onOpenChange={(open) => {
-            if (!open) setChannelDialog(null)
-          }}
-        />
-      )}
-      {dialogChannel && channelDialog?.type === 'history' && (
-        <ChannelRatioHistoryDialog
-          key={dialogChannel.id}
-          channel={dialogChannel}
-          open
-          onOpenChange={(open) => {
-            if (!open) setChannelDialog(null)
-          }}
-        />
-      )}
-      {dialogChannel && channelDialog?.type === 'connection_test' && (
-        <ChannelTestDialogForChannel
-          channel={dialogChannel}
-          open
-          onOpenChange={(open) => {
-            if (!open) setChannelDialog(null)
-          }}
-          onTestComplete={refreshChannelMonitorAfterAction}
-          footerActions={<ChannelProbePolicyAction channel={dialogChannel} />}
-        />
-      )}
-      {editingGroup && (
-        <EditGroupRatioDialog
-          key={editingGroup.name}
-          group={editingGroup}
-          open
-          onOpenChange={(open) => {
-            if (!open) setEditingGroup(null)
-          }}
-        />
-      )}
-      {editingGroupChannels && (
-        <EditGroupChannelsDialog
-          key={editingGroupChannels.name}
-          group={editingGroupChannels}
-          channels={channels}
-          open
-          onOpenChange={(open) => {
-            if (!open) setEditingGroupChannels(null)
-          }}
-        />
-      )}
-      {syncingGroup && (
-        <SyncGroupRatioDialog
-          key={`${syncingGroup.name}:${syncingGroup.coefficient}`}
-          group={syncingGroup}
-          open
-          onOpenChange={(open) => {
-            if (!open) setSyncingGroup(null)
-          }}
-        />
-      )}
-      {automationsOpen && (
-        <Suspense fallback={null}>
-          <LazyUpstreamAutomationsDialog
-            channels={channels}
-            onOpenChange={setAutomationsOpen}
-          />
-        </Suspense>
-      )}
-      {upstreamAccountsOpen && (
-        <Suspense fallback={null}>
-          <LazyUpstreamAccountsDialog
-            channels={channels}
-            onOpenChange={setUpstreamAccountsOpen}
-          />
-        </Suspense>
-      )}
-      {variableGroupsOpen && (
-        <ChannelMonitorVariableGroupsDialog
-          onOpenChange={setVariableGroupsOpen}
-        />
-      )}
-      {limitGroupsOpen && (
-        <Suspense fallback={null}>
-          <ChannelLimitGroupsDialog
-            channels={channels}
-            onOpenChange={setLimitGroupsOpen}
-          />
-        </Suspense>
-      )}
-      {tokenProtectionOpen && (
-        <Suspense fallback={null}>
-          <LazyTokenProtectionDialog onOpenChange={setTokenProtectionOpen} />
-        </Suspense>
-      )}
-      {settingsOpen && (
-        <ChannelMonitorSettingsDialog
-          key={`${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${autoUpdateRetryDelaySeconds}:${settings.upstream_request_timeout_seconds ?? DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS}:${autoUpdateConsecutiveFailureLimit}:${settings.sync_failure_alert_threshold ?? DEFAULT_SYNC_FAILURE_ALERT_THRESHOLD}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.route_metric_retention_days}:${settings.duration_bucket_retention_days}:${settings.daily_metric_retention_days}:${settings.execution_detail_retention_days}:${settings.task_retention_days}:${settings.ratio_monitor_task_retention_days}:${settings.smart_schedule_task_retention_days}:${settings.smart_schedule_probe_task_retention_days}:${settings.cleanup_task_retention_days}:${settings.model_detection_task_retention_days}:${settings.channel_test_task_retention_days}:${settings.model_update_task_retention_days}:${settings.task_keep_latest_count}:${settings.ratio_history_retention_days}:${settings.status_probe_history_retention_days}:${settings.group_monitor_retention_days}:${settings.model_detection_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.email_notification_types.join(',')}:${settings.error_message_mapping}:${settings.error_message_whitelist ?? ''}:${settings.error_message_keywords}:${settings.probe_response_enabled}:${settings.probe_response_allowed_ips ?? ''}:${settings.probe_response_match_input ?? DEFAULT_PROBE_RESPONSE_MATCH_INPUT}:${settings.probe_response_text ?? DEFAULT_PROBE_RESPONSE_TEXT}:${settings.probe_response_min_delay_ms ?? DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS}:${settings.probe_response_max_delay_ms ?? DEFAULT_PROBE_RESPONSE_MAX_DELAY_MS}:${settings.probe_response_input_tokens ?? DEFAULT_PROBE_RESPONSE_INPUT_TOKENS}:${settings.probe_response_cache_write_tokens ?? DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS}:${settings.probe_response_cached_tokens ?? DEFAULT_PROBE_RESPONSE_CACHED_TOKENS}:${settings.probe_response_output_tokens ?? DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS}`}
-          settings={settings}
-          open
-          onOpenChange={setSettingsOpen}
-        />
-      )}
-      {groupMonitorSettingsOpen && (
-        <ChannelGroupMonitorSettingsSheet
-          data={groupMonitorSettingsQuery.data?.data}
-          groupOrder={groupOrder}
-          open
-          onOpenChange={setGroupMonitorSettingsOpen}
-        />
-      )}
-      {smartScheduleSettingsMounted && (
-        <ChannelMonitorSmartScheduleSettingsSheet
-          settings={settings}
-          modelOptionsByGroup={smartScheduleModelOptionsByGroup}
-          groupOptions={groups.map((group) => group.name)}
-          open={smartScheduleSettingsOpen}
-          onOpenChange={setSmartScheduleSettingsOpen}
-          onOpenChangeComplete={(open) => {
-            if (!open) setSmartScheduleSettingsMounted(false)
-          }}
-        />
-      )}
-      {taskHistoryOpen && (
-        <Suspense fallback={null}>
-          <LazyChannelMonitorTaskHistoryDialog
+      <ChannelMonitorPrivacyDialogGuard
+        open={Boolean(
+          channelDialog ||
+          editingGroup ||
+          editingGroupChannels ||
+          syncingGroup ||
+          automationsOpen ||
+          upstreamAccountsOpen ||
+          variableGroupsOpen ||
+          limitGroupsOpen ||
+          tokenProtectionOpen ||
+          settingsOpen ||
+          groupMonitorSettingsOpen ||
+          smartScheduleSettingsOpen ||
+          taskHistoryOpen ||
+          smartScheduleHistoryOpen ||
+          analyticsOpen ||
+          batchTestOpen ||
+          orderDialogOpen
+        )}
+        onClose={() => {
+          setChannelDialog(null)
+          setEditingGroup(null)
+          setEditingGroupChannels(null)
+          setSyncingGroup(null)
+          setAutomationsOpen(false)
+          setUpstreamAccountsOpen(false)
+          setVariableGroupsOpen(false)
+          setLimitGroupsOpen(false)
+          setTokenProtectionOpen(false)
+          setSettingsOpen(false)
+          setGroupMonitorSettingsOpen(false)
+          setSmartScheduleSettingsOpen(false)
+          setSmartScheduleSettingsMounted(false)
+          setTaskHistoryOpen(false)
+          setSmartScheduleHistoryOpen(false)
+          setAnalyticsOpen(false)
+          setAnalyticsChannelId(undefined)
+          setAnalyticsDetailTarget(null)
+          setBatchTestOpen(false)
+          setOrderDialogOpen(false)
+        }}
+      >
+        {dialogChannel && channelDialog?.type === 'concurrency' && (
+          <EditChannelConcurrencyLimitDialog
+            key={dialogChannel.id}
+            channel={dialogChannel}
             open
-            onOpenChange={setTaskHistoryOpen}
+            onOpenChange={(open) => {
+              if (!open) setChannelDialog(null)
+            }}
           />
-        </Suspense>
-      )}
-      {smartScheduleHistoryOpen && (
-        <Suspense fallback={null}>
-          <LazyChannelMonitorSmartScheduleExecutionDialog
-            open
-            onOpenChange={setSmartScheduleHistoryOpen}
+        )}
+        {dialogChannel && channelDialog?.type === 'groups' && (
+          <EditChannelGroupsDialog
+            key={dialogChannel.id}
+            channel={dialogChannel}
             groupOrder={groupOrder}
-            modelsByGroup={smartScheduleDisplayModelsByGroup}
-            selection={smartScheduleDisplaySelection}
-            onSelectionChange={saveSmartScheduleDisplaySelection}
-          />
-        </Suspense>
-      )}
-      {analyticsOpen && (
-        <ChannelMonitorAnalyticsDialog
-          open
-          metric={analyticsMetric}
-          channels={channels}
-          initialChannelId={analyticsChannelId}
-          initialModel={
-            analyticsDetailTarget?.scope === 'channel'
-              ? analyticsDetailTarget.modelName
-              : undefined
-          }
-          initialGroup={
-            analyticsDetailTarget?.scope === 'group'
-              ? analyticsDetailTarget.groupName
-              : undefined
-          }
-          rangeMinutes={
-            analyticsDetailTarget ? performanceRangeMinutes : undefined
-          }
-          successMode={analyticsDetailTarget?.mode}
-          onOpenChange={(open) => {
-            setAnalyticsOpen(open)
-            if (!open) {
-              setAnalyticsChannelId(undefined)
-              setAnalyticsDetailTarget(null)
-            }
-          }}
-        />
-      )}
-      {batchTestOpen && (
-        <Suspense fallback={null}>
-          <LazyChannelBatchTestDialog
             open
-            channels={channels}
-            modelSelectionMode='single'
-            selectAllMode='all'
-            enableRepeatMode
-            onOpenChange={setBatchTestOpen}
-            onTestComplete={refreshChannelMonitorAfterAction}
+            onOpenChange={(open) => {
+              if (!open) setChannelDialog(null)
+            }}
           />
-        </Suspense>
-      )}
-      {orderDialogOpen && (
-        <ChannelMonitorOrderDialog
-          key={`${channels.length}:${channelOrder.join(',')}`}
-          channels={channels}
-          channelOrder={channelOrder}
-          open
-          onOpenChange={setOrderDialogOpen}
-        />
-      )}
+        )}
+        {dialogChannel && channelDialog?.type === 'upstream' && (
+          <UpstreamConfigDialog
+            onManageAccounts={() => {
+              setChannelDialog(null)
+              setUpstreamAccountsOpen(true)
+            }}
+            key={dialogChannel.id}
+            channel={dialogChannel}
+            open
+            onOpenChange={(open) => {
+              if (!open) setChannelDialog(null)
+            }}
+          />
+        )}
+        {dialogChannel && channelDialog?.type === 'history' && (
+          <ChannelRatioHistoryDialog
+            key={dialogChannel.id}
+            channel={dialogChannel}
+            open
+            onOpenChange={(open) => {
+              if (!open) setChannelDialog(null)
+            }}
+          />
+        )}
+        {dialogChannel && channelDialog?.type === 'connection_test' && (
+          <ChannelTestDialogForChannel
+            channel={dialogChannel}
+            open
+            onOpenChange={(open) => {
+              if (!open) setChannelDialog(null)
+            }}
+            onTestComplete={refreshChannelMonitorAfterAction}
+            footerActions={<ChannelProbePolicyAction channel={dialogChannel} />}
+          />
+        )}
+        {editingGroup && (
+          <EditGroupRatioDialog
+            key={editingGroup.name}
+            group={editingGroup}
+            open
+            onOpenChange={(open) => {
+              if (!open) setEditingGroup(null)
+            }}
+          />
+        )}
+        {editingGroupChannels && (
+          <EditGroupChannelsDialog
+            key={editingGroupChannels.name}
+            group={editingGroupChannels}
+            channels={channels}
+            open
+            onOpenChange={(open) => {
+              if (!open) setEditingGroupChannels(null)
+            }}
+          />
+        )}
+        {syncingGroup && (
+          <SyncGroupRatioDialog
+            key={`${syncingGroup.name}:${syncingGroup.coefficient}`}
+            group={syncingGroup}
+            open
+            onOpenChange={(open) => {
+              if (!open) setSyncingGroup(null)
+            }}
+          />
+        )}
+        {automationsOpen && (
+          <Suspense fallback={null}>
+            <LazyUpstreamAutomationsDialog
+              channels={channels}
+              onOpenChange={setAutomationsOpen}
+            />
+          </Suspense>
+        )}
+        {upstreamAccountsOpen && (
+          <Suspense fallback={null}>
+            <LazyUpstreamAccountsDialog
+              channels={channels}
+              onOpenChange={setUpstreamAccountsOpen}
+            />
+          </Suspense>
+        )}
+        {variableGroupsOpen && (
+          <ChannelMonitorVariableGroupsDialog
+            onOpenChange={setVariableGroupsOpen}
+          />
+        )}
+        {limitGroupsOpen && (
+          <Suspense fallback={null}>
+            <ChannelLimitGroupsDialog
+              channels={channels}
+              onOpenChange={setLimitGroupsOpen}
+            />
+          </Suspense>
+        )}
+        {tokenProtectionOpen && (
+          <Suspense fallback={null}>
+            <LazyTokenProtectionDialog onOpenChange={setTokenProtectionOpen} />
+          </Suspense>
+        )}
+        {settingsOpen && (
+          <ChannelMonitorSettingsDialog
+            key={`${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${autoUpdateRetryDelaySeconds}:${settings.upstream_request_timeout_seconds ?? DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS}:${autoUpdateConsecutiveFailureLimit}:${settings.sync_failure_alert_threshold ?? DEFAULT_SYNC_FAILURE_ALERT_THRESHOLD}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.route_metric_retention_days}:${settings.duration_bucket_retention_days}:${settings.daily_metric_retention_days}:${settings.execution_detail_retention_days}:${settings.task_retention_days}:${settings.ratio_monitor_task_retention_days}:${settings.smart_schedule_task_retention_days}:${settings.smart_schedule_probe_task_retention_days}:${settings.cleanup_task_retention_days}:${settings.model_detection_task_retention_days}:${settings.channel_test_task_retention_days}:${settings.model_update_task_retention_days}:${settings.task_keep_latest_count}:${settings.ratio_history_retention_days}:${settings.status_probe_history_retention_days}:${settings.group_monitor_retention_days}:${settings.model_detection_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.email_notification_types.join(',')}:${settings.error_message_mapping}:${settings.error_message_whitelist ?? ''}:${settings.error_message_keywords}:${settings.probe_response_enabled}:${settings.probe_response_allowed_ips ?? ''}:${settings.probe_response_match_input ?? DEFAULT_PROBE_RESPONSE_MATCH_INPUT}:${settings.probe_response_text ?? DEFAULT_PROBE_RESPONSE_TEXT}:${settings.probe_response_min_delay_ms ?? DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS}:${settings.probe_response_max_delay_ms ?? DEFAULT_PROBE_RESPONSE_MAX_DELAY_MS}:${settings.probe_response_input_tokens ?? DEFAULT_PROBE_RESPONSE_INPUT_TOKENS}:${settings.probe_response_cache_write_tokens ?? DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS}:${settings.probe_response_cached_tokens ?? DEFAULT_PROBE_RESPONSE_CACHED_TOKENS}:${settings.probe_response_output_tokens ?? DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS}`}
+            settings={settings}
+            open
+            onOpenChange={setSettingsOpen}
+          />
+        )}
+        {groupMonitorSettingsOpen && (
+          <ChannelGroupMonitorSettingsSheet
+            data={groupMonitorSettingsQuery.data?.data}
+            groupOrder={groupOrder}
+            open
+            onOpenChange={setGroupMonitorSettingsOpen}
+          />
+        )}
+        {smartScheduleSettingsMounted && (
+          <ChannelMonitorSmartScheduleSettingsSheet
+            settings={settings}
+            modelOptionsByGroup={smartScheduleModelOptionsByGroup}
+            groupOptions={groups.map((group) => group.name)}
+            open={smartScheduleSettingsOpen}
+            onOpenChange={setSmartScheduleSettingsOpen}
+            onOpenChangeComplete={(open) => {
+              if (!open) setSmartScheduleSettingsMounted(false)
+            }}
+          />
+        )}
+        {taskHistoryOpen && (
+          <Suspense fallback={null}>
+            <LazyChannelMonitorTaskHistoryDialog
+              open
+              onOpenChange={setTaskHistoryOpen}
+            />
+          </Suspense>
+        )}
+        {smartScheduleHistoryOpen && (
+          <Suspense fallback={null}>
+            <LazyChannelMonitorSmartScheduleExecutionDialog
+              open
+              onOpenChange={setSmartScheduleHistoryOpen}
+              groupOrder={groupOrder}
+              modelsByGroup={smartScheduleDisplayModelsByGroup}
+              selection={smartScheduleDisplaySelection}
+              onSelectionChange={saveSmartScheduleDisplaySelection}
+            />
+          </Suspense>
+        )}
+        {analyticsOpen && (
+          <ChannelMonitorAnalyticsDialog
+            open
+            metric={analyticsMetric}
+            channels={channels}
+            initialChannelId={analyticsChannelId}
+            initialModel={
+              analyticsDetailTarget?.scope === 'channel'
+                ? analyticsDetailTarget.modelName
+                : undefined
+            }
+            initialGroup={
+              analyticsDetailTarget?.scope === 'group'
+                ? analyticsDetailTarget.groupName
+                : undefined
+            }
+            rangeMinutes={
+              analyticsDetailTarget ? performanceRangeMinutes : undefined
+            }
+            successMode={analyticsDetailTarget?.mode}
+            onOpenChange={(open) => {
+              setAnalyticsOpen(open)
+              if (!open) {
+                setAnalyticsChannelId(undefined)
+                setAnalyticsDetailTarget(null)
+              }
+            }}
+          />
+        )}
+        {batchTestOpen && (
+          <Suspense fallback={null}>
+            <LazyChannelBatchTestDialog
+              open
+              channels={channels}
+              modelSelectionMode='single'
+              selectAllMode='all'
+              enableRepeatMode
+              onOpenChange={setBatchTestOpen}
+              onTestComplete={refreshChannelMonitorAfterAction}
+            />
+          </Suspense>
+        )}
+        {orderDialogOpen && (
+          <ChannelMonitorOrderDialog
+            key={`${channels.length}:${channelOrder.join(',')}`}
+            channels={channels}
+            channelOrder={channelOrder}
+            open
+            onOpenChange={setOrderDialogOpen}
+          />
+        )}
+      </ChannelMonitorPrivacyDialogGuard>
     </>
   )
 }

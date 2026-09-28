@@ -4,12 +4,16 @@ import type { ReactNode } from 'react'
 
 import { Button } from '@/components/ui/button'
 
+import { useChannelMonitorPrivacy } from '../hooks/use-channel-monitor-privacy'
+
 export function ChannelMonitorPerformanceDetailButton(props: {
   children: ReactNode
   label: string
   onClick: () => void
   disabled?: boolean
 }) {
+  const privateMode = useChannelMonitorPrivacy()
+  const label = privateMode ? '查看性能明细' : props.label
   return (
     <Button
       type='button'
@@ -17,9 +21,9 @@ export function ChannelMonitorPerformanceDetailButton(props: {
       className='h-auto min-w-0 justify-start gap-1 px-1 py-0.5 text-left whitespace-normal'
       onClick={props.onClick}
       disabled={props.disabled}
-      aria-label={props.label}
+      aria-label={label}
       aria-haspopup='dialog'
-      title={props.label}
+      title={label}
     >
       {props.children}
       <HugeiconsIcon icon={ViewIcon} data-icon='inline-end' />

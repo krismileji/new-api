@@ -23,6 +23,8 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { cn } from '@/lib/utils'
 
+import { useChannelMonitorPrivacy } from '../hooks/use-channel-monitor-privacy'
+
 type ChannelMonitorSuccessRateValueProps = {
   rate: number | null | undefined
   successCount: number | null | undefined
@@ -46,6 +48,7 @@ const percentFormatter = new Intl.NumberFormat(undefined, {
 export function ChannelMonitorSuccessRateValue(
   props: ChannelMonitorSuccessRateValueProps
 ) {
+  const privateMode = useChannelMonitorPrivacy()
   if (props.loading) {
     return (
       <Skeleton
@@ -114,7 +117,9 @@ export function ChannelMonitorSuccessRateValue(
   if (!props.onClick) {
     return value
   }
-  const detailLabel = props.detailLabel ?? '查看成功率明细'
+  const detailLabel = privateMode
+    ? '查看成功率明细'
+    : (props.detailLabel ?? '查看成功率明细')
   return (
     <Button
       type='button'

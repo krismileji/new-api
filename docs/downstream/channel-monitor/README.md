@@ -1,6 +1,6 @@
 # 渠道监控
 
-Root 管理入口为 `/channel-monitor`，API 前缀为 `/api/channel_monitor`。从[监控总览](dashboard.md)了解常用操作、运行记录与配置管理入口，从[使用指南](../integration-guide.md)了解功能启用顺序。
+Root 管理入口为 `/channel-monitor`，API 前缀为 `/api/channel_monitor`。从[监控总览](dashboard.md)了解常用操作、截图隐私模式、运行记录与配置管理入口，从[使用指南](../integration-guide.md)了解功能启用顺序。
 
 ## 上游配置与余额
 

@@ -26,6 +26,7 @@ import { CHANNEL_STATUS } from '@/features/channels/constants'
 import { cn } from '@/lib/utils'
 
 import { getChannelMonitorStatusLabel } from '../constants'
+import { useChannelMonitorPrivacy } from '../hooks/use-channel-monitor-privacy'
 
 type ChannelMonitorStatusBadgeProps = {
   status: number
@@ -36,6 +37,7 @@ type ChannelMonitorStatusBadgeProps = {
 export function ChannelMonitorStatusBadge(
   props: ChannelMonitorStatusBadgeProps
 ) {
+  const privateMode = useChannelMonitorPrivacy()
   const label = getChannelMonitorStatusLabel(props.status)
 
   if (props.status === CHANNEL_STATUS.MANUAL_DISABLED) {
@@ -47,7 +49,9 @@ export function ChannelMonitorStatusBadge(
   }
 
   if (props.status === CHANNEL_STATUS.AUTO_DISABLED) {
-    const reason = props.reason?.trim() || '未记录系统禁用原因'
+    const reason = privateMode
+      ? '敏感信息已隐藏'
+      : props.reason?.trim() || '未记录系统禁用原因'
 
     return (
       <Tooltip>

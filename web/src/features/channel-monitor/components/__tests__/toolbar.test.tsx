@@ -67,12 +67,12 @@ describe('渠道监控顶部操作', () => {
     const toolbar = screen.getByRole('toolbar', { name: '渠道监控操作' })
     const buttons = within(toolbar).getAllByRole('button')
 
-    expect(buttons.map((button) => button.textContent)).toEqual([
-      '运行记录',
-      '配置管理',
-      '连通性测试',
-      '刷新',
-    ])
+    expect(buttons.map((button) => button.textContent).filter(Boolean)).toEqual(
+      ['运行记录', '配置管理', '连通性测试', '刷新']
+    )
+    expect(
+      within(toolbar).getByRole('button', { name: '隐藏敏感信息' })
+    ).toHaveAttribute('aria-pressed', 'false')
     expect(screen.queryByRole('menuitem')).not.toBeInTheDocument()
     for (const name of ['运行记录', '配置管理']) {
       expect(screen.getByRole('button', { name })).toHaveAttribute(

@@ -52,6 +52,7 @@ import {
   ChannelMonitorFirstTokenValue,
   ChannelMonitorTPSValue,
 } from './channel-monitor-performance-value'
+import { ChannelMonitorPrivate } from './channel-monitor-privacy'
 import { ChannelMonitorStatusBadge } from './channel-monitor-status-badge'
 import { ChannelMonitorSuccessRateValue } from './channel-monitor-success-rate-value'
 
@@ -226,25 +227,31 @@ export function ChannelMonitorModelPerformanceView(
                         title={channelStatusLabel}
                       />
                       <div className='flex min-w-0 flex-col gap-0.5'>
-                        <span className='truncate font-medium'>
-                          {row.channel.name}
-                        </span>
+                        <ChannelMonitorPrivate>
+                          <span className='truncate font-medium'>
+                            {row.channel.name}
+                          </span>
+                        </ChannelMonitorPrivate>
                         {!channelEnabled && (
                           <ChannelMonitorStatusBadge
                             status={row.channel.status}
                             reason={row.channel.status_reason}
                           />
                         )}
-                        <span className='text-muted-foreground text-xs'>
-                          ID {row.channel.id}
-                        </span>
+                        <ChannelMonitorPrivate fallback={null}>
+                          <span className='text-muted-foreground text-xs'>
+                            ID {row.channel.id}
+                          </span>
+                        </ChannelMonitorPrivate>
                       </div>
                     </div>
                   </TableCell>
                   <TableCell>
-                    <span className='font-mono font-semibold'>
-                      {formatMonitorRatio(row.channel.cost_ratio)}
-                    </span>
+                    <ChannelMonitorPrivate>
+                      <span className='font-mono font-semibold'>
+                        {formatMonitorRatio(row.channel.cost_ratio)}
+                      </span>
+                    </ChannelMonitorPrivate>
                   </TableCell>
                   <TableCell>
                     <ChannelMonitorPerformanceDetailButton
