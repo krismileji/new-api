@@ -9,9 +9,9 @@ import (
 )
 
 type ChannelGroupMonitorCacheCounts struct {
-	GroupName        string
-	CacheHitCount    int64
-	CacheSampleCount int64
+	GroupName       string
+	CacheReadTokens int64
+	InputTokens     int64
 }
 
 // GetChannelGroupMonitorHistoricalCacheCounts reads complete business-request
@@ -24,7 +24,7 @@ func GetChannelGroupMonitorHistoricalCacheCounts(ctx context.Context, groupNames
 		return nil, errors.New("缓存率历史统计数据库不可用")
 	}
 	rows, err := DB.WithContext(ctx).Model(&ChannelMonitorDailySuccessLedger{}).
-		Select("group_name, cache_hit_count, cache_sample_count, aggregate_json").
+		Select("group_name, aggregate_json").
 		Where("day_start >= ? AND day_start < ?", startAt, endAt).
 		Where("group_name IN ?", groupNames).Rows()
 	if err != nil {
@@ -40,27 +40,27 @@ func GetChannelGroupMonitorHistoricalCacheCounts(ctx context.Context, groupNames
 		if err := DB.ScanRows(rows, &row); err != nil {
 			return nil, err
 		}
-		var excluded struct {
-			Hits    int64 `json:"group_cache_excluded_hits"`
-			Samples int64 `json:"group_cache_excluded_samples"`
+		var tokens struct {
+			Read  int64 `json:"group_cache_read_tokens"`
+			Input int64 `json:"group_cache_input_tokens"`
 		}
-		// Legacy snapshots have no exclusions and retain their original counts.
+		// Old snapshots have no eligible token totals. Leave them out rather
+		// than mixing request counts or unfiltered tokens into this rate.
 		if row.AggregateJSON != "" {
-			if err := common.UnmarshalJsonStr(row.AggregateJSON, &excluded); err != nil {
+			if err := common.UnmarshalJsonStr(row.AggregateJSON, &tokens); err != nil {
 				return nil, err
 			}
 		}
-		if excluded.Hits < 0 || excluded.Hits > row.CacheHitCount || excluded.Samples < 0 || excluded.Samples > row.CacheSampleCount {
+		if tokens.Read < 0 || tokens.Input < 0 {
 			return nil, errors.New("分组缓存率历史统计无效")
 		}
-		hits, samples := row.CacheHitCount-excluded.Hits, row.CacheSampleCount-excluded.Samples
 		count := byGroup[row.GroupName]
-		if hits < 0 || samples < 0 || count.CacheHitCount > math.MaxInt64-hits || count.CacheSampleCount > math.MaxInt64-samples {
+		if count.CacheReadTokens > math.MaxInt64-tokens.Read || count.InputTokens > math.MaxInt64-tokens.Input {
 			return nil, errors.New("分组缓存率历史统计溢出")
 		}
 		count.GroupName = row.GroupName
-		count.CacheHitCount += hits
-		count.CacheSampleCount += samples
+		count.CacheReadTokens += tokens.Read
+		count.InputTokens += tokens.Input
 		byGroup[row.GroupName] = count
 	}
 	counts := make([]ChannelGroupMonitorCacheCounts, 0, len(byGroup))

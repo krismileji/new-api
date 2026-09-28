@@ -79,6 +79,7 @@ func TestDailyPersistenceWaitsForHolesAndReplaysRetainedTailWithoutDoubleCountin
 		require.NoError(t, err)
 		events[index].EventSequence = sequence
 		events[index].InputTokens = common.GetPointer(int64(10000))
+		events[index].IsStream = true
 		events[index].CacheReadTokens = common.GetPointer(int64(0))
 		if index != 1 {
 			events[index].CacheReadTokens = common.GetPointer(int64(5000))
@@ -113,7 +114,7 @@ func TestDailyPersistenceWaitsForHolesAndReplaysRetainedTailWithoutDoubleCountin
 	assert.False(t, view.CoveragePartial)
 	counts, err := model.GetChannelGroupMonitorHistoricalCacheCounts(ctx, []string{"vip"}, day, day+24*60*60)
 	require.NoError(t, err)
-	assert.Equal(t, []model.ChannelGroupMonitorCacheCounts{{GroupName: "vip", CacheHitCount: 1, CacheSampleCount: 2}}, counts,
+	assert.Equal(t, []model.ChannelGroupMonitorCacheCounts{{GroupName: "vip", CacheReadTokens: 5000, InputTokens: 20000}}, counts,
 		"tail replay preserves the original excluded sample and does not count it twice")
 }
 

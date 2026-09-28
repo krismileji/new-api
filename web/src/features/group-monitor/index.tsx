@@ -489,7 +489,7 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                           {props.result.show_cache_rate ? (
                             <div
                               className='min-w-0'
-                              title={`近 ${props.result.display_value} ${DISPLAY_UNIT_LABEL[props.result.display_unit]}命中缓存的请求数 / 有效缓存样本数${(props.result.cache_min_context_k ?? 0) > 0 ? `；当前新增样本仅统计输入上下文 ≥ ${props.result.cache_min_context_k} K tokens 的流式请求（1 K = 1000 tokens），历史数据保留采集时的统计口径` : ''}`}
+                              title={`近 ${props.result.display_value} ${DISPLAY_UNIT_LABEL[props.result.display_unit]}流式请求的缓存读取 Token / 总输入 Token（包含缓存读写，不含输出）${(props.result.cache_min_context_k ?? 0) > 0 ? `；当前新增样本仅统计输入上下文 ≥ ${props.result.cache_min_context_k} K tokens 的流式请求（1 K = 1000 tokens），历史数据保留采集时的统计口径` : ''}`}
                             >
                               <dt className='text-muted-foreground mb-1 text-[11px] lg:sr-only'>
                                 缓存率
@@ -608,7 +608,7 @@ export function GroupMonitor() {
                   成功率按近 {result.display_value}{' '}
                   {DISPLAY_UNIT_LABEL[result.display_unit]}内的有效逻辑探测统计
                   {result.show_cache_rate
-                    ? '；缓存率按同一时间范围内实际请求的有效缓存样本统计'
+                    ? '；缓存率按同一时间范围内流式业务请求的缓存读取 Token / 总输入 Token 统计，输入包含缓存读写，不含输出'
                     : null}
                   {result.show_cache_rate &&
                   (result.cache_min_context_k ?? 0) > 0

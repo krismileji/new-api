@@ -232,6 +232,8 @@ const (
 	channelMonitorRedisSharedMetricTPSGenerationMs        = "tps_generation_duration_ms_v2"
 	channelMonitorRedisSharedMetricGroupCacheSkipHits     = "group_cache_excluded_hits"
 	channelMonitorRedisSharedMetricGroupCacheSkipSamples  = "group_cache_excluded_samples"
+	channelMonitorRedisSharedMetricGroupCacheReadTokens   = "group_cache_read_tokens"
+	channelMonitorRedisSharedMetricGroupCacheInputTokens  = "group_cache_input_tokens"
 	channelMonitorRedisSharedMetricCacheSamples           = "cache_sample_count"
 	channelMonitorRedisSharedMetricCacheHits              = "cache_hit_count"
 	channelMonitorRedisSharedMetricCacheReadTokens        = "cache_read_tokens"
@@ -309,6 +311,8 @@ type ChannelMonitorRedisSharedAggregate struct {
 
 	GroupCacheExcludedHits    int64 `json:"group_cache_excluded_hits,omitempty"`
 	GroupCacheExcludedSamples int64 `json:"group_cache_excluded_samples,omitempty"`
+	GroupCacheReadTokens      int64 `json:"group_cache_read_tokens,omitempty"`
+	GroupCacheInputTokens     int64 `json:"group_cache_input_tokens,omitempty"`
 
 	SettledCostNanoCNY               int64 `json:"settled_cost_nano_cny"`
 	SettledRequestCount              int64 `json:"settled_request_count"`
@@ -745,6 +749,7 @@ var channelMonitorRedisSharedIntegerMetrics = map[string]struct{}{
 	channelMonitorRedisSharedMetricTPSOutputTokens: {}, channelMonitorRedisSharedMetricTPSGenerationMs: {},
 	channelMonitorRedisSharedMetricCacheSamples: {}, channelMonitorRedisSharedMetricCacheHits: {},
 	channelMonitorRedisSharedMetricGroupCacheSkipHits: {}, channelMonitorRedisSharedMetricGroupCacheSkipSamples: {},
+	channelMonitorRedisSharedMetricGroupCacheReadTokens: {}, channelMonitorRedisSharedMetricGroupCacheInputTokens: {},
 	channelMonitorRedisSharedMetricCacheReadTokens: {}, channelMonitorRedisSharedMetricCacheWriteRequests: {},
 	channelMonitorRedisSharedMetricCacheWriteTokens: {}, channelMonitorRedisSharedMetricInputTokens: {},
 	channelMonitorRedisSharedMetricSettledCost: {}, channelMonitorRedisSharedMetricSettledRequests: {},
@@ -1329,6 +1334,13 @@ func channelMonitorRedisSharedEventDeltaFromEvent(event model.ChannelMonitorEven
 	if event.GroupCacheExcluded != nil && *event.GroupCacheExcluded {
 		delta.Integers[channelMonitorRedisSharedMetricGroupCacheSkipSamples] = delta.Integers[channelMonitorRedisSharedMetricCacheSamples]
 		delta.Integers[channelMonitorRedisSharedMetricGroupCacheSkipHits] = delta.Integers[channelMonitorRedisSharedMetricCacheHits]
+	} else if event.IsStream && inputTokens > 0 {
+		// Store eligible token totals separately: legacy request counters cannot
+		// reconstruct token weights after the context filter has been applied.
+		delta.Integers[channelMonitorRedisSharedMetricGroupCacheInputTokens] = inputTokens
+		if event.CacheReadTokens != nil {
+			delta.Integers[channelMonitorRedisSharedMetricGroupCacheReadTokens] = *event.CacheReadTokens
+		}
 	}
 	return delta, true
 }
@@ -2195,6 +2207,8 @@ func mergeChannelMonitorRedisSharedAggregate(target *ChannelMonitorRedisSharedAg
 		{&target.CacheHitCount, source.CacheHitCount},
 		{&target.GroupCacheExcludedHits, source.GroupCacheExcludedHits},
 		{&target.GroupCacheExcludedSamples, source.GroupCacheExcludedSamples},
+		{&target.GroupCacheReadTokens, source.GroupCacheReadTokens},
+		{&target.GroupCacheInputTokens, source.GroupCacheInputTokens},
 		{&target.CacheReadTokens, source.CacheReadTokens},
 		{&target.CacheWriteRequestCount, source.CacheWriteRequestCount},
 		{&target.CacheWriteTokens, source.CacheWriteTokens},
@@ -2227,6 +2241,8 @@ func mergeChannelMonitorRedisSharedAggregate(target *ChannelMonitorRedisSharedAg
 	target.CacheSampleCount += source.CacheSampleCount
 	target.GroupCacheExcludedHits += source.GroupCacheExcludedHits
 	target.GroupCacheExcludedSamples += source.GroupCacheExcludedSamples
+	target.GroupCacheReadTokens += source.GroupCacheReadTokens
+	target.GroupCacheInputTokens += source.GroupCacheInputTokens
 	target.CacheHitCount += source.CacheHitCount
 	target.CacheReadTokens += source.CacheReadTokens
 	target.CacheWriteRequestCount += source.CacheWriteRequestCount
@@ -2571,6 +2587,10 @@ func addChannelMonitorRedisAggregateField(aggregate *ChannelMonitorRedisSharedAg
 		aggregate.GroupCacheExcludedHits += value
 	case channelMonitorRedisSharedMetricGroupCacheSkipSamples:
 		aggregate.GroupCacheExcludedSamples += value
+	case channelMonitorRedisSharedMetricGroupCacheReadTokens:
+		aggregate.GroupCacheReadTokens += value
+	case channelMonitorRedisSharedMetricGroupCacheInputTokens:
+		aggregate.GroupCacheInputTokens += value
 	case channelMonitorRedisSharedMetricCacheSamples:
 		aggregate.CacheSampleCount += value
 	case channelMonitorRedisSharedMetricCacheHits:

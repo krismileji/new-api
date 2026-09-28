@@ -94,34 +94,41 @@ func TestChannelGroupMonitorCacheRatesDatabaseMatrix(t *testing.T) {
 			for index, fixture := range []struct {
 				daysAgo int64
 				group   string
-				hits    int64
-				samples int64
+				read    int64
+				input   int64
 			}{
-				{30, "vip", 100, 100}, // Outside even the longest display window.
-				{29, "vip", 1, 1},
-				{7, "vip", 0, 4},
-				{6, "vip", 2, 3},
-				{1, "vip", 0, 2},
-				{1, "vip", 1, 1}, // Another channel in the same group.
-				{1, "zero", 0, 1},
+				{30, "vip", 9000, 10000}, // Outside even the longest display window.
+				{29, "vip", 300, 1000},
+				{7, "vip", 0, 4000},
+				{6, "vip", 1200, 3000},
+				{1, "vip", 0, 2000},
+				{1, "vip", 800, 1000}, // Another channel in the same group.
+				{1, "zero", 0, 1000},
 				{1, "unknown", 0, 0},
-				{1, "private", 99, 99},
-				{6, "historical", 1, 1},
-				{0, "vip", 50, 50}, // Today's stored snapshot must not be added again.
+				{1, "private", 9900, 9900},
+				{6, "historical", 500, 1000},
+				{0, "vip", 5000, 5000}, // Today's stored snapshot must not be added again.
 			} {
+				aggregate, err := common.Marshal(ChannelMonitorRedisSharedAggregate{
+					GroupCacheReadTokens: fixture.read, GroupCacheInputTokens: fixture.input,
+				})
+				require.NoError(t, err)
 				rows = append(rows, model.ChannelMonitorDailySuccessLedger{
 					DayStart: today - fixture.daysAgo*daySeconds, ChannelId: index + 1,
 					GroupName: fixture.group, GroupKey: fixture.group,
 					UserAttribution: string(model.ChannelMonitorEventUserAttributionUnknown),
-					CacheHitCount:   fixture.hits, CacheSampleCount: fixture.samples,
+					CacheReadTokens: fixture.read, InputTokens: fixture.input,
+					AggregateJSON: string(aggregate),
 				})
 			}
 			require.NoError(t, db.Create(&rows).Error)
 			projection := NewChannelMonitorRedisSharedProjectionWithClient(client)
 			hit := newChannelMonitorRedisSharedProjectionTestEvent("today-hit", today)
-			hit.InputTokens, hit.CacheReadTokens = common.GetPointer(int64(100)), common.GetPointer(int64(20))
+			hit.IsStream = true
+			hit.InputTokens, hit.CacheReadTokens = common.GetPointer(int64(1000)), common.GetPointer(int64(600))
 			miss := newChannelMonitorRedisSharedProjectionTestEvent("today-miss", now)
-			miss.InputTokens, miss.CacheReadTokens = common.GetPointer(int64(100)), common.GetPointer(int64(0))
+			miss.IsStream = true
+			miss.InputTokens, miss.CacheReadTokens = common.GetPointer(int64(2000)), common.GetPointer(int64(0))
 			previousDay := hit
 			previousDay.EventId, previousDay.OccurredAt = "previous-day-already-persisted", today-60
 			require.NoError(t, projection.WriteChannelMonitorEvents(context.Background(), []model.ChannelMonitorEvent{hit, miss, previousDay}))
@@ -131,10 +138,10 @@ func TestChannelGroupMonitorCacheRatesDatabaseMatrix(t *testing.T) {
 				days int64
 				want map[string]float64
 			}{
-				{"one day uses realtime only", 1, map[string]float64{"vip": 50}},
-				{"two days combine sample counts", 2, map[string]float64{"vip": 40, "zero": 0}},
-				{"seven days include first day and historical-only groups", 7, map[string]float64{"vip": 50, "zero": 0, "historical": 100}},
-				{"thirty days exclude older history", 30, map[string]float64{"vip": 500.0 / 13, "zero": 0, "historical": 100}},
+				{"one day uses realtime only", 1, map[string]float64{"vip": 20}},
+				{"two days combine token totals", 2, map[string]float64{"vip": 1400.0 / 6000 * 100, "zero": 0}},
+				{"seven days include first day and historical-only groups", 7, map[string]float64{"vip": 2600.0 / 9000 * 100, "zero": 0, "historical": 50}},
+				{"thirty days exclude older history", 30, map[string]float64{"vip": 2900.0 / 14000 * 100, "zero": 0, "historical": 50}},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					rates, err := GetChannelGroupMonitorCacheRates(context.Background(), []string{"vip", "zero", "unknown", "empty", "historical"}, today-(tc.days-1)*daySeconds, now+1)
@@ -166,9 +173,12 @@ func TestChannelGroupMonitorCacheRatesDatabaseMatrix(t *testing.T) {
 					require.NoError(t, persistChannelMonitorDailyMetrics(ctx, client, day))
 					require.NoError(t, db.AutoMigrate(&model.ChannelMonitorDailySuccessLedger{}, &model.ChannelMonitorDailyCheckpoint{}))
 				}
-				// Legacy rows retain the original counts; a new threshold never rewrites them.
+				// Legacy rows lack eligible token totals; their unfiltered tokens
+				// and request counts must not be mixed into the new rate.
 				legacy := (model.ChannelMonitorDailyMetricIdentity{ChannelID: 98, Group: "context-vip"}).LedgerRow(day)
 				legacy.CacheHitCount, legacy.CacheSampleCount = 50, 50
+				legacy.CacheReadTokens, legacy.InputTokens = 500000, 500000
+				legacy.AggregateJSON = `{"cache_hit_count":50,"cache_sample_count":50,"cache_read_tokens":500000,"input_tokens":500000,"group_cache_excluded_hits":1,"group_cache_excluded_samples":1}`
 				require.NoError(t, db.Create(&legacy).Error)
 				require.NoError(t, client.Del(ctx, ChannelMonitorRedisSuccessDayKey(day)).Err())
 				require.NoError(t, rebuildChannelMonitorDailyMetrics(ctx, client, day))
@@ -185,16 +195,16 @@ func TestChannelGroupMonitorCacheRatesDatabaseMatrix(t *testing.T) {
 					min  int
 					want map[string]float64
 				}{
-					{10, map[string]float64{"context-vip": 52.0 / 54 * 100}},
-					{11, map[string]float64{"context-vip": 52.0 / 54 * 100}},
-					{21, map[string]float64{"context-vip": 52.0 / 54 * 100}},
+					{10, map[string]float64{"context-vip": 10000.0 / 60000 * 100}},
+					{11, map[string]float64{"context-vip": 10000.0 / 60000 * 100}},
+					{21, map[string]float64{"context-vip": 10000.0 / 60000 * 100}},
 				} {
 					previousPolicy := channelGroupMonitorCachePolicyState.Load()
 					channelGroupMonitorCachePolicyState.Store(&channelGroupMonitorCachePolicy{MinContextK: tc.min})
 					t.Cleanup(func() { channelGroupMonitorCachePolicyState.Store(previousPolicy) })
 					rates, err := GetChannelGroupMonitorCacheRates(ctx, []string{"context-vip"}, day, now+1)
 					require.NoError(t, err)
-					assert.Equal(t, tc.want, rates)
+					assert.InDeltaMapValues(t, tc.want, rates, 0.000001)
 				}
 			})
 			t.Run("retention cleans all daily tables and prevents replay resurrection", func(t *testing.T) {

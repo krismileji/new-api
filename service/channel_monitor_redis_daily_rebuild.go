@@ -310,6 +310,7 @@ func channelMonitorRedisDailySuccessAggregate(source ChannelMonitorRedisSharedAg
 		FinalSuccessCount: source.FinalSuccessCount, FinalFailureCount: source.FinalFailureCount,
 		CacheHitCount: source.CacheHitCount, CacheSampleCount: source.CacheSampleCount,
 		CacheReadTokens: source.CacheReadTokens, InputTokens: source.InputTokens,
+		GroupCacheReadTokens: source.GroupCacheReadTokens, GroupCacheInputTokens: source.GroupCacheInputTokens,
 		CacheWriteRequestCount: source.CacheWriteRequestCount, APIKeyName: source.APIKeyName,
 	}
 }
@@ -474,6 +475,8 @@ func encodeChannelMonitorRedisDailySuccessAggregates(
 			channelMonitorRedisSharedMetricFinalFailure:           aggregate.FinalFailureCount,
 			channelMonitorRedisSharedMetricGroupCacheSkipHits:     aggregate.GroupCacheExcludedHits,
 			channelMonitorRedisSharedMetricGroupCacheSkipSamples:  aggregate.GroupCacheExcludedSamples,
+			channelMonitorRedisSharedMetricGroupCacheReadTokens:   aggregate.GroupCacheReadTokens,
+			channelMonitorRedisSharedMetricGroupCacheInputTokens:  aggregate.GroupCacheInputTokens,
 			channelMonitorRedisSharedMetricCacheHits:              aggregate.CacheHitCount,
 			channelMonitorRedisSharedMetricCacheSamples:           aggregate.CacheSampleCount,
 			channelMonitorRedisSharedMetricCacheReadTokens:        aggregate.CacheReadTokens,
