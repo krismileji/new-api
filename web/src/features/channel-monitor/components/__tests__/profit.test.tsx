@@ -85,3 +85,62 @@ test('loss filter changes only the list and retains full scope summary and trend
   expect(screen.getByText(/钱包扣费.*订阅消耗/)).toHaveTextContent('2.0000')
   expect(screen.getByText(/钱包扣费.*订阅消耗/)).toHaveTextContent('1.0000')
 })
+
+test('expanding a loss row keeps profitable and unconfirmed children filtered out', async () => {
+  const loss = {
+    profit_nano_cny: -1_000_000_000,
+    profit_confirmed: true,
+  }
+  const view = renderAnalyticsQuery('profit', (params) => {
+    if (params.group_by === 'channel') {
+      return analyticsResponse(params, [
+        analyticsItem('7', { ...loss, channel_id: 7 }),
+      ])
+    }
+    if (params.group_by === 'model') {
+      const items = [
+        analyticsItem('loss-model', {
+          ...loss,
+          model_key: 'loss-model',
+          model_name: '亏损模型',
+        }),
+      ]
+      if (!params.only_loss) {
+        items.push(
+          analyticsItem('profitable-model', {
+            profit_nano_cny: 1_000_000_000,
+            profit_confirmed: true,
+            model_name: '盈利模型',
+          }),
+          analyticsItem('pending-model', {
+            ...loss,
+            profit_confirmed: false,
+            model_name: '待确认模型',
+          })
+        )
+      }
+      return analyticsResponse(params, items)
+    }
+    return analyticsResponse(params, [])
+  })
+
+  await screen.findByRole('button', { name: '查看渠道 A明细' })
+  fireEvent.click(screen.getByRole('button', { name: '仅展示亏损行' }))
+  await waitFor(() =>
+    expect(
+      view.requests.some(
+        (request) => request.group_by === 'channel' && request.only_loss
+      )
+    ).toBe(true)
+  )
+  fireEvent.click(
+    await screen.findByRole('button', { name: '查看渠道 A明细' })
+  )
+  await screen.findByRole('button', { name: '查看亏损模型明细' })
+  expect(
+    screen.queryByRole('button', { name: '查看盈利模型明细' })
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByRole('button', { name: '查看待确认模型明细' })
+  ).not.toBeInTheDocument()
+})

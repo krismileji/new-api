@@ -404,6 +404,7 @@ export function ChannelMonitorAnalyticsDialog(
     search: search || undefined,
     sort,
     direction,
+    onlyLoss: rootRequest.onlyLoss,
   }
 
   useEffect(() => {

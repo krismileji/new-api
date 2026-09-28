@@ -134,16 +134,29 @@ func PrepareChannelMonitorIncome(ctx context.Context, record *ChannelMonitorInco
 		return errors.New("收入结算标识冲突")
 	}
 	if saved.CostRecorded == 0 && saved.CostEventID != "" {
-		var applied ChannelDailyCostOutbox
-		err = DB.WithContext(ctx).Where("event_id = ? AND processed_at > 0", saved.CostEventID).First(&applied).Error
-		if err == nil {
+		// Include unprocessed events in the lock so an in-flight projection
+		// cannot miss this income while we miss its uncommitted cost. Insert
+		// income first, then follow the worker's outbox-before-income lock order.
+		err = DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var applied ChannelDailyCostOutbox
+			if err := lockForUpdate(tx).Where("event_id = ?", saved.CostEventID).First(&applied).Error; err != nil {
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					return nil
+				}
+				return err
+			}
+			if applied.ProcessedAt <= 0 {
+				return nil
+			}
 			saved.DayStart = ChannelDailyCostDayStart(applied.OccurredAt)
-			if err = DB.WithContext(ctx).Model(&ChannelMonitorIncome{}).Where("settlement_key = ? AND cost_recorded = 0", saved.SettlementKey).
+			if err := tx.Model(&ChannelMonitorIncome{}).Where("settlement_key = ? AND cost_recorded = 0", saved.SettlementKey).
 				Updates(map[string]any{"cost_recorded": 1, "day_start": saved.DayStart}).Error; err != nil {
 				return err
 			}
 			saved.CostRecorded = 1
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		})
+		if err != nil {
 			return err
 		}
 	}

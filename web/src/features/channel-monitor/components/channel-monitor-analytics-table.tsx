@@ -467,6 +467,7 @@ function queryFromExpansionContext(
     search: context.search,
     sort: context.sort,
     direction: context.direction,
+    onlyLoss: context.onlyLoss,
     page: 1,
     pageSize: 20,
   }

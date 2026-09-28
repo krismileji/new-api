@@ -24,6 +24,7 @@ export type ChannelMonitorAnalyticsExpansionContext = {
   search?: string
   sort?: ChannelMonitorAnalyticsSort
   direction?: 'asc' | 'desc'
+  onlyLoss?: boolean
 }
 
 export function getChannelMonitorAnalyticsChildGroupBy(
