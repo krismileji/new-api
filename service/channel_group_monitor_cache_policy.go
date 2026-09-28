@@ -52,7 +52,7 @@ func captureChannelGroupMonitorCachePolicy(event *model.ChannelMonitorEvent) {
 		return
 	}
 	policy := channelGroupMonitorCachePolicyState.Load()
-	excluded := policy == nil // Do not invent samples before configuration is loaded.
+	excluded := policy == nil || !event.IsStream // Do not invent samples before configuration is loaded.
 	if policy != nil && policy.MinContextK > 0 {
 		input := event.InputTokens
 		if input == nil {

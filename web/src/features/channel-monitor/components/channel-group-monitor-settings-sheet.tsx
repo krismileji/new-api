@@ -478,7 +478,9 @@ export function ChannelGroupMonitorSettingsSheet(
                     <div className='min-w-0 space-y-1'>
                       <FormLabel>显示缓存率</FormLabel>
                       <FormDescription>
-                        按当前状态展示范围统计实际请求的缓存命中率，无有效样本时显示暂无数据
+                        按当前状态展示范围统计流式业务请求的缓存读取 Token /
+                        总输入
+                        Token，缓存写入仅计入总输入，无有效样本时显示暂无数据
                       </FormDescription>
                     </div>
                     <FormControl>
@@ -513,7 +515,7 @@ export function ChannelGroupMonitorSettingsSheet(
                       />
                     </FormControl>
                     <FormDescription>
-                      0 沿用全部有效请求；大于 0
+                      0 统计全部有效流式请求；大于 0
                       时，只统计输入上下文达到此下限的流式请求，包含等于下限的请求。1
                       K = 1000 tokens，输入包含缓存读取与写入，不含输出。
                       配置变更只影响后续采集的请求，历史数据保留原统计口径。

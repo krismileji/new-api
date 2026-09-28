@@ -96,7 +96,9 @@ test('修改状态展示范围后缓存率说明同步更新', () => {
   const view = render(<GroupMonitorContent result={result} />)
 
   expect(
-    screen.getByTitle('近 60 分钟命中缓存的请求数 / 有效缓存样本数')
+    screen.getByTitle(
+      '近 60 分钟流式请求的缓存读取 Token / 总输入 Token（包含缓存读写，不含输出）'
+    )
   ).toBeVisible()
 
   view.rerender(
@@ -105,7 +107,9 @@ test('修改状态展示范围后缓存率说明同步更新', () => {
     />
   )
   expect(
-    screen.getByTitle('近 3 小时命中缓存的请求数 / 有效缓存样本数')
+    screen.getByTitle(
+      '近 3 小时流式请求的缓存读取 Token / 总输入 Token（包含缓存读写，不含输出）'
+    )
   ).toBeVisible()
 
   view.rerender(
@@ -114,7 +118,9 @@ test('修改状态展示范围后缓存率说明同步更新', () => {
     />
   )
   expect(
-    screen.getByTitle('近 7 天命中缓存的请求数 / 有效缓存样本数')
+    screen.getByTitle(
+      '近 7 天流式请求的缓存读取 Token / 总输入 Token（包含缓存读写，不含输出）'
+    )
   ).toBeVisible()
 })
 

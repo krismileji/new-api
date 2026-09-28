@@ -31,7 +31,7 @@ Root 管理入口为 `/channel-monitor`，API 前缀为 `/api/channel_monitor`�
 ## 探测与检测
 
 - [状态探测](status-probe.md)：渠道模型的定时/手动探测、状态与调度样本。
-- [模型广场分组监控](model-market-monitoring.md)：分类、独立开关、展示周期、缓存率采集阈值与历史保留。
+- [模型广场分组监控](model-market-monitoring.md)：分类、独立开关、展示周期、按 Token 加权的缓存率、采集阈值与历史保留。
 - [探测策略与业务周期监测](probe-policy.md)：禁止自动探测、小输入本地响应和 Redis 被动监测。
 - [模型检测](model-detection.md)：独立检测器、模型核验、证据与成本。
 - [连通性测试](connectivity-test.md)：单次、批量、并发循环测试。

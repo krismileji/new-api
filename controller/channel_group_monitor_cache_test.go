@@ -82,7 +82,8 @@ func TestGetPricingGroupMonitorCacheRateVisibilityAndFallback(t *testing.T) {
 		minContextK    int
 		stream         bool
 	}{
-		{"enabled", true, true, true, 0, false},
+		{"enabled", true, true, true, 0, true},
+		{"non-stream excluded without threshold", true, true, false, 0, false},
 		{"disabled hides existing rates", false, true, false, 0, false},
 		{"unavailable retains monitoring", true, false, false, 0, false},
 		{"stream at threshold", true, true, true, 10, true},
@@ -134,7 +135,7 @@ func TestGetPricingGroupMonitorCacheRateVisibilityAndFallback(t *testing.T) {
 			assert.Equal(t, "vip", payload.Data.Items[0]["group"])
 			assert.Contains(t, payload.Data.Items[0], "recent_window")
 			if tc.wantRate {
-				assert.Equal(t, float64(100), payload.Data.Items[0]["cache_rate"])
+				assert.Equal(t, 0.2, payload.Data.Items[0]["cache_rate"])
 			} else {
 				assert.NotContains(t, payload.Data.Items[0], "cache_rate")
 			}
@@ -206,6 +207,7 @@ func TestChannelGroupMonitorCacheRateFollowsDisplayWindow(t *testing.T) {
 					OccurredAt: fixture.at, CreatedAt: now, ChannelId: 11, GroupName: "vip", ModelName: "gpt-4.1",
 					Source: model.ChannelMonitorEventSourceBusiness, Outcome: model.ChannelMonitorEventOutcomeSuccess,
 					CostStatus: model.ChannelMonitorEventCostNone, RequestDispatched: true, IsFinalAttempt: true,
+					IsStream:    true,
 					InputTokens: common.GetPointer(int64(100)), CacheReadTokens: common.GetPointer(fixture.cache),
 				})
 			}
@@ -215,7 +217,7 @@ func TestChannelGroupMonitorCacheRateFollowsDisplayWindow(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, items, 1)
 			require.NotNil(t, items[0].CacheRate)
-			assert.InDelta(t, 200.0/3, *items[0].CacheRate, 0.000001)
+			assert.InDelta(t, 40.0/300*100, *items[0].CacheRate, 0.000001)
 			assert.Equal(t, tc.start, items[0].RecentWindow[0].StartedAt)
 		})
 	}
