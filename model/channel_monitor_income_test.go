@@ -69,7 +69,7 @@ func runChannelMonitorIncomeLedgerCases(t *testing.T, db *gorm.DB) {
 		QuotaPerUnit: "100", USDToCNY: "7", CostEventID: "cost-event-1",
 	}
 	require.NoError(t, PrepareChannelMonitorIncome(context.Background(), record))
-	assert.Equal(t, int64(7_000_000_000), record.IncomeNanoCNY)
+	assert.Equal(t, int64(1_000_000_000), record.IncomeNanoCNY)
 	assert.Equal(t, ChannelMonitorDailyCostModelKey("gpt-4.1"), record.ModelKey)
 	assert.Equal(t, "pending", record.Status)
 
@@ -79,7 +79,7 @@ func runChannelMonitorIncomeLedgerCases(t *testing.T, db *gorm.DB) {
 	require.NoError(t, PrepareChannelMonitorIncome(context.Background(), &duplicate))
 	assert.Equal(t, record.SettlementKey, duplicate.SettlementKey)
 	assert.Equal(t, int64(100), duplicate.Quota)
-	assert.Equal(t, int64(7_000_000_000), duplicate.IncomeNanoCNY)
+	assert.Equal(t, int64(1_000_000_000), duplicate.IncomeNanoCNY)
 
 	require.NoError(t, ConfirmChannelMonitorIncome(context.Background(), record.SettlementKey))
 	now := time.Now().Unix()
@@ -119,7 +119,7 @@ func runChannelMonitorIncomeLedgerCases(t *testing.T, db *gorm.DB) {
 	var refundIncome ChannelMonitorIncome
 	require.NoError(t, db.Where("settlement_key = ?", lateIncome.SettlementKey).First(&refundIncome).Error)
 	assert.Equal(t, "pending", refundIncome.Status)
-	assert.Equal(t, int64(7_000_000_000), refundIncome.IncomeNanoCNY, "a refund in progress must not count as confirmed profit")
+	assert.Equal(t, int64(1_000_000_000), refundIncome.IncomeNanoCNY, "a refund in progress must not count as confirmed profit")
 	require.NoError(t, CancelChannelMonitorIncomeRefund(context.Background(), lateIncome.SettlementKey))
 	require.NoError(t, db.Where("settlement_key = ?", lateIncome.SettlementKey).First(&refundIncome).Error)
 	assert.Equal(t, "settled", refundIncome.Status, "a failed refund can restore the original charge")
@@ -139,7 +139,7 @@ func runChannelMonitorIncomeLedgerCases(t *testing.T, db *gorm.DB) {
 	task.PrivateData.BillingContext = &TaskBillingContext{ChannelCostResolved: true}
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return correctTaskChannelMonitorIncome(tx, task, 50) }))
 	require.NoError(t, db.Where("settlement_key = ?", record.SettlementKey).First(&saved).Error)
-	assert.Equal(t, int64(3_500_000_000), saved.IncomeNanoCNY)
+	assert.Equal(t, int64(500_000_000), saved.IncomeNanoCNY)
 	assert.Equal(t, 1, saved.CostRecorded)
 	require.NoError(t, db.Transaction(func(tx *gorm.DB) error { return correctTaskChannelMonitorIncome(tx, task, 0) }))
 	require.NoError(t, db.Where("settlement_key = ?", record.SettlementKey).First(&saved).Error)

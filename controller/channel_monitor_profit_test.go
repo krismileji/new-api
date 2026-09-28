@@ -51,12 +51,14 @@ func runChannelMonitorProfitAnalyticsCases(t *testing.T, db *gorm.DB, day int64)
 			SettlementKey: settlementKeys[0], DayStart: day, ChannelID: firstChannel,
 			UserID: 101, APIKeyID: 201, APIKeyKey: "key-one", APIKeyName: "Key One",
 			ModelKey: modelKey, ModelName: "gpt-4.1", BillingSource: "wallet", Quota: 100,
+			QuotaPerUnit: "1", USDToCNY: "1",
 			IncomeNanoCNY: 100_000_000_000, Status: "settled", CostEventID: "cost-one", CostRecorded: 1,
 		},
 		{
 			SettlementKey: settlementKeys[1], DayStart: day, ChannelID: secondChannel,
 			UserID: 102, APIKeyID: 202, APIKeyKey: "key-two", APIKeyName: "Key Two",
 			ModelKey: modelKey, ModelName: "gpt-4.1", BillingSource: "subscription", Quota: 10,
+			QuotaPerUnit: "1", USDToCNY: "1",
 			IncomeNanoCNY: 10_000_000_000, Status: "settled", CostEventID: "cost-two", CostRecorded: 1,
 		},
 	} {

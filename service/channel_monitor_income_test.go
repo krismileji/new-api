@@ -46,7 +46,7 @@ func TestSettleBillingPersistsFinalWalletChargeForProfit(t *testing.T) {
 	var income model.ChannelMonitorIncome
 	require.NoError(t, model.DB.Where("settlement_key = ?", model.ChannelMonitorIncomeKey(relayInfo.RequestId, "request")).First(&income).Error)
 	assert.Equal(t, int64(100), income.Quota)
-	assert.Equal(t, int64(7_000_000_000), income.IncomeNanoCNY)
+	assert.Equal(t, int64(1_000_000_000), income.IncomeNanoCNY)
 	assert.Equal(t, "wallet", income.BillingSource)
 	assert.Equal(t, "settled", income.Status)
 
@@ -58,7 +58,7 @@ func TestSettleBillingPersistsFinalWalletChargeForProfit(t *testing.T) {
 	require.NoError(t, SettleBilling(subContext, &info, 50))
 	var subscriptionIncome model.ChannelMonitorIncome
 	require.NoError(t, model.DB.Where("settlement_key = ?", model.ChannelMonitorIncomeKey(info.RequestId, "request")).First(&subscriptionIncome).Error)
-	assert.Equal(t, int64(3_500_000_000), subscriptionIncome.IncomeNanoCNY)
+	assert.Equal(t, int64(500_000_000), subscriptionIncome.IncomeNanoCNY)
 	assert.Equal(t, "subscription", subscriptionIncome.BillingSource)
 	assert.Equal(t, "settled", subscriptionIncome.Status)
 
@@ -78,7 +78,7 @@ func TestSettleBillingPersistsFinalWalletChargeForProfit(t *testing.T) {
 	key := model.ChannelMonitorIncomeKey(strconv.Itoa(task.Id), "midjourney")
 	var midjourneyIncome model.ChannelMonitorIncome
 	require.NoError(t, model.DB.Where("settlement_key = ?", key).First(&midjourneyIncome).Error)
-	assert.Equal(t, int64(7_000_000_000), midjourneyIncome.IncomeNanoCNY)
+	assert.Equal(t, int64(1_000_000_000), midjourneyIncome.IncomeNanoCNY)
 	assert.True(t, RefundMidjourneyQuota(context.Background(), task, "test refund"))
 	require.NoError(t, model.DB.Where("settlement_key = ?", key).First(&midjourneyIncome).Error)
 	assert.Zero(t, midjourneyIncome.IncomeNanoCNY)
@@ -151,7 +151,7 @@ func TestRealtimeProfitIncludesEachFundingDeductionAndFinalSettlement(t *testing
 		amount += income.IncomeNanoCNY
 	}
 	assert.Equal(t, int64(10_000-user.Quota), quota, "profit follows every actual wallet deduction")
-	assert.Equal(t, quota*70_000_000, amount)
+	assert.Equal(t, quota*10_000_000, amount)
 }
 
 func TestTaskBillingCorrectionsReplaceChannelMonitorIncomeSnapshot(t *testing.T) {
@@ -187,7 +187,7 @@ func TestTaskBillingCorrectionsReplaceChannelMonitorIncomeSnapshot(t *testing.T)
 	var saved model.ChannelMonitorIncome
 	require.NoError(t, model.DB.Where("settlement_key = ?", income.SettlementKey).First(&saved).Error)
 	assert.Equal(t, int64(1500), saved.Quota)
-	assert.Equal(t, int64(21_000_000), saved.IncomeNanoCNY)
+	assert.Equal(t, int64(3_000_000), saved.IncomeNanoCNY)
 
 	assert.True(t, RefundTaskQuota(context.Background(), task, "test refund"))
 	assert.True(t, RefundTaskQuota(context.Background(), task, "replayed refund"))

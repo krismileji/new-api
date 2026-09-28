@@ -45,7 +45,9 @@ func TestChannelMonitorAnalyticsDatabaseMatrix(t *testing.T) {
 	assert.Equal(t, startedAt, model.ChannelMonitorIncomeGapSince(), "repeated startup must restore the durable gap marker")
 	var preservedIncome model.ChannelMonitorIncome
 	require.NoError(t, db.Where("settlement_key = ?", incomeKey).First(&preservedIncome).Error)
-	assert.Equal(t, income.IncomeNanoCNY, preservedIncome.IncomeNanoCNY)
+	assert.Equal(t, int64(20_000), preservedIncome.IncomeNanoCNY, "旧汇率收入修正为平台 1:1 口径")
+	assert.Equal(t, "1", preservedIncome.USDToCNY)
+	assert.Equal(t, income.Quota, preservedIncome.Quota)
 	duplicateIncome := income
 	duplicateIncome.ID = 0
 	assert.Error(t, db.Create(&duplicateIncome).Error, "settlement key remains unique after a repeated migration")

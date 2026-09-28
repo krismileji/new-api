@@ -10,18 +10,17 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 )
 
-type channelMonitorIncomeConversion struct{ QuotaPerUnit, USDToCNY float64 }
+type channelMonitorIncomeConversion struct{ QuotaPerUnit float64 }
 
 func captureChannelMonitorIncomeConversion(c *gin.Context) {
 	if c == nil {
 		return
 	}
 	if _, exists := c.Get("channel_monitor_income_conversion"); !exists {
-		c.Set("channel_monitor_income_conversion", channelMonitorIncomeConversion{common.QuotaPerUnit, operation_setting.USDExchangeRate})
+		c.Set("channel_monitor_income_conversion", channelMonitorIncomeConversion{common.QuotaPerUnit})
 	}
 }
 
@@ -35,7 +34,7 @@ func prepareChannelMonitorIncome(c *gin.Context, info *relaycommon.RelayInfo, qu
 	captureChannelMonitorIncomeConversion(c)
 	value, _ := c.Get("channel_monitor_income_conversion")
 	conversion := value.(channelMonitorIncomeConversion)
-	if info.RequestId == "" || info.ChannelMeta == nil || info.ChannelId <= 0 || math.IsNaN(conversion.QuotaPerUnit) || math.IsInf(conversion.QuotaPerUnit, 0) || math.IsNaN(conversion.USDToCNY) || math.IsInf(conversion.USDToCNY, 0) {
+	if info.RequestId == "" || info.ChannelMeta == nil || info.ChannelId <= 0 || math.IsNaN(conversion.QuotaPerUnit) || math.IsInf(conversion.QuotaPerUnit, 0) {
 		model.MarkChannelMonitorIncomeGap(ctx)
 		logger.LogWarn(c, "收入记录缺少请求标识或有效换算参数")
 		return nil
@@ -49,7 +48,7 @@ func prepareChannelMonitorIncome(c *gin.Context, info *relaycommon.RelayInfo, qu
 		SettlementKey: model.ChannelMonitorIncomeKey(info.RequestId, kind), ChannelID: info.ChannelId,
 		UserID: info.UserId, APIKeyID: info.TokenId, APIKeyKey: snapshot.KeyFingerprint, APIKeyName: snapshot.APIKeyName,
 		ModelName: info.OriginModelName, GroupName: info.UsingGroup, BillingSource: source, Quota: int64(quota),
-		QuotaPerUnit: strconv.FormatFloat(conversion.QuotaPerUnit, 'f', -1, 64), USDToCNY: strconv.FormatFloat(conversion.USDToCNY, 'f', -1, 64),
+		QuotaPerUnit: strconv.FormatFloat(conversion.QuotaPerUnit, 'f', -1, 64), USDToCNY: "1",
 	}
 	record.CostEventID = channelDailyCostEventId(c, info.ChannelId)
 	if err := model.PrepareChannelMonitorIncome(ctx, record); err != nil {

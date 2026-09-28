@@ -487,7 +487,7 @@ export function ChannelMonitorAnalyticsDialog(
   } else if (props.metric === 'profit') {
     title = '渠道利润分析'
     description =
-      '账面毛利 = 用户最终扣费 − 渠道总成本（含探测和模型检测）。钱包与订阅消耗按结算快照换算人民币；退款、补扣修正原记录。未确认成本或收入不会按零认定利润。'
+      '账面毛利 = 用户最终扣费 − 渠道总成本（含探测和模型检测）。平台按 1:1 记账：用户扣费 7，收入也记 7，不乘美元展示汇率。订阅为名义消耗；退款、补扣修正原记录。未确认成本或收入不会按零认定利润。'
   } else if (props.metric === 'success') {
     title = '成功率与缓存分析'
     description = `${props.successMode === 'final' ? '成功率按请求最终结果统计。' : '成功率按实际派发的上游尝试统计，包含重试。'}缓存利用率按流式请求的输入 Token 加权；缓存写入次数包含流式和非流式请求。`

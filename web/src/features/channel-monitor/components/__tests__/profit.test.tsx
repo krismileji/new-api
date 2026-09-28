@@ -88,6 +88,9 @@ test('launch-day history gaps hide profit and rate in summaries, rows and daily 
     )
   )
   await screen.findByRole('button', { name: '查看渠道 A明细' })
+  expect(screen.getByText(/平台按 1:1 记账/)).toHaveTextContent(
+    '用户扣费 7，收入也记 7，不乘美元展示汇率'
+  )
   const trend = await screen.findByRole('region', { name: '利润历史趋势' })
   fireEvent.click(within(trend).getByText('查看每日数值'))
   expect(screen.queryAllByText('-¥90.0000')).toHaveLength(0)

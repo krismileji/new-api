@@ -74,6 +74,19 @@ func InitializeChannelMonitorIncome(db *gorm.DB, master bool) error {
 		return err
 	}
 	channelMonitorIncomeGap.Store(state.GapSince)
+	if master {
+		if err := migrateChannelMonitorIncomeParity(db); err != nil {
+			return err
+		}
+	} else {
+		var pending []int64
+		if err := db.Model(&ChannelMonitorIncome{}).Where("usd_to_cny <> ?", "1").Limit(1).Pluck("id", &pending).Error; err != nil {
+			return err
+		}
+		if len(pending) > 0 {
+			return errors.New("渠道收入尚未完成 1:1 修正，请先升级并启动主节点")
+		}
+	}
 	ChannelMonitorIncomeReady.Store(true)
 	return nil
 }
@@ -113,6 +126,9 @@ func PrepareChannelMonitorIncome(ctx context.Context, record *ChannelMonitorInco
 		(record.BillingSource != "wallet" && record.BillingSource != "subscription") {
 		return errors.New("收入结算记录无效")
 	}
+	// Platform credits are sold 1:1 with CNY. Display currency settings must
+	// never inflate the income used for channel profit.
+	record.USDToCNY = "1"
 	amount, err := ChannelMonitorIncomeAmount(record.Quota, record.QuotaPerUnit, record.USDToCNY)
 	if err != nil {
 		return err
@@ -257,8 +273,8 @@ func ConfirmChannelMonitorCostIncome(tx *gorm.DB, events []ChannelDailyCostOutbo
 	return nil
 }
 
-// Task corrections share the funding transaction and reuse the original FX
-// snapshot. A repeated callback replaces the total, never adds it twice.
+// Task corrections share the funding transaction and reuse the original quota
+// unit. A repeated callback replaces the total, never adds it twice.
 func correctTaskChannelMonitorIncome(tx *gorm.DB, task *Task, quota int) error {
 	if !ChannelMonitorIncomeReady.Load() || task.PrivateData.Execution == nil || strings.TrimSpace(task.PrivateData.Execution.RequestID) == "" {
 		return nil
@@ -272,11 +288,11 @@ func correctTaskChannelMonitorIncome(tx *gorm.DB, task *Task, quota int) error {
 	if err != nil {
 		return err
 	}
-	amount, err := ChannelMonitorIncomeAmount(int64(quota), record.QuotaPerUnit, record.USDToCNY)
+	amount, err := ChannelMonitorIncomeAmount(int64(quota), record.QuotaPerUnit, "1")
 	if err != nil {
 		return err
 	}
-	updates := map[string]any{"quota": quota, "income_nano_cny": amount, "status": "settled", "updated_at": time.Now().Unix()}
+	updates := map[string]any{"quota": quota, "income_nano_cny": amount, "usd_to_cny": "1", "status": "settled", "updated_at": time.Now().Unix()}
 	if task.PrivateData.BillingContext != nil && task.PrivateData.BillingContext.ChannelCostResolved {
 		updates["cost_recorded"] = 1
 	}
