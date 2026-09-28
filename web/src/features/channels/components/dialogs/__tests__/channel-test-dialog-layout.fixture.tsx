@@ -151,7 +151,7 @@ const singleRendered = await renderDialog(
     onOpenChange={() => {}}
   />
 )
-assert.ok(singleRendered.dialog.classList.contains('max-h-[calc(100vh-2rem)]'))
+assert.ok(singleRendered.dialog.classList.contains('max-h-[min(90dvh,var(--dialog-available-height))]'))
 assert.equal(
   singleRendered.dialog.style.getPropertyValue('--dialog-content-height'),
   'auto'

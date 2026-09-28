@@ -45,12 +45,15 @@ func TestChannelMonitorRatioAuditSkipsTaskStartsAndUnchangedValues(t *testing.T)
 	UpdateChannelMonitorRatio(unchangedContext)
 	require.Equal(t, http.StatusOK, unchangedRecorder.Code, unchangedRecorder.Body.String())
 
-	var logs []model.Log
-	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeManage).Find(&logs).Error)
+	var logs []model.AuditLog
+	require.NoError(t, model.LOG_DB.Where("category = ?", model.AuditCategoryOperation).Find(&logs).Error)
 	require.Len(t, logs, 1)
 	assert.Equal(t, "已将渠道 audit-ratio（ID: 101）的倍率更新为 1.5", logs[0].Content)
-	assert.Contains(t, logs[0].Other, `"action":"channel.monitor_ratio_update"`)
-	assert.Contains(t, logs[0].Other, `"channel_name":"audit-ratio"`)
+	require.NotNil(t, logs[0].Other.Op)
+	assert.Equal(t, "channel.monitor_ratio_update", logs[0].Other.Op.Action)
+	encoded, err := common.Marshal(logs[0].Other.Op.Params["channel_name"])
+	require.NoError(t, err)
+	assert.JSONEq(t, `"audit-ratio"`, string(encoded))
 }
 
 func TestChannelStatusAuditOnlyRecordsActualChangesWithReadableStatus(t *testing.T) {
@@ -74,9 +77,12 @@ func TestChannelStatusAuditOnlyRecordsActualChangesWithReadableStatus(t *testing
 	UpdateChannelStatus(changedContext)
 	require.Equal(t, http.StatusOK, changedRecorder.Code, changedRecorder.Body.String())
 
-	var logs []model.Log
-	require.NoError(t, model.LOG_DB.Where("type = ?", model.LogTypeManage).Find(&logs).Error)
+	var logs []model.AuditLog
+	require.NoError(t, model.LOG_DB.Where("category = ?", model.AuditCategoryOperation).Find(&logs).Error)
 	require.Len(t, logs, 1)
 	assert.Equal(t, "已禁用渠道 audit-status（ID: 102）", logs[0].Content)
-	assert.Contains(t, logs[0].Other, `"channel_name":"audit-status"`)
+	require.NotNil(t, logs[0].Other.Op)
+	encoded, err := common.Marshal(logs[0].Other.Op.Params["channel_name"])
+	require.NoError(t, err)
+	assert.JSONEq(t, `"audit-status"`, string(encoded))
 }

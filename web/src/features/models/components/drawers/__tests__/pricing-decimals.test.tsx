@@ -17,18 +17,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
+import { usePricingPreferencesStore } from '@/stores/pricing-preferences-store'
 
 import type { Model } from '../../../types'
 import { ModelMutateDrawer } from '../model-mutate-drawer'
 
 test.each([
-  { option: 'ModelPrice', label: 'Fixed price (USD)' },
-  { option: 'ModelRatio', label: 'Model ratio' },
-])('模型编辑器加载 $option 时显示完整小数', async ({ option, label }) => {
+  { option: 'ModelPrice', label: 'Fixed price', expected: '0.0000002' },
+  { option: 'ModelRatio', label: 'Input price', expected: '0.0000004' },
+])('模型编辑器加载 $option 时显示完整小数', async ({ option, label, expected }) => {
+  const previousAuth = useAuthStore.getState().auth
+  useAuthStore.setState({ auth: { ...previousAuth, user: { ...previousAuth.user, role: 100 } as NonNullable<typeof previousAuth.user> } })
+  usePricingPreferencesStore.setState({ currency: 'USD' })
   const model: Model = {
     id: 1,
     model_name: 'decimal-model',
@@ -39,11 +44,11 @@ test.each([
     name_rule: 0,
   }
   vi.spyOn(api, 'get').mockImplementation(async (url) => {
-    if (url === '/api/option/') {
+    if (url === '/api/option/model_pricing') {
       return {
         data: {
           success: true,
-          data: [{ key: option, value: '{"decimal-model":2e-7}' }],
+          data: { entries: [{model_name: 'decimal-model', version: '1', configured: { [option]: 2e-7 }, effective: { [option]: 2e-7 }}], options: {}, empty_version: '0' },
         },
       }
     }
@@ -65,8 +70,10 @@ test.each([
     </QueryClientProvider>
   )
 
+  fireEvent.click(screen.getByRole('tab', { name: 'Pricing' }))
   await waitFor(() =>
-    expect(screen.getByLabelText(label)).toHaveValue('0.0000002')
+    expect(screen.getByLabelText(label)).toHaveValue(expected)
   )
   client.clear()
+  useAuthStore.setState({ auth: previousAuth })
 })

@@ -84,6 +84,7 @@ function renderSettings(groupDefaults = initialGroups) {
             ExposeRatioEnabled: false,
             BillingMode: '{}',
             BillingExpr: '{}',
+      PluginBillingExpr: '{}',
           }}
           groupDefaults={groupDefaults}
           toolPricesDefault='{}'
@@ -130,7 +131,7 @@ test('保存取消可选的分组后，重新加载设置再勾选仍保留说�
   const view = renderSettings()
 
   await user.click(screen.getByRole('checkbox', { name: 'User selectable' }))
-  await user.click(screen.getByRole('button', { name: 'Save group ratios' }))
+  await user.click(screen.getByRole('button', { name: 'Save group settings' }))
   await waitFor(() => expect(saved.UserUsableGroups).toBe('{}'))
   expect(JSON.parse(saved.GroupDescriptions ?? '{}')).toEqual({
     default: '默认分组说明',
@@ -143,7 +144,7 @@ test('保存取消可选的分组后，重新加载设置再勾选仍保留说�
   ).not.toBeChecked()
   await user.click(screen.getByRole('checkbox', { name: 'User selectable' }))
   expect(screen.getByDisplayValue('默认分组说明')).toBeEnabled()
-  await user.click(screen.getByRole('button', { name: 'Save group ratios' }))
+  await user.click(screen.getByRole('button', { name: 'Save group settings' }))
   await waitFor(() =>
     expect(JSON.parse(saved.UserUsableGroups)).toEqual({
       default: '默认分组说明',
@@ -184,7 +185,7 @@ test('显式清空说明后取消可选并保存，重新加载时不恢复旧�
 
   await user.clear(screen.getByPlaceholderText('Group description'))
   await user.click(screen.getByRole('checkbox', { name: 'User selectable' }))
-  await user.click(screen.getByRole('button', { name: 'Save group ratios' }))
+  await user.click(screen.getByRole('button', { name: 'Save group settings' }))
   await waitFor(() => expect(saved.UserUsableGroups).toBe('{}'))
   expect(JSON.parse(saved.GroupDescriptions ?? '{}')).toEqual({ default: '' })
 
@@ -203,11 +204,11 @@ test('说明保存失败时停止更新可选分组，避免删除仍未备份�
   renderSettings()
 
   await user.click(screen.getByRole('checkbox', { name: 'User selectable' }))
-  await user.click(screen.getByRole('button', { name: 'Save group ratios' }))
+  await user.click(screen.getByRole('button', { name: 'Save group settings' }))
   await waitFor(() => expect(update).toHaveBeenCalled())
   await waitFor(() =>
     expect(
-      screen.getByRole('button', { name: 'Save group ratios' })
+      screen.getByRole('button', { name: 'Save group settings' })
     ).toBeEnabled()
   )
   expect(update.mock.calls.map(([request]) => request.key)).toEqual([
@@ -246,7 +247,7 @@ test('分组改名后说明跟随新名称保存，其他分组的说明保持�
   const groupName = screen.getByDisplayValue('default')
   await user.clear(groupName)
   await user.type(groupName, 'renamed')
-  await user.click(screen.getByRole('button', { name: 'Save group ratios' }))
+  await user.click(screen.getByRole('button', { name: 'Save group settings' }))
   await waitFor(() =>
     expect(JSON.parse(saved.UserUsableGroups ?? '{}')).toEqual({
       renamed: '默认分组说明',
@@ -274,7 +275,7 @@ test('删除分组时一并删除保留的说明，重新添加分组不会复�
   })
 
   await user.click(screen.getByRole('button', { name: 'Delete' }))
-  await user.click(screen.getByRole('button', { name: 'Save group ratios' }))
+  await user.click(screen.getByRole('button', { name: 'Save group settings' }))
   await waitFor(() => expect(saved.UserUsableGroups).toBe('{}'))
   expect(saved.GroupDescriptions).toBe('{}')
 
@@ -311,7 +312,7 @@ test.each(['{}', ''])(
         target: { value: '{}' },
       }
     )
-    await user.click(screen.getByRole('button', { name: 'Save group ratios' }))
+    await user.click(screen.getByRole('button', { name: 'Save group settings' }))
     await waitFor(() => expect(saved.UserUsableGroups).toBe('{}'))
     expect(saved.GroupDescriptions).toBe('{}')
   }

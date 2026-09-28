@@ -34,7 +34,8 @@ import { getLogsViewCapabilities } from './scope'
 export function useColumnsByCategory(
   logCategory: LogCategory,
   viewScope: LogsViewScope,
-  isRoot: boolean
+  isRoot: boolean,
+  showBillingSource = false
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ): ColumnDef<any>[] {
   const capabilities = getLogsViewCapabilities(viewScope)
@@ -42,7 +43,8 @@ export function useColumnsByCategory(
     capabilities.isAdminView,
     isRoot,
     capabilities.showUserColumn,
-    capabilities.showChannelColumn
+    capabilities.showChannelColumn,
+    showBillingSource
   )
   const drawingColumns = useDrawingLogsColumns(
     capabilities.isAdminView,

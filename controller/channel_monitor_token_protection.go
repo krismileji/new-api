@@ -35,8 +35,8 @@ func SaveTokenProtectionSettings(c *gin.Context) {
 		c.JSON(status, gin.H{"success": false, "message": err.Error()})
 		return
 	}
-	model.RecordOperationAuditLog(c.GetInt("id"), "更新 API Key 自动禁用规则", c.ClientIP(), "token_auto_disable_settings", nil,
-		map[string]interface{}{"revision": settings.Revision, "enabled": settings.Enabled, "rule_count": len(settings.Rules)}, nil)
+	model.RecordOperationAuditLog(c.GetInt("id"), c.GetInt("role"), "更新 API Key 自动禁用规则", c.ClientIP(), "token_auto_disable_settings",
+		map[string]interface{}{"revision": settings.Revision, "enabled": settings.Enabled, "rule_count": len(settings.Rules)}, auditOperatorInfo(c), nil, c)
 	common.ApiSuccess(c, settings)
 }
 
@@ -62,7 +62,7 @@ func ReleaseTokenProtection(c *gin.Context) {
 		c.JSON(http.StatusConflict, gin.H{"success": false, "message": err.Error()})
 		return
 	}
-	model.RecordOperationAuditLog(c.GetInt("id"), "解除 API Key 自动禁用", c.ClientIP(), "token_auto_disable_release",
-		map[string]interface{}{"record_id": c.Param("id")}, nil, nil)
+	model.RecordOperationAuditLog(c.GetInt("id"), c.GetInt("role"), "解除 API Key 自动禁用", c.ClientIP(), "token_auto_disable_release",
+		map[string]interface{}{"record_id": c.Param("id")}, auditOperatorInfo(c), nil, c)
 	common.ApiSuccess(c, nil)
 }

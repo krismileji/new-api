@@ -62,7 +62,7 @@ func updateChannelStatusesByTag(tag string, status int) error {
 		for index := range channels {
 			channel := &channels[index]
 			channelIds = append(channelIds, channel.Id)
-			if channel.Status == status {
+			if channel.Status == status && !(status == common.ChannelStatusManuallyDisabled && channel.ChannelInfo.IsMultiKey && channel.GetOtherInfo()["status_reason"] == ChannelStatusReasonAllKeysDisabled) {
 				continue
 			}
 			info := channel.GetOtherInfo()

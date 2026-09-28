@@ -55,6 +55,7 @@ export type SectionPageLayoutProps = {
   children: ReactNode
   fixedContent?: boolean
   stackHeaderOnMobile?: boolean
+  stackActionsOnMobile?: boolean
 }
 
 export function SectionPageLayout(props: SectionPageLayoutProps) {
@@ -101,7 +102,8 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
                 'min-w-0',
                 props.stackHeaderOnMobile
                   ? 'w-full sm:w-auto sm:flex-1'
-                  : 'flex-1'
+                  : 'flex-1',
+                !props.stackHeaderOnMobile && props.stackActionsOnMobile && 'max-sm:basis-full'
               )}
             >
               <h2 className='truncate text-base font-bold tracking-tight sm:text-lg'>

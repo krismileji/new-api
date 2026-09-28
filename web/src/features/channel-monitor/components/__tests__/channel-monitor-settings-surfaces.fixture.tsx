@@ -373,7 +373,7 @@ const retentionSettingsLoaded =
     ?.querySelector('[aria-label="启用自动清理"]')
     ?.getAttribute('aria-checked') === 'true'
 const retentionFieldsOnlyInRetentionTab =
-  monitorRetentionFieldCount === 0 && retentionRetentionFieldCount === 17
+  monitorRetentionFieldCount === 0 && retentionRetentionFieldCount === 18
 await unmountSettingsSurface(generalSurface)
 
 const scheduleSurface = await renderSettingsSurface('schedule')
@@ -444,7 +444,7 @@ const policyInputGroupsUseInsetRing =
     inputGroup.classList.contains('ring-inset')
   )
 const policyDialogCentered =
-  policyDialog.className.includes('top-1/2') &&
+  policyDialog.className.includes('top-[var(--dialog-viewport-center,50dvh)]') &&
   policyDialog.className.includes('left-1/2')
 const policyDialogUsesInsetRing = policyDialog.classList.contains('ring-inset')
 const policyDialogUsesContentSizedViewport =
@@ -492,22 +492,22 @@ const policyDialogHidesLegacyDegradeScore =
 const policyDialogHasNoLegacyWeightControls =
   !policyDialogText.includes('得分曲线指数') &&
   !policyDialogText.includes('相对权重拉伸')
-const fastFailureInput = policyDialog.querySelector(
-  'input[name="fastFailureSeconds"]'
-)
-const stabilityFailureGrid = fastFailureInput?.closest(
-  '[class*="lg:grid-cols-3"]'
-)
-const policyDialogStabilityInputsAligned =
-  stabilityFailureGrid?.classList.contains('items-start') === true &&
+const policyDialogStabilityInputsAligned = [
   [
-    'fastFailurePenaltyPercent',
     'fastFailureSeconds',
     'fastFailureSameChannelRetryCount',
     'fastFailureSameChannelRetryDelayMs',
-    'slowFailureSeconds',
-    'cooldownMinutes',
-  ].every((name) => stabilityFailureGrid.querySelector(`input[name="${name}"]`))
+  ],
+  ['fastFailurePenaltyPercent', 'slowFailureSeconds', 'cooldownMinutes'],
+].every((names) => {
+  const grid = policyDialog
+    .querySelector(`input[name="${names[0]}"]`)
+    ?.closest('.grid.items-start')
+  return (
+    grid?.classList.contains('items-start') === true &&
+    names.every((name) => grid.querySelector(`input[name="${name}"]`))
+  )
+})
 const policyDialogExplainsExplicitScope = policyDialogText.includes(
   '应用到当前设置并保存智能调度设置后，该分组才会进入调度范围'
 )

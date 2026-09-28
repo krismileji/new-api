@@ -32,6 +32,7 @@ func updateChannelStatusAtomically(channelId int, usingKey string, status int, r
 		}
 
 		previousStatus := channel.Status
+		previousOtherInfo := channel.OtherInfo
 		if channel.ChannelInfo.IsMultiKey {
 			beforeInfo, err := common.Marshal(channel.ChannelInfo)
 			if err != nil {
@@ -42,7 +43,7 @@ func updateChannelStatusAtomically(channelId int, usingKey string, status int, r
 			if err != nil {
 				return err
 			}
-			if previousStatus == channel.Status && bytes.Equal(beforeInfo, afterInfo) {
+			if previousStatus == channel.Status && bytes.Equal(beforeInfo, afterInfo) && previousOtherInfo == channel.OtherInfo {
 				return nil
 			}
 		} else {

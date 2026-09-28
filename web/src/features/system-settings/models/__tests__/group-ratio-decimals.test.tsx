@@ -27,6 +27,9 @@ test('分组倍率和充值倍率加载为小数，编辑后仍按原精度输�
   const onChange = vi.fn()
   render(
     <GroupRatioVisualEditor
+      section="pricing"
+      onSectionChange={() => {}}
+      defaultUseAutoGroupField={null}
       groupRatio='{"default":2e-7}'
       groupOrder='["default"]'
       topupGroupRatio='{"default":3e-7}'

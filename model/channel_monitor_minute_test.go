@@ -251,6 +251,7 @@ func TestAggregateChannelMonitorMinuteRangeWithStateCommitsRowsAndWatermark(t *t
 	assert.Equal(t, int64(120), state.CompletedThrough)
 	assert.Equal(t, int64(60), state.CoveredFrom)
 	assert.Equal(t, int64(3), state.Revision)
+	metric = ChannelMonitorMinuteRouteMetric{}
 	require.NoError(t, db.Where("minute_start = ? AND channel_id = ?", 60, 1).First(&metric).Error)
 	assert.Equal(t, int64(2), metric.ActualSuccessCount)
 }

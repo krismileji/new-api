@@ -169,6 +169,7 @@ func setupChannelMonitorControllerTestDB(t *testing.T) *gorm.DB {
 		&model.Option{},
 		&model.User{},
 		&model.Log{},
+		&model.AuditLog{},
 		&model.Channel{},
 		&model.Ability{},
 		&model.ChannelRatioMonitor{},
@@ -356,6 +357,7 @@ func newChannelMonitorControllerContext(t *testing.T, method string, target stri
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	ctx.Set("id", 1)
 	ctx.Set("username", "root")
+	ctx.Set("role", common.RoleRootUser)
 	return ctx, recorder
 }
 
@@ -3347,12 +3349,6 @@ func TestAutoDisableChannelMonitorForLowBalanceIgnoresStaleThreshold(t *testing.
 	require.NoError(t, err)
 	assert.Equal(t, common.ChannelStatusEnabled, storedChannel.Status)
 }
-
-
-
-
-
-
 
 func TestFetchChannelMonitorUpstreamBalanceRecordsSnapshotAndAutoDisables(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)

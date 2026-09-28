@@ -268,7 +268,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 		channel = &current
 	}
 	var currentAbilities []Ability
-	if err := tx.Select(commonGroupCol, "model").Where("channel_id = ?", channel.Id).
+	if err := tx.Select([]string{"group", "model"}).Where("channel_id = ?", channel.Id).
 		Find(&currentAbilities).Error; err != nil {
 		if isNewTx {
 			tx.Rollback()
@@ -309,7 +309,7 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 	}
 
 	// Then add new abilities
-	models_ := strings.Split(channel.Models, ",")
+	models_ := channel.GetModels()
 	groups_ := strings.Split(channel.Group, ",")
 	abilitySet := make(map[string]struct{})
 	activeRoutes := make(map[ChannelSmartScheduleRouteKey]struct{})

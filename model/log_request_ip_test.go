@@ -66,13 +66,13 @@ func TestUsageLogsStoreAdminRequestIPWhenUserOptedOut(t *testing.T) {
 
 	RecordConsumeLog(c, 1, RecordConsumeLogParams{
 		ModelName: "gpt-test",
-		Other: map[string]interface{}{
-			"admin_info": map[string]interface{}{"existing": true},
-		},
+		Other: LogOtherFromLegacyMap(map[string]any{
+			"admin_info": map[string]any{"existing": true},
+		}),
 	})
-	RecordErrorLog(c, 1, 9, "gpt-test", "token", "status_code=500", 7, 1, false, "default", map[string]interface{}{
+	RecordErrorLog(c, 1, 9, "gpt-test", "token", "status_code=500", 7, 1, false, "default", LogOtherFromLegacyMap(map[string]any{
 		"admin_info": map[string]interface{}{"existing": true},
-	}, false)
+	}), false)
 
 	var logs []Log
 	require.NoError(t, db.Order("id asc").Find(&logs).Error)

@@ -103,7 +103,6 @@ func channelSmartScheduleSupportsTextProbe(channel *model.Channel, modelName str
 
 	normalizedModel := strings.ToLower(modelName)
 	if common.IsImageGenerationModel(normalizedModel) ||
-		model_setting.IsSyncImageModel(modelName) ||
 		model_setting.IsGeminiModelSupportImagine(modelName) {
 		return false
 	}

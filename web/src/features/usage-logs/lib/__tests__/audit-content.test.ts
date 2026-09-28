@@ -142,7 +142,7 @@ describe('channel monitor audit content', () => {
         },
         passthrough
       ),
-      '已将渠道 7 的状态更新为 2'
+      'Updated channel status (ID: {{id}})'
     )
 
     assert.equal(

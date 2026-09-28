@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatLogQuota } from '@/lib/format'
+import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import { getAllUserVisibleLogStats, getLogStats, getUserLogStats } from '../api'
@@ -72,6 +73,7 @@ export function CommonLogsStats() {
       } else {
         result = await getUserLogStats(params)
       }
+      result = requireServerSuccess(result)
 
       return result.success
         ? result.data || DEFAULT_LOG_STATS

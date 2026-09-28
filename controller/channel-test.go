@@ -374,6 +374,13 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			newAPIError: types.NewError(err, types.ErrorCodeChannelModelMappedError),
 		}
 	}
+	if err := helper.ApplyReasoningModelSuffix(c, info, request); err != nil {
+		return testResult{
+			context:     c,
+			localErr:    err,
+			newAPIError: types.NewErrorWithStatusCode(err, types.ErrorCodeConvertRequestFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry()),
+		}
+	}
 
 	testModel = info.UpstreamModelName
 	// 更新请求中的模型名称
@@ -671,16 +678,18 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		tokenName := "模型测试"
 		content := "模型测试"
 		if isSmartScheduleProbe {
-			other[model.ChannelMonitorSmartScheduleProbeLogKey] = true
+			other.SetPublic(model.ChannelMonitorSmartScheduleProbeLogKey, true)
 			tokenName = "智能调度探测"
 			content = "智能调度定时探测"
 		} else if isGroupMonitorProbe {
-			other[model.ChannelMonitorGroupProbeLogKey] = true
-			appendChannelGroupMonitorAttemptLogInfoFromContext(c, other, model.ChannelStatusProbeResultSuccess)
+			other.SetPublic(model.ChannelMonitorGroupProbeLogKey, true)
+			probeInfo := make(map[string]any)
+			appendChannelGroupMonitorAttemptLogInfoFromContext(c, probeInfo, model.ChannelStatusProbeResultSuccess)
+			other.MergePublic(probeInfo)
 			tokenName = "分组监控探测"
 			content = "分组监控探测"
 		} else if isStatusProbe {
-			other[model.ChannelMonitorStatusProbeLogKey] = true
+			other.SetPublic(model.ChannelMonitorStatusProbeLogKey, true)
 			tokenName = "状态探测"
 			content = "渠道状态探测"
 		}
@@ -766,25 +775,20 @@ func settleTestQuota(info *relaycommon.RelayInfo, priceData hosttypes.PriceData,
 	return quota, nil
 }
 
-func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage, tieredResult *billingexpr.TieredResult) map[string]interface{} {
+func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData hosttypes.PriceData, usage *dto.Usage, tieredResult *billingexpr.TieredResult) *model.LogOther {
 	other := service.GenerateTextOtherInfo(c, info, priceData.ModelRatio, priceData.GroupRatioInfo.GroupRatio, priceData.CompletionRatio,
 		usage.PromptTokensDetails.CachedTokens, priceData.CacheRatio, priceData.ModelPrice, priceData.GroupRatioInfo.GroupSpecialRatio)
 	if c == nil || c.Request == nil ||
 		(!isChannelSmartScheduleProbeTest(c.Request.Context()) &&
 			!isChannelGroupMonitorTest(c.Request.Context()) &&
 			!isChannelStatusProbeTest(c.Request.Context())) {
-		other[model.ChannelMonitorChannelTestLogKey] = true
+		other.SetPublic(model.ChannelMonitorChannelTestLogKey, true)
 	}
 	if tieredResult != nil {
 		service.InjectTieredBillingInfo(other, info, tieredResult)
 	}
 	if info != nil && info.QuotaClamp != nil {
-		adminInfo, _ := other["admin_info"].(map[string]interface{})
-		if adminInfo == nil {
-			adminInfo = make(map[string]interface{})
-			other["admin_info"] = adminInfo
-		}
-		adminInfo["quota_saturation"] = info.QuotaClamp.AuditMap()
+		other.SetAdmin("quota_saturation", info.QuotaClamp.AuditMap())
 	}
 	return other
 }
@@ -834,7 +838,7 @@ func detectErrorFromTestResponseBody(respBody []byte) error {
 		return fmt.Errorf("upstream error: %s", message)
 	}
 
-	for _, line := range bytes.Split(b, []byte{'\n'}) {
+	for line := range bytes.SplitSeq(b, []byte{'\n'}) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
 			continue
@@ -860,7 +864,7 @@ func validateStreamTestResponseBody(respBody []byte) error {
 		return errors.New("stream response body is empty")
 	}
 
-	for _, line := range bytes.Split(b, []byte{'\n'}) {
+	for line := range bytes.SplitSeq(b, []byte{'\n'}) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 || !bytes.HasPrefix(line, []byte("data:")) {
 			continue
@@ -1221,7 +1225,7 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 		recordChannelTestResultError(result, channel, newAPIError, false)
 	}
 	if shouldProcessChannelError {
-		processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, false)
+		processChannelErrorWithRetry(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, false)
 		summary.Disabled++
 	}
 

@@ -22,7 +22,7 @@ type taskPollingResponseAdaptor struct {
 
 func (a *taskPollingResponseAdaptor) Init(_ *relaycommon.RelayInfo) {}
 
-func (a *taskPollingResponseAdaptor) FetchTask(_ string, _ string, _ map[string]any, _ string) (*http.Response, error) {
+func (a *taskPollingResponseAdaptor) FetchTask(_ string, _ string, _ *model.Task, _ string) (*http.Response, error) {
 	if a.status == 0 {
 		return nil, nil
 	}
@@ -33,7 +33,7 @@ func (a *taskPollingResponseAdaptor) FetchTask(_ string, _ string, _ map[string]
 	return &http.Response{StatusCode: a.status, Body: body}, nil
 }
 
-func (a *taskPollingResponseAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+func (a *taskPollingResponseAdaptor) ParseTaskResult(*model.Task, *http.Response, []byte) (*relaycommon.TaskInfo, error) {
 	return nil, nil
 }
 
@@ -43,11 +43,11 @@ func (a *taskPollingResponseAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *r
 
 func (a *taskPollingResponseAdaptor) FetchMode() string { return "batch" }
 
-func (a *taskPollingResponseAdaptor) FetchBatchTasks(baseURL, key string, taskIDs []string, proxy string) (*http.Response, error) {
-	return a.FetchTask(baseURL, key, map[string]any{"ids": taskIDs}, proxy)
+func (a *taskPollingResponseAdaptor) FetchBatchTasks(baseURL, key string, taskIDs []*model.Task, proxy string) (*http.Response, error) {
+	return a.FetchTask(baseURL, key, nil, proxy)
 }
 
-func (a *taskPollingResponseAdaptor) ParseBatchResult([]byte) (map[string]*BatchTaskResult, error) {
+func (a *taskPollingResponseAdaptor) ParseBatchResult([]*model.Task, *http.Response, []byte) (map[string]*BatchTaskResult, error) {
 	return nil, nil
 }
 
@@ -79,12 +79,15 @@ func TestResolveTaskPollingBaseURLValidatesDefaultsAndUnknownTypes(t *testing.T)
 }
 
 func TestUpdateVideoSingleTaskRejectsEmptyUpstreamResponses(t *testing.T) {
+	truncate(t)
 	task := &model.Task{
 		TaskID: "public-task",
+		Status: model.TaskStatusInProgress,
 		PrivateData: model.TaskPrivateData{
 			UpstreamTaskID: "upstream-task",
 		},
 	}
+	require.NoError(t, model.DB.Create(task).Error)
 	channel := &model.Channel{Id: 809, Type: constant.ChannelTypeKling}
 	taskMap := map[string]*model.Task{"upstream-task": task}
 
@@ -93,8 +96,11 @@ func TestUpdateVideoSingleTaskRejectsEmptyUpstreamResponses(t *testing.T) {
 	assert.Contains(t, err.Error(), "empty response")
 
 	err = updateVideoSingleTask(context.Background(), &taskPollingResponseAdaptor{status: http.StatusBadGateway}, channel, "upstream-task", taskMap)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "status 502")
+	require.NoError(t, err)
+	var stored model.Task
+	require.NoError(t, model.DB.First(&stored, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusInProgress, stored.Status)
+	assert.Equal(t, 1, stored.PrivateData.PollFailures)
 }
 
 func TestUpdateBatchTasksClosesNonSuccessResponseBody(t *testing.T) {
@@ -117,9 +123,14 @@ func TestUpdateBatchTasksClosesNonSuccessResponseBody(t *testing.T) {
 	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return adaptor }
 	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
 
-	err := updateBatchTasks(context.Background(), adaptor, channelID, []string{"upstream-task"}, nil)
+	task := &model.Task{TaskID: "batch-task", Status: model.TaskStatusInProgress, PrivateData: model.TaskPrivateData{UpstreamTaskID: "upstream-task"}}
+	require.NoError(t, model.DB.Create(task).Error)
+	err := updateBatchTasks(context.Background(), adaptor, channelID, []string{"upstream-task"}, map[string]*model.Task{"upstream-task": task})
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "status code: 502")
+	require.NoError(t, err)
 	assert.True(t, body.closed)
+	var stored model.Task
+	require.NoError(t, model.DB.First(&stored, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusInProgress, stored.Status)
+	assert.Equal(t, 1, stored.PrivateData.PollFailures)
 }

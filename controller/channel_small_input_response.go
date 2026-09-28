@@ -3,12 +3,15 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/channelprobe"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 )
 
@@ -26,6 +29,15 @@ func tryChannelSmallInputResponse(c *gin.Context, info *relaycommon.RelayInfo, c
 	tokens, outputLimit, valid := service.EstimateChannelSmallInput(info)
 	if !valid || tokens >= policy.SmallInputThresholdTokens {
 		return false, nil
+	}
+	if setting.ShouldCheckPromptSensitive() {
+		meta := info.Request.GetTokenCountMeta()
+		if meta != nil {
+			if contains, words := service.CheckSensitiveText(meta.CombineText); contains {
+				service.RequestPolicy(c).AddEvent(service.PolicyEvent{ErrorCode: string(types.ErrorCodeSensitiveWordsDetected), ErrorSource: "local", Decision: service.PolicyDecision{Action: "stop", Reason: "local_rejection", Source: "global"}, Health: "unchanged"})
+				return false, types.NewError(fmt.Errorf("user sensitive words detected: %s", strings.Join(words, ", ")), types.ErrorCodeSensitiveWordsDetected)
+			}
+		}
 	}
 	if info.Billing != nil {
 		billing, ok := info.Billing.(interface{ FinishWithoutCharge(context.Context) error })
