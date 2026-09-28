@@ -59,7 +59,7 @@ func channelMonitorProfitFacts(ctx context.Context, db *gorm.DB, query channelMo
 	}
 	if query.APIKeyKey != nil {
 		if channelMonitorAnalyticsSystemAPIKey(*query.APIKeyKey) {
-			base = base.Where("api_key_id = 0 AND source_kind = ?", *query.APIKeyKey)
+			base = base.Where("api_key_id = 0 AND ("+channelMonitorAnalyticsCostAPIKeyGroupSQL+") = ?", *query.APIKeyKey)
 		} else {
 			base = base.Where("api_key_key = ?", *query.APIKeyKey)
 		}

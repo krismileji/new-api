@@ -522,6 +522,12 @@ func channelDailyCostSourceKind(ctx *gin.Context) string {
 	if ctx != nil && ctx.GetBool(model.ChannelMonitorStatusProbeLogKey) {
 		return "status_probe"
 	}
+	if ctx != nil && ctx.GetBool(model.ChannelMonitorSmartScheduleProbeLogKey) {
+		return "smart_probe"
+	}
+	if ctx != nil && ctx.GetBool("channel_test") {
+		return "manual_test"
+	}
 	return "business"
 }
 

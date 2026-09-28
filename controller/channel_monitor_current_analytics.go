@@ -266,7 +266,8 @@ func queryChannelMonitorCurrentCostAnalytics(ctx context.Context, query channelM
 		matchQuery.APIKeyKey = nil
 	}
 	for _, row := range details {
-		if probeSource != "" && (row.APIKeyId != 0 || row.SourceKind != probeSource) {
+		apiKeyIdentity := channelMonitorAnalyticsCostAPIKeyIdentity(row.APIKeyId, row.APIKeyKey, row.SourceKind, row.APIKeyName)
+		if probeSource != "" && (row.APIKeyId != 0 || apiKeyIdentity != probeSource) {
 			continue
 		}
 		if !channelMonitorAnalyticsCurrentMatch(matchQuery, row.ChannelId, row.UserId, row.APIKeyId, row.APIKeyName, row.APIKeyKey, row.ModelName, row.ModelKey) {
@@ -281,7 +282,7 @@ func queryChannelMonitorCurrentCostAnalytics(ctx context.Context, query channelM
 		item := map[string]any{
 			"day_start": row.DayStart, "channel_id": row.ChannelId, "user_id": row.UserId,
 			"user_attribution": row.UserAttribution, "api_key_id": row.APIKeyId,
-			"api_key_key":  channelMonitorAnalyticsCostAPIKeyIdentity(row.APIKeyId, row.APIKeyKey, row.SourceKind),
+			"api_key_key":  apiKeyIdentity,
 			"api_key_name": row.APIKeyName, "model_key": row.ModelKey, "model_name": row.ModelName,
 			"cost_nano_cny": row.CostNanoCNY, "probe_cost_nano_cny": row.ProbeCostNanoCNY,
 			"group_probe_cost_nano_cny":     row.GroupProbeCostNanoCNY,
