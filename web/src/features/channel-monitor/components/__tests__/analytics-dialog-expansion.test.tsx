@@ -1,4 +1,6 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { fireEvent, render, screen } from '@testing-library/react'
+import type { ReactElement } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 import type {
@@ -59,6 +61,15 @@ function response(
 
 function item(key: string, fields: Partial<ChannelMonitorAnalyticsItem> = {}) {
   return { ...summary, key, ...fields }
+}
+
+function renderDialog(element: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  })
+  return render(
+    <QueryClientProvider client={client}>{element}</QueryClientProvider>
+  )
 }
 
 describe('ChannelMonitorAnalyticsDialog expansion', () => {
@@ -138,7 +149,7 @@ describe('ChannelMonitorAnalyticsDialog expansion', () => {
   })
 
   test('expands and loads child dimensions without replacing the root table', () => {
-    render(
+    renderDialog(
       <ChannelMonitorAnalyticsDialog
         open
         metric='success'
@@ -196,7 +207,7 @@ describe('ChannelMonitorAnalyticsDialog expansion', () => {
   })
 
   test('expands users into API keys, models and then channels', () => {
-    render(
+    renderDialog(
       <ChannelMonitorAnalyticsDialog
         open
         metric='success'
@@ -238,7 +249,7 @@ describe('ChannelMonitorAnalyticsDialog expansion', () => {
   })
 
   test('sorts success analysis by call count by default and toggles header sorting', () => {
-    render(
+    renderDialog(
       <ChannelMonitorAnalyticsDialog
         open
         metric='success'
@@ -270,7 +281,7 @@ describe('ChannelMonitorAnalyticsDialog expansion', () => {
   })
 
   test('sorts cost analysis by cost descending by default and toggles direction', () => {
-    render(
+    renderDialog(
       <ChannelMonitorAnalyticsDialog
         open
         metric='cost'
@@ -302,7 +313,7 @@ describe('ChannelMonitorAnalyticsDialog expansion', () => {
   })
 
   test('defaults to today and accepts a selected date range', () => {
-    render(
+    renderDialog(
       <ChannelMonitorAnalyticsDialog
         open
         metric='cost'

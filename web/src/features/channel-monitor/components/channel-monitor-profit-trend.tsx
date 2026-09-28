@@ -22,6 +22,7 @@ import { formatChannelMonitorBeijingDate } from '../lib/cost-date'
 import { formatProfitMoney } from '../lib/profit-format'
 import type { ChannelMonitorAnalyticsQuery } from '../types-analytics'
 import { ChannelMonitorAnalyticsCoverage } from './channel-monitor-analytics-coverage'
+import { ChannelMonitorProfitValue } from './channel-monitor-profit'
 
 export function ChannelMonitorProfitTrend({
   request,
@@ -63,7 +64,10 @@ export function ChannelMonitorProfitTrend({
     ),
     income: (row.income_nano_cny ?? 0) / 1e9,
     cost: (row.cost_nano_cny ?? 0) / 1e9,
-    profit: (row.profit_nano_cny ?? 0) / 1e9,
+    profit:
+      row.profit_confirmed === true && row.profit_nano_cny != null
+        ? row.profit_nano_cny / 1e9
+        : null,
   }))
   return (
     <section aria-label='利润历史趋势' className='rounded-lg border p-3'>
@@ -139,8 +143,7 @@ export function ChannelMonitorProfitTrend({
                   <td>{formatProfitMoney(row.income_nano_cny)}</td>
                   <td>{formatProfitMoney(row.cost_nano_cny)}</td>
                   <td>
-                    {formatProfitMoney(row.profit_nano_cny)}
-                    {!row.profit_confirmed ? '（待确认）' : ''}
+                    <ChannelMonitorProfitValue summary={row} />
                   </td>
                 </tr>
               ))}

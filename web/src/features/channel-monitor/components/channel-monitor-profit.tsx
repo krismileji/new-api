@@ -13,16 +13,17 @@ export function ChannelMonitorProfitValue({
   summary?: ChannelMonitorAnalyticsSummary
   className?: string
 }) {
+  const confirmed = summary?.profit_confirmed === true
   return (
     <span
       className={cn(
         'font-mono tabular-nums',
         className,
-        (summary?.profit_nano_cny ?? 0) < 0 && 'text-destructive'
+        confirmed && (summary?.profit_nano_cny ?? 0) < 0 && 'text-destructive'
       )}
     >
-      {formatProfitMoney(summary?.profit_nano_cny)}
-      {summary && !summary.profit_confirmed ? (
+      {formatProfitMoney(confirmed ? summary.profit_nano_cny : undefined)}
+      {summary && !confirmed ? (
         <span className='text-muted-foreground block font-sans text-xs'>
           利润待确认
         </span>
@@ -60,7 +61,7 @@ export function ChannelMonitorProfitCells({
         <ChannelMonitorProfitValue summary={summary} />
       </TableCell>
       <TableCell className='text-right font-mono tabular-nums'>
-        {formatProfitRate(summary.profit_rate)}
+        {formatProfitRate(summary)}
       </TableCell>
     </>
   )

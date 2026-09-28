@@ -4,8 +4,9 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from '@testing-library/react'
-import { afterEach, expect, test } from 'vitest'
+import { afterEach, expect, test, vi } from 'vitest'
 
 import { ChannelMonitorProfitValue } from '../channel-monitor-profit'
 import {
@@ -16,8 +17,9 @@ import {
 } from './analytics-query.fixture'
 
 afterEach(cleanup)
+afterEach(() => vi.useRealTimers())
 
-test('unconfirmed profit stays visibly marked and missing data is not zero', () => {
+test('unconfirmed profit hides the misleading loss while missing data is not zero', () => {
   const view = render(
     <ChannelMonitorProfitValue
       summary={{
@@ -28,10 +30,98 @@ test('unconfirmed profit stays visibly marked and missing data is not zero', () 
     />
   )
   expect(screen.getByText('利润待确认')).toBeInTheDocument()
-  expect(view.container.textContent).toContain('-')
+  expect(screen.queryByText(/1\.0000/)).not.toBeInTheDocument()
+  expect(view.container.querySelector('.text-destructive')).toBeNull()
   view.rerender(<ChannelMonitorProfitValue />)
   expect(view.container.textContent).toBe('-')
   expect(screen.queryByText('利润待确认')).not.toBeInTheDocument()
+})
+
+test('confirmed losses remain visible and turn neutral if confirmation is withdrawn', () => {
+  const summary = {
+    ...analyticsMetrics,
+    profit_nano_cny: -2_000_000_000,
+    profit_confirmed: true,
+  }
+  const view = render(<ChannelMonitorProfitValue summary={summary} />)
+  expect(screen.getByText('-¥2.0000')).toHaveClass('text-destructive')
+  expect(screen.queryByText('利润待确认')).not.toBeInTheDocument()
+  view.rerender(
+    <ChannelMonitorProfitValue
+      summary={{ ...summary, profit_confirmed: false }}
+    />
+  )
+  expect(screen.queryByText(/2\.0000/)).not.toBeInTheDocument()
+  expect(screen.getByText('利润待确认')).toBeInTheDocument()
+})
+
+test('launch-day history gaps hide profit and rate in summaries, rows and daily values', async () => {
+  const summary = {
+    ...analyticsMetrics,
+    income_nano_cny: 10_000_000_000,
+    cost_nano_cny: 100_000_000_000,
+    profit_nano_cny: -90_000_000_000,
+    profit_rate: -9,
+    profit_confirmed: false,
+    income_started_at: 1790553600,
+  }
+  renderAnalyticsQuery('profit', (params) =>
+    analyticsResponse(
+      params,
+      [
+        analyticsItem('7', {
+          ...summary,
+          channel_id: 7,
+          day_start: 1790524800,
+        }),
+      ],
+      {
+        scope_summary: summary,
+        summary,
+        coverage: {
+          status: 'partial',
+          covered_from: 1790553600,
+          covered_through: 1790611200,
+          reasons: ['income_history_unavailable'],
+        },
+      }
+    )
+  )
+  await screen.findByRole('button', { name: '查看渠道 A明细' })
+  const trend = await screen.findByRole('region', { name: '利润历史趋势' })
+  fireEvent.click(within(trend).getByText('查看每日数值'))
+  expect(screen.queryAllByText('-¥90.0000')).toHaveLength(0)
+  expect(screen.queryAllByText('-900.0%')).toHaveLength(0)
+  expect(screen.getAllByText('利润待确认').length).toBeGreaterThan(1)
+  expect(
+    screen.getByText('历史缺失不会通过等待或刷新补齐。')
+  ).toBeInTheDocument()
+  expect(within(trend).getByText(/10\.0000/)).toBeInTheDocument()
+  expect(within(trend).getByText(/100\.0000/)).toBeInTheDocument()
+})
+
+test('profit refresh reloads both income summary and trend for a new charged request', async () => {
+  let income = 1_000_000_000
+  const view = renderAnalyticsQuery('profit', (params) => {
+    const summary = {
+      ...analyticsMetrics,
+      income_nano_cny: income,
+      profit_confirmed: false,
+    }
+    return analyticsResponse(params, [], { scope_summary: summary, summary })
+  })
+  await screen.findByText('所选日期暂无利润记录')
+  const before = view.requests.length
+  income = 2_000_000_000
+  fireEvent.click(screen.getByRole('button', { name: '刷新核对' }))
+  await waitFor(() => {
+    const refreshed = view.requests.slice(before)
+    expect(refreshed.some((request) => request.group_by === 'channel')).toBe(
+      true
+    )
+    expect(refreshed.some((request) => request.group_by === 'day')).toBe(true)
+    expect(screen.getByText(/¥2\.0000/)).toBeInTheDocument()
+  })
 })
 
 test('loss filter changes only the list and retains full scope summary and trend', async () => {
@@ -63,7 +153,9 @@ test('loss filter changes only the list and retains full scope summary and trend
   })
   await screen.findByRole('button', { name: '查看渠道 A明细' })
   for (const label of ['用户扣费', '总成本', '利润率', '利润']) {
-    expect(screen.getAllByText(label, { exact: true }).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(label, { exact: true }).length).toBeGreaterThan(
+      0
+    )
   }
   await screen.findByText('所选日期暂无利润记录')
   const filter = screen.getByRole('button', { name: '仅展示亏损行' })
@@ -84,6 +176,65 @@ test('loss filter changes only the list and retains full scope summary and trend
   ).toBe(true)
   expect(screen.getByText(/钱包扣费.*订阅消耗/)).toHaveTextContent('2.0000')
   expect(screen.getByText(/钱包扣费.*订阅消耗/)).toHaveTextContent('1.0000')
+  expect(screen.getAllByText('33.3%').length).toBeGreaterThan(0)
+})
+
+test('selecting full dates excludes launch-day history without clearing an independent recording gap', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] })
+  vi.setSystemTime(new Date('2026-09-28T12:00:00+08:00'))
+  const summary = {
+    ...analyticsMetrics,
+    income_started_at: new Date('2026-09-27T12:00:00+08:00').getTime() / 1000,
+    profit_confirmed: false,
+  }
+  const view = renderAnalyticsQuery('profit', (params) =>
+    analyticsResponse(params, [], {
+      scope_summary: summary,
+      coverage: {
+        status: 'partial',
+        covered_from: summary.income_started_at,
+        covered_through: 1790611200,
+        reasons:
+          params.from === '2026-09-27'
+            ? ['income_history_unavailable', 'income_recording_gap']
+            : ['income_recording_gap'],
+      },
+    })
+  )
+  await screen.findByText('所选日期暂无利润记录')
+  fireEvent.click(screen.getByRole('button', { name: '统计日期范围' }))
+  fireEvent.change(screen.getByLabelText('开始日期'), {
+    target: { value: '2026-09-27' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: '应用' }))
+  fireEvent.click(await screen.findByRole('button', { name: '仅看完整日期' }))
+  await waitFor(() => {
+    expect(
+      screen.getByRole('button', { name: '统计日期范围' })
+    ).toHaveTextContent('当日')
+    expect(screen.getByText(/收入或成本曾写入失败/)).toBeInTheDocument()
+    expect(
+      screen.queryByText('历史缺失不会通过等待或刷新补齐。')
+    ).not.toBeInTheDocument()
+  })
+  expect(screen.getByText('当前范围暂不能判断盈亏')).toBeInTheDocument()
+  expect(view.requests.at(-1)?.from).toBe('2026-09-28')
+})
+
+test('failed profit refresh preserves prior income and reports failure instead of zero', async () => {
+  let unavailable = false
+  renderAnalyticsQuery('profit', (params) => {
+    if (unavailable) throw new Error('核对服务暂不可用')
+    return analyticsResponse(params, [], {
+      scope_summary: { ...analyticsMetrics, income_nano_cny: 3_000_000_000 },
+    })
+  })
+  await screen.findByText('所选日期暂无利润记录')
+  unavailable = true
+  fireEvent.click(screen.getByRole('button', { name: '刷新核对' }))
+  await screen.findByText('统计更新失败，保留上次结果')
+  expect(screen.getByText('¥3.0000')).toBeInTheDocument()
+  expect(screen.getByRole('button', { name: '刷新核对' })).toBeEnabled()
 })
 
 test('expanding a loss row keeps profitable and unconfirmed children filtered out', async () => {
@@ -133,9 +284,7 @@ test('expanding a loss row keeps profitable and unconfirmed children filtered ou
       )
     ).toBe(true)
   )
-  fireEvent.click(
-    await screen.findByRole('button', { name: '查看渠道 A明细' })
-  )
+  fireEvent.click(await screen.findByRole('button', { name: '查看渠道 A明细' }))
   await screen.findByRole('button', { name: '查看亏损模型明细' })
   expect(
     screen.queryByRole('button', { name: '查看盈利模型明细' })

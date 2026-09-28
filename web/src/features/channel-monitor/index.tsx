@@ -83,6 +83,7 @@ import {
   updateMonitoredChannelStatus,
 } from './api'
 import { ChannelGroupMonitorSettingsSheet } from './components/channel-group-monitor-settings-sheet'
+import { ChannelMonitorAnalyticsCoverage } from './components/channel-monitor-analytics-coverage'
 import { ChannelMonitorAnalyticsDialog } from './components/channel-monitor-analytics-dialog'
 import { ChannelMonitorChannelView } from './components/channel-monitor-channel-view'
 import { ChannelMonitorGroupView } from './components/channel-monitor-group-view'
@@ -1189,8 +1190,7 @@ export function ChannelMonitor() {
                   {formatProfitMoney(
                     profitOverview?.scope_summary.income_nano_cny
                   )}{' '}
-                  · 利润率{' '}
-                  {formatProfitRate(profitOverview?.scope_summary.profit_rate)}
+                  · 利润率 {formatProfitRate(profitOverview?.scope_summary)}
                   {profitQuery.isError && !profitOverview
                     ? ' · 利润加载失败'
                     : ''}
@@ -1210,6 +1210,10 @@ export function ChannelMonitor() {
             onOpen={() => openSuccessAnalytics()}
           />
         </div>
+        <ChannelMonitorAnalyticsCoverage
+          coverage={profitOverview?.coverage}
+          scope='今日利润'
+        />
         <Tabs
           value={view}
           onValueChange={(value) => setView(value as MonitorView)}

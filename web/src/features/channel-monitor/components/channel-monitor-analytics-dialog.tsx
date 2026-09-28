@@ -4,6 +4,7 @@ import {
   Refresh01Icon,
 } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { useQueryClient } from '@tanstack/react-query'
 import {
   lazy,
   Suspense,
@@ -55,6 +56,7 @@ import {
 import { ChannelMonitorAnalyticsExpandableTable } from './channel-monitor-analytics-table'
 import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { ChannelMonitorProfitValue } from './channel-monitor-profit'
+import { ChannelMonitorProfitStatus } from './channel-monitor-profit-status'
 
 type ChannelMonitorAnalyticsDialogProps = {
   open: boolean
@@ -268,7 +270,7 @@ function AnalyticsSummary(props: {
       ['用户扣费', formatProfitMoney(summary.income_nano_cny)],
       ['总成本', formatProfitMoney(summary.cost_nano_cny)],
       ['利润', <ChannelMonitorProfitValue key='profit' summary={summary} />],
-      ['利润率', formatProfitRate(summary.profit_rate)]
+      ['利润率', formatProfitRate(summary)]
     )
   } else if (props.metric === 'success') {
     const final = props.successMode === 'final'
@@ -334,6 +336,8 @@ function formatRate(value: number, denominator: number) {
 export function ChannelMonitorAnalyticsDialog(
   props: ChannelMonitorAnalyticsDialogProps
 ) {
+  const queryClient = useQueryClient()
+  const [refreshingProfit, setRefreshingProfit] = useState(false)
   const [tab, setTab] = useState<AnalyticsTab>('channels')
   const initialDate = formatChannelMonitorBeijingDate(new Date())
   const [dateFrom, setDateFrom] = useState(initialDate)
@@ -598,6 +602,33 @@ export function ChannelMonitorAnalyticsDialog(
           <p className='text-muted-foreground text-xs'>{description}</p>
           {props.metric === 'profit' && response ? (
             <>
+              <ChannelMonitorProfitStatus
+                response={response}
+                today={dateRange.today}
+                refreshing={refreshingProfit || rootQuery.isFetching}
+                onRefresh={async () => {
+                  setRefreshingProfit(true)
+                  try {
+                    await queryClient.refetchQueries(
+                      {
+                        queryKey: ['channel-monitor', 'analytics'],
+                        type: 'active',
+                        predicate: (query) =>
+                          (query.queryKey[2] as ChannelMonitorAnalyticsQuery)
+                            ?.metric === 'profit',
+                      },
+                      { cancelRefetch: false }
+                    )
+                  } finally {
+                    setRefreshingProfit(false)
+                  }
+                }}
+                onSelectCompleteDates={(from) => {
+                  setDateFrom(from)
+                  setDateThrough(dateRange.today)
+                  setPage(1)
+                }}
+              />
               <p className='text-muted-foreground text-xs'>
                 钱包扣费{' '}
                 {formatProfitMoney(
@@ -614,8 +645,8 @@ export function ChannelMonitorAnalyticsDialog(
                   response.scope_summary.model_detection_cost_nano_cny
                 )}{' '}
                 · 待确认扣费/退款{' '}
-                {response.scope_summary.pending_income_count ?? 0} 笔 · 未解析成本{' '}
-                {response.scope_summary.unresolved_count ?? 0} 笔
+                {response.scope_summary.pending_income_count ?? 0} 笔 ·
+                未解析成本 {response.scope_summary.unresolved_count ?? 0} 笔
               </p>
               {response.scope_summary.income_started_at ? (
                 <p className='text-muted-foreground text-xs'>
@@ -695,7 +726,9 @@ export function ChannelMonitorAnalyticsDialog(
               （北京时间）
             </span>
           ) : null}
-          <ChannelMonitorAnalyticsCoverage coverage={coverage} />
+          {props.metric !== 'profit' ? (
+            <ChannelMonitorAnalyticsCoverage coverage={coverage} />
+          ) : null}
           <div
             className={cn(
               'min-h-0 shrink-0',
