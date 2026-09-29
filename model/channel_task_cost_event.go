@@ -39,6 +39,7 @@ type ChannelTaskCostEvent struct {
 }
 
 type ChannelTaskCostEventInput struct {
+	TaskID          int64
 	CostEventId     string
 	ChannelId       int
 	OccurredAt      int64
@@ -70,6 +71,35 @@ func RegisterChannelTaskCostEvent(ctx context.Context, input ChannelTaskCostEven
 
 	var currentCost int64
 	err := withTaskBillingTransaction(ctx, func(tx *gorm.DB) error {
+		// Match settlement's lock order (task, then event). A fast poll may
+		// finish after task insertion but before HTTP-side cost registration.
+		var task *Task
+		currentCost = input.CostNanoCNY
+		if input.TaskID > 0 {
+			task = &Task{}
+			if err := lockForUpdate(tx).First(task, input.TaskID).Error; err != nil {
+				return err
+			}
+			if task.ChannelId != input.ChannelId || taskBillingCostEventID(task) != input.CostEventId {
+				return errors.New("任务与成本事件不匹配")
+			}
+			if task.Status == TaskStatusFailure {
+				currentCost = 0
+			} else if bc := task.PrivateData.BillingContext; bc.ChannelCostSnapshot != nil && bc.TieredSnapshot != nil {
+				var err error
+				currentCost, err = bc.ChannelCostSnapshot.ExpressionCost(bc.TieredSnapshot)
+				if err != nil {
+					return err
+				}
+			} else if input.InitialQuota > 0 && int64(task.Quota) != input.InitialQuota {
+				cost := decimal.NewFromInt(input.CostNanoCNY).Mul(decimal.NewFromInt(int64(task.Quota))).
+					Div(decimal.NewFromInt(input.InitialQuota)).Round(0)
+				if cost.IsNegative() || cost.GreaterThan(decimal.NewFromInt(math.MaxInt64)) {
+					return errors.New("任务成本修正超出范围")
+				}
+				currentCost = cost.IntPart()
+			}
+		}
 		registrationToken := uuid.NewString()
 		record := ChannelTaskCostEvent{
 			CostEventId:        input.CostEventId,
@@ -86,7 +116,7 @@ func RegisterChannelTaskCostEvent(ctx context.Context, input ChannelTaskCostEven
 			ModelName:          input.ModelName,
 			InitialQuota:       input.InitialQuota,
 			InitialCostNanoCNY: input.CostNanoCNY,
-			CostNanoCNY:        input.CostNanoCNY,
+			CostNanoCNY:        currentCost,
 			CreatedAt:          input.OccurredAt,
 			UpdatedAt:          input.OccurredAt,
 		}
@@ -100,17 +130,17 @@ func RegisterChannelTaskCostEvent(ctx context.Context, input ChannelTaskCostEven
 			return err
 		}
 		if existing.RegistrationToken == registrationToken {
-			if err := addChannelDailyCost(tx, input.ChannelId, input.OccurredAt, input.CostNanoCNY, 0, 0, 1, 0); err != nil {
+			if err := addChannelDailyCost(tx, input.ChannelId, input.OccurredAt, currentCost, 0, 0, 1, 0); err != nil {
 				return err
 			}
 			if input.KeyFingerprint != "" {
-				if err := addChannelDailyAPIKeyCost(tx, input.ChannelId, input.OccurredAt, input.CostNanoCNY, 1, 0, input.APIKeyId, input.APIKeyName, input.KeyFingerprint, input.KeyDisplay); err != nil {
+				if err := addChannelDailyAPIKeyCost(tx, input.ChannelId, input.OccurredAt, currentCost, 1, 0, input.APIKeyId, input.APIKeyName, input.KeyFingerprint, input.KeyDisplay); err != nil {
 					return err
 				}
 			}
 			if tx.Migrator().HasTable(&ChannelMonitorDailyCostDetail{}) {
 				if err := addChannelMonitorDailyCostDetail(tx, ChannelDailyCostDelta{
-					ChannelId: input.ChannelId, OccurredAt: input.OccurredAt, CostNanoCNY: input.CostNanoCNY,
+					ChannelId: input.ChannelId, OccurredAt: input.OccurredAt, CostNanoCNY: currentCost,
 					SettledDelta: 1, APIKeyId: input.APIKeyId, APIKeyName: input.APIKeyName,
 					KeyFingerprint: input.KeyFingerprint, KeyDisplay: input.KeyDisplay, UserId: input.UserId,
 					UserAttribution: input.UserAttribution, ModelName: input.ModelName, SourceKind: "business",
@@ -118,21 +148,28 @@ func RegisterChannelTaskCostEvent(ctx context.Context, input ChannelTaskCostEven
 					return err
 				}
 			}
-			currentCost = input.CostNanoCNY
 			version, err := appendChannelDailyCostProjectionTx(tx, channelTaskCostProjectionDelta(record, currentCost), 0, record.CostEventId)
 			if err != nil {
 				return err
 			}
 			if version > 0 {
-				return tx.Model(&ChannelTaskCostEvent{}).Where("id = ?", existing.Id).UpdateColumn("projection_version", version).Error
+				if err := tx.Model(&ChannelTaskCostEvent{}).Where("id = ?", existing.Id).UpdateColumn("projection_version", version).Error; err != nil {
+					return err
+				}
 			}
-			return nil
+		} else {
+			if !channelTaskCostEventMatchesInput(existing, input) {
+				return errors.New("task cost event id was reused with different immutable data")
+			}
+			currentCost = existing.CostNanoCNY
 		}
-
-		if !channelTaskCostEventMatchesInput(existing, input) {
-			return errors.New("task cost event id was reused with different immutable data")
+		if task != nil {
+			bc := task.PrivateData.BillingContext
+			bc.ChannelCostEventId = input.CostEventId
+			bc.ChannelCostNanoCNY = currentCost
+			bc.ChannelCostResolved = true
+			return tx.Model(&Task{}).Where("id = ?", task.ID).UpdateColumn("private_data", task.PrivateData).Error
 		}
-		currentCost = existing.CostNanoCNY
 		return nil
 	})
 	return currentCost, err

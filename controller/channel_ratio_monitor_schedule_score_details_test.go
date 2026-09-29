@@ -801,7 +801,7 @@ func TestRunChannelSmartSchedulePersistsExecutionTimeScoreDetails(t *testing.T) 
 	assert.Equal(t, model.ChannelSmartScheduleScoreDetailsVersion, executionDetails.Version)
 	assert.Contains(t, string(rawResult), `"score_details":{"version":`)
 	assert.Contains(t, string(rawResult), `"minimum_samples":5`)
-	assert.Contains(t, string(rawResult), `"switch_threshold_percent":3`)
+	assert.InDelta(t, 10, executionDetails.Decision.PrimarySwitchThresholdPercent, 1e-9)
 	require.NotNil(t, executionDetails.Inputs.CostRatio.Value)
 	assert.InDelta(t, 1, *executionDetails.Inputs.CostRatio.Value, 1e-9)
 

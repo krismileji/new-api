@@ -18,6 +18,7 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/tidwall/sjson"
 )
 
 func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.NewAPIError, *dto.RealtimeUsage) {
@@ -62,6 +63,9 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	usage := &dto.RealtimeUsage{}
 	localUsage := &dto.RealtimeUsage{}
 	sumUsage := &dto.RealtimeUsage{}
+	drain, unregisterDrain := newRealtimeChannelDrain(info)
+	defer unregisterDrain()
+	var clientWriteMu sync.Mutex
 
 	gopool.Go(func() {
 		defer readers.Done()
@@ -91,6 +95,30 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					return
 				}
 
+				// A create rejection must be distinguishable from an unrelated
+				// control error while the channel is draining.
+				if realtimeEvent.Type == "response.create" && realtimeEvent.EventId == "" {
+					realtimeEvent.EventId = common.GetUUID()
+					message, err = sjson.SetBytes(message, "event_id", realtimeEvent.EventId)
+					if err != nil {
+						errChan <- err
+						return
+					}
+				}
+				if !drain.admit(realtimeEvent.Type, realtimeEvent.EventId) {
+					payload, _ := common.Marshal(map[string]any{"type": "error", "error": map[string]any{
+						"type": "invalid_request_error", "code": "channel_disabled", "event_id": realtimeEvent.EventId,
+						"message": "渠道已自动禁用，不再接受新的生成请求",
+					}})
+					clientWriteMu.Lock()
+					err = helper.WssString(c, clientConn, string(payload))
+					clientWriteMu.Unlock()
+					if err != nil {
+						errChan <- err
+						return
+					}
+					continue
+				}
 				if realtimeEvent.Type == dto.RealtimeEventTypeSessionUpdate {
 					if realtimeEvent.Session != nil {
 						if realtimeEvent.Session.Tools != nil {
@@ -156,6 +184,7 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					return
 				}
 
+				drain.observeStart(message)
 				if realtimeEvent.Type == dto.RealtimeEventTypeResponseDone {
 					realtimeUsage := realtimeEvent.Response.Usage
 					if realtimeUsage != nil {
@@ -221,12 +250,15 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					localUsage.OutputTokenDetails.AudioTokens += audioToken
 				}
 
+				clientWriteMu.Lock()
 				err = helper.WssString(c, clientConn, string(message))
+				clientWriteMu.Unlock()
 				if err != nil {
 					errChan <- fmt.Errorf("error writing to client: %v", err)
 					return
 				}
 
+				drain.observeFinished(message)
 				select {
 				case receiveChan <- message:
 				default:

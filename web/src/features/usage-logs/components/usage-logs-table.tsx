@@ -96,13 +96,13 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
   const searchParams = route.useSearch()
   const userId = useAuthStore((state) => state.auth.user?.id)
   const { data: showBillingSource = false } = useQuery({
-    queryKey: ['usage-log-billing-source', isAdminView, userId],
+    queryKey: ['usage-log-billing-source', isAllUsersView, userId],
     enabled: logCategory === 'common' && userId != null,
     queryFn: async () => {
-      if (isAdminView) {
+      if (isAllUsersView) {
         const plansResult = await getAdminPlans()
         return shouldShowBillingSource({
-          isAdmin: isAdminView,
+          isAdmin: isAllUsersView,
           plans: plansResult.success ? plansResult.data : undefined,
           subscriptions: undefined,
         })
@@ -110,7 +110,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
 
       const selfResult = await getSelfSubscriptionFull()
       return shouldShowBillingSource({
-        isAdmin: isAdminView,
+        isAdmin: isAllUsersView,
         plans: undefined,
         subscriptions: selfResult.success
           ? selfResult.data?.subscriptions

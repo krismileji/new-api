@@ -103,7 +103,7 @@ export function ChannelLimitGroupsDialog(props: Props) {
         if (!mutation.isPending && !editing) props.onOpenChange(open)
       }}
     >
-      <DialogContent className='flex max-h-[calc(100dvh-2rem)] flex-col overflow-hidden sm:max-w-3xl'>
+      <DialogContent className='flex flex-col sm:max-w-3xl'>
         <DialogHeader>
           <DialogTitle>{editing ? '编辑共享限流组' : '共享限流组'}</DialogTitle>
           <DialogDescription>

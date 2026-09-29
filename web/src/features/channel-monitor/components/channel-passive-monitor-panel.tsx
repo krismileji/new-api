@@ -284,7 +284,7 @@ function ChannelPassiveHistory(props: {
         if (!open) props.onClose()
       }}
     >
-      <DialogContent className='max-h-[90dvh] overflow-y-auto sm:max-w-2xl'>
+      <DialogContent className='sm:max-w-2xl'>
         <DialogHeader>
           <DialogTitle>
             业务周期历史 · {props.item.target.model_name}

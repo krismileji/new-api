@@ -147,8 +147,10 @@ func TestChannelBalanceSyncKeepsTaskWithMissingPriceSnapshot(t *testing.T) {
 	ctx.Set(channelDailyCostSnapshotContextKey, channelDailyCostSnapshot{ChannelId: f.config.ChannelID, BalanceConfig: f.config})
 	BeginChannelDailyCostAttempt(ctx, f.config.ChannelID)
 	MarkChannelDailyCostRequestDispatched(ctx)
-	_, recorded, err := RecordTaskChannelDailyCost(ctx, f.config.ChannelID, f.now.Unix(), channelDailyCostEventId(ctx, f.config.ChannelID),
-		1000, "unpriced-task", types.PriceData{UsePrice: true, ModelPrice: 1})
+	task := &model.Task{TaskID: "unpriced-task", ChannelId: f.config.ChannelID, SubmitTime: f.now.Unix(),
+		PrivateData: model.TaskPrivateData{BillingContext: &model.TaskBillingContext{OriginModelName: "unpriced-task"}},
+	}
+	_, recorded, err := RecordTaskChannelDailyCost(ctx, task, types.PriceData{UsePrice: true, ModelPrice: 1, Quota: 1000})
 	require.NoError(t, err)
 	assert.False(t, recorded)
 	f.advance(time.Minute)

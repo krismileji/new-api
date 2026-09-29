@@ -1449,7 +1449,10 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	assert.Contains(t, option.Value, `"jitter_slow_threshold_seconds":10`)
 	assert.Contains(t, option.Value, `"jitter_slow_threshold_seconds":12`)
 	assert.Contains(t, option.Value, `"exploration_max_prompt_tokens":50000`)
-	assert.Contains(t, option.Value, `"stability_release_max_prompt_tokens":0`)
+	for _, policy := range storedGroupPolicies {
+		require.NotNil(t, policy.StabilityReleaseMaxPromptTokens)
+		assert.Equal(t, 50_000, *policy.StabilityReleaseMaxPromptTokens)
+	}
 	assert.Contains(t, option.Value, `"adaptive_sampling_first_token_warning_request_percent":10`)
 	assert.NotContains(t, option.Value, "jitter_absolute_tolerance_seconds")
 	assert.NotContains(t, option.Value, "jitter_baseline_minutes")
@@ -2045,7 +2048,7 @@ func TestUpdateChannelMonitorConcurrencyLimitValidatesPersistsAndReportsUsage(t 
 	lease, acquired, status, err := service.AcquireChannelConcurrency(t.Context(), 16)
 	require.NoError(t, err)
 	require.True(t, acquired)
-	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 2}, status)
+	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 2, CurrentRPM: 1}, status)
 
 	ctx, recorder = newChannelMonitorControllerContext(t, http.MethodGet, "/api/channel_monitor", nil)
 	GetChannelMonitorOverview(ctx)
@@ -2070,7 +2073,7 @@ func TestUpdateChannelMonitorConcurrencyLimitValidatesPersistsAndReportsUsage(t 
 	unlimitedLease, acquired, status, err := service.AcquireChannelConcurrency(t.Context(), 16)
 	require.NoError(t, err)
 	require.True(t, acquired)
-	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 0}, status)
+	assert.Equal(t, service.ChannelConcurrencyStatus{Active: 1, Limit: 0, CurrentRPM: 2}, status)
 	unlimitedLease.Release()
 }
 

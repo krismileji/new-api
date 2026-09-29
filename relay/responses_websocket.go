@@ -96,13 +96,16 @@ type responsesWSSession struct {
 	nextEventIndex int
 	workers        sync.WaitGroup
 
-	clientWriteMu sync.Mutex
-	targetWriteMu sync.Mutex
-	connectionMu  sync.Mutex
-	target        *websocket.Conn
-	unregister    func()
-	stateMu       sync.Mutex
-	current       *responsesWSCallState
+	tokenProtection *responsesWSTokenProtection
+
+	clientWriteMu      sync.Mutex
+	targetWriteMu      sync.Mutex
+	connectionMu       sync.Mutex
+	target             *websocket.Conn
+	unregister         func()
+	stateMu            sync.Mutex
+	current            *responsesWSCallState
+	channelDrainReason string
 
 	// These fields belong to the serial request worker and describe the actual
 	// established connection. Per-request token/user data is never stored here.
@@ -128,9 +131,11 @@ func ResponsesWebSocketHelper(c *gin.Context, client *websocket.Conn, runner Res
 		maxMB = 128
 	}
 	client.SetReadLimit(int64(maxMB) << 20)
+	finishProtection := s.protectTokenSession()
 	defer func() {
 		s.shutdown()
 		s.workers.Wait()
+		finishProtection()
 	}()
 
 	for {
@@ -181,6 +186,10 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 			apiErr = types.NewError(fmt.Errorf("responses websocket request panic: %v", recovered), types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			state.closeAfter = true
 		}
+		if protected := s.tokenProtectionError(apiErr); protected != nil {
+			apiErr = protected
+			state.closeAfter = true
+		}
 		// Finish the middleware count before publishing the terminal event. Hold
 		// admission while writing it so an immediate next create cannot race
 		// the current request's release; socket close needs neither lock.
@@ -193,7 +202,11 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		s.clientWriteMu.Lock()
 		s.stateMu.Lock()
 		if outgoing != nil {
-			if err := s.client.SetWriteDeadline(time.Now().Add(responsesWSWriteTimeout)); err != nil {
+			writeTimeout := responsesWSWriteTimeout
+			if s.tokenProtectionCause() != nil {
+				writeTimeout = time.Second
+			}
+			if err := s.client.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
 				state.closeAfter = true
 			} else if err := s.client.WriteMessage(outgoing.kind, outgoing.body); err != nil {
 				state.closeAfter = true
@@ -201,9 +214,12 @@ func (s *responsesWSSession) runRequest(state *responsesWSCallState, message []b
 		}
 		s.current = nil
 		close(state.done)
+		drainReason := s.channelDrainReason
 		s.stateMu.Unlock()
 		s.clientWriteMu.Unlock()
-		if state.closeAfter {
+		if drainReason != "" {
+			s.closeForPolicy(drainReason)
+		} else if state.closeAfter {
 			s.shutdown()
 		}
 	}()
@@ -230,6 +246,8 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 	started := time.Now()
 	var info *relaycommon.RelayInfo
 	billingPrepared := false
+	var attempt *responsesWSChannelAttempt
+	defer func() { attempt.finish() }()
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			apiErr = types.NewError(fmt.Errorf("responses websocket call panic: %v", recovered), types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
@@ -266,6 +284,18 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 		info.IsStream = true
 		common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
+		channel, err := appmodel.CacheGetChannel(s.lockedChannelID)
+		if err != nil {
+			return types.NewError(err, types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
+		}
+		var local [][]byte
+		_, attempt, local, apiErr = s.admitChannel(c, info, nil, channel, false)
+		if apiErr != nil {
+			return apiErr
+		}
+		if len(local) > 0 {
+			return s.completeLocalResponse(state, local, create.StreamID)
+		}
 		if apiErr = PrepareRequestBilling(c, info); apiErr != nil {
 			return apiErr
 		}
@@ -275,23 +305,39 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 		if apiErr != nil {
 			return apiErr
 		}
+		attempt.begin(info)
+		service.MarkChannelDailyCostRequestDispatched(c)
 		if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
 			state.closeAfter = true
 			return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 		}
 	} else {
-		retry := &service.RetryParam{Ctx: c, TokenGroup: common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup), ModelName: modelName, RequestPath: c.Request.URL.Path, Retry: common.GetPointer(0)}
+		retry := &service.RetryParam{
+			Ctx: c, TokenGroup: common.GetContextKeyString(c, appconstant.ContextKeyUsingGroup),
+			ModelName: modelName, RequestPath: c.Request.URL.Path, Retry: common.GetPointer(0),
+			SelectionOptions: service.ChannelSelectionOptionsForRequest(c, 0),
+		}
 		for ; retry.GetRetry() <= common.RetryTimes; retry.IncreaseRetry() {
 			var channel *appmodel.Channel
 			channel, apiErr = selectResponsesWSChannel(c, modelName, retry)
 			if apiErr != nil {
 				return apiErr
 			}
-			service.AppendUsedChannel(c, channel.Id)
 			if info == nil {
 				info = relaycommon.GenRelayInfoResponses(c, &create.Request)
 				info.IsStream = true
 				common.SetContextKey(c, appconstant.ContextKeyIsStream, true)
+			}
+			var local [][]byte
+			channel, attempt, local, apiErr = s.admitChannel(c, info, retry, channel, true)
+			if apiErr != nil {
+				return apiErr
+			}
+			if len(local) > 0 {
+				return s.completeLocalResponse(state, local, create.StreamID)
+			}
+			service.AppendUsedChannel(c, channel.Id)
+			if !billingPrepared {
 				if apiErr = PrepareRequestBilling(c, info); apiErr != nil {
 					return apiErr
 				}
@@ -311,6 +357,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			}
 			adaptor := GetAdaptor(info.ApiType)
 			adaptor.Init(info)
+			attempt.begin(info)
 			target, dialErr := relaychannel.DoWssRequest(adaptor, c, info, nil)
 			if dialErr != nil {
 				apiErr = service.NormalizeViolationFeeError(types.NewError(dialErr, types.ErrorCodeDoRequestFailed))
@@ -320,6 +367,8 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				service.RecordPolicyFailure(c, channel.Id, apiErr, decision)
 				service.ProcessChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, info)
 				if decision.Action == "retry" {
+					attempt.finish()
+					attempt = nil
 					continue
 				}
 				return apiErr
@@ -327,6 +376,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			if !s.setTarget(target) {
 				return types.NewError(context.Canceled, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 			}
+			service.MarkChannelDailyCostRequestDispatched(c)
 			if err := s.writeTarget(websocket.TextMessage, payload); err != nil {
 				state.closeAfter = true
 				return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
@@ -416,6 +466,15 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 						}
 						continue
 					}
+					service.ObserveTokenAutoDisableJSON(c.Request.Context(), info.ChannelId, http.StatusSwitchingProtocols, incoming.body)
+					if protected := service.TokenAutoDisableError(c.Request.Context()); protected != nil {
+						if accepted {
+							accumulator.Observe(&event.ResponsesStreamResponse)
+							info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+							ConsumeResponsesQuota(c, info, accumulator.Finish())
+						}
+						return protected
+					}
 					if accepted {
 						if rejection.Error != nil {
 							code := ""
@@ -453,6 +512,12 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 					}
 				}
 				accumulator.Observe(&event.ResponsesStreamResponse)
+				service.ObserveTokenAutoDisableJSON(c.Request.Context(), info.ChannelId, http.StatusSwitchingProtocols, incoming.body)
+				if protected := service.TokenAutoDisableError(c.Request.Context()); protected != nil {
+					info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+					ConsumeResponsesQuota(c, info, accumulator.Finish())
+					return protected
+				}
 			}
 			switch event.Type {
 			case "response.completed", "response.done", "response.incomplete", "response.failed", "response.cancelled", "response.canceled":
@@ -492,10 +557,11 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			state.closeAfter = true
 			ConsumeResponsesQuota(c, info, accumulator.Finish())
 			return nil
-		case <-s.ctx.Done():
-			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, s.ctx.Err())
+		case <-c.Request.Context().Done():
+			state.closeAfter = true
+			info.StreamStatus.SetEndReason(relaycommon.StreamEndReasonClientGone, c.Request.Context().Err())
 			ConsumeResponsesQuota(c, info, accumulator.Finish())
-			return nil
+			return service.TokenAutoDisableError(c.Request.Context())
 		}
 	}
 }
@@ -639,6 +705,10 @@ func (s *responsesWSSession) startTargetReader(target *websocket.Conn) {
 					return
 				}
 			} else if err == nil {
+				service.ObserveTokenAutoDisableJSON(s.ctx, s.lockedChannelID, http.StatusSwitchingProtocols, body)
+				if s.tokenProtectionCause() != nil {
+					return
+				}
 				if writeErr := s.writeClient(kind, body); writeErr != nil {
 					s.shutdown()
 					return
@@ -662,7 +732,7 @@ func (s *responsesWSSession) getCurrent() *responsesWSCallState {
 func (s *responsesWSSession) tryReserveCurrent(state *responsesWSCallState) bool {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
-	if s.current != nil {
+	if s.current != nil || s.channelDrainReason != "" {
 		return false
 	}
 	s.current = state
@@ -734,19 +804,28 @@ func (s *responsesWSSession) closeTarget() {
 func (s *responsesWSSession) shutdown() {
 	s.cancel()
 	s.closeTarget()
+	if s.tokenProtectionCause() != nil {
+		_ = s.client.UnderlyingConn().SetReadDeadline(time.Now())
+		return
+	}
 	_ = s.client.Close()
 }
 
 func (s *responsesWSSession) registerChannelClose(channelID int) {
 	unregister := wsmanager.Register(channelID, wsmanager.KindResponses, s.closeForPolicy)
+	unregisterDrain := wsmanager.RegisterChannelDrain(channelID, s.drainChannel)
 	s.connectionMu.Lock()
 	if s.ctx.Err() != nil {
 		s.connectionMu.Unlock()
 		unregister()
+		unregisterDrain()
 		return
 	}
-	s.unregister = unregister
+	s.unregister = func() { unregisterDrain(); unregister() }
 	s.connectionMu.Unlock()
+	// Cover a disable that committed while the upstream handshake was in flight,
+	// before this session could receive the drain broadcast.
+	service.EnforceChannelWebSocketStatus(channelID, s.drainChannel, s.closeForPolicy)
 }
 
 // closeForPolicy tells both peers why the connection ends, like the realtime

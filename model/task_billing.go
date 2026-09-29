@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"strings"
 	"time"
@@ -177,6 +178,20 @@ func applyTaskBillingOnce(ctx context.Context, requested *Task, operation TaskBi
 			result.ActualQuota = task.Quota
 			return nil
 		}
+		// Keep the persisted expression/conversion frozen, but retain completion
+		// facts even when polling wins the race with initial cost registration.
+		if bc := task.PrivateData.BillingContext; operation == TaskBillingOperationSettle &&
+			bc != nil && bc.ChannelCostSnapshot != nil && bc.TieredSnapshot != nil {
+			if incoming := requested.PrivateData.BillingContext; incoming != nil && incoming.TieredSnapshot != nil {
+				snapshot := *bc.TieredSnapshot
+				snapshot.UsageFacts = make(map[string]any, len(bc.TieredSnapshot.UsageFacts)+len(incoming.TieredSnapshot.UsageFacts))
+				maps.Copy(snapshot.UsageFacts, bc.TieredSnapshot.UsageFacts)
+				maps.Copy(snapshot.UsageFacts, incoming.TieredSnapshot.UsageFacts)
+				snapshot.EstimatedTier = incoming.TieredSnapshot.EstimatedTier
+				bc.TieredSnapshot = &snapshot
+				costContextChanged = true
+			}
+		}
 		targetQuota := task.Quota
 		if operation == TaskBillingOperationRefund {
 			targetQuota = 0
@@ -244,6 +259,10 @@ func applyTaskBillingOnce(ctx context.Context, requested *Task, operation TaskBi
 				var target func(ChannelTaskCostEvent) (int64, error)
 				if operation == TaskBillingOperationRefund {
 					target = func(ChannelTaskCostEvent) (int64, error) { return 0, nil }
+				} else if bc := task.PrivateData.BillingContext; bc != nil && bc.ChannelCostSnapshot != nil && bc.TieredSnapshot != nil {
+					target = func(ChannelTaskCostEvent) (int64, error) {
+						return bc.ChannelCostSnapshot.ExpressionCost(bc.TieredSnapshot)
+					}
 				} else {
 					target = func(event ChannelTaskCostEvent) (int64, error) {
 						if event.InitialQuota <= 0 {

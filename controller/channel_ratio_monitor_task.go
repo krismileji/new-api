@@ -1136,6 +1136,7 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 					logger.LogWarn(ctx, fmt.Sprintf("channel ratio monitor: channel_id=%d automatic disable failed: %v", channel.Id, disableErr))
 				}
 				if disabled && revisionCurrent {
+					service.DrainChannelWebSockets(channel.Id)
 					stateMu.Lock()
 					summary.ChannelsDisabled++
 					channelStatusChanged = true

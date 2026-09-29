@@ -459,10 +459,8 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		}
 		dialer.Proxy = http.ProxyURL(proxyURL)
 	}
-	// The handshake is the transport boundary for WebSocket requests. Keep the
-	// client context attached so a disconnected downstream request cannot leave
-	// a dial blocked until the dialer's own timeout, and only mark dispatch after
-	// the handshake succeeds.
+	// Keep the client context attached so a disconnected downstream request
+	// cannot leave a dial blocked until the dialer's own timeout.
 	targetConn, handshakeResp, err := dialer.DialContext(c.Request.Context(), fullRequestURL, targetHeader)
 	if err != nil {
 		statusCode := http.StatusBadGateway
@@ -487,7 +485,11 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 			statusCode,
 		)
 	}
-	service.MarkChannelDailyCostRequestDispatched(c)
+	// Realtime starts at the handshake. Responses marks dispatch separately
+	// for each response.create sent over the persistent connection.
+	if info.RelayFormat != types.RelayFormatOpenAIResponses {
+		service.MarkChannelDailyCostRequestDispatched(c)
+	}
 	// send request body
 	//all, err := io.ReadAll(requestBody)
 	//err = service.WssString(c, targetConn, string(all))

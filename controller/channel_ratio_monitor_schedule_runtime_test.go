@@ -29,6 +29,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureIgnoresMinimumSamples(t *testi
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 100, 80, 30,
 	)
+	policy.ConsecutiveFailureThreshold = common.GetPointer(2)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),
@@ -960,6 +961,7 @@ func TestProtectChannelSmartScheduleRuntimeFailureDoesNotRecountPersistedErrors(
 		"vip", channelMonitorSmartScheduleStrategyRatio, true,
 		channelMonitorSmartScheduleApplyPriorityWeight, []string{"model-a"}, 3, 80, 30,
 	)
+	policy.ConsecutiveFailureThreshold = common.GetPointer(2)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),

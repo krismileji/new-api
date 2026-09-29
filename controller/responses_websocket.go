@@ -41,6 +41,7 @@ var responsesWSRequestEngine = sync.OnceValue(func() *gin.Engine {
 		c.Next()
 	}, middleware.BodyStorageCleanup(), middleware.TokenAuth(), middleware.ModelRequestRateLimit(), func(c *gin.Context) {
 		state := c.Request.Context().Value(responsesWSRequestContextKey{}).(*responsesWSRequestState)
+		relay.SetResponsesWSChannelAdmission(c, admitResponsesWSChannel)
 		state.apiError = state.handle(c)
 		if state.apiError != nil {
 			status := state.apiError.StatusCode

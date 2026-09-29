@@ -50,6 +50,8 @@ type RelayAttemptState struct {
 	quotaClamp              *rootcommon.QuotaClamp
 	taskAction              string
 	contextAction           string
+	taskRequest             any
+	hasTaskRequest          bool
 	priceData               hosttypes.PriceData
 	requestInfoHeaders      map[string]string
 	requestHeaders          http.Header
@@ -65,6 +67,14 @@ func NewRelayAttemptState(c *gin.Context, info *RelayInfo) (*RelayAttemptState, 
 	}
 	if c != nil {
 		state.contextAction = c.GetString("action")
+		if taskRequest, exists := c.Get("task_request"); exists {
+			var err error
+			state.taskRequest, err = cloneTaskRequest(taskRequest)
+			if err != nil {
+				return nil, fmt.Errorf("复制任务请求快照失败: %w", err)
+			}
+			state.hasTaskRequest = true
+		}
 		if c.Request != nil {
 			state.requestHeaders = c.Request.Header.Clone()
 		}
@@ -274,10 +284,31 @@ func (state *RelayAttemptState) Reset(c *gin.Context, info *RelayInfo) error {
 	c.Set("response_format", "")
 	c.Set("request_model", "")
 	c.Set("action", state.contextAction)
-	c.Set("task_request", nil)
+	// Native plugin requests have already been decoded before the retry loop.
+	// Restore that baseline without sharing mutable data with earlier attempts.
+	if state.hasTaskRequest {
+		taskRequest, err := cloneTaskRequest(state.taskRequest)
+		if err != nil {
+			return fmt.Errorf("恢复任务请求快照失败: %w", err)
+		}
+		c.Set("task_request", taskRequest)
+	} else {
+		delete(c.Keys, "task_request")
+	}
 	c.Set("volcengine_tts_request", nil)
 	c.Set("HexPayloadHash", "")
 	return nil
+}
+
+func cloneTaskRequest(request any) (any, error) {
+	if request == nil {
+		return nil, nil
+	}
+	clone := reflect.New(reflect.TypeOf(request))
+	if err := copier.CopyWithOption(clone.Interface(), request, copier.Option{DeepCopy: true}); err != nil {
+		return nil, err
+	}
+	return clone.Elem().Interface(), nil
 }
 
 func cloneResponsesUsageInfo(info *ResponsesUsageInfo) *ResponsesUsageInfo {

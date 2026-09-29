@@ -36,7 +36,7 @@ import { toIntlLocale } from '@/i18n/languages'
 import { formatTimestampRelative, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
-import { SYSTEM_TASK_TYPE_LABEL } from '../constants'
+import { getSystemTaskTypeLabel } from '../downstream-system-tasks'
 
 const STATUS_VARIANT: Record<SystemTaskStatus, 'secondary' | 'destructive'> = {
   pending: 'secondary',
@@ -116,7 +116,7 @@ export function SystemTasksTable(props: SystemTasksTableProps) {
               <TableCell className='px-4 py-3 align-middle'>
                 <div className='space-y-0.5'>
                   <div className='font-medium'>
-                    {t(SYSTEM_TASK_TYPE_LABEL[task.type] ?? task.type)}
+                    {getSystemTaskTypeLabel(task.type, t)}
                   </div>
                   <div className='text-muted-foreground font-mono text-[11px]'>
                     {TYPE_DISPLAY_ID[task.type] ?? task.type}

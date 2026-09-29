@@ -238,18 +238,11 @@ export function SidebarModulesSection({
     watchedShopNames,
     shopUrlInputs.length
   )
-  const occurrences = new Map<string, number>()
-  const shopUrlInputItems = shopUrlInputs.map((url, index) => {
-    const baseKey = url.trim() || 'empty'
-    const occurrence = occurrences.get(baseKey) ?? 0
-    occurrences.set(baseKey, occurrence + 1)
-    return {
-      key: `${baseKey}-${occurrence}`,
-      url,
-      name: shopNameInputs[index] ?? '',
-      index,
-    }
-  })
+  const shopUrlInputItems = shopUrlInputs.map((url, index) => ({
+    url,
+    name: shopNameInputs[index] ?? '',
+    index,
+  }))
 
   const shopModuleEnabled = Boolean(
     form.watch('personal.enabled') && form.watch('personal.shop')
@@ -391,7 +384,7 @@ export function SidebarModulesSection({
                         </div>
                         {shopUrlInputItems.map((item) => (
                           <div
-                            key={`shop-url-${item.key}`}
+                            key={`shop-url-${item.index}`}
                             className='grid gap-2 sm:grid-cols-[minmax(8rem,1fr)_minmax(0,2fr)]'
                           >
                             <InputGroup>

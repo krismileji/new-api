@@ -294,6 +294,8 @@ func CalcOpenRouterCacheCreateTokens(usage dto.Usage, priceData types.PriceData)
 }
 
 func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent string) {
+	// Preserve the upstream usage provenance before billing fills in an estimate.
+	authoritativeUsage := channelDailyCostUsageIsAuthoritative(ctx, relayInfo, usage)
 	if usage == nil {
 		usage = &dto.Usage{PromptTokens: relayInfo.GetEstimatePromptTokens(), TotalTokens: relayInfo.GetEstimatePromptTokens()}
 	}
@@ -374,7 +376,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
 		logger.LogError(ctx, "error settling billing: "+err.Error())
 	}
-	recordAudioChannelDailyCost(ctx, relayInfo, quotaInfo, totalTokens, channelDailyCostUsageIsAuthoritative(ctx, usage), tieredOk, tieredResult)
+	recordAudioChannelDailyCost(ctx, relayInfo, quotaInfo, totalTokens, authoritativeUsage, tieredOk, tieredResult)
 
 	logModel := billingModelName
 	if extraContent != "" {

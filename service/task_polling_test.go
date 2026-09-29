@@ -3,9 +3,11 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -16,11 +18,17 @@ import (
 	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
 )
 
 type taskPollingFetchAdaptor struct {
@@ -120,9 +128,14 @@ func (a *sunoFailurePollingAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *re
 
 type batchPollingAdaptor struct {
 	taskPollingFetchAdaptor
-	batchCalls int
-	batchIDs   []string
-	results    map[string]*BatchTaskResult
+	actualQuota int
+	batchCalls  int
+	batchIDs    []string
+	results     map[string]*BatchTaskResult
+}
+
+func (a *batchPollingAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
+	return a.actualQuota
 }
 
 func (a *batchPollingAdaptor) FetchMode() string { return "batch" }
@@ -784,6 +797,189 @@ func TestUpdateSunoTasksStalePollsRefundExactlyOnce(t *testing.T) {
 	assert.Equal(t, initialUserQuota+taskQuota, getUserQuota(t, userID))
 	assert.Equal(t, initialTokenQuota+taskQuota, getTokenRemainQuota(t, tokenID))
 	assert.Equal(t, int64(1), countLogs(t))
+}
+
+// External DSNs must point to dedicated test databases; log DSNs exercise
+// settlement with a separately configured log database.
+func TestTaskTerminalMetricsDatabaseMatrix(t *testing.T) {
+	previousConfig := config.GlobalConfig.ExportAllConfigs()
+	previousRedis, previousBatch, previousLog := common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled
+	common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled = false, false, true
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{"perf_metrics_setting.enabled": "true"}))
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(previousConfig))
+		common.RedisEnabled, common.BatchUpdateEnabled, common.LogConsumeEnabled = previousRedis, previousBatch, previousLog
+	})
+	for _, dialect := range []struct {
+		kind        common.DatabaseType
+		env, logEnv string
+	}{
+		{common.DatabaseTypeSQLite, "", ""},
+		{common.DatabaseTypeMySQL, "TEST_TASK_METRICS_MYSQL_DSN", "TEST_TASK_METRICS_MYSQL_LOG_DSN"},
+		{common.DatabaseTypePostgreSQL, "TEST_TASK_METRICS_POSTGRES_DSN", "TEST_TASK_METRICS_POSTGRES_LOG_DSN"},
+	} {
+		t.Run(string(dialect.kind), func(t *testing.T) {
+			var driver, logDriver gorm.Dialector = sqlite.Open(":memory:"), sqlite.Open(":memory:")
+			if dialect.env != "" {
+				dsn, logDSN := os.Getenv(dialect.env), os.Getenv(dialect.logEnv)
+				if dsn == "" || logDSN == "" {
+					t.Skip(dialect.env + " and " + dialect.logEnv + " are required")
+				}
+				if dialect.kind == common.DatabaseTypeMySQL {
+					driver, logDriver = mysql.Open(dsn), mysql.Open(logDSN)
+				} else {
+					driver, logDriver = postgres.Open(dsn), postgres.Open(logDSN)
+				}
+			}
+			db, err := gorm.Open(driver, &gorm.Config{})
+			require.NoError(t, err)
+			logDB, err := gorm.Open(logDriver, &gorm.Config{})
+			require.NoError(t, err)
+			for _, handle := range []*gorm.DB{db, logDB} {
+				sqlDB, err := handle.DB()
+				require.NoError(t, err)
+				sqlDB.SetMaxOpenConns(1)
+				t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+			}
+			previousDB, previousLogDB := model.DB, model.LOG_DB
+			previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
+			model.DB, model.LOG_DB = db, logDB
+			common.SetDatabaseTypes(dialect.kind, dialect.kind)
+			t.Cleanup(func() {
+				model.DB, model.LOG_DB = previousDB, previousLogDB
+				common.SetDatabaseTypes(previousMainType, previousLogType)
+			})
+			require.NoError(t, db.AutoMigrate(&model.Task{}, &model.User{}, &model.Token{}, &model.Channel{}, &model.PerfMetric{}))
+			require.NoError(t, logDB.AutoMigrate(&model.Log{}))
+			versionQuery := "SELECT version()"
+			if dialect.kind == common.DatabaseTypeSQLite {
+				versionQuery = "SELECT sqlite_version()"
+			}
+			var version string
+			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("database: %s (separate log DB)", version)
+			for _, tc := range []struct {
+				name                        string
+				batch, pollFailure, perCall bool
+				status                      model.TaskStatus
+				actualQuota                 int
+			}{
+				{name: "single settlement retry", status: model.TaskStatusSuccess, actualQuota: 3_000},
+				{name: "single refund retry", status: model.TaskStatusFailure},
+				{name: "batch settlement retry", batch: true, status: model.TaskStatusSuccess, actualQuota: 3_000},
+				{name: "batch refund retry", batch: true, status: model.TaskStatusFailure},
+				{name: "single HTTP 404 refund retry", pollFailure: true, status: model.TaskStatusFailure},
+				{name: "batch HTTP 404 refund retry", batch: true, pollFailure: true, status: model.TaskStatusFailure},
+				{name: "single per-call completion", perCall: true, status: model.TaskStatusSuccess, actualQuota: 5_000},
+				{name: "batch per-call completion", batch: true, perCall: true, status: model.TaskStatusSuccess, actualQuota: 5_000},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					const initialWallet, initialToken, reserved = 10_000, 8_000, 5_000
+					identity := fmt.Sprintf("metrics-%x", time.Now().UnixNano())
+					user := model.User{Username: identity, AffCode: identity, Quota: initialWallet, UsedQuota: reserved, RequestCount: 1, Status: common.UserStatusEnabled}
+					require.NoError(t, db.Create(&user).Error)
+					token := model.Token{UserId: user.Id, Key: identity, RemainQuota: initialToken, UsedQuota: reserved, Status: common.TokenStatusEnabled}
+					require.NoError(t, db.Create(&token).Error)
+					channel := model.Channel{Type: constant.ChannelTypeKling, Name: identity, Key: "unused", Status: common.ChannelStatusEnabled, UsedQuota: reserved}
+					require.NoError(t, db.Create(&channel).Error)
+					task := makeTask(user.Id, channel.Id, reserved, token.Id, BillingSourceWallet, 0)
+					task.TaskID, task.PrivateData.UpstreamTaskID = identity, identity
+					task.Progress = "50%"
+					task.Properties.OriginModelName, task.PrivateData.BillingContext.OriginModelName = identity, identity
+					task.PrivateData.BillingContext.PerCallBilling = tc.perCall
+					require.NoError(t, db.Create(task).Error)
+					t.Cleanup(func() {
+						require.NoError(t, logDB.Where("user_id = ?", user.Id).Delete(&model.Log{}).Error)
+						for _, row := range []any{task, &token, &user, &channel} {
+							require.NoError(t, db.Unscoped().Delete(row).Error)
+						}
+					})
+					var stale model.Task
+					require.NoError(t, db.First(&stale, task.ID).Error)
+					failBilling := !tc.perCall
+					require.NoError(t, db.Callback().Update().Before("gorm:update").Register("test:fail_task_billing", func(tx *gorm.DB) {
+						if failBilling && tx.Statement.Table == "users" {
+							tx.AddError(errors.New("forced task billing failure"))
+						}
+					}))
+					t.Cleanup(func() { require.NoError(t, db.Callback().Update().Remove("test:fail_task_billing")) })
+					var adaptor TaskPollingAdaptor = &successfulBillingPollingAdaptor{status: tc.status, actualQuota: tc.actualQuota}
+					if tc.batch {
+						adaptor = &batchPollingAdaptor{actualQuota: tc.actualQuota, results: map[string]*BatchTaskResult{
+							identity: {TaskInfo: relaycommon.TaskInfo{TaskID: identity, Status: string(tc.status)}},
+						}}
+					}
+					if tc.pollFailure {
+						adaptor = &taskPollingResponseAdaptor{status: http.StatusNotFound}
+					}
+					poll := func(current *model.Task) {
+						t.Helper()
+						tasks := map[string]*model.Task{identity: current}
+						if tc.batch {
+							require.NoError(t, updateBatchTasks(context.Background(), adaptor.(BatchTaskPollingAdaptor), channel.Id, []string{identity}, tasks))
+						} else {
+							require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, &channel, identity, tasks))
+						}
+					}
+					poll(task)
+					if failBilling {
+						var rolledBack model.Task
+						require.NoError(t, db.First(&rolledBack, task.ID).Error)
+						assert.EqualValues(t, model.TaskStatusInProgress, rolledBack.Status)
+						assert.Equal(t, reserved, rolledBack.Quota)
+						assert.Equal(t, initialWallet, getUserQuota(t, user.Id))
+						assert.Equal(t, initialToken, getTokenRemainQuota(t, token.Id))
+						assertTaskPerformanceSummary(t, identity, 0, 0)
+						failBilling = false
+						poll(&rolledBack)
+					}
+					// Neither a stale CAS loser nor a refreshed terminal replay may add a sample.
+					poll(&stale)
+					var completed model.Task
+					require.NoError(t, db.First(&completed, task.ID).Error)
+					poll(&completed)
+					assert.Equal(t, tc.status, completed.Status)
+					assert.Equal(t, tc.actualQuota, completed.Quota)
+					assert.Equal(t, initialWallet+reserved-tc.actualQuota, getUserQuota(t, user.Id))
+					assert.Equal(t, initialToken+reserved-tc.actualQuota, getTokenRemainQuota(t, token.Id))
+					used, requests := getUserUsageAccounting(t, user.Id)
+					assert.Equal(t, tc.actualQuota, used)
+					assert.Equal(t, 1, requests)
+					assert.Equal(t, int64(tc.actualQuota), getChannelUsedQuota(t, channel.Id))
+					var logCount int64
+					require.NoError(t, logDB.Model(&model.Log{}).Where("user_id = ?", user.Id).Count(&logCount).Error)
+					expectedLogs := int64(1)
+					if tc.perCall {
+						expectedLogs = 0
+					}
+					assert.Equal(t, expectedLogs, logCount)
+					rate := float64(0)
+					if tc.status == model.TaskStatusSuccess {
+						rate = 100
+					}
+					assertTaskPerformanceSummary(t, identity, 1, rate)
+					// One opposite outcome must give two requests and 50%, including after a retry.
+					perfmetrics.Record(perfmetrics.Sample{Model: identity, Group: task.Group, Success: tc.status != model.TaskStatusSuccess})
+					assertTaskPerformanceSummary(t, identity, 2, 50)
+				})
+			}
+		})
+	}
+}
+
+func assertTaskPerformanceSummary(t *testing.T, modelName string, count int64, rate float64) {
+	t.Helper()
+	summary, err := perfmetrics.QuerySummaryAll(24, nil)
+	require.NoError(t, err)
+	var actual perfmetrics.ModelSummary
+	for _, entry := range summary.Models {
+		if entry.ModelName == modelName {
+			actual = entry
+			break
+		}
+	}
+	assert.Equal(t, count, actual.RequestCount)
+	assert.Equal(t, rate, actual.SuccessRate)
 }
 
 func TestUpdateVideoTaskRetriesBillingAfterTerminalCAS(t *testing.T) {

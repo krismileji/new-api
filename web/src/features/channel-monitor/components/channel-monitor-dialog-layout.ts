@@ -19,5 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { cn } from '@/lib/utils'
 
 export function channelMonitorDialogContentClassName(className?: string) {
-  return cn('max-h-[calc(100dvh-2rem)] overflow-hidden', className)
+  // Inherit the shared safe-area bound and keep actions reachable when the
+  // header and footer alone exceed the available viewport height.
+  return cn('overflow-y-auto', className)
 }

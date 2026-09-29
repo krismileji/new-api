@@ -110,41 +110,53 @@ func channelBalanceRequestBudget(ctx *gin.Context, info *relaycommon.RelayInfo, 
 	price.GroupRatioInfo.GroupSpecialRatio = 0
 	price.GroupRatioInfo.HasSpecialRatio = false
 	price.FreeModel, price.Quota, price.QuotaToPreConsume = false, 0, 0
+	prompt := info.GetEstimatePromptTokens()
+	if tiered := info.TieredBillingSnapshot; tiered != nil {
+		prompt = tiered.EstimatedPromptTokens
+	}
+	completion := 8192
+	if info.Request != nil {
+		if meta := info.Request.GetTokenCountMeta(); meta != nil && meta.MaxTokens > 0 {
+			completion = meta.MaxTokens
+		}
+	}
+	if info.RelayMode == relayconstant.RelayModeEmbeddings || info.RelayMode == relayconstant.RelayModeRerank {
+		completion = 0
+	}
+	// Request validators impose tighter protocol bounds. This check also
+	// protects internal/probe callers before forming the synthetic usage.
+	if prompt < 0 || prompt > common.MaxQuota/2 || completion > common.MaxQuota/2 {
+		return -1, "", false
+	}
 	var tier string
 	var expression string
 	var rules []billingexpr.RequestRuleTrace
 	quotaBeforeGroup := 0.0
 	if tiered := info.TieredBillingSnapshot; tiered != nil {
-		expression, tier = tiered.ExprString, tiered.EstimatedTier
-		quotaBeforeGroup = tiered.EstimatedQuotaBeforeGroup
+		expression = tiered.ExprString
 		snapshot.QuotaPerUnit = tiered.QuotaPerUnit
 		request := billingexpr.RequestInput{}
 		if info.BillingRequestInput != nil {
 			request = *info.BillingRequestInput
 		}
-		_, trace, err := billingexpr.RunExprWithRequest(expression, billingexpr.TokenParams{
-			P: float64(tiered.EstimatedPromptTokens), Len: float64(tiered.EstimatedPromptTokens), C: float64(tiered.EstimatedCompletionTokens),
+		if tiered.EstimatedImageCount != nil {
+			request.ImageCount = tiered.EstimatedImageCount
+		}
+		// User reservations cover input only and may apply a configurable
+		// multiplier. Estimate upstream cost independently with an output budget.
+		cost, trace, err := billingexpr.RunExprWithRequest(expression, billingexpr.TokenParams{
+			P: float64(prompt), Len: float64(prompt), C: float64(completion),
 		}, request)
 		if err != nil {
 			return -1, "", false
 		}
-		rules = trace.RequestRules
-	} else {
-		prompt := info.GetEstimatePromptTokens()
-		completion := 8192
-		if info.Request != nil {
-			if meta := info.Request.GetTokenCountMeta(); meta != nil && meta.MaxTokens > 0 {
-				completion = meta.MaxTokens
-			}
-		}
-		if info.RelayMode == relayconstant.RelayModeEmbeddings || info.RelayMode == relayconstant.RelayModeRerank {
-			completion = 0
-		}
-		// Request validators impose tighter protocol bounds. This check also
-		// protects internal/probe callers before forming the synthetic usage.
-		if prompt < 0 || prompt > common.MaxQuota/2 || completion > common.MaxQuota/2 {
+		quotaBeforeGroup = cost / 1_000_000 * snapshot.QuotaPerUnit
+		if _, err := common.QuotaFromFloatStrict(quotaBeforeGroup); err != nil {
 			return -1, "", false
 		}
+		tier = trace.MatchedTier
+		rules = trace.RequestRules
+	} else {
 		copied := *info
 		copied.PriceData, copied.QuotaClamp = price, nil
 		summary := calculateTextQuotaSummaryWithQuotaPerUnit(ctx, &copied, &dto.Usage{
@@ -195,6 +207,20 @@ func finishChannelBalanceAttempt(ctx *gin.Context, snapshot channelDailyCostSnap
 	}
 	if attempt.Finished {
 		return
+	}
+	// A native Responses socket carries separate generations, each with its
+	// own terminal event. A terminal plus authoritative settled cost closes
+	// that generation even while the connection remains open. Realtime usage
+	// updates and interrupted Responses streams still have uncertain coverage.
+	if value, exists := ctx.Get(channelBalanceRelayInfoContextKey); exists {
+		if info, ok := value.(*relaycommon.RelayInfo); ok && info != nil && info.ChannelMeta != nil &&
+			info.ChannelId == snapshot.ChannelId && info.RelayMode == relayconstant.RelayModeResponses &&
+			info.ClientWs != nil && info.TaskRelayInfo == nil && info.StreamStatus != nil {
+			outcome := info.StreamStatus.OutcomeSnapshot()
+			if outcome.EndReason == relaycommon.StreamEndReasonDone && outcome.Response != relaycommon.ResponseOutcomeUnknown {
+				attempt.CompletionUncertain = false
+			}
+		}
 	}
 	attempt.CompletionUncertain = attempt.CompletionUncertain || completionUncertain
 	// Incremental WebSocket usage and async task submission are not evidence

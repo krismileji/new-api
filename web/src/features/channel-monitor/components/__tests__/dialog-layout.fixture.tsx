@@ -115,8 +115,7 @@ async function renderDialog(
 
 const contentClasses =
   channelMonitorDialogContentClassName('flex flex-col').split(/\s+/)
-assert.ok(contentClasses.includes('max-h-[calc(100dvh-2rem)]'))
-assert.ok(contentClasses.includes('overflow-hidden'))
+assert.ok(contentClasses.includes('overflow-y-auto'))
 assert.equal(
   contentClasses.some((value) => value.startsWith('h-[')),
   false
@@ -133,6 +132,11 @@ const orderRendered = await renderDialog(
 )
 const orderList = orderRendered.dialog.querySelector<HTMLElement>(
   '[data-slot="channel-order-list"]'
+)
+assert.ok(
+  orderRendered.dialog.classList.contains(
+    'max-h-[var(--dialog-available-height,calc(100dvh-2rem))]'
+  )
 )
 assert.ok(orderList)
 assert.ok(orderList.classList.contains('min-h-0'))

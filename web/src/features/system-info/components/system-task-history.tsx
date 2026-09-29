@@ -41,7 +41,10 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { createServerError } from '@/lib/server-error-message'
 
 import { deleteSystemTaskHistory } from '../api'
-import { SYSTEM_TASK_TYPE_LABEL } from '../constants'
+import {
+  getSystemTaskTypeLabel,
+  SYSTEM_TASK_TYPES,
+} from '../downstream-system-tasks'
 import { SystemTasksTable } from './system-tasks-table'
 
 const EMPTY_TASKS: SystemTask[] = []
@@ -149,9 +152,9 @@ export function SystemTaskHistory(props: { activeRefreshAt: number }) {
               }}
             >
               <NativeSelectOption value=''>{t('All Types')}</NativeSelectOption>
-              {Object.entries(SYSTEM_TASK_TYPE_LABEL).map(([value, label]) => (
+              {SYSTEM_TASK_TYPES.map((value) => (
                 <NativeSelectOption key={value} value={value}>
-                  {t(label)}
+                  {getSystemTaskTypeLabel(value, t)}
                 </NativeSelectOption>
               ))}
             </NativeSelect>

@@ -237,7 +237,9 @@ assert.ok(generalDialog)
 const generalTitle = generalDialog.textContent ?? ''
 const generalHasSchedule = generalTitle.includes('智能调度设置')
 const generalUsesContentSizedViewport =
-  generalDialog.classList.contains('max-h-[calc(100dvh-2rem)]') &&
+  generalDialog.classList.contains(
+    'max-h-[var(--dialog-available-height,calc(100dvh-2rem))]'
+  ) &&
   generalDialog.classList.contains('sm:max-w-4xl') &&
   ![...generalDialog.classList].some((className) => className.startsWith('h-['))
 const generalUsesInsetRing = generalDialog.classList.contains('ring-inset')
@@ -448,7 +450,9 @@ const policyDialogCentered =
   policyDialog.className.includes('left-1/2')
 const policyDialogUsesInsetRing = policyDialog.classList.contains('ring-inset')
 const policyDialogUsesContentSizedViewport =
-  policyDialog.classList.contains('max-h-[calc(100dvh-2rem)]') &&
+  policyDialog.classList.contains(
+    'max-h-[var(--dialog-available-height,calc(100dvh-2rem))]'
+  ) &&
   policyDialog.classList.contains('sm:max-w-5xl') &&
   ![...policyDialog.classList].some((className) => className.startsWith('h-['))
 const policyDialogScrollArea = policyDialog.querySelector(

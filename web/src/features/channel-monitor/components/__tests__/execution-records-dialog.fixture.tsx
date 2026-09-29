@@ -277,7 +277,11 @@ const ratioRendered = await renderDialog(
   ratioQueryClient
 )
 assert.ok(ratioRendered.dialog.textContent?.includes('倍率与余额更新记录'))
-assert.ok(ratioRendered.dialog.classList.contains('max-h-[calc(100dvh-2rem)]'))
+assert.ok(
+  ratioRendered.dialog.classList.contains(
+    'max-h-[var(--dialog-available-height,calc(100dvh-2rem))]'
+  )
+)
 assert.equal(
   [...ratioRendered.dialog.classList].some((className) =>
     className.startsWith('h-[')
@@ -475,7 +479,9 @@ const scheduleRendered = await renderDialog(
 )
 assert.ok(scheduleRendered.dialog.textContent?.includes('智能调度执行记录'))
 assert.ok(
-  scheduleRendered.dialog.classList.contains('max-h-[calc(100dvh-2rem)]')
+  scheduleRendered.dialog.classList.contains(
+    'max-h-[var(--dialog-available-height,calc(100dvh-2rem))]'
+  )
 )
 assert.equal(
   [...scheduleRendered.dialog.classList].some((className) =>
@@ -661,8 +667,8 @@ await act(async () => {
       },
     }
   )
-  await waitForDialogText(scheduleRendered.dialog, '轮询新增渠道')
 })
+await waitForDialogText(scheduleRendered.dialog, '轮询新增渠道')
 assert.equal(search.value, '')
 assert.ok(scheduleRendered.dialog.textContent?.includes('轮询新增渠道'))
 assert.equal(

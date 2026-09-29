@@ -1,6 +1,7 @@
 package model
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -9,6 +10,8 @@ import (
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -246,7 +249,7 @@ func TestUserLogQueriesHideRetryAndSystemRequests(t *testing.T) {
 	assert.Contains(t, adminContent, "manual channel test")
 }
 
-func TestUserVisibleLogsHydrateChannelNameAfterCacheMiss(t *testing.T) {
+func TestLogQueriesHydrateChannelNames(t *testing.T) {
 	originalDB := DB
 	originalLogDB := LOG_DB
 	originalLogDatabaseType := common.LogDatabaseType()
@@ -260,36 +263,99 @@ func TestUserVisibleLogsHydrateChannelNameAfterCacheMiss(t *testing.T) {
 		channelsIDM = originalChannels
 	})
 
-	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "logs-cache-miss.db")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		require.NoError(t, sqlDB.Close())
-	})
-	require.NoError(t, db.AutoMigrate(&Log{}))
-	require.NoError(t, db.Exec("CREATE TABLE channels (id INTEGER PRIMARY KEY, name TEXT NOT NULL)").Error)
-	const channelID = 987654321
-	require.NoError(t, db.Exec("INSERT INTO channels (id, name) VALUES (?, ?)", channelID, "cache-miss-channel").Error)
-	require.NoError(t, db.Create(&Log{
-		UserId:    1,
-		CreatedAt: 1,
-		Type:      LogTypeConsume,
-		ChannelId: channelID,
-		Content:   "visible request",
-	}).Error)
-
-	DB = db
-	LOG_DB = db
-	common.SetLogDatabaseType(common.DatabaseTypeSQLite)
-	common.MemoryCacheEnabled = true
-	channelsIDM = map[int]*Channel{}
-
-	logs, total, err := GetAllUserVisibleLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 10, "", "", "")
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), total)
-	require.Len(t, logs, 1)
-	assert.Equal(t, "cache-miss-channel", logs[0].ChannelName)
+	for _, database := range []struct {
+		name      string
+		kind      common.DatabaseType
+		dsns      [2]string
+		dialector func(string) gorm.Dialector
+	}{
+		{"sqlite", common.DatabaseTypeSQLite, [2]string{filepath.Join(t.TempDir(), "main.db"), filepath.Join(t.TempDir(), "logs.db")}, sqlite.Open},
+		{"mysql", common.DatabaseTypeMySQL, [2]string{os.Getenv("TEST_MYSQL_DSN"), os.Getenv("TEST_MYSQL_LOG_DSN")}, mysql.Open},
+		{"postgres", common.DatabaseTypePostgreSQL, [2]string{os.Getenv("TEST_POSTGRES_DSN"), os.Getenv("TEST_POSTGRES_LOG_DSN")}, postgres.Open},
+	} {
+		t.Run(database.name, func(t *testing.T) {
+			if database.dsns[0] == "" || database.dsns[1] == "" {
+				t.Skip("requires isolated main and log test database DSNs")
+			}
+			var databases [2]*gorm.DB
+			for i, dsn := range database.dsns {
+				db, err := gorm.Open(database.dialector(dsn), &gorm.Config{})
+				require.NoError(t, err)
+				sqlDB, err := db.DB()
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+				versionQuery := "SELECT VERSION()"
+				if database.kind == common.DatabaseTypeSQLite {
+					versionQuery = "SELECT sqlite_version()"
+				}
+				var version string
+				require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+				t.Logf("database %d: %s", i, version)
+				databases[i] = db
+			}
+			DB, LOG_DB = databases[0], databases[1]
+			common.SetLogDatabaseType(database.kind)
+			// Never modify existing tables when external test DSNs are supplied.
+			require.False(t, DB.Migrator().HasTable("channels"), "use an empty main test database")
+			require.False(t, LOG_DB.Migrator().HasTable(&Log{}), "use an empty log test database")
+			mainDB, logDB := DB, LOG_DB
+			require.NoError(t, mainDB.Exec("CREATE TABLE channels (id INTEGER PRIMARY KEY, name TEXT NOT NULL)").Error)
+			t.Cleanup(func() { require.NoError(t, mainDB.Migrator().DropTable("channels")) })
+			require.NoError(t, logDB.AutoMigrate(&Log{}))
+			t.Cleanup(func() { require.NoError(t, logDB.Migrator().DropTable(&Log{})) })
+			require.NoError(t, mainDB.Table("channels").Create([]map[string]any{
+				{"id": 101, "name": "database-name"},
+				{"id": 102, "name": "cache-miss-channel"},
+			}).Error)
+			for _, channelID := range []int{101, 102, 103, 104, 0, 101} {
+				require.NoError(t, logDB.Create(&Log{
+					UserId: 1, CreatedAt: 1, Type: LogTypeConsume,
+					ChannelId: channelID, Content: "visible request",
+				}).Error)
+			}
+			channelsIDM = map[int]*Channel{
+				101: {Id: 101, Name: "cached-name"},
+				103: {Id: 103, Name: "cache-only-channel"},
+			}
+			for _, mode := range []struct {
+				name    string
+				enabled bool
+				names   map[int]string
+			}{
+				{"mixed_cache_hits_and_misses", true, map[int]string{101: "cached-name", 102: "cache-miss-channel", 103: "cache-only-channel"}},
+				{"cache_disabled", false, map[int]string{101: "database-name", 102: "cache-miss-channel"}},
+			} {
+				t.Run(mode.name, func(t *testing.T) {
+					common.MemoryCacheEnabled = mode.enabled
+					for _, view := range []string{"all", "user_visible", "self"} {
+						t.Run(view, func(t *testing.T) {
+							var logs []*Log
+							var total int64
+							var err error
+							switch view {
+							case "all":
+								logs, total, err = GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 10, 0, "", "", "")
+							case "user_visible":
+								logs, total, err = GetAllUserVisibleLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 10, "", "", "")
+							case "self":
+								logs, total, err = GetUserLogs(1, LogTypeUnknown, 0, 0, "", "", 0, 10, "", "", "")
+							}
+							require.NoError(t, err)
+							assert.Equal(t, int64(6), total)
+							require.Len(t, logs, 6)
+							for _, log := range logs {
+								if view == "self" {
+									assert.Empty(t, log.ChannelName, "self view must hide channel names")
+								} else {
+									assert.Equal(t, mode.names[log.ChannelId], log.ChannelName, "channel %d", log.ChannelId)
+								}
+							}
+						})
+					}
+				})
+			}
+		})
+	}
 }
 
 func TestClickHouseRetryAttemptColumn(t *testing.T) {

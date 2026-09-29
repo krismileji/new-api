@@ -378,6 +378,7 @@ func applyChannelMonitorPolicyPlan(ctx context.Context, plan channelMonitorPolic
 		if changed {
 			disabledChannelIds = append(disabledChannelIds, channelId)
 			disableApplied[channelId] = struct{}{}
+			service.DrainChannelWebSockets(channelId)
 		}
 	}
 

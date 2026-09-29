@@ -1887,6 +1887,7 @@ func TestPlanChannelSmartScheduleUsesHysteresisAndForceReset(t *testing.T) {
 	challengerScore := 0.82
 	scoring := defaultChannelSmartScheduleScoring()
 	scoring.StabilityPercent = 100
+	scoring.PrimarySwitchThresholdPercent = 3
 	candidates := []channelSmartScheduleCandidate{
 		{
 			ChannelId: 1, CurrentPriority: 80, CurrentWeight: 900,
@@ -2062,6 +2063,7 @@ func TestRunChannelSmartScheduleManualPrimaryAllowsStabilityDegrade(t *testing.T
 	sampleMode := channelMonitorSmartScheduleSampleProbe
 	policy.SampleMode = &sampleMode
 	policy.Scoring.StabilityPercent = 100
+	policy.ConsecutiveFailureThreshold = common.GetPointer(2)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorSmartScheduleEnabledOption:       "true",
 		channelMonitorSmartScheduleGroupPoliciesOption: channelSmartScheduleTestGroupPoliciesJSON(t, policy),

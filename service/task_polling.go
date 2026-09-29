@@ -158,7 +158,7 @@ func sweepTimedOutTasks(ctx context.Context) {
 			continue
 		}
 		timedOutCount++
-		if !isLegacy && task.Quota != 0 {
+		if !isLegacy {
 			if !RefundTaskQuota(ctx, task, reason) {
 				rollbackTaskAfterBillingFailure(ctx, task, previousSnapshot)
 			}
@@ -442,15 +442,7 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 			continue
 		}
 		if terminalTransition {
-			perfmetrics.RecordTaskResult(task, &responseItem.TaskInfo)
-			billingSettled, billingAttempted := settleTaskBillingOnCompleteResult(ctx, adaptor, task, &responseItem.TaskInfo)
-			if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
-				if !RefundTaskQuota(ctx, task, task.FailReason) {
-					rollbackTaskAfterBillingFailure(ctx, task, previousSnapshot)
-				}
-			} else if task.Status == model.TaskStatusSuccess && billingAttempted && !billingSettled {
-				rollbackTaskAfterBillingFailure(ctx, task, previousSnapshot)
-			}
+			finalizeTerminalTask(ctx, adaptor, task, &responseItem.TaskInfo, previousSnapshot)
 		}
 	}
 	return nil
@@ -699,30 +691,26 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 	}
 
 	if shouldFinalizeBilling {
-		perfmetrics.RecordTaskResult(task, taskResult)
-		billingSettled, billingAttempted := settleTaskBillingOnCompleteResult(ctx, adaptor, task, taskResult)
-		if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
-			if !RefundTaskQuota(ctx, task, task.FailReason) {
-				rollbackTaskAfterBillingFailure(ctx, task, previousSnapshot)
-			}
-		} else if task.Status == model.TaskStatusSuccess && billingAttempted && !billingSettled {
-			rollbackTaskAfterBillingFailure(ctx, task, previousSnapshot)
-		}
+		finalizeTerminalTask(ctx, adaptor, task, taskResult, previousSnapshot)
 	}
 
 	return nil
 }
 
-// finalizeTerminalTask 终态统一收尾（状态 CAS 赢家调用，恰好一次）：采样 + 结算 + 失败兜底退款。
+// finalizeTerminalTask 先结算或退款，仅在终态转换无需回滚时采样。
 func finalizeTerminalTask(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo, previousSnapshot taskPollingSnapshot) {
-	perfmetrics.RecordTaskResult(task, taskResult)
 	billingSettled, billingAttempted := settleTaskBillingOnCompleteResult(ctx, adaptor, task, taskResult)
-	if task.Status == model.TaskStatusFailure && !billingSettled && task.Quota != 0 {
+	if task.Status == model.TaskStatusFailure && !billingSettled {
 		if !RefundTaskQuota(ctx, task, task.FailReason) {
 			rollbackTaskAfterBillingFailure(ctx, task, previousSnapshot)
+			return
 		}
 	} else if task.Status == model.TaskStatusSuccess && billingAttempted && !billingSettled {
 		rollbackTaskAfterBillingFailure(ctx, task, previousSnapshot)
+		return
+	}
+	if previousSnapshot.status != task.Status {
+		perfmetrics.RecordTaskResult(task, taskResult)
 	}
 }
 

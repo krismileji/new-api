@@ -172,6 +172,7 @@ type TaskBillingContext struct {
 	ChannelCostEventId  string                       `json:"channel_cost_event_id,omitempty"`
 	ChannelCostNanoCNY  int64                        `json:"channel_cost_nano_cny,omitempty"`
 	ChannelCostResolved bool                         `json:"channel_cost_resolved,omitempty"`
+	ChannelCostSnapshot *TaskChannelCostSnapshot     `json:"channel_cost_snapshot,omitempty"`
 }
 
 // ResultRetrievable reports whether retrieval surfaces (native query routes,

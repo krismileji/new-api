@@ -31,6 +31,7 @@ type closeEvent struct {
 	ChannelIDs []int  `json:"channel_ids"`
 	Reason     string `json:"reason"`
 	Origin     string `json:"origin"`
+	Drain      bool   `json:"drain,omitempty"`
 }
 
 var (
@@ -128,6 +129,10 @@ func StartSubscriber(ctx context.Context) {
 }
 
 func PublishCloseChannels(ctx context.Context, channelIDs []int, reason string) error {
+	return publishChannelEvent(ctx, channelIDs, reason, false)
+}
+
+func publishChannelEvent(ctx context.Context, channelIDs []int, reason string, drain bool) error {
 	rdb := common.RDB
 	if !common.RedisEnabled || rdb == nil {
 		return nil
@@ -140,6 +145,7 @@ func PublishCloseChannels(ctx context.Context, channelIDs []int, reason string) 
 		ChannelIDs: ids,
 		Reason:     normalizeReason(reason),
 		Origin:     getOriginID(),
+		Drain:      drain,
 	})
 	if err != nil {
 		return err
@@ -170,7 +176,11 @@ func receiveChannelCloseEvents(ctx context.Context, ch <-chan *redis.Message, or
 			if event.Origin == origin {
 				continue
 			}
-			CloseChannels(event.ChannelIDs, event.Reason)
+			if event.Drain {
+				DrainChannels(event.ChannelIDs, event.Reason)
+			} else {
+				CloseChannels(event.ChannelIDs, event.Reason)
+			}
 		}
 	}
 }

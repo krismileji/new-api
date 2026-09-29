@@ -72,7 +72,7 @@ export function ChannelProbePolicyDialog(props: Props) {
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       {props.trigger && <DialogTrigger render={props.trigger} />}
-      <DialogContent className='max-h-[90dvh] overflow-y-auto sm:max-w-xl'>
+      <DialogContent className='sm:max-w-xl'>
         <DialogHeader>
           <DialogTitle>渠道探测策略</DialogTitle>
           <DialogDescription>

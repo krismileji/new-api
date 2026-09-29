@@ -13,6 +13,9 @@ import (
 )
 
 func TestGetChannelMonitorRecoveryBeforeBackgroundCheck(t *testing.T) {
+	previousRedisEnabled := common.RedisEnabled
+	common.RedisEnabled = true
+	t.Cleanup(func() { common.RedisEnabled = previousRedisEnabled })
 	response := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(response)
 	context.Request = httptest.NewRequest(http.MethodGet, "/api/channel_monitor/health", nil)

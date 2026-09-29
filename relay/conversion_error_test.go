@@ -29,7 +29,7 @@ func TestNewAPIErrorFromConversionMarksLocalConversionFailureNonRetryable(t *tes
 	got := newAPIErrorFromConversion(errors.New("invalid image payload"))
 
 	require.NotNil(t, got)
-	assert.Equal(t, types.ErrorCodeConvertRequestFailed, got.GetErrorCode())
-	assert.Equal(t, http.StatusInternalServerError, got.StatusCode)
+	assert.Equal(t, types.ErrorCodeInvalidRequest, got.GetErrorCode())
+	assert.Equal(t, http.StatusBadRequest, got.StatusCode)
 	assert.True(t, types.IsSkipRetryError(got))
 }

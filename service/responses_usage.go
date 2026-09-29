@@ -22,6 +22,7 @@ type ResponsesUsageAccumulator struct {
 	imageCommitted bool
 	started        bool
 	finished       bool
+	hasUsage       bool
 }
 
 func NewResponsesUsageAccumulator(info *relaycommon.RelayInfo) *ResponsesUsageAccumulator {
@@ -40,6 +41,7 @@ func (a *ResponsesUsageAccumulator) Observe(event *dto.ResponsesStreamResponse) 
 	switch event.Type {
 	case "response.completed", "response.done", "response.failed", "response.incomplete", "response.cancelled", "response.canceled":
 		if event.Response != nil {
+			a.hasUsage = a.hasUsage || event.Response.Usage != nil
 			ApplyResponsesUsage(a.usage, event.Response.Usage)
 			if a.outputText.Len() == 0 {
 				// Some upstreams carry the output only on the terminal event.
@@ -84,6 +86,7 @@ func (a *ResponsesUsageAccumulator) Finish() *dto.Usage {
 		return a.usage
 	}
 	a.finished = true
+	promptTokens, completionTokens := a.usage.PromptTokens, a.usage.CompletionTokens
 	// A final image item can already have reached the client before the stream
 	// disconnects. Explicit failed/incomplete terminals reset and commit zero in
 	// Observe; otherwise retain completed tool usage even without a terminal.
@@ -104,6 +107,7 @@ func (a *ResponsesUsageAccumulator) Finish() *dto.Usage {
 		a.usage.PromptTokens = a.info.GetEstimatePromptTokens()
 	}
 	a.usage.TotalTokens = a.usage.PromptTokens + a.usage.CompletionTokens
+	a.info.ChannelCostUsageUnresolved = !a.hasUsage || a.usage.PromptTokens != promptTokens || a.usage.CompletionTokens != completionTokens
 	if a.usage.BillingUsage != nil {
 		a.usage.BillingUsage = dto.CloneBillingUsageWithEstimatedCompletion(a.usage.BillingUsage, a.usage.CompletionTokens)
 	}

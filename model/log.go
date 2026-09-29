@@ -180,6 +180,7 @@ func hydrateLogChannelNames(logs []*Log) error {
 		return nil
 	}
 
+	channelMap := make(map[int]string, channelIds.Len())
 	var channels []struct {
 		Id   int    `gorm:"column:id"`
 		Name string `gorm:"column:name"`
@@ -188,13 +189,7 @@ func hydrateLogChannelNames(logs []*Log) error {
 		missingChannelIDs := make([]int, 0)
 		for _, channelId := range channelIds.Items() {
 			if cacheChannel, err := CacheGetChannel(channelId); err == nil && cacheChannel != nil {
-				channels = append(channels, struct {
-					Id   int    `gorm:"column:id"`
-					Name string `gorm:"column:name"`
-				}{
-					Id:   channelId,
-					Name: cacheChannel.Name,
-				})
+				channelMap[channelId] = cacheChannel.Name
 			} else {
 				// Logs can outlive a cache refresh (or the channel itself). Fall
 				// back to the primary database so user-visible logs still expose
@@ -211,7 +206,6 @@ func hydrateLogChannelNames(logs []*Log) error {
 		return err
 	}
 
-	channelMap := make(map[int]string, len(channels))
 	for _, channel := range channels {
 		channelMap[channel.Id] = channel.Name
 	}

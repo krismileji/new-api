@@ -528,12 +528,14 @@ func TestRecordTaskChannelDailyCostRegistersInitialCostExactlyOnce(t *testing.T)
 		Configured:   true,
 	})
 	priceData := types.PriceData{ModelPrice: 0.02, UsePrice: true, Quota: 10_000}
+	task := makeTask(1, channelID, priceData.Quota, 0, BillingSourceWallet, 0)
+	task.TaskID, task.SubmitTime = "initial-cost", submittedAt
 
-	firstCost, resolved, err := RecordTaskChannelDailyCost(ctx, channelID, submittedAt, costEventID, int64(priceData.Quota), "test-model", priceData)
+	firstCost, resolved, err := RecordTaskChannelDailyCost(ctx, task, priceData)
 	require.NoError(t, err)
 	require.True(t, resolved)
 	assert.Equal(t, int64(80_000_000), firstCost)
-	secondCost, resolved, err := RecordTaskChannelDailyCost(ctx, channelID, submittedAt, costEventID, int64(priceData.Quota), "test-model", priceData)
+	secondCost, resolved, err := RecordTaskChannelDailyCost(ctx, task, priceData)
 	require.NoError(t, err)
 	require.True(t, resolved)
 	assert.Equal(t, firstCost, secondCost)
@@ -571,7 +573,9 @@ func TestTaskInitialCostPersistenceFailureEmitsUnresolvedSuccess(t *testing.T) {
 		Configured:   true,
 	})
 	priceData := types.PriceData{ModelPrice: 0.02, UsePrice: true, Quota: 10_000}
-	_, resolved, err := RecordTaskChannelDailyCost(ctx, channelID, submittedAt, "task:persistence-failure", int64(priceData.Quota), "test-model", priceData)
+	task := makeTask(1, channelID, priceData.Quota, 0, BillingSourceWallet, 0)
+	task.TaskID, task.SubmitTime = "persistence-failure", submittedAt
+	_, resolved, err := RecordTaskChannelDailyCost(ctx, task, priceData)
 	require.Error(t, err)
 	assert.False(t, resolved)
 	assert.Nil(t, ChannelDailyCostAttemptSettledCost(ctx, channelID))

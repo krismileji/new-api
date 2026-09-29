@@ -50,6 +50,8 @@ func tryChannelSmallInputResponse(c *gin.Context, info *relaycommon.RelayInfo, c
 	}
 	text := service.BuildChannelSmallInputText(policy.SmallInputResponseText, info.OriginModelName, tokens, outputLimit)
 	c.Set(service.ChannelLocalResponseContextKey, true)
+	// Local responses are not samples of upstream availability or performance.
+	info.PerformanceBusinessRejection = true
 	service.EmitChannelLocalResponseEvent(c, info, channelID, policy, tokens)
 	channelprobe.WriteLocalTextResponse(c, info.Request, info.OriginModelName, channelprobe.ResponseConfig{
 		ResponseText: text.Text, InputTokens: text.InputTokens, OutputTokens: text.OutputTokens, Truncated: text.Truncated,

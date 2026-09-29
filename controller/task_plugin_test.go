@@ -97,7 +97,8 @@ func TestDeleteThirdPartyPluginReportsAssociatedChannelsAndInFlightTasks(t *test
 }
 
 func TestDisableThirdPartyPluginSupportsCascadeAndForce(t *testing.T) {
-	setupTaskPluginControllerTest(t)
+	database := modelManagementDB(t, "sqlite", "")
+	require.NoError(t, database.AutoMigrate(&model.TaskPlugin{}, &model.Task{}))
 	loaded, err := jsplugin.DefaultRegistry.Register(lifecyclePluginSource, jsplugin.Options{})
 	require.NoError(t, err)
 	t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister("lifecycle-only") })

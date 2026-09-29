@@ -321,10 +321,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		if shouldRetry {
 			decision.Action = "retry"
-			if retryDecision == relayRetryFastFailureSameChannel {
+			if types.IsModelCapacityError(newAPIError) {
+				decision.Reason, decision.Source = "模型容量不足", "system"
+			} else if retryDecision == relayRetryFastFailureSameChannel {
 				decision.Reason, decision.Source = "retry_status_matched", "system"
 			}
 		} else {
+			if decision.Action == "retry" {
+				decision.Reason, decision.Source = "non_retryable_error", "system"
+			}
 			decision.Action = "stop"
 		}
 		service.RecordPolicyFailure(c, channel.Id, newAPIError, decision)
@@ -1073,6 +1078,8 @@ func executeTaskSubmissionWith(
 		decision := decideTaskRetry(c, taskErr, common.RetryTimes-retryParam.GetRetry())
 		if shouldRetry {
 			decision.Action, decision.Reason = "retry", "retry_status_matched"
+		} else if decision.Action == "retry" {
+			decision = service.PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}
 		}
 		service.RecordPolicyFailure(c, channel.Id, taskAPIError, decision)
 		if !taskErr.LocalError {
@@ -1213,6 +1220,7 @@ func executeTaskSubmissionWith(
 			insertOmits = append(insertOmits, "data")
 		}
 	}
+	service.PrepareTaskChannelCost(c, task)
 	diagnostics.insertStart(task)
 	if insertErr := task.InsertWithContext(c.Request.Context(), insertOmits...); insertErr != nil {
 		common.SysError("insert task error: " + insertErr.Error())

@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -50,13 +51,16 @@ func TestChannelSmallInputResponseThresholdAndManualBoundary(t *testing.T) {
 			c, _ := gin.CreateTestContext(recorder)
 			c.Request = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader("{}"))
 			c.Set("channel_test", tc.manual)
-			handled, apiErr := tryChannelSmallInputResponse(c, info, 17)
+			caseInfo := *info
+			handled, apiErr := tryChannelSmallInputResponse(c, &caseInfo, 17)
 			require.Nil(t, apiErr)
 			assert.Equal(t, tc.match, handled)
 			if tc.match {
+				assert.Equal(t, perfmetrics.OutcomeIgnored, perfmetrics.ClassifyRelayOutcome(c.Request.Context(), &caseInfo, nil))
 				assert.Contains(t, recorder.Body.String(), "自定义")
 				assert.Equal(t, "local_response", recorder.Header().Get("X-New-Api-Response-Source"))
 			} else {
+				assert.Equal(t, perfmetrics.OutcomeSuccess, perfmetrics.ClassifyRelayOutcome(c.Request.Context(), &caseInfo, nil))
 				assert.Empty(t, recorder.Body.String())
 			}
 		})
@@ -98,4 +102,5 @@ func TestChannelSmallInputResponseAfterConcurrencyReselection(t *testing.T) {
 	assert.Equal(t, 102, common.GetContextKeyInt(c, constant.ContextKeyChannelId))
 	assert.True(t, c.GetBool(service.ChannelLocalResponseContextKey))
 	assert.Contains(t, recorder.Body.String(), "备用渠道本地响应")
+	assert.Equal(t, perfmetrics.OutcomeIgnored, perfmetrics.ClassifyRelayOutcome(c.Request.Context(), info, nil))
 }

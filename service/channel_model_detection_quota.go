@@ -56,7 +56,7 @@ func CalculateChannelModelDetectionQuotaWithSnapshot(ctx *gin.Context, info *rel
 }
 
 func calculateChannelModelDetectionQuota(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage, quotaPerUnit float64) ChannelModelDetectionQuotaResult {
-	if ctx == nil || info == nil || usage == nil || !channelDailyCostUsageIsAuthoritative(ctx, usage) {
+	if ctx == nil || info == nil || usage == nil || !channelDailyCostUsageIsAuthoritative(ctx, info, usage) {
 		return ChannelModelDetectionQuotaResult{}
 	}
 	if quotaPerUnit <= 0 || math.IsNaN(quotaPerUnit) || math.IsInf(quotaPerUnit, 0) {

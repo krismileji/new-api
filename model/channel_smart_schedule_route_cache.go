@@ -365,7 +365,7 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 		modelName, requestPath, options, trafficPolicy, retry > 0, managedPool,
 	)
 	if len(routes) == 0 {
-		normalizedModel := ratio_setting.FormatMatchingModelName(modelName)
+		normalizedModel := ratio_setting.RoutingMatchModelName(modelName)
 		selectionModelName = normalizedModel
 		managedPool = trafficPolicy != nil && trafficPolicy.managesPool(group, selectionModelName)
 		routes = prepareChannelSmartScheduleCachedRoutes(

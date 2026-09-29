@@ -199,17 +199,9 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
 	costEventId := ""
 	if task != nil && task.PrivateData.BillingContext != nil {
-		costEventId = "task:" + task.TaskID
-		task.PrivateData.BillingContext.ChannelCostEventId = costEventId
-		settledCost, resolved, err := RecordTaskChannelDailyCost(
-			c,
-			info.ChannelId,
-			task.SubmitTime,
-			costEventId,
-			int64(info.PriceData.Quota),
-			info.OriginModelName,
-			info.PriceData,
-		)
+		PrepareTaskChannelCost(c, task)
+		costEventId = task.PrivateData.BillingContext.ChannelCostEventId
+		settledCost, resolved, err := RecordTaskChannelDailyCost(c, task, info.PriceData)
 		if err != nil {
 			logger.LogError(c, fmt.Sprintf("持久化任务渠道成本失败 task %s: %s", task.TaskID, err.Error()))
 		} else if resolved {

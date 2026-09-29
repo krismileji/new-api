@@ -12,13 +12,13 @@ func channelSmartScheduleModelName(modelName string) string {
 
 // channelSmartScheduleRouteModelNames follows channel selection semantics:
 // use an explicitly configured model first and only fall back to its matching
-// wildcard when the exact route has no usable channel.
+// base model or wildcard when the exact route has no usable channel.
 func channelSmartScheduleRouteModelNames(modelName string) []string {
 	modelName = strings.TrimSpace(modelName)
 	if modelName == "" {
 		return nil
 	}
-	normalized := channelSmartScheduleModelName(modelName)
+	normalized := ratio_setting.RoutingMatchModelName(modelName)
 	if normalized == "" || normalized == modelName {
 		return []string{modelName}
 	}

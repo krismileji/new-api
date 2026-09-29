@@ -416,8 +416,11 @@ func recordChannelDailyCostUnresolved(ctx *gin.Context, channelId int) {
 	recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
 }
 
-func channelDailyCostUsageIsAuthoritative(ctx *gin.Context, usage *dto.Usage) bool {
+func channelDailyCostUsageIsAuthoritative(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage) bool {
 	if usage == nil {
+		return false
+	}
+	if info != nil && info.ChannelCostUsageUnresolved {
 		return false
 	}
 	if ctx != nil && common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens) {
@@ -564,7 +567,7 @@ func recordTextChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	snapshot = channelDailyCostSnapshotWithRelayInfo(snapshot, relayInfo)
 	quotaPerUnit := snapshot.QuotaPerUnit
 	if tieredBillingApplied {
-		if !channelDailyCostUsageIsAuthoritative(ctx, originUsage) {
+		if !channelDailyCostUsageIsAuthoritative(ctx, relayInfo, originUsage) {
 			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 			return
 		}
@@ -599,7 +602,7 @@ func recordTextChannelDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		recordChannelDailyCostWithSnapshot(ctx, snapshot, quotaBeforeGroup)
 		return
 	}
-	if !relayInfo.PriceData.UsePrice && !channelDailyCostUsageIsAuthoritative(ctx, originUsage) {
+	if !relayInfo.PriceData.UsePrice && !channelDailyCostUsageIsAuthoritative(ctx, relayInfo, originUsage) {
 		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 		return
 	}
@@ -691,7 +694,7 @@ func RecordChannelTestDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		return
 	}
 	if relayInfo.TieredBillingSnapshot != nil {
-		if !authoritativeUsage || !channelDailyCostUsageIsAuthoritative(ctx, usage) {
+		if !authoritativeUsage || !channelDailyCostUsageIsAuthoritative(ctx, relayInfo, usage) {
 			recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 			return
 		}
@@ -716,7 +719,7 @@ func RecordChannelTestDailyCost(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		recordChannelDailyCostWithSnapshot(ctx, snapshot, quotaBeforeGroup.InexactFloat64())
 		return
 	}
-	if !relayInfo.PriceData.UsePrice && (!authoritativeUsage || !channelDailyCostUsageIsAuthoritative(ctx, usage)) {
+	if !relayInfo.PriceData.UsePrice && (!authoritativeUsage || !channelDailyCostUsageIsAuthoritative(ctx, relayInfo, usage)) {
 		recordChannelDailyCostUnresolved(ctx, relayInfo.ChannelId)
 		return
 	}
@@ -744,17 +747,33 @@ func RecordPerCallChannelDailyCost(ctx *gin.Context, channelId int, modelName st
 // RecordTaskChannelDailyCost synchronously registers an asynchronous task's
 // initial cost so later refunds and recalculations can correct the original
 // submission day without racing the generic daily-cost batcher.
-func RecordTaskChannelDailyCost(ctx *gin.Context, channelId int, occurredAt int64, costEventId string, initialQuota int64, modelName string, priceData types.PriceData) (int64, bool, error) {
-	snapshot := channelDailyCostSnapshotWithCurrentKey(ctx, channelDailyCostSnapshotFromContext(ctx, channelId))
-	snapshot.ModelName = strings.TrimSpace(modelName)
+func RecordTaskChannelDailyCost(ctx *gin.Context, task *model.Task, priceData types.PriceData) (int64, bool, error) {
+	if task == nil || task.PrivateData.BillingContext == nil {
+		return 0, false, errors.New("任务成本计费上下文缺失")
+	}
+	PrepareTaskChannelCost(ctx, task)
+	bc := task.PrivateData.BillingContext
+	snapshot := channelDailyCostSnapshotWithCurrentKey(ctx, channelDailyCostSnapshotFromContext(ctx, task.ChannelId))
+	snapshot.ModelName = strings.TrimSpace(taskModelName(task))
 	quotaBeforeGroup := priceData.ModelPrice * snapshot.QuotaPerUnit
 	if !priceData.UsePrice {
 		quotaBeforeGroup = priceData.ModelRatio / 2 * snapshot.QuotaPerUnit
 	}
-	if !common.StringsContains(constant.TaskPricePatches, modelName) {
+	if !common.StringsContains(constant.TaskPricePatches, snapshot.ModelName) {
 		quotaBeforeGroup = priceData.ApplyOtherRatiosToFloat(quotaBeforeGroup)
 	}
 	costNanoCNY, resolved := calculateChannelDailyCost(snapshot, quotaBeforeGroup)
+	if bc.TieredSnapshot != nil {
+		var err error
+		costNanoCNY, err = bc.ChannelCostSnapshot.ExpressionCost(bc.TieredSnapshot)
+		resolved = err == nil
+		if err != nil && bc.ChannelCostSnapshot != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("任务 %s 成本保持未解析: %v", task.TaskID, err))
+		}
+	}
+	if task.Status == model.TaskStatusFailure {
+		costNanoCNY, resolved = calculateChannelDailyCost(snapshot, 0)
+	}
 	if !resolved {
 		finishChannelBalanceTaskAttempt(ctx, snapshot)
 		recordChannelDailyCostEvent(ctx, snapshot, 0, 0, 1)
@@ -762,9 +781,10 @@ func RecordTaskChannelDailyCost(ctx *gin.Context, channelId int, occurredAt int6
 	}
 
 	storedCost, err := model.RegisterChannelTaskCostEvent(channelMonitorPublishContext(ctx), model.ChannelTaskCostEventInput{
-		CostEventId:     costEventId,
+		TaskID:          task.ID,
+		CostEventId:     bc.ChannelCostEventId,
 		ChannelId:       snapshot.ChannelId,
-		OccurredAt:      occurredAt,
+		OccurredAt:      task.SubmitTime,
 		APIKeyId:        snapshot.APIKeyId,
 		APIKeyName:      snapshot.APIKeyName,
 		KeyFingerprint:  snapshot.KeyFingerprint,
@@ -772,7 +792,7 @@ func RecordTaskChannelDailyCost(ctx *gin.Context, channelId int, occurredAt int6
 		UserId:          snapshot.UserId,
 		UserAttribution: snapshot.UserAttribution,
 		ModelName:       snapshot.ModelName,
-		InitialQuota:    initialQuota,
+		InitialQuota:    int64(priceData.Quota),
 		CostNanoCNY:     costNanoCNY,
 	})
 	if err != nil {

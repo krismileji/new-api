@@ -178,6 +178,62 @@ func putUpdateChannel(t *testing.T, userID, role int, body string) *httptest.Res
 	return recorder
 }
 
+func TestUpdateChannelTaskPluginPersistsValidatedBaseURL(t *testing.T) {
+	const key = "update-default-url"
+	const defaultURL = "https://plugin.example/v1"
+	for _, test := range []struct {
+		name      string
+		oldURL    string
+		patch     map[string]any
+		wantURL   string
+		defaulted bool
+	}{
+		{name: "bind without an existing URL", wantURL: defaultURL, defaulted: true},
+		{name: "bind replaces old URL with plugin default", oldURL: "https://old.example", wantURL: defaultURL, defaulted: true},
+		{name: "explicit blank uses plugin default", oldURL: "https://old.example", patch: map[string]any{"base_url": ""}, wantURL: defaultURL, defaulted: true},
+		{name: "explicit custom URL wins", oldURL: "https://old.example", patch: map[string]any{"base_url": "https://custom.example"}, wantURL: "https://custom.example"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			setupTaskPluginBindChannelTest(t)
+			source := strings.Replace(taskPluginControllerTestSource(key, "1.0.0"), "apiVersion: 1,", `apiVersion: 1, baseUrl: "`+defaultURL+`/",`, 1)
+			_, err := jsplugin.DefaultRegistry.Register(source, jsplugin.Options{})
+			require.NoError(t, err)
+			t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister(key) })
+			channel := model.Channel{Type: constant.ChannelTypeOpenAI, Name: "bind-existing", Key: "sk", Models: "doc-1", Group: "default", Status: common.ChannelStatusEnabled}
+			if test.oldURL != "" {
+				channel.BaseURL = &test.oldURL
+			}
+			require.NoError(t, channel.Insert())
+			body := map[string]any{
+				"id": channel.Id, "type": constant.ChannelTypeTaskPlugin,
+				"name": channel.Name, "models": channel.Models, "group": channel.Group,
+				"setting": `{"task_plugin_key":"` + key + `"}`,
+			}
+			for field, value := range test.patch {
+				body[field] = value
+			}
+			encoded, err := common.Marshal(body)
+			require.NoError(t, err)
+			response := putUpdateChannel(t, 1, common.RoleRootUser, string(encoded))
+			require.Contains(t, response.Body.String(), `"success":true`)
+			stored, err := model.GetChannelById(channel.Id, true)
+			require.NoError(t, err)
+			assert.Equal(t, constant.ChannelTypeTaskPlugin, stored.Type)
+			assert.Equal(t, test.wantURL, stored.GetBaseURL())
+			var audits []model.AuditLog
+			require.NoError(t, model.LOG_DB.Where("action = ?", "channel.update").Find(&audits).Error)
+			require.Len(t, audits, 1)
+			encoded, err = common.Marshal(audits[0])
+			require.NoError(t, err)
+			if test.defaulted {
+				assert.Contains(t, string(encoded), `"base_url_source":"plugin_default"`)
+			} else {
+				assert.NotContains(t, string(encoded), `"base_url_source"`)
+			}
+		})
+	}
+}
+
 func TestNewAPIChannelPluginBindingsRequireBindPermission(t *testing.T) {
 	setupTaskPluginBindChannelTest(t)
 	const key = "gateway-bind"

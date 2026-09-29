@@ -24,7 +24,7 @@ func IsChannelEnabledForGroupModel(group string, modelName string, channelID int
 				return true
 			}
 		}
-		normalized := ratio_setting.FormatMatchingModelName(modelName)
+		normalized := ratio_setting.RoutingMatchModelName(modelName)
 		if normalized != "" && normalized != modelName {
 			for _, route := range channelSmartScheduleRouteCache[group][normalized] {
 				if route.channelId == channelID && channelsIDM[channelID] != nil && channelsIDM[channelID].Status == common.ChannelStatusEnabled {

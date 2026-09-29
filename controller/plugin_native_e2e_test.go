@@ -19,51 +19,11 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
-type nativeRouteBilling struct {
-	events      []string
-	preConsumed int
-	userID      int
-	settled     bool
-}
-
-func (b *nativeRouteBilling) Settle(int) error {
-	b.events = append(b.events, "settle")
-	b.settled = true
-	return nil
-}
-
-func (b *nativeRouteBilling) Refund(*gin.Context) {
-	b.events = append(b.events, "refund")
-	if !b.settled && b.preConsumed > 0 {
-		_ = model.IncreaseUserQuota(b.userID, b.preConsumed, true)
-		b.preConsumed = 0
-	}
-}
-
-func (b *nativeRouteBilling) NeedsRefund() bool {
-	return !b.settled && b.preConsumed > 0
-}
-
-func (b *nativeRouteBilling) GetPreConsumedQuota() int {
-	return b.preConsumed
-}
-
-func (b *nativeRouteBilling) Reserve(quota int) error {
-	b.events = append(b.events, "reserve")
-	if err := model.DecreaseUserQuota(b.userID, quota, true); err != nil {
-		return err
-	}
-	b.preConsumed = quota
-	return nil
-}
-
-func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
+func TestKlingNativeRouteSubmitRetryPollSettleAndQuery(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	service.InitHttpClient()
 
@@ -73,15 +33,18 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 	previousBatchUpdate := common.BatchUpdateEnabled
 	previousLogConsume := common.LogConsumeEnabled
 	previousRedisEnabled := common.RedisEnabled
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, database.AutoMigrate(&model.User{}, &model.Channel{}, &model.Task{}, &model.Log{}))
+	previousRetryTimes := common.RetryTimes
+	previousMainDBType, previousLogDBType := common.MainDatabaseType(), common.LogDatabaseType()
+	database, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Task{}, &model.Log{}, &model.ChannelRatioMonitor{})
 	model.DB = database
 	model.LOG_DB = database
+	common.SetMainDatabaseType(dialect)
+	common.SetLogDatabaseType(dialect)
 	common.MemoryCacheEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = false
 	common.RedisEnabled = false
+	common.RetryTimes = 1
 	previousModelRatios := ratio_setting.ModelRatio2JSONString()
 	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"kling-v1":1}`))
 	t.Cleanup(func() {
@@ -91,6 +54,9 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 		common.BatchUpdateEnabled = previousBatchUpdate
 		common.LogConsumeEnabled = previousLogConsume
 		common.RedisEnabled = previousRedisEnabled
+		common.RetryTimes = previousRetryTimes
+		common.SetMainDatabaseType(previousMainDBType)
+		common.SetLogDatabaseType(previousLogDBType)
 		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousModelRatios))
 	})
 	require.NoError(t, database.Create(&model.User{
@@ -106,13 +72,19 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/kling/v1/videos/text2video":
-			submitCalls.Add(1)
+			attempt := submitCalls.Add(1)
 			body, readErr := io.ReadAll(r.Body)
 			if !assert.NoError(t, readErr) {
 				http.Error(w, "read request", http.StatusInternalServerError)
 				return
 			}
 			assert.Contains(t, string(body), `"model_name":"kling-v1"`)
+			assert.Contains(t, string(body), `"prompt":"a lighthouse"`)
+			assert.Contains(t, string(body), `"negative_prompt":"rain"`)
+			if attempt == 1 {
+				http.Error(w, "temporary outage", http.StatusServiceUnavailable)
+				return
+			}
 			_, _ = io.WriteString(w, `{"code":0,"message":"","data":{"task_id":"kling-private-1","task_status":"submitted"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/kling/v1/videos/text2video/kling-private-1":
 			queryCalls.Add(1)
@@ -145,7 +117,7 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 	submitContext.Request = httptest.NewRequest(
 		http.MethodPost,
 		"/kling/v1/videos/text2video",
-		bytes.NewBufferString(`{"model_name":"kling-v1","prompt":"a lighthouse"}`),
+		bytes.NewBufferString(`{"model_name":"kling-v1","prompt":"a lighthouse","negative_prompt":"rain"}`),
 	)
 	submitContext.Request.Header.Set("Content-Type", "application/json")
 	submitContext.Set(pluginruntime.ContextKeyPinnedRoute, pluginruntime.PinnedRoute{
@@ -165,7 +137,6 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 	require.Equal(t, "text_to_video", submitContext.GetString("task_action"))
 	require.Nil(t, middleware.SetupContextForSelectedChannel(submitContext, &channel, "kling-v1"))
 
-	billing := &nativeRouteBilling{userID: 7}
 	relayInfo := &relaycommon.RelayInfo{
 		UserId:          7,
 		UserGroup:       "default",
@@ -173,25 +144,33 @@ func TestKlingNativeRouteSubmitPollSettleAndQuery(t *testing.T) {
 		UserQuota:       1_000_000,
 		TokenGroup:      "default",
 		OriginModelName: "kling-v1",
-		Billing:         billing,
+		IsPlayground:    true,
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{
 			Action:        submitContext.GetString("task_action"),
 			PublicTaskID:  "task_kling_public",
 			LockedChannel: &channel,
 		},
 	}
+	relayInfo.UserSetting.BillingPreference = "wallet_only"
 
 	outcome, taskErr := executeTaskSubmissionWith(submitContext, relayInfo, relay.RelayTaskSubmit)
 	require.Nil(t, taskErr)
 	require.NotNil(t, outcome)
-	require.Equal(t, []string{"reserve", "settle"}, billing.events)
+	require.NotNil(t, relayInfo.Billing)
+	assert.False(t, relayInfo.Billing.NeedsRefund())
+	var submittedUser model.User
+	require.NoError(t, database.First(&submittedUser, 7).Error)
+	assert.Equal(t, 1_000_000-outcome.Result.Quota, submittedUser.Quota, "retry must not charge the reservation twice")
 	require.False(t, submitContext.Writer.Written())
 
 	presentTaskSubmission(submitContext, outcome)
 	require.Equal(t, http.StatusOK, submitRecorder.Code)
 	assert.Contains(t, submitRecorder.Body.String(), `"task_id":"task_kling_public"`)
 	assert.NotContains(t, submitRecorder.Body.String(), "kling-private-1")
-	assert.Equal(t, int32(1), submitCalls.Load())
+	assert.Equal(t, int32(2), submitCalls.Load())
+	var taskCount int64
+	require.NoError(t, database.Model(&model.Task{}).Count(&taskCount).Error)
+	assert.Equal(t, int64(1), taskCount)
 
 	var persisted model.Task
 	require.NoError(t, database.Where("task_id = ?", "task_kling_public").First(&persisted).Error)

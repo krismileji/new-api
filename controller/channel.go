@@ -1204,12 +1204,13 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 	// PatchChannel accepts partial updates. Keep the committed fields that
-	// define the effective upstream address when the request omits them, so a
-	// name/key/weight-only edit cannot look like a provider or URL change.
+	// define the effective upstream address when the request omits them, unless
+	// validation has already supplied the selected plugin's default Base URL.
+	// A name/key/weight-only edit must not look like a provider or URL change.
 	if _, typeProvided := requestData["type"]; !typeProvided {
 		channel.Type = originChannel.Type
 	}
-	if _, baseURLProvided := requestData["base_url"]; !baseURLProvided {
+	if _, baseURLProvided := requestData["base_url"]; !baseURLProvided && !baseURLFromPluginDefault {
 		channel.BaseURL = originChannel.BaseURL
 	}
 	originProxy := originChannel.GetSetting().Proxy

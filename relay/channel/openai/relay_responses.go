@@ -118,6 +118,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			if oaiError := streamResponse.Response.GetOpenAIError(); oaiError != nil && (oaiError.Type != "" || oaiError.Message != "" || oaiError.Code != nil) {
 				candidate := normalizeModelCapacityError(types.WithOpenAIError(*oaiError, resp.StatusCode))
 				if types.IsModelCapacityError(candidate) {
+					info.ObserveResponseModel(streamResponse.Response.Model)
 					streamErr = candidate
 					sr.Stop(candidate)
 					return

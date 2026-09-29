@@ -47,6 +47,9 @@ function LogsFixture() {
       >
         Switch scope
       </button>
+      <button type='button' onClick={() => setViewScope('user-visible')}>
+        User-visible scope
+      </button>
       <UsageLogsTable logCategory='common' />
     </>
   )
@@ -84,7 +87,8 @@ async function renderLogs(props: {
       }
     } else if (
       url.startsWith('/api/log?') ||
-      url.startsWith('/api/log/self?')
+      url.startsWith('/api/log/self?') ||
+      url.startsWith('/api/log/user-visible?')
     ) {
       data = { items: records, total: records.length }
     } else if (url === '/api/group/') {
@@ -194,3 +198,31 @@ test('uses personal subscriptions when an admin switches to only-self view', asy
   await user.click(screen.getByRole('button', { name: 'Switch scope' }))
   expect(await screen.findByRole('img', { name: 'Wallet' })).toBeVisible()
 })
+
+test.each([
+  { enabledPlans: [true], activeSubscription: false, showsWallet: true },
+  { enabledPlans: [], activeSubscription: true, showsWallet: false },
+])(
+  'user-visible aggregate uses system plans independently of the viewer subscription ($showsWallet)',
+  async ({ enabledPlans, activeSubscription, showsWallet }) => {
+    const user = userEvent.setup()
+    const client = await renderLogs({
+      role: ROLE.ADMIN,
+      enabledPlans,
+      activeSubscription,
+    })
+
+    await user.click(screen.getByRole('button', { name: 'User-visible scope' }))
+    await waitFor(() => expect(client.isFetching()).toBe(0))
+
+    const wallet = screen.queryByRole('img', { name: 'Wallet' })
+    if (showsWallet) {
+      expect(wallet).toBeVisible()
+    } else {
+      expect(wallet).not.toBeInTheDocument()
+    }
+    expect(screen.getByRole('img', { name: 'Subscription' })).toBeVisible()
+    expect(api.get).toHaveBeenCalledWith('/api/subscription/admin/plans')
+    expect(api.get).not.toHaveBeenCalledWith('/api/subscription/self')
+  }
+)

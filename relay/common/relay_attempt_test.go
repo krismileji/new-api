@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,86 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRelayAttemptStateRestoresPreparedTaskRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		request any
+		mutate  func(any)
+	}{
+		{
+			name: "native plugin normalized request",
+			request: map[string]any{
+				"prompt": "original prompt",
+				"metadata": map[string]any{
+					"duration": int64(5), "audio": false, "seed": int64(0), "optional": nil,
+					"images": []any{map[string]any{"__fileRef": "request_file:image", "encoding": "base64"}},
+				},
+			},
+			mutate: func(value any) {
+				request := value.(map[string]any)
+				request["prompt"] = "mutated prompt"
+				metadata := request["metadata"].(map[string]any)
+				metadata["duration"] = int64(10)
+				metadata["images"].([]any)[0].(map[string]any)["__fileRef"] = "wrong-file"
+			},
+		},
+		{
+			name: "typed task request",
+			request: TaskSubmitReq{
+				Prompt: "original prompt", Images: []string{"first.png"},
+				Metadata: map[string]any{"options": map[string]any{"audio": false}},
+			},
+			mutate: func(value any) {
+				request := value.(TaskSubmitReq)
+				request.Images[0] = "mutated.png"
+				request.Metadata["options"].(map[string]any)["audio"] = true
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Set("task_request", tc.request)
+			info := &RelayInfo{}
+			expected, err := rootcommon.Marshal(tc.request)
+			require.NoError(t, err)
+			state, err := NewRelayAttemptState(c, info)
+			require.NoError(t, err)
+
+			tc.mutate(tc.request)
+			for range 2 {
+				require.NoError(t, state.Reset(c, info))
+				restored, exists := c.Get("task_request")
+				require.True(t, exists)
+				require.IsType(t, tc.request, restored)
+				actual, err := rootcommon.Marshal(restored)
+				require.NoError(t, err)
+				assert.JSONEq(t, string(expected), string(actual))
+				tc.mutate(restored)
+			}
+		})
+	}
+}
+
+func TestRelayAttemptStateAllowsTaskRequestReparse(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/tasks/example", strings.NewReader(`{"prompt":"original prompt","duration":5}`))
+	c.Request.Header.Set("Content-Type", "application/json")
+	info := &RelayInfo{TaskRelayInfo: &TaskRelayInfo{}}
+	state, err := NewRelayAttemptState(c, info)
+	require.NoError(t, err)
+	require.Nil(t, ValidateBasicTaskRequest(c, info, constant.TaskActionTextToVideo))
+	c.Set("task_request", TaskSubmitReq{Prompt: "stale prompt"})
+
+	require.NoError(t, state.Reset(c, info))
+	_, exists := c.Get("task_request")
+	require.False(t, exists, "the adaptor reparses only when the key is absent")
+	require.Nil(t, ValidateBasicTaskRequest(c, info, constant.TaskActionTextToVideo))
+	restored, err := GetTaskRequest(c)
+	require.NoError(t, err)
+	assert.Equal(t, "original prompt", restored.Prompt)
+	assert.Equal(t, 5, restored.Duration)
+}
 
 func TestRelayAttemptStateRestoresRequestBaseline(t *testing.T) {
 	gin.SetMode(gin.TestMode)

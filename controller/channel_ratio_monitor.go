@@ -1734,6 +1734,7 @@ func autoDisableChannelMonitorAtEffectiveBalance(
 	}
 	if changed {
 		channel.Status = common.ChannelStatusAutoDisabled
+		service.DrainChannelWebSockets(channel.Id)
 		return true, nil
 	}
 	storedChannel, err := model.GetChannelById(channel.Id, true)

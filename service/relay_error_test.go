@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -18,10 +19,8 @@ import (
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
-	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestShouldRetryRelayErrorHonorsChannelPinOnChannelError(t *testing.T) {
@@ -59,6 +58,9 @@ func TestShouldRetryRelayErrorHonorsChannelPinOnChannelError(t *testing.T) {
 
 func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 	previousDB, previousType := model.DB, common.MainDatabaseType()
+	previousLogType := common.LogDatabaseType()
+	previousPath, previousMaster := common.SQLitePath, common.IsMasterNode
+	previousIncomeReady := model.ChannelMonitorIncomeReady.Load()
 	previousCache, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled
 	previousAutoDisable, previousErrorLog := common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled
 	previousNotifyLimit := constant.NotifyLimitCount
@@ -67,15 +69,22 @@ func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 	previousFetch := *fetch
 	t.Cleanup(func() {
 		model.DB = previousDB
-		common.SetMainDatabaseType(previousType)
+		common.SetDatabaseTypes(previousType, previousLogType)
+		common.SQLitePath, common.IsMasterNode = previousPath, previousMaster
+		model.ChannelMonitorIncomeReady.Store(previousIncomeReady)
 		common.MemoryCacheEnabled, common.RedisEnabled = previousCache, previousRedis
 		common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled = previousAutoDisable, previousErrorLog
 		constant.NotifyLimitCount = previousNotifyLimit
 		httpClient, system_setting.WorkerUrl = previousClient, previousWorker
 		*fetch = previousFetch
 	})
-	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
+	// The downstream status transaction also needs dialect column names,
+	// which a bare gorm.Open does not initialize.
+	t.Setenv("SQL_DSN", "local")
+	t.Setenv("LOG_SQL_DSN", "")
+	common.SQLitePath, common.IsMasterNode = filepath.Join(t.TempDir(), "channel-error.db"), false
+	require.NoError(t, model.InitDB())
+	database := model.DB
 	sqlDB, err := database.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
