@@ -144,7 +144,6 @@ test.each(['custom', 'new_api'] as const)(
       last_balance_time: 0,
       last_balance_error: '',
       proxy: '',
-      refresh_interval_minutes: 5,
     }
     renderEditor(
       <UpstreamConfigDialog

@@ -125,7 +125,7 @@ export default function UpstreamAccountsDialog(props: {
             <DialogTitle>{editing ? '管理账户关联' : '上游账户'}</DialogTitle>
             <DialogDescription>
               {editing
-                ? `${editing.account?.name || '新上游账户'} · 选择关联渠道，预览配置差异后确认。`
+                ? `${editing.account?.name || '新上游账户'} · 账户配置可直接保存；创建账户或变更关联渠道需预览差异后确认。`
                 : '同一余额池配置一次。渠道分别保留倍率、分组和请求统计。'}
             </DialogDescription>
           </DialogHeader>
@@ -261,9 +261,7 @@ export default function UpstreamAccountsDialog(props: {
                       <CardContent>
                         <div className='flex flex-wrap items-center gap-x-3 gap-y-2'>
                           <p className='text-muted-foreground text-xs'>
-                            {account.refresh_interval_minutes
-                              ? `每 ${account.refresh_interval_minutes} 分钟刷新余额`
-                              : '定时余额刷新已关闭'}
+                            余额刷新跟随渠道监控设置
                           </p>
                           <CollapsibleTrigger
                             className='group'

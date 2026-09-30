@@ -19,6 +19,7 @@ func TestUpstreamAccountDatabaseMatrix(t *testing.T) {
 	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(engine, func(t *testing.T) {
 			db := setupChannelMonitorCustomActionRefreshDB(t, engine)
+			useChannelMonitorOptionMap(t, map[string]string{channelMonitorAutoUpdateIntervalOption: "5"})
 			disableChannelMonitorSSRFProtection(t)
 			require.NoError(t, db.AutoMigrate(&model.ChannelMonitorUpstreamAccount{}))
 			require.NoError(t, db.AutoMigrate(&model.ChannelMonitorUpstreamAccount{}, &model.ChannelRatioMonitor{}))
@@ -51,7 +52,7 @@ func TestUpstreamAccountDatabaseMatrix(t *testing.T) {
 			require.NoError(t, err)
 			raw, err := common.Marshal(model.ChannelMonitorAccountSettingsFromMonitor(source))
 			require.NoError(t, err)
-			account := model.ChannelMonitorUpstreamAccount{Name: "同一余额池", Settings: string(raw), RefreshIntervalMinutes: 5}
+			account := model.ChannelMonitorUpstreamAccount{Name: "同一余额池", Settings: string(raw), RefreshIntervalMinutes: 0}
 			members, err := model.SaveChannelMonitorUpstreamAccount(t.Context(), &account, nil, []int{101, 102}, map[int]int64{101: 1, 102: 1})
 			require.NoError(t, err)
 			require.Len(t, members, 2)
@@ -66,6 +67,46 @@ func TestUpstreamAccountDatabaseMatrix(t *testing.T) {
 			}
 			assert.EqualValues(t, 1, polls.Load(), "两个不同倍率的渠道只查询一次余额")
 			assert.False(t, (upstreamAccountBalanceTaskHandler{}).Enabled(), "刷新间隔内不生成空轮询任务")
+			for _, tc := range []struct {
+				name           string
+				globalInterval string
+				legacyInterval int
+				manual         bool
+				forced         bool
+				wantEnabled    bool
+				wantFetch      bool
+			}{
+				{name: "全局关闭覆盖旧账户间隔", globalInterval: "0", legacyInterval: 1},
+				{name: "延长全局间隔后复用余额", globalInterval: "5", legacyInterval: 1},
+				{name: "缩短全局间隔后刷新余额", globalInterval: "1", legacyInterval: 60, wantEnabled: true, wantFetch: true},
+				{name: "旧账户关闭值不阻止全局刷新", globalInterval: "1", legacyInterval: 0, wantEnabled: true, wantFetch: true},
+				{name: "全局关闭后仍可手动刷新", globalInterval: "0", manual: true, wantFetch: true},
+				{name: "全局关闭后自动任务仍可按需刷新", globalInterval: "0", forced: true, wantFetch: true},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					useChannelMonitorOptionMap(t, map[string]string{channelMonitorAutoUpdateIntervalOption: tc.globalInterval})
+					require.NoError(t, db.Model(&model.ChannelMonitorUpstreamAccount{}).Where("id = ?", account.ID).Updates(map[string]any{
+						"refresh_interval_minutes": tc.legacyInterval,
+						"last_balance_check":       common.GetTimestamp() - 120,
+					}).Error)
+					assert.Equal(t, tc.wantEnabled, (upstreamAccountBalanceTaskHandler{}).Enabled())
+					pollContext := t.Context()
+					if !tc.manual {
+						pollContext = withUpstreamAccountBalanceRound(pollContext)
+						pollContext.Value(upstreamAccountBalanceRoundKey{}).(*upstreamAccountBalanceRound).forceRefresh = tc.forced
+					}
+					before := polls.Load()
+					outcome, err := fetchAndRecordUpstreamAccountBalance(pollContext, members[0], time.Second)
+					require.NoError(t, err)
+					require.NotNil(t, outcome.Result.Balance.Amount)
+					assert.Equal(t, 100.0, *outcome.Result.Balance.Amount)
+					expectedPolls := before
+					if tc.wantFetch {
+						expectedPolls++
+					}
+					assert.Equal(t, expectedPolls, polls.Load())
+				})
+			}
 			for _, id := range []int{101, 102} {
 				m, err := model.GetChannelRatioMonitor(id)
 				require.NoError(t, err)
@@ -85,6 +126,9 @@ func TestUpstreamAccountDatabaseMatrix(t *testing.T) {
 			view, err := channelMonitorAccountView(t.Context(), account)
 			require.NoError(t, err)
 			assert.ElementsMatch(t, []int{101, 102}, view.ChannelIDs)
+			viewJSON, err := common.Marshal(view)
+			require.NoError(t, err)
+			assert.NotContains(t, string(viewJSON), "refresh_interval_minutes")
 
 			input := automationTestConfig(server.URL)
 			input.AccountID = account.ID

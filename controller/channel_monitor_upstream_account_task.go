@@ -19,7 +19,8 @@ func (upstreamAccountBalanceTaskHandler) Type() string            { return upstr
 func (upstreamAccountBalanceTaskHandler) Interval() time.Duration { return 30 * time.Second }
 func (upstreamAccountBalanceTaskHandler) NewPayload() any         { return struct{}{} }
 func (upstreamAccountBalanceTaskHandler) Enabled() bool {
-	if model.DB == nil {
+	intervalMinutes := getChannelMonitorSettings().AutoUpdateIntervalMinutes
+	if model.DB == nil || intervalMinutes <= 0 {
 		return false
 	}
 	accounts, err := model.ListChannelMonitorUpstreamAccounts(context.Background())
@@ -27,7 +28,7 @@ func (upstreamAccountBalanceTaskHandler) Enabled() bool {
 		return false
 	}
 	for _, account := range accounts {
-		if account.RefreshIntervalMinutes <= 0 || common.GetTimestamp() < account.LastBalanceCheck+int64(account.RefreshIntervalMinutes)*60 {
+		if common.GetTimestamp() < account.LastBalanceCheck+int64(intervalMinutes)*60 {
 			continue
 		}
 		settings, err := account.MonitorSettings()
@@ -42,6 +43,7 @@ func (upstreamAccountBalanceTaskHandler) Enabled() bool {
 	return false
 }
 func (upstreamAccountBalanceTaskHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	monitorSettings := getChannelMonitorSettings()
 	accounts, err := model.ListChannelMonitorUpstreamAccounts(ctx)
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
@@ -55,7 +57,7 @@ func (upstreamAccountBalanceTaskHandler) Run(ctx context.Context, task *model.Sy
 			failures = append(failures, ctx.Err())
 			break
 		}
-		if account.RefreshIntervalMinutes <= 0 || common.GetTimestamp() < account.LastBalanceCheck+int64(account.RefreshIntervalMinutes)*60 {
+		if monitorSettings.AutoUpdateIntervalMinutes <= 0 || common.GetTimestamp() < account.LastBalanceCheck+int64(monitorSettings.AutoUpdateIntervalMinutes)*60 {
 			continue
 		}
 		settings, err := account.MonitorSettings()
@@ -74,7 +76,7 @@ func (upstreamAccountBalanceTaskHandler) Run(ctx context.Context, task *model.Sy
 		if len(members) == 0 {
 			continue
 		}
-		_, err = fetchAndRecordUpstreamAccountBalance(ctx, members[0], getChannelMonitorSettings().upstreamRequestTimeout())
+		_, err = fetchAndRecordUpstreamAccountBalance(ctx, members[0], monitorSettings.upstreamRequestTimeout())
 		checked++
 		if err != nil {
 			failures = append(failures, err)

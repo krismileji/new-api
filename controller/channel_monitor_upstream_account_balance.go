@@ -124,7 +124,8 @@ func pollUpstreamAccountBalance(ctx context.Context, monitor model.ChannelRatioM
 	}
 	round, scheduled := ctx.Value(upstreamAccountBalanceRoundKey{}).(*upstreamAccountBalanceRound)
 	scheduled = scheduled && !round.forceRefresh
-	if scheduled && account.RefreshIntervalMinutes == 0 {
+	intervalMinutes := getChannelMonitorSettings().AutoUpdateIntervalMinutes
+	if scheduled && intervalMinutes == 0 {
 		outcome.Result.Balance.Amount = account.Balance
 		return outcome, nil
 	}
@@ -137,7 +138,7 @@ func pollUpstreamAccountBalance(ctx context.Context, monitor model.ChannelRatioM
 	if err != nil {
 		return outcome, err
 	}
-	if scheduled && account.Balance != nil && account.LastBalanceCheck > 0 && (account.RefreshIntervalMinutes == 0 || common.GetTimestamp() < account.LastBalanceCheck+int64(account.RefreshIntervalMinutes)*60) {
+	if scheduled && account.Balance != nil && account.LastBalanceCheck > 0 && common.GetTimestamp() < account.LastBalanceCheck+int64(intervalMinutes)*60 {
 		outcome.Result.Balance.Amount = account.Balance
 		outcome.Result.Balance.Error = account.LastBalanceError
 		if account.LastBalanceError != "" {

@@ -16,15 +16,14 @@ import (
 )
 
 type upstreamAccountRequest struct {
-	Proxy                  *string       `json:"proxy,omitempty"`
-	BalanceKey             *string       `json:"balance_key,omitempty"`
-	RefreshIntervalMinutes *int          `json:"refresh_interval_minutes"`
-	ID                     int           `json:"id"`
-	Revision               int64         `json:"revision"`
-	Name                   string        `json:"name"`
-	SourceChannelID        int           `json:"source_channel_id"`
-	ChannelIDs             []int         `json:"channel_ids"`
-	ChannelRevisions       map[int]int64 `json:"channel_revisions"`
+	Proxy            *string       `json:"proxy,omitempty"`
+	BalanceKey       *string       `json:"balance_key,omitempty"`
+	ID               int           `json:"id"`
+	Revision         int64         `json:"revision"`
+	Name             string        `json:"name"`
+	SourceChannelID  int           `json:"source_channel_id"`
+	ChannelIDs       []int         `json:"channel_ids"`
+	ChannelRevisions map[int]int64 `json:"channel_revisions"`
 }
 
 func channelMonitorConfigurationForRequest(channelID int, accountRevision *int64) (model.ChannelRatioMonitor, error) {
@@ -52,26 +51,24 @@ func channelMonitorConfigurationForRequest(channelID int, accountRevision *int64
 }
 
 type upstreamAccountView struct {
-	HasBalanceKey          bool                            `json:"has_balance_key"`
-	RefreshIntervalMinutes int                             `json:"refresh_interval_minutes"`
-	ID                     int                             `json:"id"`
-	Name                   string                          `json:"name"`
-	Revision               int64                           `json:"revision"`
-	ChannelIDs             []int                           `json:"channel_ids"`
-	ChannelRevisions       map[int]int64                   `json:"channel_revisions"`
-	Upstream               *channelMonitorUpstreamConfig   `json:"upstream"`
-	Balance                *float64                        `json:"balance"`
-	Estimate               *service.ChannelBalanceEstimate `json:"balance_estimate,omitempty"`
-	LastBalanceTime        int64                           `json:"last_balance_time"`
-	LastBalanceError       string                          `json:"last_balance_error"`
-	Proxy                  string                          `json:"proxy"`
+	HasBalanceKey    bool                            `json:"has_balance_key"`
+	ID               int                             `json:"id"`
+	Name             string                          `json:"name"`
+	Revision         int64                           `json:"revision"`
+	ChannelIDs       []int                           `json:"channel_ids"`
+	ChannelRevisions map[int]int64                   `json:"channel_revisions"`
+	Upstream         *channelMonitorUpstreamConfig   `json:"upstream"`
+	Balance          *float64                        `json:"balance"`
+	Estimate         *service.ChannelBalanceEstimate `json:"balance_estimate,omitempty"`
+	LastBalanceTime  int64                           `json:"last_balance_time"`
+	LastBalanceError string                          `json:"last_balance_error"`
+	Proxy            string                          `json:"proxy"`
 }
 
 func channelMonitorAccountView(ctx context.Context, account model.ChannelMonitorUpstreamAccount) (upstreamAccountView, error) {
 	view := upstreamAccountView{ID: account.ID, Name: account.Name, Revision: account.Revision,
-		HasBalanceKey:          account.BalanceKey != "",
-		RefreshIntervalMinutes: account.RefreshIntervalMinutes,
-		Balance:                account.Balance, LastBalanceTime: account.LastBalanceTime, LastBalanceError: account.LastBalanceError,
+		HasBalanceKey: account.BalanceKey != "",
+		Balance:       account.Balance, LastBalanceTime: account.LastBalanceTime, LastBalanceError: account.LastBalanceError,
 		Proxy: account.Proxy, ChannelIDs: []int{}, ChannelRevisions: map[int]int64{}}
 	settings, err := account.MonitorSettings()
 	if err != nil {
@@ -201,11 +198,6 @@ func prepareChannelMonitorAccount(ctx context.Context, input upstreamAccountRequ
 	if len(account.BalanceKey) > 4096 {
 		err = errors.New("余额查询 API Key 过长")
 		return
-	}
-	if input.RefreshIntervalMinutes != nil {
-		account.RefreshIntervalMinutes = *input.RefreshIntervalMinutes
-	} else if input.ID == 0 {
-		account.RefreshIntervalMinutes = max(1, getChannelMonitorSettings().AutoUpdateIntervalMinutes)
 	}
 	settings, parseErr := account.MonitorSettings()
 	if parseErr != nil {

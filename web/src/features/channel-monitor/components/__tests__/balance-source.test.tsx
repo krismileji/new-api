@@ -35,7 +35,6 @@ function balanceSourceFixture() {
     last_balance_time: 1,
     last_balance_error: '',
     proxy: '',
-    refresh_interval_minutes: 5,
     upstream: {
       ...channel.upstream,
       base_url: 'https://wallet.example',

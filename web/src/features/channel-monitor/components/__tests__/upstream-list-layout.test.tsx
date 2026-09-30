@@ -31,7 +31,6 @@ function renderList(kind: '账户' | '任务', name = '主账户') {
     last_balance_time: 0,
     last_balance_error: '',
     proxy: '',
-    refresh_interval_minutes: 5,
   }
   const config = createChannelMonitorCustomFormConfig(undefined)
   config.actions = [createChannelMonitorCustomAction()]

@@ -33,7 +33,6 @@ function MetadataFixture(props: {
     last_balance_time: 0,
     last_balance_error: '',
     proxy: '',
-    refresh_interval_minutes: 5,
   }
   return (
     <Form {...form}>

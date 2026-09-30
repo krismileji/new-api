@@ -23,12 +23,154 @@ import { describe, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
+import type { UpstreamAccount } from '../../api-upstream-accounts'
 import { customVariableChannel } from '../../lib/__tests__/custom-variable.fixture'
 import { UpstreamAccountEditor } from '../upstream-account-editor'
 import UpstreamAccountsDialog from '../upstream-accounts-dialog'
 import { UpstreamConfigDialog } from '../upstream-config-dialog'
 
 describe('共享上游账户', () => {
+  test('账户余额跟随渠道监控更新，修改账户名称可直接保存且不提交旧刷新间隔', async () => {
+    const channel = customVariableChannel()
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: {
+        success: true,
+        data: [
+          {
+            id: 8,
+            revision: 1,
+            name: '共享钱包',
+            channel_ids: [channel.id],
+            channel_revisions: { [channel.id]: 3 },
+            refresh_interval_minutes: 5,
+            balance: null,
+            proxy: '',
+            has_balance_key: false,
+            upstream: channel.upstream,
+          },
+        ],
+      },
+    })
+    const preview = vi.spyOn(api, 'post').mockResolvedValue({
+      data: {
+        success: true,
+        data: [{ channel_id: channel.id, revision: 3, fields: [] }],
+      },
+    })
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: true, data: {} },
+    })
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <UpstreamAccountsDialog
+          channels={[channel]}
+          onOpenChange={() => undefined}
+        />
+      </QueryClientProvider>
+    )
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('button', { name: '管理关联' }))
+    expect(
+      screen.queryByRole('spinbutton', {
+        name: '余额自动刷新间隔（分钟）',
+      })
+    ).not.toBeInTheDocument()
+    expect(
+      screen.getByText('余额自动刷新跟随渠道监控设置中的更新间隔。')
+    ).toBeVisible()
+    await user.type(screen.getByRole('textbox', { name: '账户名称' }), '更新')
+    await user.click(screen.getByRole('button', { name: '保存配置' }))
+    await waitFor(() => expect(put).toHaveBeenCalledOnce())
+    expect(put.mock.calls[0][1]).toMatchObject({
+      id: 8,
+      revision: 1,
+      channel_ids: [channel.id],
+      channel_revisions: { [channel.id]: 3 },
+      name: '共享钱包更新',
+    })
+    expect(put.mock.calls[0][1]).not.toHaveProperty('refresh_interval_minutes')
+    expect(preview).not.toHaveBeenCalled()
+    expect(
+      await screen.findByRole('button', { name: '管理关联' })
+    ).toBeEnabled()
+  })
+
+  test('编辑账户更换关联渠道必须重新预览，确认后提交最新渠道版本', async () => {
+    const channel = customVariableChannel()
+    if (!channel.upstream) throw new Error('fixture requires upstream')
+    const second = { ...channel, id: 22, name: '第二渠道' }
+    const account: UpstreamAccount = {
+      id: 8,
+      revision: 1,
+      name: '共享钱包',
+      channel_ids: [channel.id],
+      channel_revisions: { [channel.id]: 3 },
+      balance: null,
+      last_balance_time: 0,
+      last_balance_error: '',
+      proxy: '',
+      has_balance_key: false,
+      upstream: channel.upstream,
+    }
+    vi.spyOn(api, 'post').mockResolvedValue({
+      data: {
+        success: true,
+        data: [{ channel_id: 22, revision: 5, fields: [] }],
+      },
+    })
+    const put = vi.spyOn(api, 'put').mockResolvedValue({
+      data: { success: true, data: {} },
+    })
+    const client = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    })
+    const saved = vi.fn()
+    render(
+      <QueryClientProvider client={client}>
+        <UpstreamAccountEditor
+          account={account}
+          channels={[channel, second]}
+          onClose={() => undefined}
+          onSaved={saved}
+        />
+      </QueryClientProvider>
+    )
+    const user = userEvent.setup()
+    await user.click(
+      screen.getByRole('checkbox', { name: new RegExp(channel.name) })
+    )
+    await user.click(screen.getByRole('checkbox', { name: /第二渠道/ }))
+    expect(
+      screen.queryByRole('button', { name: '保存配置' })
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '确认关联' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: '预览配置差异' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '确认关联' })).toBeEnabled()
+    )
+    await user.type(screen.getByLabelText('账户名称'), '更新')
+    expect(screen.getByRole('button', { name: '确认关联' })).toBeDisabled()
+    expect(put).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: '预览配置差异' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: '确认关联' })).toBeEnabled()
+    )
+    await user.click(screen.getByRole('button', { name: '确认关联' }))
+    await waitFor(() => expect(saved).toHaveBeenCalledOnce())
+    expect(put.mock.calls[0][1]).toMatchObject({
+      id: 8,
+      revision: 1,
+      channel_ids: [22],
+      channel_revisions: { [channel.id]: 3, 22: 5 },
+    })
+  })
+
   test('创建账户先预览多渠道差异，修改选择后必须重新预览', async () => {
     const channel = customVariableChannel()
     const second = { ...channel, id: 22, name: '第二渠道', ratio: 2 }
@@ -62,6 +204,9 @@ describe('共享上游账户', () => {
     )
     const user = userEvent.setup()
     await user.type(screen.getByLabelText('账户名称'), '共享钱包')
+    expect(
+      screen.queryByRole('spinbutton', { name: '余额自动刷新间隔（分钟）' })
+    ).not.toBeInTheDocument()
     await user.selectOptions(
       screen.getByLabelText('配置来源渠道'),
       String(channel.id)
@@ -103,8 +248,8 @@ describe('共享上游账户', () => {
       source_channel_id: channel.id,
       channel_ids: [channel.id, 22],
       channel_revisions: { [channel.id]: 3, 22: 5 },
-      refresh_interval_minutes: 5,
     })
+    expect(put.mock.calls[0][1]).not.toHaveProperty('refresh_interval_minutes')
   })
 
   test('账户加载失败可重试，空列表显示创建入口', async () => {

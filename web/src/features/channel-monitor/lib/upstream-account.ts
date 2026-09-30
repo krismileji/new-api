@@ -32,11 +32,6 @@ export const upstreamAccountSchema = z
       .array(z.number().int().positive())
       .max(100, '最多关联 100 个渠道'),
     channel_revisions: z.record(z.string(), z.number()),
-    refresh_interval_minutes: z
-      .number()
-      .int('请输入整数分钟')
-      .min(0)
-      .max(10080, '刷新间隔最多 10080 分钟'),
     proxy: z.string().max(2048).optional(),
     balance_key: z.string().max(4096).optional(),
   })

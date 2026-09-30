@@ -28,7 +28,6 @@ import type {
 
 export type UpstreamAccount = {
   has_balance_key: boolean
-  refresh_interval_minutes: number
   id: number
   name: string
   revision: number
@@ -45,7 +44,6 @@ export type UpstreamAccount = {
 export type UpstreamAccountInput = {
   proxy?: string
   balance_key?: string
-  refresh_interval_minutes?: number
   id: number
   revision: number
   name: string

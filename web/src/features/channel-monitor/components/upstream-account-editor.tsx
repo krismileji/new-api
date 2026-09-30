@@ -65,7 +65,6 @@ export function UpstreamAccountEditor(props: {
       source_channel_id: 0,
       channel_ids: props.account?.channel_ids ?? [],
       channel_revisions: props.account?.channel_revisions ?? {},
-      refresh_interval_minutes: props.account?.refresh_interval_minutes ?? 5,
       proxy: props.account?.proxy,
       balance_key: '',
     },
@@ -107,6 +106,10 @@ export function UpstreamAccountEditor(props: {
   )
   const previewCurrent =
     preview?.input === JSON.stringify({ ...input, name: input.name.trim() })
+  const previewRequired =
+    !props.account ||
+    input.channel_ids.length !== props.account.channel_ids.length ||
+    input.channel_ids.some((id) => !props.account?.channel_ids.includes(id))
   const errors = Object.entries(form.formState.errors)
   const keyword = search.trim().toLowerCase()
   const visibleChannels = available.filter(
@@ -115,13 +118,16 @@ export function UpstreamAccountEditor(props: {
       (!selectedOnly || input.channel_ids.includes(channel.id))
   )
   const confirm = form.handleSubmit((values) => {
-    if (!previewCurrent || !preview) return
+    if (previewRequired && (!previewCurrent || !preview)) return
     const submitted: UpstreamAccountInput = {
       ...values,
       channel_revisions: {
         ...values.channel_revisions,
         ...Object.fromEntries(
-          preview.rows.map((row) => [row.channel_id, row.revision])
+          (previewRequired && preview ? preview.rows : []).map((row) => [
+            row.channel_id,
+            row.revision,
+          ])
         ),
       },
     }
@@ -130,11 +136,15 @@ export function UpstreamAccountEditor(props: {
   return (
     <form
       className='flex min-h-0 flex-1 flex-col'
-      onSubmit={form.handleSubmit((values) => inspect.mutate(values))}
+      onSubmit={
+        previewRequired
+          ? form.handleSubmit((values) => inspect.mutate(values))
+          : confirm
+      }
     >
       <UpstreamEditorLayout
         sections={[
-          { id: 'account', label: '账户设置', detail: '账户名称、刷新与认证' },
+          { id: 'account', label: '账户设置', detail: '账户名称、代理与认证' },
           {
             id: 'channels',
             label: '关联渠道',
@@ -179,24 +189,9 @@ export function UpstreamAccountEditor(props: {
                 </NativeSelect>
               </Field>
             ) : null}
-            <Field>
-              <FieldLabel htmlFor={`${id}-interval`}>
-                余额自动刷新间隔（分钟）
-              </FieldLabel>
-              <Input
-                id={`${id}-interval`}
-                type='number'
-                min={0}
-                max={10080}
-                {...form.register('refresh_interval_minutes', {
-                  valueAsNumber: true,
-                })}
-                disabled={busy}
-              />
-              <p className='text-muted-foreground text-sm'>
-                0 表示关闭定时刷新。手动查询和自动任务仍可按需读取余额。
-              </p>
-            </Field>
+            <p className='text-muted-foreground text-sm'>
+              余额自动刷新跟随渠道监控设置中的更新间隔。
+            </p>
             {props.account ? (
               <Field>
                 <FieldLabel htmlFor={`${id}-proxy`}>账户请求代理</FieldLabel>
@@ -316,7 +311,12 @@ export function UpstreamAccountEditor(props: {
                   </AlertDescription>
                 </Alert>
               ) : null}
-              {previewCurrent && preview ? (
+              {!previewRequired ? (
+                <p className='text-muted-foreground text-sm'>
+                  关联渠道未变更，可直接保存账户配置。
+                </p>
+              ) : null}
+              {previewRequired && previewCurrent && preview ? (
                 <Alert>
                   <AlertDescription>
                     <p>保存后以下渠道使用账户配置，各渠道倍率保持独立：</p>
@@ -336,13 +336,14 @@ export function UpstreamAccountEditor(props: {
                     ) : null}
                   </AlertDescription>
                 </Alert>
-              ) : (
+              ) : null}
+              {previewRequired && !previewCurrent ? (
                 <p className='text-muted-foreground text-sm'>
                   {preview
                     ? '配置已修改，请重新预览差异后再确认关联。'
                     : '选择渠道后，点击“预览配置差异”查看本次变更。'}
                 </p>
-              )}
+              ) : null}
             </UpstreamEditorSection>
           </div>
         </div>
@@ -356,15 +357,18 @@ export function UpstreamAccountEditor(props: {
         >
           返回列表
         </Button>
-        <Button type='submit' variant='outline' disabled={busy}>
-          预览配置差异
-        </Button>
+        {previewRequired ? (
+          <Button type='submit' variant='outline' disabled={busy}>
+            预览配置差异
+          </Button>
+        ) : null}
         <Button
           type='button'
-          disabled={busy || !previewCurrent}
+          disabled={busy || (previewRequired && !previewCurrent)}
           onClick={() => void confirm()}
         >
-          {save.isPending ? <Spinner /> : null}确认关联
+          {save.isPending ? <Spinner /> : null}
+          {previewRequired ? '确认关联' : '保存配置'}
         </Button>
       </div>
     </form>
