@@ -76,7 +76,7 @@ async function fetchLogStats<T>(
 // ============================================================================
 
 export const getAllLogs = (params: GetLogsParams = {}) =>
-  fetchLogs('/api/log', params, 'all')
+  fetchLogs('/api/log/', params, 'all')
 
 export const getAllUserVisibleLogs = (params: GetLogsParams = {}) =>
   fetchLogs('/api/log', params, 'user-visible')
