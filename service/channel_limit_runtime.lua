@@ -92,7 +92,22 @@ local function reply(ok, reason)
     for p, n in pairs(active) do table.insert(tiers, {priority=p, active=n, rpm=rpm[p] or 0}) end
     for _, m in ipairs(group.members) do table.insert(members,m.channel_id) end
   end
+  -- Check inactive balance tracking in the admission round trip. A missing or
+  -- malformed hint must never prevent admission or bypass active accounting.
+  local balanceTrackingDisabled = false
+  if ok then
+    local encoded = redis.pcall('GET', 'channel_balance:{'..channelID..'}:config')
+    if encoded == false then
+      balanceTrackingDisabled = true
+    elseif type(encoded) == 'string' then
+      local valid, config = pcall(cjson.decode, encoded)
+      if valid and type(config) == 'table' then
+        balanceTrackingDisabled = config.ChannelID == channelID and config.Enabled == false and (config.AccountID or 0) == 0
+      end
+    end
+  end
   return cjson.encode({acquired=ok, active=channelActive, limit=limit, current_rpm=channelRPM, rpm_limit=rpmLimit,
+    balance_tracking_disabled=balanceTrackingDisabled,
     group_id=groupID, priority=priority, group_active=totalActive, group_rpm=totalRPM,
     group_concurrency_limit=group and group.concurrency_limit or 0, group_rpm_limit=group and group.rpm_limit or 0,
     waiting=redis.call('ZCARD', queueKey), reason=reason, tiers=tiers, members=members})

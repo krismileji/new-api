@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,10 +13,142 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/types"
+	"github.com/go-redis/redis/v8"
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestChannelBalanceInactiveAdmissionSkipsOnlyUnusedTracking(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		remote          string
+		localEnabled    bool
+		expired         bool
+		otherChannel    bool
+		otherDatabase   bool
+		withoutHint     bool
+		wantNoCommands  bool
+		wantReservation bool
+	}{
+		{name: "unconfigured", wantNoCommands: true},
+		{name: "disabled", remote: "disabled", wantNoCommands: true},
+		{name: "enabled", remote: "enabled", localEnabled: true, wantReservation: true},
+		{name: "enabled with stale disabled snapshot", remote: "enabled", localEnabled: false, wantReservation: true},
+		{name: "paused shared member", remote: "shared", wantReservation: true},
+		{name: "missing locator with active local config", localEnabled: true, wantReservation: true},
+		{name: "malformed locator", remote: "malformed"},
+		{name: "wrong locator type", remote: "wrong_type"},
+		{name: "expired admission", expired: true},
+		{name: "different channel", otherChannel: true},
+		{name: "different redis database", otherDatabase: true},
+		{name: "no admission hint", withoutHint: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newChannelBalanceFixture(t)
+			key := fmt.Sprintf("channel_balance:{%d}:config", f.config.ChannelID)
+			local := f.config
+			local.Enabled, local.Revision, local.ChannelRevision = tc.localEnabled, 0, 0
+			switch tc.remote {
+			case "disabled", "enabled", "shared":
+				f.monitor.UpstreamBalanceSyncDisabled = tc.remote != "enabled"
+				if tc.remote == "shared" {
+					f.monitor.UpstreamAccountID, f.monitor.UpstreamAccountRevision = 9, 1
+				}
+				f.config = ChannelBalanceConfigForMonitor(f.monitor)
+				require.NoError(t, ConfigureChannelBalanceEstimate(t.Context(), f.monitor))
+			case "malformed":
+				require.NoError(t, f.client.Set(t.Context(), key, "{", 0).Err())
+			case "wrong_type":
+				require.NoError(t, f.client.HSet(t.Context(), key, "value", "invalid").Err())
+			}
+			require.NoError(t, f.client.HSet(t.Context(), channelConcurrencyRedisConfigKey, channelConcurrencyRedisLoadedField, "1").Err())
+			lease, acquired, _, err := acquireChannelLimitRedis(t.Context(), f.client, f.config.ChannelID)
+			require.NoError(t, err)
+			require.True(t, acquired)
+			defer lease.Release()
+			if tc.otherDatabase {
+				other := redis.NewClient(&redis.Options{Addr: f.server.Addr(), DB: 1})
+				t.Cleanup(func() { require.NoError(t, other.Close()) })
+				common.RDBMonitorWrite = other
+			}
+			if tc.withoutHint {
+				lease.Context = t.Context()
+			}
+			if tc.expired || tc.otherChannel {
+				inactive := lease.Context.Value(channelBalanceInactiveAdmissionKey{}).(channelBalanceInactiveAdmission)
+				if tc.expired {
+					inactive.CheckedAt = time.Now().Add(-time.Second)
+				}
+				if tc.otherChannel {
+					inactive.ChannelID++
+				}
+				lease.Context = context.WithValue(lease.Context, channelBalanceInactiveAdmissionKey{}, inactive)
+			}
+			ctx := newChannelDailyCostTestContext()
+			ctx.Request = ctx.Request.WithContext(lease.Context)
+			ctx.Set(channelDailyCostSnapshotContextKey, channelDailyCostSnapshot{ChannelId: f.config.ChannelID, BalanceConfig: local})
+			BeginChannelDailyCostAttempt(ctx, f.config.ChannelID)
+			before := f.server.CommandCount()
+			MarkChannelDailyCostRequestDispatched(ctx)
+			if tc.wantNoCommands {
+				assert.Equal(t, before, f.server.CommandCount(), "unused tracking must not issue a separate Redis command")
+			} else {
+				assert.Greater(t, f.server.CommandCount(), before, "active or uncertain tracking must retain the lookup")
+			}
+			value, exists := ctx.Get(channelDailyCostAttemptContextKey)
+			require.True(t, exists)
+			attempt := value.(*channelDailyCostAttemptState)
+			if tc.wantReservation {
+				require.NotNil(t, attempt.Balance)
+				estimate, err := GetChannelBalanceEstimate(t.Context(), attempt.Balance.Config)
+				require.NoError(t, err)
+				assert.EqualValues(t, 1, estimate.InFlightCount)
+				assert.Equal(t, f.config.AccountID, attempt.Balance.Config.AccountID)
+			} else {
+				assert.Nil(t, attempt.Balance)
+			}
+			assert.Nil(t, model.DB, "the admission hint cannot add a SQL dependency")
+		})
+	}
+}
+
+func TestChannelBalanceAdmissionObservesRemoteEnablementAndRebinding(t *testing.T) {
+	f := newChannelBalanceFixture(t)
+	require.NoError(t, f.client.HSet(t.Context(), channelConcurrencyRedisConfigKey, channelConcurrencyRedisLoadedField, "1").Err())
+	first, acquired, _, err := acquireChannelLimitRedis(t.Context(), f.client, f.config.ChannelID)
+	require.NoError(t, err)
+	require.True(t, acquired)
+	defer first.Release()
+	oldSnapshot := channelDailyCostSnapshot{ChannelId: f.config.ChannelID, BalanceConfig: f.config}
+	oldSnapshot.BalanceConfig.Enabled = false
+	oldSnapshot.BalanceConfig.ChannelRevision = 0
+	// Configure a shared wallet as another node would, without invalidating or
+	// updating this node's pricing snapshot. Reuse the previous context too.
+	for _, accountID := range []int{9, 10} {
+		f.monitor.UpstreamAccountID = accountID
+		f.monitor.UpstreamRevision++
+		f.monitor.UpstreamAccountRevision = 1
+		require.NoError(t, ConfigureChannelBalanceEstimate(t.Context(), f.monitor))
+		lease, acquired, _, err := acquireChannelLimitRedis(first.Context, f.client, f.config.ChannelID)
+		require.NoError(t, err)
+		require.True(t, acquired)
+		defer lease.Release()
+		ctx := newChannelDailyCostTestContext()
+		ctx.Request = ctx.Request.WithContext(lease.Context)
+		ctx.Set(channelDailyCostSnapshotContextKey, oldSnapshot)
+		BeginChannelDailyCostAttempt(ctx, f.config.ChannelID)
+		MarkChannelDailyCostRequestDispatched(ctx)
+		value, _ := ctx.Get(channelDailyCostAttemptContextKey)
+		attempt := value.(*channelDailyCostAttemptState)
+		require.NotNil(t, attempt.Balance)
+		assert.Equal(t, accountID, attempt.Balance.Config.AccountID)
+		estimate, err := GetChannelBalanceEstimate(t.Context(), attempt.Balance.Config)
+		require.NoError(t, err)
+		assert.EqualValues(t, 1, estimate.InFlightCount)
+		oldSnapshot.BalanceConfig = attempt.Balance.Config
+	}
+}
 
 func TestChannelBalanceResponsesTerminalRetiresOnlyKnownGeneration(t *testing.T) {
 	for _, tc := range []struct {

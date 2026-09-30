@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -12,9 +13,20 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 )
 
 const channelBalanceRelayInfoContextKey = "channel_balance_relay_info"
+
+type channelBalanceInactiveAdmissionKey struct{}
+
+// The hint belongs to one admission, not a node-wide negative cache. A fresh
+// Redis admission on another node observes online enablement and account binds.
+type channelBalanceInactiveAdmission struct {
+	ChannelID int
+	Client    *redis.Client
+	CheckedAt time.Time
+}
 
 type channelBalanceAttempt struct {
 	Config              ChannelBalanceConfig
@@ -40,6 +52,18 @@ func startChannelBalanceAttempt(ctx *gin.Context, state *channelDailyCostAttempt
 	}
 	value, _ := ctx.Get(channelDailyCostSnapshotContextKey)
 	snapshot, _ := value.(channelDailyCostSnapshot)
+	if common.RedisEnabled && !snapshot.BalanceConfig.Enabled && snapshot.BalanceConfig.AccountID == 0 && ctx.Request != nil {
+		inactive, ok := ctx.Request.Context().Value(channelBalanceInactiveAdmissionKey{}).(channelBalanceInactiveAdmission)
+		client := common.RedisMonitorWriteClient()
+		if ok && inactive.ChannelID == state.ChannelId && inactive.Client != nil && client != nil &&
+			time.Since(inactive.CheckedAt) < channelBalanceOperationTimeout {
+			admissionOptions, balanceOptions := inactive.Client.Options(), client.Options()
+			if admissionOptions.Addr == balanceOptions.Addr && admissionOptions.Network == balanceOptions.Network &&
+				admissionOptions.DB == balanceOptions.DB {
+				return
+			}
+		}
+	}
 	// Read the channel locator from the primary before a new reservation. Other
 	// nodes may still have a pricing snapshot cached when an account is rebound.
 	// In-flight attempts retain the captured locator and never take this path again.
@@ -49,7 +73,8 @@ func startChannelBalanceAttempt(ctx *gin.Context, state *channelDailyCostAttempt
 		cancel()
 		var current ChannelBalanceConfig
 		if readErr == nil && common.UnmarshalJsonStr(encoded, &current) == nil && current.ChannelID == state.ChannelId &&
-			(current.AccountID != snapshot.BalanceConfig.AccountID || (current.AccountID > 0 && current.Revision != snapshot.BalanceConfig.Revision)) {
+			(current.AccountID != snapshot.BalanceConfig.AccountID || current.ChannelRevision > snapshot.BalanceConfig.ChannelRevision ||
+				(current.AccountID > 0 && current.Revision != snapshot.BalanceConfig.Revision)) {
 			snapshot.BalanceConfig = current
 			snapshot.ChannelId = state.ChannelId
 			if current.AccountID > 0 {

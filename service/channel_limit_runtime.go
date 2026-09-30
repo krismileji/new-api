@@ -32,13 +32,14 @@ type channelLimitReply struct {
 	Members []int                   `json:"members"`
 	Tiers   []ChannelLimitTierUsage `json:"tiers"`
 	ChannelConcurrencyStatus
-	Acquired    bool   `json:"acquired"`
-	GroupID     int64  `json:"group_id"`
-	Priority    int    `json:"priority"`
-	GroupActive int    `json:"group_active"`
-	GroupRPM    int    `json:"group_rpm"`
-	Waiting     int    `json:"waiting"`
-	Reason      string `json:"reason"`
+	Acquired                bool   `json:"acquired"`
+	GroupID                 int64  `json:"group_id"`
+	Priority                int    `json:"priority"`
+	GroupActive             int    `json:"group_active"`
+	GroupRPM                int    `json:"group_rpm"`
+	Waiting                 int    `json:"waiting"`
+	Reason                  string `json:"reason"`
+	BalanceTrackingDisabled bool   `json:"balance_tracking_disabled"`
 }
 
 func acquireChannelLimitRedis(ctx context.Context, client *redis.Client, channelID int) (*ChannelConcurrencyLease, bool, ChannelConcurrencyStatus, error) {
@@ -58,7 +59,9 @@ func acquireChannelLimitRedis(ctx context.Context, client *redis.Client, channel
 		admission.channelID = channelID
 	}
 	var reply channelLimitReply
+	var balanceCheckedAt time.Time
 	for retry := 0; retry < 2; retry++ {
+		balanceCheckedAt = time.Now()
 		raw, err := client.Eval(ctx, channelLimitRuntimeScript, []string{channelLimitRegistryKey}, "acquire", 0, channelID, member, waiting, ChannelProbeTrigger(ctx) != "").Text()
 		if err != nil {
 			return nil, false, ChannelConcurrencyStatus{}, err
@@ -100,6 +103,12 @@ func acquireChannelLimitRedis(ctx context.Context, client *redis.Client, channel
 	if reply.GroupID > 0 {
 		lease.Context = context.WithValue(ctx, sharedChannelLimitLeaseKey{}, true)
 	}
+	inactive := channelBalanceInactiveAdmission{}
+	if reply.BalanceTrackingDisabled {
+		inactive = channelBalanceInactiveAdmission{ChannelID: channelID, Client: client, CheckedAt: balanceCheckedAt}
+	}
+	// Clear an earlier attempt's hint even when the next admission is active.
+	lease.Context = context.WithValue(lease.Context, channelBalanceInactiveAdmissionKey{}, inactive)
 	return lease, true, status, nil
 }
 
