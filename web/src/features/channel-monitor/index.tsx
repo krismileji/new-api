@@ -2028,7 +2028,7 @@ function ChannelMonitorContent() {
           <Suspense fallback={null}>
             <LazyChannelBatchTestDialog
               open
-              channels={channels}
+              channels={orderedChannels}
               modelSelectionMode='single'
               selectAllMode='all'
               enableRepeatMode

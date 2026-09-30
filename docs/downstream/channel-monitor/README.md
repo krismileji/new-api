@@ -34,7 +34,7 @@ Root 管理入口为 `/channel-monitor`，API 前缀为 `/api/channel_monitor`�
 - [模型广场分组监控](model-market-monitoring.md)：分类、独立开关、无可用路由与配置失效的区分、展示周期、用户 API Key 最高与平均缓存率、采集阈值、Redis 增量窗口、按分组更新快照、去重期限与配置变更重置。
 - [探测策略与业务周期监测](probe-policy.md)：禁止自动探测、小输入本地响应和 Redis 被动监测。
 - [模型检测](model-detection.md)：独立检测器、模型核验、证据与成本。
-- [连通性测试](connectivity-test.md)：单次、批量、并发循环测试。
+- [连通性测试](connectivity-test.md)：单次、批量、并发循环测试，沿用渠道视图排序。
 - [全局本地探针响应](local-probe-response.md)：公开接口固定输入的本地回应，包含 Responses 插件模型，与渠道小输入策略分别配置。
 
 ## 权限与数据边界
