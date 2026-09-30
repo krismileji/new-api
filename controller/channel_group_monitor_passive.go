@@ -37,6 +37,12 @@ func applyChannelGroupPassiveOverview(ctx context.Context, items []channelGroupM
 			}
 			period := view.Periods[0]
 			item.Passive = &channelGroupPassiveResponse{Source: "redis_business", Scope: "group_final", IntervalSeconds: view.Target.IntervalSeconds, Period: period}
+			// Keep the historical period available without allowing its success
+			// to overwrite an invalid configuration or a newer routing failure.
+			if !item.ConfigValid || item.Status == channelGroupMonitorHealthUnavailable ||
+				(item.LatestResult == model.ChannelGroupMonitorResultUnavailable && period.PeriodEnd <= item.LastFinishedAt) {
+				continue
+			}
 			item.LatestFirstTokenMs = period.AverageFirstTokenMs
 			item.CacheRate = nil
 			item.SuccessRate = nil
@@ -60,8 +66,8 @@ func applyChannelGroupPassiveOverview(ctx context.Context, items []channelGroupM
 	}
 }
 
-// Only a scheduled group consisting entirely of disabled physical channels can
-// finish before resolving a pricing user. Manual runs retain the ordinary path.
+// A scheduled group whose members all forbid automatic probes uses passive
+// data after checking business availability. Manual runs retain active probes.
 func channelGroupUsesOnlyPassiveMonitoring(ctx context.Context, group, modelName string) (bool, error) {
 	var abilities []model.Ability
 	if err := model.DB.WithContext(ctx).Select("channel_id").Where(&model.Ability{Group: group, Model: modelName}).Find(&abilities).Error; err != nil {

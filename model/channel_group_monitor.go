@@ -202,7 +202,8 @@ func GetChannelGroupMonitorConfigOrDefaultWithContext(ctx context.Context) (Chan
 }
 
 // GetChannelGroupMonitorCandidateChannels loads only the channel columns used
-// to validate whether an enabled ability can serve the text probe request.
+// to validate whether an ability can serve the text probe request. Configuration
+// validation includes disabled channels; execution still uses normal routing.
 func GetChannelGroupMonitorCandidateChannels(ctx context.Context, enabledOnly bool) ([]*Channel, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -224,10 +225,11 @@ func GetChannelGroupMonitorCandidateChannels(ctx context.Context, enabledOnly bo
 	return channels, nil
 }
 
-// GetChannelGroupMonitorCandidateAbilities loads the enabled relationships for
+// GetChannelGroupMonitorCandidateAbilities loads the configured relationships for
 // an explicit channel set. An explicit empty set must remain empty instead of
-// degrading into a query for every ability.
-func GetChannelGroupMonitorCandidateAbilities(ctx context.Context, channelIDs []int) ([]Ability, error) {
+// degrading into a query for every ability. enabledOnly restricts routing
+// candidates without treating a disabled relationship as missing configuration.
+func GetChannelGroupMonitorCandidateAbilities(ctx context.Context, channelIDs []int, enabledOnly bool) ([]Ability, error) {
 	if len(channelIDs) == 0 {
 		return []Ability{}, nil
 	}
@@ -235,12 +237,15 @@ func GetChannelGroupMonitorCandidateAbilities(ctx context.Context, channelIDs []
 		ctx = context.Background()
 	}
 	var abilities []Ability
-	err := DB.WithContext(ctx).
+	query := DB.WithContext(ctx).
 		Select(commonGroupCol, "model", "channel_id").
-		Where("enabled = ? AND channel_id IN ?", true, channelIDs).
+		Where("channel_id IN ?", channelIDs).
 		Order(commonGroupCol + " ASC, model ASC, channel_id ASC").
-		Limit(ChannelGroupMonitorCandidateMaxAbilities + 1).
-		Find(&abilities).Error
+		Limit(ChannelGroupMonitorCandidateMaxAbilities + 1)
+	if enabledOnly {
+		query = query.Where("enabled = ?", true)
+	}
+	err := query.Find(&abilities).Error
 	if err != nil {
 		return nil, err
 	}

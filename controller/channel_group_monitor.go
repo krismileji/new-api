@@ -170,7 +170,7 @@ func getChannelGroupMonitorCandidateModels(ctx context.Context, enabledOnly bool
 		channelsByID[channel.Id] = channel
 		channelIDs = append(channelIDs, channel.Id)
 	}
-	abilities, err := model.GetChannelGroupMonitorCandidateAbilities(ctx, channelIDs)
+	abilities, err := model.GetChannelGroupMonitorCandidateAbilities(ctx, channelIDs, enabledOnly)
 	if err != nil {
 		return nil, err
 	}
@@ -555,6 +555,12 @@ func buildChannelGroupMonitorItems(
 		}
 	}
 	items := make([]channelGroupMonitorItemResponse, 0, len(groups))
+	// Disabled channels and abilities remain valid configuration, but must not
+	// leave an old healthy result visible until the next scheduled execution.
+	enabledCandidates, err := getChannelGroupMonitorCandidateModels(ctx, true)
+	if err != nil {
+		return nil, err
+	}
 	for _, group := range groups {
 		configValid := groupMonitorModelIsCandidate(validCandidates, group.GroupName, group.ProbeModel)
 		item := channelGroupMonitorItemResponse{
@@ -586,6 +592,8 @@ func buildChannelGroupMonitorItems(
 		}
 		if !configValid {
 			item.Status = channelGroupMonitorHealthUnconfigured
+		} else if config.Enabled && !groupMonitorModelIsCandidate(enabledCandidates, group.GroupName, group.ProbeModel) {
+			item.Status = channelGroupMonitorHealthUnavailable
 		}
 		if !group.IsEnabled() {
 			item.Status = channelGroupMonitorHealthPaused
@@ -616,7 +624,7 @@ func GetChannelGroupMonitorSettings(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), true)
+	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), false)
 	if err != nil {
 		respondChannelGroupMonitorQueryError(c, err)
 		return
@@ -649,7 +657,7 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "状态展示范围至少需要覆盖两个探测周期"})
 		return
 	}
-	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), true)
+	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), false)
 	if err != nil {
 		respondChannelGroupMonitorQueryError(c, err)
 		return
@@ -762,7 +770,7 @@ func GetChannelGroupMonitorOverview(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), true)
+	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), false)
 	if err != nil {
 		respondChannelGroupMonitorQueryError(c, err)
 		return
@@ -863,7 +871,7 @@ func GetPricingGroupMonitor(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), true)
+	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), false)
 	if err != nil {
 		respondChannelGroupMonitorQueryError(c, err)
 		return

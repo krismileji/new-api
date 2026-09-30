@@ -264,7 +264,7 @@ func runChannelGroupMonitorClaim(parent context.Context, claim model.ChannelGrou
 	}()
 
 	testUserId, testUserErr := resolveChannelTestUserID(nil)
-	validCandidates, err := getChannelGroupMonitorCandidateModels(ctx, true)
+	validCandidates, err := getChannelGroupMonitorCandidateModels(ctx, false)
 	if err != nil {
 		return err
 	}
@@ -339,28 +339,6 @@ func runChannelGroupMonitorGroup(
 		_, saveErr := model.SaveChannelGroupMonitorExecution(&execution)
 		return saveErr
 	}
-	if claim.Trigger == model.ChannelGroupMonitorTriggerScheduled {
-		passive, policyErr := channelGroupUsesOnlyPassiveMonitoring(ctx, group.GroupName, group.ProbeModel)
-		if passive || policyErr != nil {
-			execution.Result = model.ChannelGroupMonitorResultSkipped
-			execution.ErrorCode = "auto_probe_disabled"
-			execution.ErrorMessage = "全部渠道已禁止自动探测，按配置周期使用 Redis 业务数据"
-			if policyErr != nil {
-				execution.ErrorCode = "probe_policy_unavailable"
-				execution.ErrorMessage = "无法读取渠道探测策略，本轮跳过"
-			}
-			_, saveErr := model.SaveChannelGroupMonitorExecution(&execution)
-			return saveErr
-		}
-	}
-	if testUserErr != nil {
-		execution.Result = model.ChannelGroupMonitorResultLocalFailure
-		execution.ErrorCode = "test_user_unavailable"
-		execution.ErrorMessage = truncateChannelGroupMonitorText(common.MaskSensitiveInfo(testUserErr.Error()), 512)
-		_, saveErr := model.SaveChannelGroupMonitorExecution(&execution)
-		return saveErr
-	}
-
 	probeRoutingContext := newChannelGroupMonitorRoutingContext(ctx, testUserId, group.GroupName)
 	probeRequestID := common.NewRequestId()
 	probeStartedAt := time.Now()
@@ -422,6 +400,30 @@ func runChannelGroupMonitorGroup(
 				execution.ErrorMessage = "当前没有可分配的探测路由"
 			}
 			break
+		}
+
+		// Resolve business availability before skipping active probes. A group
+		// with no route is unavailable even when its members use passive data.
+		if attemptNumber == 0 {
+			if claim.Trigger == model.ChannelGroupMonitorTriggerScheduled {
+				passive, policyErr := channelGroupUsesOnlyPassiveMonitoring(ctx, group.GroupName, group.ProbeModel)
+				if passive || policyErr != nil {
+					execution.Result = model.ChannelGroupMonitorResultSkipped
+					execution.ErrorCode = "auto_probe_disabled"
+					execution.ErrorMessage = "全部渠道已禁止自动探测，按配置周期使用 Redis 业务数据"
+					if policyErr != nil {
+						execution.ErrorCode = "probe_policy_unavailable"
+						execution.ErrorMessage = "无法读取渠道探测策略，本轮跳过"
+					}
+					break
+				}
+			}
+			if testUserErr != nil {
+				execution.Result = model.ChannelGroupMonitorResultLocalFailure
+				execution.ErrorCode = "test_user_unavailable"
+				execution.ErrorMessage = truncateChannelGroupMonitorText(common.MaskSensitiveInfo(testUserErr.Error()), 512)
+				break
+			}
 		}
 
 		attemptNumber++
