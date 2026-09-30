@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -87,6 +89,56 @@ func TestChannelGroupMonitorCacheRatesDatabaseMatrix(t *testing.T) {
 				model.DB, common.RDBMonitorRead, common.RedisEnabled = previousDB, previousRead, previousEnabled
 				common.SetDatabaseTypes(previousMainType, previousLogType)
 			})
+			t.Run("logical probe and outbox commit atomically", func(t *testing.T) {
+				for _, table := range []any{&model.ChannelGroupMonitorExecution{}, &model.ChannelGroupMonitorState{}, &model.ChannelMonitorEventOutbox{}} {
+					require.False(t, db.Migrator().HasTable(table))
+					require.NoError(t, db.AutoMigrate(table))
+					t.Cleanup(func() { assert.NoError(t, db.Migrator().DropTable(table)) })
+				}
+				oldWrite, oldEnabled, oldPolicy := common.RDBMonitorWrite, common.RedisEnabled, channelGroupMonitorCachePolicyState.Load()
+				common.RDBMonitorWrite, common.RedisEnabled = client, true
+				channelGroupMonitorCachePolicyState.Store(nil)
+				t.Cleanup(func() {
+					common.RDBMonitorWrite, common.RedisEnabled = oldWrite, oldEnabled
+					channelGroupMonitorCachePolicyState.Store(oldPolicy)
+				})
+				config := model.ChannelGroupMonitorConfig{Revision: 1, Enabled: true, DisplayValue: 60, DisplayUnit: "minute", GroupsJSON: `{"groups":[{"group_name":"vip","probe_model":"gpt-test"}]}`}
+				require.NoError(t, UpdateChannelGroupMonitorCachePolicy(config))
+				generation, err := SyncChannelGroupMonitorGeneration(t.Context(), config)
+				require.NoError(t, err)
+				now := generation.StartedAt
+				probe := model.ChannelGroupMonitorExecution{RunId: "committed-probe", GroupName: "vip", ProbeModel: "gpt-test", ConfigRevision: 1, StartedAt: now, FinishedAt: now, Result: model.ChannelGroupMonitorResultSuccess, ErrorMessage: "admin-only"}
+				created, err := model.SaveChannelGroupMonitorExecution(&probe)
+				require.NoError(t, err)
+				assert.True(t, created)
+				created, err = model.SaveChannelGroupMonitorExecution(&probe)
+				require.NoError(t, err)
+				assert.False(t, created)
+				var rows []model.ChannelMonitorEventOutbox
+				require.NoError(t, db.Find(&rows).Error)
+				require.Len(t, rows, 1)
+				event, err := model.UnmarshalChannelMonitorEvent([]byte(rows[0].Payload))
+				require.NoError(t, err)
+				assert.NotContains(t, rows[0].Payload, "admin-only")
+				require.NoError(t, ProjectChannelGroupMonitorEvents(t.Context(), client, []model.ChannelMonitorEvent{event, event}, now))
+				groups, err := ReadChannelGroupMonitorProjection(t.Context(), generation, now)
+				require.NoError(t, err)
+				require.NotNil(t, groups["vip"].State)
+				assert.Equal(t, model.ChannelGroupMonitorResultSuccess, groups["vip"].State.Result)
+				require.NoError(t, db.Callback().Create().Before("gorm:create").Register("group_test:outbox_failure", func(tx *gorm.DB) {
+					if tx.Statement.Schema != nil && tx.Statement.Schema.Table == "channel_monitor_event_outboxes" {
+						tx.AddError(errors.New("outbox unavailable"))
+					}
+				}))
+				t.Cleanup(func() { assert.NoError(t, db.Callback().Create().Remove("group_test:outbox_failure")) })
+				probe.Id = 0
+				probe.RunId = "rolled-back-probe"
+				_, err = model.SaveChannelGroupMonitorExecution(&probe)
+				require.ErrorContains(t, err, "outbox unavailable")
+				var count int64
+				require.NoError(t, db.Model(&model.ChannelGroupMonitorExecution{}).Where("run_id = ?", probe.RunId).Count(&count).Error)
+				assert.Zero(t, count, "execution must roll back when its event cannot commit")
+			})
 			const daySeconds = int64(24 * 60 * 60)
 			today := model.ChannelDailyCostDayStart(1_750_032_000)
 			now := today + 10*60*60 + 37*60 + 25
@@ -154,6 +206,77 @@ func TestChannelGroupMonitorCacheRatesDatabaseMatrix(t *testing.T) {
 				})
 			}
 
+			t.Run("per-key rates combine days and routes before equal-weight averaging", func(t *testing.T) {
+				ctx := t.Context()
+				for index, fixture := range []struct {
+					key         int
+					daysAgo     int64
+					read, input int64
+				}{
+					{101, 2, 200, 1000},
+					{101, 1, 600, 1000},
+					{102, 1, 50, 100},
+					{0, 1, 1000, 1000}, // Unknown keys affect only the legacy weighted rate.
+					{103, 1, 0, 0},
+					{104, 3, 1000, 1000}, // Outside the requested window.
+				} {
+					aggregate, err := common.Marshal(ChannelMonitorRedisSharedAggregate{
+						GroupCacheReadTokens: fixture.read, GroupCacheInputTokens: fixture.input,
+					})
+					require.NoError(t, err)
+					row := (model.ChannelMonitorDailyMetricIdentity{
+						ChannelID: 201 + index, APIKeyID: fixture.key, Group: "key-stats",
+					}).LedgerRow(today - fixture.daysAgo*daySeconds)
+					row.AggregateJSON = string(aggregate)
+					require.NoError(t, db.Create(&row).Error)
+				}
+				var events []model.ChannelMonitorEvent
+				for index, fixture := range []struct {
+					group            string
+					key              int
+					read, input      int64
+					stream, excluded bool
+				}{
+					{"key-stats", 101, 0, 2000, true, false},
+					{"key-stats", 102, 50, 100, true, false},
+					{"key-stats", 103, 0, 0, true, false},
+					{"key-stats", 105, 1000, 1000, false, false},
+					{"key-stats", 106, 1000, 1000, true, true},
+					{"key-stats-private", 101, 1000, 1000, true, false},
+					{"key-stats-zero", 107, 0, 100, true, false},
+				} {
+					event := newChannelMonitorRedisSharedProjectionTestEvent("key-stats-"+fixture.group, now)
+					event.EventId += strconv.Itoa(index)
+					event.EventSequence = uint64(2000 + index)
+					event.ChannelId, event.GroupName, event.APIKeyId = 301+index, fixture.group, fixture.key
+					event.InputTokens, event.CacheReadTokens = &fixture.input, &fixture.read
+					event.IsStream, event.GroupCacheExcluded = fixture.stream, &fixture.excluded
+					events = append(events, event)
+				}
+				common.RedisEnabled = false
+				require.NoError(t, projection.WriteChannelMonitorEvents(ctx, events))
+				require.NoError(t, projection.WriteChannelMonitorEvents(ctx, events)) // Replays must not alter the rates.
+				common.RedisEnabled = true
+				for _, tc := range []struct {
+					start            int64
+					maximum, average float64
+				}{
+					{today - 2*daySeconds, 50, 35},
+					{today, 50, 25},
+				} {
+					statistics, err := GetChannelGroupMonitorCacheStatistics(ctx, []string{"key-stats", "key-stats-zero", "key-stats-empty"}, tc.start, now+1)
+					require.NoError(t, err)
+					require.NotNil(t, statistics["key-stats"].APIKeyMax)
+					require.NotNil(t, statistics["key-stats"].APIKeyAverage)
+					assert.InDelta(t, tc.maximum, *statistics["key-stats"].APIKeyMax, 0.000001)
+					assert.InDelta(t, tc.average, *statistics["key-stats"].APIKeyAverage, 0.000001)
+					require.NotNil(t, statistics["key-stats-zero"].APIKeyAverage)
+					assert.Zero(t, *statistics["key-stats-zero"].APIKeyAverage)
+					assert.Zero(t, *statistics["key-stats-zero"].APIKeyMax)
+					assert.NotContains(t, statistics, "key-stats-private")
+					assert.NotContains(t, statistics, "key-stats-empty")
+				}
+			})
 			t.Run("frozen cache decisions survive persistence restore and threshold changes", func(t *testing.T) {
 				ctx := context.Background()
 				common.RedisEnabled = false

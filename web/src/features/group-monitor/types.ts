@@ -106,6 +106,8 @@ export type ChannelGroupMonitorItem = {
   latest_first_token_ms: number | null
   success_rate: number | null
   cache_rate?: number | null
+  cache_rate_max?: number | null
+  cache_rate_average?: number | null
   success_count: number
   completed_count: number
   last_finished_at: number
@@ -124,9 +126,12 @@ export type PricingGroupMonitorItem = Pick<
   | 'latest_first_token_ms'
   | 'success_rate'
   | 'cache_rate'
+  | 'cache_rate_max'
+  | 'cache_rate_average'
   | 'last_finished_at'
   | 'recent_window'
 > & {
+  description?: string
   group_ratio?: number
 }
 

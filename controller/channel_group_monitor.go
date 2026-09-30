@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -70,6 +72,8 @@ type channelGroupMonitorItemResponse struct {
 	LatestFirstTokenMs *float64                            `json:"latest_first_token_ms"`
 	SuccessRate        *float64                            `json:"success_rate"`
 	CacheRate          *float64                            `json:"cache_rate,omitempty"`
+	CacheRateMax       *float64                            `json:"cache_rate_max,omitempty"`
+	CacheRateAverage   *float64                            `json:"cache_rate_average,omitempty"`
 	SuccessCount       int                                 `json:"success_count"`
 	CompletedCount     int                                 `json:"completed_count"`
 	LastFinishedAt     int64                               `json:"last_finished_at"`
@@ -111,6 +115,7 @@ type pricingGroupMonitorItemResponse struct {
 	Passive            *channelGroupPassiveResponse        `json:"passive,omitempty"`
 	PassiveMembers     bool                                `json:"passive_members,omitempty"`
 	Group              string                              `json:"group"`
+	Description        string                              `json:"description,omitempty"`
 	Category           string                              `json:"category,omitempty"`
 	Initial            string                              `json:"initial"`
 	Status             string                              `json:"status"`
@@ -118,6 +123,8 @@ type pricingGroupMonitorItemResponse struct {
 	LatestFirstTokenMs *float64                            `json:"latest_first_token_ms"`
 	SuccessRate        *float64                            `json:"success_rate"`
 	CacheRate          *float64                            `json:"cache_rate,omitempty"`
+	CacheRateMax       *float64                            `json:"cache_rate_max,omitempty"`
+	CacheRateAverage   *float64                            `json:"cache_rate_average,omitempty"`
 	GroupRatio         float64                             `json:"group_ratio"`
 	LastFinishedAt     int64                               `json:"last_finished_at"`
 	RecentWindow       []channelGroupMonitorBucketResponse `json:"recent_window"`
@@ -488,107 +495,101 @@ func channelGroupMonitorHealth(config model.ChannelGroupMonitorConfig, state *mo
 	}
 }
 
+type channelGroupMonitorBuildInputs struct {
+	Reuse             map[string]channelGroupMonitorItemResponse
+	EnabledCandidates map[string][]string
+}
+
 func buildChannelGroupMonitorItems(
 	ctx context.Context,
 	config model.ChannelGroupMonitorConfig,
 	validCandidates map[string][]string,
 	now int64,
+	inputs ...channelGroupMonitorBuildInputs,
 ) ([]channelGroupMonitorItemResponse, error) {
 	groups, err := config.Groups()
 	if err != nil {
 		return nil, err
 	}
-	groupNames := make([]string, 0, len(groups))
-	for _, group := range groups {
-		groupNames = append(groupNames, group.GroupName)
-	}
-	states, err := model.GetChannelGroupMonitorStatesForGroups(ctx, groupNames)
+	generation, err := service.SyncChannelGroupMonitorGeneration(ctx, config)
 	if err != nil {
 		return nil, err
 	}
-	stateByGroup := make(map[string]model.ChannelGroupMonitorState, len(states))
-	for _, state := range states {
-		stateByGroup[state.GroupName] = state
+	selected := make(map[string]bool, len(groups))
+	for _, group := range groups {
+		selected[group.GroupName] = true
+		if len(inputs) > 0 {
+			_, unchanged := inputs[0].Reuse[group.GroupName]
+			selected[group.GroupName] = !unchanged
+		}
+	}
+	projection, err := service.ReadChannelGroupMonitorProjection(ctx, generation, now, selected)
+	if err != nil {
+		return nil, err
 	}
 	showCacheRate, err := config.ShowCacheRate()
 	if err != nil {
 		return nil, err
 	}
-	displayValue, displayUnit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
-	bucketSeconds := model.ChannelStatusProbeDisplayBucketSeconds(displayUnit)
-	windowStart := model.ChannelStatusProbeDisplayBucketStart(now, displayUnit) -
-		int64(displayValue-1)*bucketSeconds
-	windowEnd := now + 1
-	var cacheRates map[string]float64
-	if showCacheRate {
-		cacheRates, err = service.GetChannelGroupMonitorCacheRates(ctx, groupNames, windowStart, windowEnd)
-		if err != nil {
-			common.SysError("读取分组监控缓存率失败: " + err.Error())
-		}
-	}
-	summaries, err := model.GetChannelGroupMonitorExecutionSummariesForGroups(
-		ctx, groupNames, windowStart, windowEnd,
-	)
-	if err != nil {
-		return nil, err
-	}
-	type summary struct{ success, completed int }
-	summaryByGroup := make(map[string]summary)
-	for _, item := range summaries {
-		current := summaryByGroup[item.GroupName]
-		current.completed += int(item.ResultCount)
-		if item.Result == model.ChannelGroupMonitorResultSuccess {
-			current.success += int(item.ResultCount)
-		}
-		summaryByGroup[item.GroupName] = current
-	}
-	executions, err := model.GetChannelGroupMonitorExecutionWindowForGroups(
-		ctx, groupNames, windowStart, windowEnd,
-	)
-	if err != nil {
-		return nil, err
-	}
-	recentWindows := mergeChannelGroupMonitorRecentWindow(executions, now, displayValue, displayUnit)
-	for _, group := range groups {
-		if _, exists := recentWindows[group.GroupName]; !exists {
-			recentWindows[group.GroupName] = emptyChannelGroupMonitorRecentWindow(now, displayValue, displayUnit)
-		}
-	}
 	items := make([]channelGroupMonitorItemResponse, 0, len(groups))
 	// Disabled channels and abilities remain valid configuration, but must not
 	// leave an old healthy result visible until the next scheduled execution.
-	enabledCandidates, err := getChannelGroupMonitorCandidateModels(ctx, true)
-	if err != nil {
-		return nil, err
+	var enabledCandidates map[string][]string
+	if len(inputs) > 0 {
+		enabledCandidates = inputs[0].EnabledCandidates
+	}
+	if enabledCandidates == nil {
+		enabledCandidates, err = getChannelGroupMonitorCandidateModels(ctx, true)
+		if err != nil {
+			return nil, err
+		}
 	}
 	for _, group := range groups {
+		if len(inputs) > 0 {
+			if previous, ok := inputs[0].Reuse[group.GroupName]; ok {
+				items = append(items, previous)
+				continue
+			}
+		}
 		configValid := groupMonitorModelIsCandidate(validCandidates, group.GroupName, group.ProbeModel)
 		item := channelGroupMonitorItemResponse{
 			Group: group.GroupName, Initial: channelGroupMonitorInitial(group.GroupName, group.DisplayInitial), ProbeModel: group.ProbeModel,
 			Category:    group.Category,
-			ConfigValid: configValid, RecentWindow: recentWindows[group.GroupName],
+			ConfigValid: configValid, RecentWindow: emptyChannelGroupMonitorRecentWindow(now, config.DisplayValue, config.DisplayUnit),
 		}
-		window := summaryByGroup[group.GroupName]
-		if rate, exists := cacheRates[group.GroupName]; exists {
-			item.CacheRate = &rate
+		data := projection[group.GroupName]
+		if showCacheRate {
+			item.CacheRate, item.CacheRateMax, item.CacheRateAverage = data.Cache.Weighted, data.Cache.APIKeyMax, data.Cache.APIKeyAverage
 		}
-		item.SuccessCount = window.success
-		item.CompletedCount = window.completed
-		if window.completed > 0 {
-			rate := float64(window.success) * 100 / float64(window.completed)
+		for index, source := range data.Buckets {
+			bucket := &item.RecentWindow[index]
+			bucket.Success = int(source.Counts["success"])
+			bucket.UpstreamFailure = int(source.Counts["upstream_failure"])
+			bucket.LocalFailure = int(source.Counts["local_failure"])
+			bucket.RateLimited = int(source.Counts["rate_limited"])
+			bucket.Unavailable = int(source.Counts["unavailable"])
+			bucket.Timeout = int(source.Counts["timeout"])
+			bucket.Skipped = int(source.Counts["skipped"])
+			bucket.FirstTokenTotalMs, bucket.FirstTokenSampleCount = source.Counts["first_total"], int64(source.Counts["first_count"])
+			bucket.TPSTotal, bucket.TPSSampleCount = source.Counts["tps_total"], int64(source.Counts["tps_count"])
+			bucket.ResponseTimeTotalMs, bucket.ResponseTimeSampleCount = source.Counts["response_total"], int64(source.Counts["response_count"])
+			bucket.Result = channelGroupMonitorBucketResult(*bucket)
+			if source.Latest != nil {
+				bucket.LatestResult, bucket.LatestFirstTokenMs = source.Latest.Result, source.Latest.FirstTokenMs
+				bucket.LatestTPS, bucket.LatestResponseTimeMs = source.Latest.TPS, source.Latest.ResponseTimeMs
+			}
+			item.SuccessCount += bucket.Success
+			item.CompletedCount += bucket.Success + bucket.UpstreamFailure + bucket.LocalFailure + bucket.RateLimited + bucket.Unavailable + bucket.Timeout
+		}
+		if item.CompletedCount > 0 {
+			rate := float64(item.SuccessCount) * 100 / float64(item.CompletedCount)
 			item.SuccessRate = &rate
 		}
-		if state, exists := stateByGroup[group.GroupName]; exists {
-			item.Status = channelGroupMonitorHealth(config, &state, now)
-			item.LatestFirstTokenMs = state.FirstTokenMs
-			item.LastFinishedAt = state.FinishedAt
-			item.LatestResult = state.Result
-			item.LastSuccessAt = state.LastSuccessAt
-			item.LastFailureAt = state.LastFailureAt
-			item.ConsecutiveSuccess = state.ConsecutiveSuccess
-			item.ConsecutiveFailure = state.ConsecutiveFailure
-		} else {
-			item.Status = channelGroupMonitorHealth(config, nil, now)
+		item.Status = channelGroupMonitorHealth(config, data.State, now)
+		if state := data.State; state != nil {
+			item.LatestFirstTokenMs, item.LastFinishedAt, item.LatestResult = state.FirstTokenMs, state.FinishedAt, state.Result
+			item.LastSuccessAt, item.LastFailureAt = state.LastSuccessAt, state.LastFailureAt
+			item.ConsecutiveSuccess, item.ConsecutiveFailure = state.ConsecutiveSuccess, state.ConsecutiveFailure
 		}
 		if !configValid {
 			item.Status = channelGroupMonitorHealthUnconfigured
@@ -600,7 +601,7 @@ func buildChannelGroupMonitorItems(
 		}
 		items = append(items, item)
 	}
-	applyChannelGroupPassiveOverview(ctx, items)
+	applyChannelGroupPassiveOverviewSince(ctx, items, generation.StartedAt)
 	return items, nil
 }
 
@@ -614,24 +615,12 @@ func respondChannelGroupMonitorQueryError(c *gin.Context, err error) {
 }
 
 func GetChannelGroupMonitorSettings(c *gin.Context) {
-	config, err := model.GetChannelGroupMonitorConfigOrDefaultWithContext(c.Request.Context())
-	if err != nil {
-		common.ApiError(c, err)
+	var snapshot channelGroupMonitorSnapshot
+	if err := service.ReadChannelGroupMonitorSnapshot(c.Request.Context(), &snapshot); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": service.ErrChannelGroupMonitorSnapshotPending.Error()})
 		return
 	}
-	response, err := channelGroupMonitorConfigToResponse(config)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), false)
-	if err != nil {
-		respondChannelGroupMonitorQueryError(c, err)
-		return
-	}
-	writeChannelMonitorBoundedJSON(c, gin.H{
-		"settings": response, "candidate_models_by_group": candidates,
-	})
+	writeChannelMonitorBoundedJSON(c, gin.H{"settings": snapshot.Overview.Settings, "candidate_models_by_group": snapshot.Overview.CandidateModelsByGroup})
 }
 
 func UpdateChannelGroupMonitorSettings(c *gin.Context) {
@@ -740,6 +729,8 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 	}
 	if err := service.UpdateChannelGroupMonitorCachePolicy(saved); err != nil {
 		common.SysError("更新分组缓存率配置失败: " + err.Error())
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "配置已保存，Redis 统计重置暂未完成，请稍后刷新配置", "revision": saved.Revision})
+		return
 	}
 	response, err := channelGroupMonitorConfigToResponse(saved)
 	if err != nil {
@@ -754,35 +745,22 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 		"interval_seconds": *request.IntervalSeconds, "display_value": *request.DisplayValue,
 		"display_unit": *request.DisplayUnit,
 	})
+	// Saving invalidates the previous lease with the statistics generation.
+	// Publish the new initial view now instead of waiting for the periodic check.
+	if err := refreshChannelGroupMonitorSnapshot(c.Request.Context(), true); err != nil {
+		common.SysError("生成分组监控初始快照失败: " + err.Error())
+	}
 	wakeChannelGroupMonitorWorker()
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": response})
 }
 
 func GetChannelGroupMonitorOverview(c *gin.Context) {
-	now := common.GetTimestamp()
-	config, err := model.GetChannelGroupMonitorConfigOrDefaultWithContext(c.Request.Context())
-	if err != nil {
-		common.ApiError(c, err)
+	var snapshot channelGroupMonitorSnapshot
+	if err := service.ReadChannelGroupMonitorSnapshot(c.Request.Context(), &snapshot); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": service.ErrChannelGroupMonitorSnapshotPending.Error()})
 		return
 	}
-	settings, err := channelGroupMonitorConfigToResponse(config)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), false)
-	if err != nil {
-		respondChannelGroupMonitorQueryError(c, err)
-		return
-	}
-	items, err := buildChannelGroupMonitorItems(c.Request.Context(), config, candidates, now)
-	if err != nil {
-		respondChannelGroupMonitorQueryError(c, err)
-		return
-	}
-	writeChannelMonitorBoundedJSON(c, channelGroupMonitorOverviewResponse{
-		ServerNow: now, Settings: settings, CandidateModelsByGroup: candidates, Items: items,
-	})
+	writeChannelMonitorBoundedJSON(c, snapshot.Overview)
 }
 
 func RunChannelGroupMonitorNow(c *gin.Context) {
@@ -844,45 +822,33 @@ func ListChannelGroupMonitorExecutions(c *gin.Context) {
 }
 
 func GetPricingGroupMonitor(c *gin.Context) {
-	now := common.GetTimestamp()
-	config, err := model.GetChannelGroupMonitorConfigOrDefaultWithContext(c.Request.Context())
-	if err != nil {
-		common.ApiError(c, err)
+	var snapshot channelGroupMonitorSnapshot
+	if err := service.ReadChannelGroupMonitorSnapshot(c.Request.Context(), &snapshot); err != nil {
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": service.ErrChannelGroupMonitorSnapshotPending.Error()})
 		return
 	}
-	showCacheRate, err := config.ShowCacheRate()
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	cacheMinContextK, err := config.CacheMinContextK()
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	userGroup := ""
-	if userId, exists := c.Get("id"); exists {
-		if user, userErr := model.GetUserCache(userId.(int)); userErr == nil {
-			userGroup = user.Group
+	userGroup := c.GetString("user_group")
+	for index := range snapshot.Public.Items {
+		item := &snapshot.Public.Items[index]
+		if ratio, ok := snapshot.UserRatios[userGroup][item.Group]; ok {
+			item.GroupRatio = ratio
 		}
 	}
-	categories, err := config.Categories()
-	if err != nil {
-		common.ApiError(c, err)
-		return
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": snapshot.Public})
+}
+
+func buildPricingGroupMonitorItems(config model.ChannelGroupMonitorConfig, items []channelGroupMonitorItemResponse) []pricingGroupMonitorItemResponse {
+	common.OptionMapRWMutex.RLock()
+	descriptionsJSON := common.OptionMap["GroupDescriptions"]
+	common.OptionMapRWMutex.RUnlock()
+	descriptions := make(map[string]string)
+	if descriptionsJSON != "" {
+		if err := common.UnmarshalJsonStr(descriptionsJSON, &descriptions); err != nil || descriptions == nil {
+			descriptions = make(map[string]string)
+		}
 	}
-	candidates, err := getChannelGroupMonitorCandidateModels(c.Request.Context(), false)
-	if err != nil {
-		respondChannelGroupMonitorQueryError(c, err)
-		return
-	}
-	// Monitoring configuration is the public display list, independent of which
-	// groups the current account may select when making model requests.
-	items, err := buildChannelGroupMonitorItems(c.Request.Context(), config, candidates, now)
-	if err != nil {
-		respondChannelGroupMonitorQueryError(c, err)
-		return
-	}
+	// Selectable groups retain their current descriptions, including explicit blanks.
+	maps.Copy(descriptions, setting.GetUserUsableGroupsCopy())
 	publicItems := make([]pricingGroupMonitorItemResponse, 0, len(items))
 	for _, item := range items {
 		status := item.Status
@@ -894,6 +860,7 @@ func GetPricingGroupMonitor(c *gin.Context) {
 		publicItems = append(publicItems, pricingGroupMonitorItemResponse{
 			Passive: item.Passive, PassiveMembers: item.PassiveMembers,
 			Group:              item.Group,
+			Description:        descriptions[item.Group],
 			Category:           item.Category,
 			Initial:            item.Initial,
 			Status:             status,
@@ -901,17 +868,12 @@ func GetPricingGroupMonitor(c *gin.Context) {
 			LatestFirstTokenMs: item.LatestFirstTokenMs,
 			SuccessRate:        item.SuccessRate,
 			CacheRate:          item.CacheRate,
-			GroupRatio:         service.GetUserGroupRatio(userGroup, item.Group),
+			CacheRateMax:       item.CacheRateMax,
+			CacheRateAverage:   item.CacheRateAverage,
+			GroupRatio:         service.GetUserGroupRatio("", item.Group),
 			LastFinishedAt:     item.LastFinishedAt,
 			RecentWindow:       item.RecentWindow,
 		})
 	}
-	displayValue, displayUnit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{
-		"enabled": config.Enabled, "server_now": now,
-		"cache_min_context_k": cacheMinContextK,
-		"show_cache_rate":     showCacheRate,
-		"data_cutoff_at":      now - channelGroupMonitorDisplaySeconds(displayValue, displayUnit),
-		"display_value":       displayValue, "display_unit": displayUnit, "items": publicItems, "categories": categories,
-	}})
+	return publicItems
 }

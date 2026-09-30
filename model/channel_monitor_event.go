@@ -30,6 +30,7 @@ const (
 	ChannelMonitorEventSourceManualTest     ChannelMonitorEventSource = "manual_test"
 	ChannelMonitorEventSourceModelDetection ChannelMonitorEventSource = "model_detection"
 	ChannelMonitorEventSourceLocalResponse  ChannelMonitorEventSource = "local_response"
+	ChannelMonitorEventSourceGroupSummary   ChannelMonitorEventSource = "group_summary"
 )
 
 type ChannelMonitorEventOutcome string
@@ -85,7 +86,9 @@ type ChannelMonitorEvent struct {
 	Outcome    ChannelMonitorEventOutcome    `json:"outcome"`
 	CostStatus ChannelMonitorEventCostStatus `json:"cost_status"`
 
-	GroupCacheExcluded *bool `json:"group_cache_excluded,omitempty"`
+	GroupCacheExcluded     *bool                         `json:"group_cache_excluded,omitempty"`
+	GroupMonitorGeneration string                        `json:"group_monitor_generation,omitempty"`
+	GroupMonitorProbe      *ChannelGroupMonitorExecution `json:"group_monitor_probe,omitempty"`
 
 	IsStream                  bool `json:"is_stream"`
 	IsRetryAttempt            bool `json:"is_retry_attempt"`
@@ -161,8 +164,30 @@ func (event ChannelMonitorEvent) Validate() error {
 	if event.OccurredAt <= 0 || event.CreatedAt <= 0 {
 		return errors.New("渠道监控事件时间无效")
 	}
-	if event.ChannelId <= 0 {
+	if event.ChannelId <= 0 && event.Source != ChannelMonitorEventSourceGroupSummary {
 		return errors.New("渠道监控事件渠道 ID 无效")
+	}
+	if event.Source == ChannelMonitorEventSourceGroupSummary {
+		probe := event.GroupMonitorProbe
+		if probe == nil || probe.Id <= 0 || probe.RunId == "" || probe.GroupName != event.GroupName || probe.FinishedAt != event.OccurredAt || probe.StartedAt <= 0 || probe.FinishedAt < probe.StartedAt || event.GroupMonitorGeneration == "" || len(event.GroupMonitorGeneration) > 64 {
+			return errors.New("分组监控汇总事件无效")
+		}
+		if event.SchedulingEligible || event.RuntimeProtectionEligible || event.RequestDispatched || event.CostStatus != ChannelMonitorEventCostNone || len(event.PassiveTargets) > 0 || probe.SettledCostNanoCNY != nil {
+			return errors.New("分组监控汇总不能产生渠道费用或健康副作用")
+		}
+		for _, value := range []*float64{probe.FirstTokenMs, probe.ResponseTimeMs, probe.TPS} {
+			if value != nil && (*value < 0 || math.IsNaN(*value) || math.IsInf(*value, 0)) {
+				return errors.New("分组监控汇总指标无效")
+			}
+		}
+		switch probe.Result {
+		case ChannelGroupMonitorResultSuccess, ChannelGroupMonitorResultUpstreamFailure, ChannelGroupMonitorResultRateLimited,
+			ChannelGroupMonitorResultLocalFailure, ChannelGroupMonitorResultUnavailable, ChannelGroupMonitorResultSkipped, ChannelGroupMonitorResultTimeout:
+		default:
+			return errors.New("分组监控探测结果无效")
+		}
+	} else if event.GroupMonitorProbe != nil {
+		return errors.New("分组监控汇总事件来源无效")
 	}
 	if event.UserId < 0 {
 		return errors.New("渠道监控事件用户 ID 无效")
@@ -266,6 +291,26 @@ func (event ChannelMonitorEvent) Marshal() ([]byte, error) {
 // Clone freezes pointer-backed optional measurements before an event crosses
 // the asynchronous queue boundary.
 func (event ChannelMonitorEvent) Clone() ChannelMonitorEvent {
+	if event.GroupMonitorProbe != nil {
+		probe := *event.GroupMonitorProbe
+		if probe.FirstTokenMs != nil {
+			value := *probe.FirstTokenMs
+			probe.FirstTokenMs = &value
+		}
+		if probe.TPS != nil {
+			value := *probe.TPS
+			probe.TPS = &value
+		}
+		if probe.ResponseTimeMs != nil {
+			value := *probe.ResponseTimeMs
+			probe.ResponseTimeMs = &value
+		}
+		if probe.SettledCostNanoCNY != nil {
+			value := *probe.SettledCostNanoCNY
+			probe.SettledCostNanoCNY = &value
+		}
+		event.GroupMonitorProbe = &probe
+	}
 	if event.GroupCacheExcluded != nil {
 		value := *event.GroupCacheExcluded
 		event.GroupCacheExcluded = &value
@@ -332,6 +377,7 @@ func (source ChannelMonitorEventSource) valid() bool {
 		ChannelMonitorEventSourceSmartProbe,
 		ChannelMonitorEventSourceManualTest,
 		ChannelMonitorEventSourceModelDetection,
+		ChannelMonitorEventSourceGroupSummary,
 		ChannelMonitorEventSourceLocalResponse:
 		return true
 	default:

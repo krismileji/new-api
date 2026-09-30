@@ -18,12 +18,47 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
-import { render, screen, within } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import {
+  render,
+  renderHook,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
 
+import * as groupMonitorApi from '../api'
+import { useGroupMonitor } from '../hooks/use-group-monitor'
 import { GroupMonitorBucketDetails, GroupMonitorContent } from '../index'
 import type { PricingGroupMonitor, PricingGroupMonitorItem } from '../types'
+
+test('快照刷新失败后隐藏已缓存的正常状态', async () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  client.setQueryData(['pricing', 'group-monitor'], {
+    success: true,
+    data: categoryMonitorResult([{ group: 'vip' }]),
+  })
+  const request = vi
+    .spyOn(groupMonitorApi, 'getPricingGroupMonitor')
+    .mockRejectedValue(new Error('分组监控汇总暂不可用'))
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  )
+  try {
+    const { result, unmount } = renderHook(() => useGroupMonitor(), { wrapper })
+    await waitFor(() => expect(result.current.isError).toBe(true))
+    expect(result.current.data).toBeUndefined()
+    unmount()
+  } finally {
+    request.mockRestore()
+    client.clear()
+  }
+})
 
 function categoryMonitorResult(
   groups: Array<Pick<PricingGroupMonitorItem, 'group' | 'category'>>
@@ -46,23 +81,56 @@ function categoryMonitorResult(
   }
 }
 
+test('在分组名称下展示完整说明，保留换行并允许长文本折行', () => {
+  const result = categoryMonitorResult([{ group: 'vip' }])
+  const description =
+    '高可用线路，适合长上下文请求\nhttps://example.com/groups/long-description-without-spaces'
+  result.items[0].description = description
+  render(<GroupMonitorContent result={result} />)
+
+  const group = within(screen.getByRole('article', { name: 'vip' }))
+  const text = group.getByText(description.replace('\n', ' '))
+  expect(text).toBeVisible()
+  expect(text.textContent).toBe(description)
+  expect(text).toHaveClass('whitespace-pre-wrap', 'wrap-anywhere')
+})
+
+test.each([undefined, '', ' \n '])(
+  '说明缺省或空白时不显示说明段落（%s）',
+  (description) => {
+    const result = categoryMonitorResult([{ group: 'vip' }])
+    result.items[0].description = '已有说明'
+    const view = render(<GroupMonitorContent result={result} />)
+    expect(screen.getByText('已有说明')).toBeVisible()
+
+    result.items[0].description = description
+    view.rerender(<GroupMonitorContent result={result} />)
+    expect(screen.queryByText('已有说明')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'vip' })).toBeVisible()
+  }
+)
+
 test.each([false, undefined])(
   '关闭或缺省显示开关时隐藏缓存率，即使响应仍含缓存数据（%s）',
   (showCacheRate) => {
     const result = categoryMonitorResult([{ group: 'vip' }])
     result.show_cache_rate = showCacheRate
     result.items[0].cache_rate = 75
+    result.items[0].cache_rate_max = 90
+    result.items[0].cache_rate_average = 60
     render(<GroupMonitorContent result={result} />)
 
     expect(screen.queryByText('缓存率')).not.toBeInTheDocument()
     expect(screen.queryByText('75.0%')).not.toBeInTheDocument()
+    expect(screen.queryByText('最高')).not.toBeInTheDocument()
+    expect(screen.queryByText('平均')).not.toBeInTheDocument()
     expect(screen.getByRole('article', { name: 'vip' })).toHaveTextContent(
       '成功率'
     )
   }
 )
 
-test('开启缓存率后展示各组百分比，区分零命中与无有效样本', () => {
+test('开启缓存率后同时展示 API Key 最高值与平均值，区分零命中与无有效样本', () => {
   const result = categoryMonitorResult([
     { group: 'hit' },
     { group: 'miss' },
@@ -70,19 +138,26 @@ test('开启缓存率后展示各组百分比，区分零命中与无有效样�
   ])
   result.show_cache_rate = true
   result.items[0].cache_rate = 72.5
-  result.items[1].cache_rate = 0
-  result.items[2].cache_rate = null
+  result.items[0].cache_rate_max = 90
+  result.items[0].cache_rate_average = 60
+  result.items[1].cache_rate_max = 0
+  result.items[1].cache_rate_average = 0
+  result.items[2].cache_rate = 80 // Legacy weighted data must not stand in for per-key statistics.
   render(<GroupMonitorContent result={result} />)
 
   const hit = within(screen.getByRole('article', { name: 'hit' }))
   expect(hit.getByText('缓存率')).toBeInTheDocument()
-  expect(hit.getByText('72.5%')).toBeVisible()
-  expect(screen.getByRole('article', { name: 'miss' })).toHaveTextContent(
-    '0.0%'
-  )
-  expect(screen.getByRole('article', { name: 'empty' })).toHaveTextContent(
-    '暂无数据'
-  )
+  expect(hit.getByText('最高').parentElement).toHaveTextContent('90.0%')
+  expect(hit.getByText('平均').parentElement).toHaveTextContent('60.0%')
+  expect(hit.queryByText('72.5%')).not.toBeInTheDocument()
+  expect(
+    within(screen.getByRole('article', { name: 'miss' })).getAllByText('0.0%')
+  ).toHaveLength(2)
+  expect(
+    within(screen.getByRole('article', { name: 'empty' })).getAllByText(
+      '暂无数据'
+    )
+  ).toHaveLength(2)
   expect(hit.getByText('缓存率').closest('dl')).toHaveClass(
     'grid-cols-2',
     'sm:grid-cols-4',
@@ -96,9 +171,7 @@ test('修改状态展示范围后缓存率说明同步更新', () => {
   const view = render(<GroupMonitorContent result={result} />)
 
   expect(
-    screen.getByTitle(
-      '近 60 分钟流式请求的缓存读取 Token / 总输入 Token（包含缓存读写，不含输出）'
-    )
+    screen.getByTitle(/近 60 分钟内，先按用户 API Key.*最高值和等权平均值/)
   ).toBeVisible()
 
   view.rerender(
@@ -107,9 +180,7 @@ test('修改状态展示范围后缓存率说明同步更新', () => {
     />
   )
   expect(
-    screen.getByTitle(
-      '近 3 小时流式请求的缓存读取 Token / 总输入 Token（包含缓存读写，不含输出）'
-    )
+    screen.getByTitle(/近 3 小时内，先按用户 API Key.*最高值和等权平均值/)
   ).toBeVisible()
 
   view.rerender(
@@ -118,9 +189,7 @@ test('修改状态展示范围后缓存率说明同步更新', () => {
     />
   )
   expect(
-    screen.getByTitle(
-      '近 7 天流式请求的缓存读取 Token / 总输入 Token（包含缓存读写，不含输出）'
-    )
+    screen.getByTitle(/近 7 天内，先按用户 API Key.*最高值和等权平均值/)
   ).toBeVisible()
 })
 
@@ -132,7 +201,7 @@ test('设置上下文下限后缓存率说明显示包含边界的流式筛选�
   expect(
     screen.getByTitle(/仅统计输入上下文 ≥ 32 K tokens 的流式请求/)
   ).toBeVisible()
-  expect(screen.getByTitle(/历史数据保留采集时的统计口径/)).toBeVisible()
+  expect(screen.getByTitle(/修改监控配置后清空统计并重新累计/)).toBeVisible()
 })
 
 test('groups interleaved categories in first appearance order and keeps each category’s group order', () => {

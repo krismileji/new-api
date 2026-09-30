@@ -186,6 +186,18 @@ func wakeChannelGroupMonitorWorker() {
 
 func startChannelGroupMonitorWorker() {
 	channelGroupMonitorWorkerOnce.Do(func() {
+		gopool.Go(func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				if common.RedisEnabled {
+					if err := refreshChannelGroupMonitorSnapshot(context.Background()); err != nil {
+						common.SysError("生成分组监控快照失败: " + err.Error())
+					}
+				}
+				<-ticker.C
+			}
+		})
 		if !common.IsMasterNode {
 			return
 		}

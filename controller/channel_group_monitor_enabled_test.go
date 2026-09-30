@@ -46,6 +46,7 @@ func TestChannelGroupMonitorSettingsRetainsConfigurationAcrossPauseAndResume(t *
 		recorder = httptest.NewRecorder()
 		c, _ = gin.CreateTestContext(recorder)
 		c.Request = httptest.NewRequest(http.MethodGet, "/api/channel_monitor/group_monitor/settings", nil)
+		prepareChannelGroupMonitorPageSnapshot(t)
 		GetChannelGroupMonitorSettings(c)
 		require.Equal(t, http.StatusOK, recorder.Code)
 		var response struct {
@@ -72,7 +73,7 @@ func TestChannelGroupMonitorSettingsRetainsConfigurationAcrossPauseAndResume(t *
 	}
 }
 
-func TestChannelGroupMonitorPausedGroupKeepsHistoryAndStatusWithoutAValidRoute(t *testing.T) {
+func TestChannelGroupMonitorPausedGroupClearsHistoryAndKeepsStatusWithoutAValidRoute(t *testing.T) {
 	for _, validRoute := range []bool{true, false} {
 		t.Run(map[bool]string{true: "available route", false: "unavailable route"}[validRoute], func(t *testing.T) {
 			db := setupChannelMonitorControllerTestDB(t)
@@ -105,6 +106,7 @@ func TestChannelGroupMonitorPausedGroupKeepsHistoryAndStatusWithoutAValidRoute(t
 			}
 			candidates, err := getChannelGroupMonitorCandidateModels(context.Background(), true)
 			require.NoError(t, err)
+			seedChannelGroupMonitorProjection(t, config, common.GetTimestamp())
 			items, err := buildChannelGroupMonitorItems(context.Background(), config, candidates, now)
 			require.NoError(t, err)
 			require.Len(t, items, 2)
@@ -115,6 +117,7 @@ func TestChannelGroupMonitorPausedGroupKeepsHistoryAndStatusWithoutAValidRoute(t
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
 			c.Request = httptest.NewRequest(http.MethodGet, "/api/pricing/group-monitor", nil)
+			prepareChannelGroupMonitorPageSnapshot(t)
 			GetPricingGroupMonitor(c)
 			require.Equal(t, http.StatusOK, recorder.Code)
 			var response struct {
@@ -131,9 +134,8 @@ func TestChannelGroupMonitorPausedGroupKeepsHistoryAndStatusWithoutAValidRoute(t
 			assert.Equal(t, "通用模型", paused.Category)
 			assert.Equal(t, "gpt-4.1", paused.ProbeModel)
 			assert.Equal(t, channelGroupMonitorHealthPaused, paused.Status)
-			require.NotNil(t, paused.SuccessRate)
-			assert.Equal(t, 100.0, *paused.SuccessRate)
-			assert.Equal(t, now-1, paused.LastFinishedAt)
+			assert.Nil(t, paused.SuccessRate)
+			assert.Zero(t, paused.LastFinishedAt)
 			assert.Equal(t, channelGroupMonitorHealthHealthy, response.Data.Items[1].Status)
 		})
 	}

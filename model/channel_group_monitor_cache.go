@@ -10,12 +10,14 @@ import (
 
 type ChannelGroupMonitorCacheCounts struct {
 	GroupName       string
+	APIKeyId        int
 	CacheReadTokens int64
 	InputTokens     int64
 }
 
 // GetChannelGroupMonitorHistoricalCacheCounts reads complete business-request
-// days before the current day, which is supplied by the realtime projection.
+// days before the current day, grouped by group and API key. Today's counts
+// are supplied by the realtime projection.
 func GetChannelGroupMonitorHistoricalCacheCounts(ctx context.Context, groupNames []string, startAt, endAt int64) ([]ChannelGroupMonitorCacheCounts, error) {
 	if len(groupNames) == 0 || startAt >= endAt {
 		return nil, nil
@@ -24,14 +26,18 @@ func GetChannelGroupMonitorHistoricalCacheCounts(ctx context.Context, groupNames
 		return nil, errors.New("缓存率历史统计数据库不可用")
 	}
 	rows, err := DB.WithContext(ctx).Model(&ChannelMonitorDailySuccessLedger{}).
-		Select("group_name, aggregate_json").
+		Select("group_name, api_key_id, aggregate_json").
 		Where("day_start >= ? AND day_start < ?", startAt, endAt).
 		Where("group_name IN ?", groupNames).Rows()
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	byGroup := make(map[string]ChannelGroupMonitorCacheCounts)
+	type groupKey struct {
+		name     string
+		apiKeyId int
+	}
+	byGroup := make(map[groupKey]ChannelGroupMonitorCacheCounts)
 	for rows.Next() {
 		var row struct {
 			ChannelGroupMonitorCacheCounts
@@ -54,14 +60,16 @@ func GetChannelGroupMonitorHistoricalCacheCounts(ctx context.Context, groupNames
 		if tokens.Read < 0 || tokens.Input < 0 {
 			return nil, errors.New("分组缓存率历史统计无效")
 		}
-		count := byGroup[row.GroupName]
+		key := groupKey{row.GroupName, row.APIKeyId}
+		count := byGroup[key]
 		if count.CacheReadTokens > math.MaxInt64-tokens.Read || count.InputTokens > math.MaxInt64-tokens.Input {
 			return nil, errors.New("分组缓存率历史统计溢出")
 		}
 		count.GroupName = row.GroupName
+		count.APIKeyId = row.APIKeyId
 		count.CacheReadTokens += tokens.Read
 		count.InputTokens += tokens.Input
-		byGroup[row.GroupName] = count
+		byGroup[key] = count
 	}
 	counts := make([]ChannelGroupMonitorCacheCounts, 0, len(byGroup))
 	for _, count := range byGroup {

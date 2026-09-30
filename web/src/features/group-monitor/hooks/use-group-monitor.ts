@@ -21,11 +21,13 @@ import { useQuery } from '@tanstack/react-query'
 import { getPricingGroupMonitor } from '../api'
 
 export function useGroupMonitor() {
-  return useQuery({
+  const query = useQuery({
     queryKey: ['pricing', 'group-monitor'],
     queryFn: getPricingGroupMonitor,
     staleTime: 30_000,
+    refetchInterval: 10_000,
     refetchOnMount: 'always',
     refetchOnWindowFocus: 'always',
   })
+  return { ...query, data: query.isError ? undefined : query.data }
 }

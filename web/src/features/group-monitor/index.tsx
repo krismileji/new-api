@@ -89,7 +89,7 @@ const DISPLAY_UNIT_LABEL = {
 const GROUP_MONITOR_COLUMNS =
   'lg:grid-cols-[minmax(0,1fr)_5.5rem_7rem_5.5rem_5rem_minmax(0,1.4fr)]'
 const GROUP_MONITOR_CACHE_COLUMNS =
-  'lg:grid-cols-[minmax(0,1fr)_5.5rem_6rem_5.5rem_5rem_5.5rem_minmax(0,1.4fr)]'
+  'lg:grid-cols-[minmax(0,1fr)_5.5rem_6rem_5.5rem_5rem_7rem_minmax(0,1.4fr)]'
 
 function formatLatency(value: number | null): string {
   if (value == null) return '--'
@@ -429,6 +429,11 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                             >
                               {item.group}
                             </h3>
+                            {item.description?.trim() ? (
+                              <p className='text-muted-foreground mt-1 text-xs wrap-anywhere whitespace-pre-wrap'>
+                                {item.description}
+                              </p>
+                            ) : null}
                             <p
                               className='text-muted-foreground mt-0.5 truncate font-mono text-[11px]'
                               title={item.probe_model || undefined}
@@ -489,15 +494,32 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                           {props.result.show_cache_rate ? (
                             <div
                               className='min-w-0'
-                              title={`近 ${props.result.display_value} ${DISPLAY_UNIT_LABEL[props.result.display_unit]}流式请求的缓存读取 Token / 总输入 Token（包含缓存读写，不含输出）${(props.result.cache_min_context_k ?? 0) > 0 ? `；当前新增样本仅统计输入上下文 ≥ ${props.result.cache_min_context_k} K tokens 的流式请求（1 K = 1000 tokens），历史数据保留采集时的统计口径` : ''}`}
+                              title={`近 ${props.result.display_value} ${DISPLAY_UNIT_LABEL[props.result.display_unit]}内，先按用户 API Key 汇总本分组流式请求的缓存读取 Token / 总输入 Token（包含缓存读写，不含输出），再取最高值和等权平均值；无有效样本的 Key 不参与统计${(props.result.cache_min_context_k ?? 0) > 0 ? `；仅统计输入上下文 ≥ ${props.result.cache_min_context_k} K tokens 的流式请求（1 K = 1000 tokens），修改监控配置后清空统计并重新累计` : ''}`}
                             >
                               <dt className='text-muted-foreground mb-1 text-[11px] lg:sr-only'>
                                 缓存率
                               </dt>
-                              <dd className='font-mono text-xs font-medium tabular-nums'>
-                                {item.cache_rate == null
-                                  ? '暂无数据'
-                                  : formatRate(item.cache_rate)}
+                              <dd className='space-y-1 text-xs tabular-nums'>
+                                <div className='flex flex-wrap justify-between gap-x-2'>
+                                  <span className='text-muted-foreground'>
+                                    最高
+                                  </span>
+                                  <span className='font-mono font-medium'>
+                                    {item.cache_rate_max == null
+                                      ? '暂无数据'
+                                      : formatRate(item.cache_rate_max)}
+                                  </span>
+                                </div>
+                                <div className='flex flex-wrap justify-between gap-x-2'>
+                                  <span className='text-muted-foreground'>
+                                    平均
+                                  </span>
+                                  <span className='font-mono font-medium'>
+                                    {item.cache_rate_average == null
+                                      ? '暂无数据'
+                                      : formatRate(item.cache_rate_average)}
+                                  </span>
+                                </div>
                               </dd>
                             </div>
                           ) : null}
@@ -608,11 +630,11 @@ export function GroupMonitor() {
                   成功率按近 {result.display_value}{' '}
                   {DISPLAY_UNIT_LABEL[result.display_unit]}内的有效逻辑探测统计
                   {result.show_cache_rate
-                    ? '；缓存率按同一时间范围内流式业务请求的缓存读取 Token / 总输入 Token 统计，输入包含缓存读写，不含输出'
+                    ? '；缓存率先按用户 API Key 汇总同一时间范围内本分组流式请求的缓存读取 Token / 总输入 Token，再展示最高值和各 Key 的等权平均值；输入包含缓存读写，不含输出，无有效样本的 Key 不参与统计'
                     : null}
                   {result.show_cache_rate &&
                   (result.cache_min_context_k ?? 0) > 0
-                    ? `，当前新增样本仅统计输入上下文 ≥ ${result.cache_min_context_k} K tokens 的流式请求（1 K = 1000 tokens），历史数据保留采集时的统计口径`
+                    ? `，仅统计输入上下文 ≥ ${result.cache_min_context_k} K tokens 的流式请求（1 K = 1000 tokens），修改监控配置后清空统计并重新累计`
                     : null}
                 </p>
                 {!result.enabled ? (

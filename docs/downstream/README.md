@@ -16,5 +16,5 @@
 | [使用日志](usage-logs/README.md) | 用户侧预览、管理员诊断范围、脱敏和费用来源展示 |
 | [中继可靠性](relay-reliability/README.md) | 失败切换、快速失败重试、错误与响应模型诊断和响应头超时 |
 | [管理员分组访问](admin-group-access/README.md) | 管理员可用分组及模型广场的权限过滤 |
-| [分组说明保留](group-pricing-descriptions.md) | 取消用户可选、切换 JSON 或改名后仍保留分组说明 |
+| [分组说明保留](group-pricing-descriptions.md) | 保留分组说明，并在分组监控中展示 |
 | [图像生成定价保护](image-pricing-guard/README.md) | 原始模型未配置图像倍率时的请求保护，包含图片任务插件入口 |

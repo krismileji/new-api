@@ -578,6 +578,22 @@ func saveChannelGroupMonitorExecutionTx(tx *gorm.DB, execution *ChannelGroupMoni
 		*execution = existing
 		return false, nil
 	}
+	if ChannelGroupMonitorExecutionEvent != nil {
+		if event := ChannelGroupMonitorExecutionEvent(*execution); event != nil {
+			payload, err := event.Marshal()
+			if err != nil {
+				return false, err
+			}
+			// Commit the logical result and its stream outbox together, including
+			// scheduler-generated timeouts. A crash cannot leave an export gap.
+			if err := tx.Create(&ChannelMonitorEventOutbox{
+				EventId: event.EventId, Payload: string(payload), NextAttemptAt: event.CreatedAt,
+				CreatedAt: event.CreatedAt, UpdatedAt: event.CreatedAt,
+			}).Error; err != nil {
+				return false, err
+			}
+		}
+	}
 
 	var state ChannelGroupMonitorState
 	stateErr := lockForUpdate(tx).Where("group_name = ?", execution.GroupName).First(&state).Error

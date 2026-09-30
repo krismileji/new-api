@@ -192,6 +192,19 @@ func (aggregator *ChannelMonitorRedisLogicalAggregator) HandleChannelMonitorEven
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := ProjectChannelGroupMonitorEvents(ctx, aggregator.client, events, time.Now().Unix()); err != nil {
+		return err
+	}
+	channelEvents := make([]model.ChannelMonitorEvent, 0, len(events))
+	for _, event := range events {
+		if event.Source != model.ChannelMonitorEventSourceGroupSummary {
+			channelEvents = append(channelEvents, event)
+		}
+	}
+	events = channelEvents
+	if len(events) == 0 {
+		return nil
+	}
 	if err := aggregator.routeHealth.HandleChannelMonitorEvents(ctx, events); err != nil {
 		return err
 	}

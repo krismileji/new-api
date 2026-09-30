@@ -114,7 +114,7 @@ func TestDailyPersistenceWaitsForHolesAndReplaysRetainedTailWithoutDoubleCountin
 	assert.False(t, view.CoveragePartial)
 	counts, err := model.GetChannelGroupMonitorHistoricalCacheCounts(ctx, []string{"vip"}, day, day+24*60*60)
 	require.NoError(t, err)
-	assert.Equal(t, []model.ChannelGroupMonitorCacheCounts{{GroupName: "vip", CacheReadTokens: 5000, InputTokens: 20000}}, counts,
+	assert.Equal(t, []model.ChannelGroupMonitorCacheCounts{{GroupName: "vip", APIKeyId: 42, CacheReadTokens: 5000, InputTokens: 20000}}, counts,
 		"tail replay preserves the original excluded sample and does not count it twice")
 }
 

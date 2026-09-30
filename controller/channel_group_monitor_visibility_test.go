@@ -23,12 +23,26 @@ func TestGetPricingGroupMonitorDisplaysConfiguredCategoriesForEveryRole(t *testi
 	))
 	originalRatios := ratio_setting.GroupRatio2JSONString()
 	originalUsableGroups := setting.UserUsableGroups2JSONString()
+	common.OptionMapRWMutex.Lock()
+	if common.OptionMap == nil {
+		common.OptionMap = make(map[string]string)
+	}
+	originalDescriptions, hadDescriptions := common.OptionMap["GroupDescriptions"]
+	common.OptionMap["GroupDescriptions"] = `{"default":"旧说明","调度验收-低成本":"低成本线路\n适合批量请求","smart-cache-priority-demo":"旧缓存说明","unmonitored":"未公开说明"}`
+	common.OptionMapRWMutex.Unlock()
 	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		if hadDescriptions {
+			common.OptionMap["GroupDescriptions"] = originalDescriptions
+		} else {
+			delete(common.OptionMap, "GroupDescriptions")
+		}
+		common.OptionMapRWMutex.Unlock()
 		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios))
 		require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(originalUsableGroups))
 	})
 	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":0.03,"vip":1}`))
-	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组"}`))
+	require.NoError(t, setting.UpdateUserUsableGroupsByJSONString(`{"default":"默认分组","smart-cache-priority-demo":""}`))
 	_, err := model.SaveChannelGroupMonitorConfig(model.ChannelGroupMonitorConfigInput{
 		Enabled: true, Categories: []string{"88", "77", "未分类"},
 		Groups: []model.ChannelGroupMonitorGroup{
@@ -55,6 +69,7 @@ func TestGetPricingGroupMonitorDisplaysConfiguredCategoriesForEveryRole(t *testi
 			c, _ := gin.CreateTestContext(recorder)
 			c.Request = httptest.NewRequest(http.MethodGet, "/api/pricing/group-monitor", nil)
 			c.Set("role", tc.role)
+			prepareChannelGroupMonitorPageSnapshot(t)
 			GetPricingGroupMonitor(c)
 			require.Equal(t, http.StatusOK, recorder.Code)
 			var payload struct {
@@ -77,6 +92,11 @@ func TestGetPricingGroupMonitorDisplaysConfiguredCategoriesForEveryRole(t *testi
 			assert.Equal(t, []string{"default", "调度验收-低成本", "smart-cache-priority-demo", "smart-cache-weight-demo"}, groupNames)
 			assert.Equal(t, []string{"88", "88", "77", "未分类"}, categories)
 			assert.Equal(t, []string{"88", "77", "未分类"}, payload.Data.Categories)
+			assert.Equal(t, "默认分组", payload.Data.Items[0]["description"])
+			assert.Equal(t, "低成本线路\n适合批量请求", payload.Data.Items[1]["description"])
+			assert.NotContains(t, payload.Data.Items[2], "description")
+			assert.NotContains(t, payload.Data.Items[3], "description")
+			assert.NotContains(t, recorder.Body.String(), "未公开说明")
 			assert.NotContains(t, recorder.Body.String(), "admin_preview")
 		})
 	}
@@ -95,6 +115,7 @@ func TestGetPricingGroupMonitorShowsSavedEmptyCategories(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/pricing/group-monitor", nil)
+	prepareChannelGroupMonitorPageSnapshot(t)
 	GetPricingGroupMonitor(c)
 	require.Equal(t, http.StatusOK, recorder.Code)
 	var payload struct {
@@ -187,6 +208,7 @@ func TestGetPricingGroupMonitorKeepsVisibleGroupsWhenRoutesUnavailable(t *testin
 			c, _ := gin.CreateTestContext(recorder)
 			c.Request = httptest.NewRequest(http.MethodGet, "/api/pricing/group-monitor", nil)
 			c.Set("role", common.RoleCommonUser)
+			prepareChannelGroupMonitorPageSnapshot(t)
 			GetPricingGroupMonitor(c)
 
 			require.Equal(t, http.StatusOK, recorder.Code)
@@ -204,10 +226,15 @@ func TestGetPricingGroupMonitorKeepsVisibleGroupsWhenRoutesUnavailable(t *testin
 			assert.Equal(t, "通用模型", item.Category)
 			assert.Equal(t, "gpt-4", item.ProbeModel)
 			assert.Equal(t, tc.wantStatus, item.Status)
-			require.NotNil(t, item.SuccessRate)
-			assert.Equal(t, 100.0, *item.SuccessRate)
-			assert.Equal(t, now-1, item.LastFinishedAt)
-			assert.Equal(t, &firstToken, item.LatestFirstTokenMs)
+			if tc.monitorEnabled {
+				require.NotNil(t, item.SuccessRate)
+				assert.Equal(t, 100.0, *item.SuccessRate)
+				assert.Equal(t, now-1, item.LastFinishedAt)
+				assert.Equal(t, &firstToken, item.LatestFirstTokenMs)
+			} else {
+				assert.Nil(t, item.SuccessRate)
+				assert.Zero(t, item.LastFinishedAt)
+			}
 			assert.Len(t, item.RecentWindow, 60)
 			assert.NotContains(t, recorder.Body.String(), "restricted")
 			assert.NotContains(t, recorder.Body.String(), "channel_id")

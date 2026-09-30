@@ -91,7 +91,7 @@ func setupGroupMonitorAvailabilityDatabase(t *testing.T, engine string) *gorm.DB
 	for _, table := range []any{
 		&model.Channel{}, &model.Ability{}, &model.User{}, &model.Option{}, &model.AuditLog{},
 		&model.ChannelRatioMonitor{}, &model.ChannelSmartScheduleRouteState{}, &model.ChannelSmartScheduleGroupPause{},
-		&model.ChannelGroupMonitorConfig{}, &model.ChannelGroupMonitorState{}, &model.ChannelGroupMonitorExecution{},
+		&model.ChannelGroupMonitorConfig{}, &model.ChannelGroupMonitorState{}, &model.ChannelGroupMonitorExecution{}, &model.ChannelMonitorEventOutbox{},
 	} {
 		require.False(t, db.Migrator().HasTable(table), "matrix database must be empty")
 		require.NoError(t, db.AutoMigrate(table))
@@ -103,7 +103,9 @@ func setupGroupMonitorAvailabilityDatabase(t *testing.T, engine string) *gorm.DB
 func TestChannelGroupMonitorUnavailableDatabaseMatrix(t *testing.T) {
 	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(engine, func(t *testing.T) {
+			setupChannelMonitorControllerTestDB(t)
 			db := setupGroupMonitorAvailabilityDatabase(t, engine)
+			common.RedisEnabled = true
 			channel := model.Channel{
 				Id: 931, Name: "停流监测", Type: constant.ChannelTypeOpenAI,
 				Status: common.ChannelStatusManuallyDisabled, Group: "monitor-unavailable", Models: "gpt-4.1",
@@ -172,6 +174,7 @@ func TestChannelGroupMonitorUnavailableDatabaseMatrix(t *testing.T) {
 						assert.False(t, execution.RequestDispatched)
 						assert.Zero(t, execution.ChannelId)
 					}
+					seedChannelGroupMonitorProjection(t, config, common.GetTimestamp())
 					items, err := buildChannelGroupMonitorItems(t.Context(), config, candidates, common.GetTimestamp())
 					require.NoError(t, err)
 					require.Len(t, items, 1)
@@ -206,6 +209,7 @@ func TestChannelGroupMonitorUnavailableDatabaseMatrix(t *testing.T) {
 				assert.Equal(t, "auto_probe_disabled", execution.ErrorCode)
 				assert.False(t, execution.RequestDispatched)
 			}
+			seedChannelGroupMonitorProjection(t, config, common.GetTimestamp())
 			items, err := buildChannelGroupMonitorItems(t.Context(), config, candidates, common.GetTimestamp())
 			require.NoError(t, err)
 			require.Len(t, items, 1)
@@ -222,6 +226,7 @@ func TestChannelGroupMonitorUnavailableDatabaseMatrix(t *testing.T) {
 			require.NoError(t, db.Where("run_id = ?", claim.RunId).First(&execution).Error)
 			assert.Equal(t, model.ChannelGroupMonitorResultSkipped, execution.Result)
 			assert.Equal(t, "probe_model_invalid", execution.ErrorCode)
+			prepareChannelGroupMonitorPageSnapshot(t)
 		})
 	}
 }
@@ -446,6 +451,7 @@ func TestBuildChannelGroupMonitorItemsUsesLatestResultAndDisplayWindow(t *testin
 
 	candidates, err := getChannelGroupMonitorCandidateModels(t.Context(), true)
 	require.NoError(t, err)
+	seedChannelGroupMonitorProjection(t, config, 1_000)
 	items, err := buildChannelGroupMonitorItems(
 		t.Context(), config, candidates, 1_000,
 	)
@@ -666,6 +672,7 @@ func TestGetPricingGroupMonitorOnlyReturnsConfiguredGroupsAndPublicFields(t *tes
 	context.Request = httptest.NewRequest(http.MethodGet, "/api/pricing/group-monitor", nil)
 	context.Set("id", 904)
 	context.Set("role", common.RoleCommonUser)
+	prepareChannelGroupMonitorPageSnapshot(t)
 	GetPricingGroupMonitor(context)
 
 	require.Equal(t, http.StatusOK, recorder.Code)

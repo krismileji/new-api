@@ -316,7 +316,7 @@ export function ChannelGroupMonitorSettingsSheet(
                     <div className='min-w-0 space-y-1'>
                       <FormLabel>启用周期探测</FormLabel>
                       <FormDescription>
-                        关闭后保留配置和历史，仍可由管理员手动探测
+                        关闭后保留配置和执行记录，展示统计清空
                       </FormDescription>
                     </div>
                     <FormControl>
@@ -478,9 +478,10 @@ export function ChannelGroupMonitorSettingsSheet(
                     <div className='min-w-0 space-y-1'>
                       <FormLabel>显示缓存率</FormLabel>
                       <FormDescription>
-                        按当前状态展示范围统计流式业务请求的缓存读取 Token /
-                        总输入
-                        Token，缓存写入仅计入总输入，无有效样本时显示暂无数据
+                        按当前状态展示范围，先计算每个用户 API Key
+                        在本分组的流式缓存率， 再展示最高值与各 Key
+                        的等权平均值；缓存写入仅计入总输入， 无有效样本的 Key
+                        不参与统计
                       </FormDescription>
                     </div>
                     <FormControl>
@@ -518,7 +519,7 @@ export function ChannelGroupMonitorSettingsSheet(
                       0 统计全部有效流式请求；大于 0
                       时，只统计输入上下文达到此下限的流式请求，包含等于下限的请求。1
                       K = 1000 tokens，输入包含缓存读取与写入，不含输出。
-                      配置变更只影响后续采集的请求，历史数据保留原统计口径。
+                      保存监控配置会清空展示统计，并按新配置重新累计。
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

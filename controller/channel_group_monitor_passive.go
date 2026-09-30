@@ -17,6 +17,10 @@ type channelGroupPassiveResponse struct {
 }
 
 func applyChannelGroupPassiveOverview(ctx context.Context, items []channelGroupMonitorItemResponse) {
+	applyChannelGroupPassiveOverviewSince(ctx, items, 0)
+}
+
+func applyChannelGroupPassiveOverviewSince(ctx context.Context, items []channelGroupMonitorItemResponse, startedAt int64) {
 	views, members := service.ReadChannelPassiveGroupSummaries(ctx)
 	for index := range items {
 		item := &items[index]
@@ -36,6 +40,9 @@ func applyChannelGroupPassiveOverview(ctx context.Context, items []channelGroupM
 				continue
 			}
 			period := view.Periods[0]
+			if period.PeriodStart < startedAt {
+				continue
+			}
 			item.Passive = &channelGroupPassiveResponse{Source: "redis_business", Scope: "group_final", IntervalSeconds: view.Target.IntervalSeconds, Period: period}
 			// Keep the historical period available without allowing its success
 			// to overwrite an invalid configuration or a newer routing failure.

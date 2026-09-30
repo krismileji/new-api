@@ -64,6 +64,7 @@ func TestUpdateChannelGroupMonitorSettingsCategory(t *testing.T) {
 			recorder = httptest.NewRecorder()
 			c, _ = gin.CreateTestContext(recorder)
 			c.Request = httptest.NewRequest(http.MethodGet, "/api/channel_monitor/group_monitor/settings", nil)
+			prepareChannelGroupMonitorPageSnapshot(t)
 			GetChannelGroupMonitorSettings(c)
 			require.Equal(t, http.StatusOK, recorder.Code)
 			var payload struct {
