@@ -30,6 +30,7 @@ import { cn } from '@/lib/utils'
 export type ModelPerfBadgeData = {
   window_start?: number
   window_end?: number
+  avg_ttft_ms?: number
   avg_latency_ms: number
   success_rate: number
   avg_tps: number
@@ -46,6 +47,7 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
   props: ModelPerfBadgeProps
 ) {
   const { t } = useTranslation()
+  const ttftText = formatLatency(props.perf?.avg_ttft_ms ?? 0)
   const latencyText = formatLatency(props.perf?.avg_latency_ms ?? 0)
   const throughputText = formatThroughput(props.perf?.avg_tps ?? 0).replace(
     ' t/s',
@@ -76,11 +78,11 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
     <div
       aria-label={t('Performance metrics for the last 24 hours')}
       className={cn(
-        'flex w-full min-w-0 items-center justify-between gap-3',
+        'flex w-full min-w-0 flex-wrap items-center justify-between gap-3',
         props.className
       )}
     >
-      <dl className='flex min-w-0 items-start gap-5 text-xs tabular-nums'>
+      <dl className='flex min-w-0 flex-wrap items-start gap-x-4 gap-y-2 text-xs tabular-nums'>
         <div className='w-24 shrink-0'>
           <dt
             title={t(
@@ -121,6 +123,14 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
                 />
               )
             })}
+          </dd>
+        </div>
+        <div title={t('Average TTFT')} className='shrink-0'>
+          <dt className='text-muted-foreground text-[11px] leading-4'>
+            {t('First token')}
+          </dt>
+          <dd className='mt-1 font-mono whitespace-nowrap'>
+            {ttftText === '—' ? '—s' : ttftText}
           </dd>
         </div>
         <div title={t('Average latency')} className='shrink-0'>

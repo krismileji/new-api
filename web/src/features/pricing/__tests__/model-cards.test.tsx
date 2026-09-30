@@ -162,7 +162,7 @@ describe('model cards', () => {
       'Performance metrics for the last 24 hours'
     )
     expect(within(metrics).getByText('—')).toBeVisible()
-    expect(within(metrics).getByText('—s')).toBeVisible()
+    expect(within(metrics).getAllByText('—s')).toHaveLength(2)
     expect(within(metrics).getByText('—t/s')).toBeVisible()
     expect(within(metrics).queryByText(/100/)).not.toBeInTheDocument()
     expect(
@@ -244,6 +244,81 @@ describe('model cards', () => {
       screen.queryByRole('group', { name: 'Tags' })
     ).not.toBeInTheDocument()
   })
+
+  it('shows the summary first-token time before latency and allows metrics to wrap on narrow cards', () => {
+    queryClient.setQueryData(['perf-metrics-summary', 24], {
+      success: true,
+      data: {
+        models: [
+          {
+            model_name: 'example-model',
+            avg_ttft_ms: 350,
+            avg_latency_ms: 1200,
+            avg_tps: 42,
+            success_rate: 100,
+          },
+        ],
+      },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ModelCardGrid models={[pricingModel()]} onModelClick={vi.fn()} />
+      </QueryClientProvider>
+    )
+
+    const metrics = screen.getByLabelText(
+      'Performance metrics for the last 24 hours'
+    )
+    expect(
+      within(metrics)
+        .getAllByRole('term')
+        .map((term) => term.textContent)
+    ).toEqual([
+      'Status100.00%',
+      'First token',
+      'Latency short',
+      'Throughput short',
+    ])
+    expect(
+      within(screen.getByTitle('Average TTFT')).getByText('350ms')
+    ).toBeVisible()
+    expect(
+      within(screen.getByTitle('Average latency')).getByText('1.20s')
+    ).toBeVisible()
+    expect(metrics).toHaveClass('flex-wrap')
+    expect(screen.getByText('First token').closest('dl')).toHaveClass(
+      'flex-wrap'
+    )
+    expect(
+      within(metrics).getByRole('button', { name: 'Details' })
+    ).toBeVisible()
+  })
+
+  it.each([
+    { avg_ttft_ms: undefined, expected: '—s' },
+    { avg_ttft_ms: 0, expected: '—s' },
+    { avg_ttft_ms: Number.NaN, expected: '—s' },
+    { avg_ttft_ms: 1500, expected: '1.50s' },
+  ])(
+    'shows $expected for first-token time $avg_ttft_ms',
+    ({ avg_ttft_ms, expected }) => {
+      render(
+        <ModelCard
+          model={pricingModel()}
+          onClick={vi.fn()}
+          perf={{
+            avg_ttft_ms,
+            avg_latency_ms: 1200,
+            avg_tps: 42,
+            success_rate: 100,
+          }}
+        />
+      )
+      expect(
+        within(screen.getByTitle('Average TTFT')).getByText(expected)
+      ).toBeVisible()
+    }
+  )
 
   it.each([
     { success_rate: 0, expected: '0.00%' },
@@ -441,7 +516,7 @@ describe('model cards', () => {
       within(
         screen.getByLabelText('Performance metrics for the last 24 hours')
       ).getAllByText(/^—/)
-    ).toHaveLength(3)
+    ).toHaveLength(4)
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Details' }))
     expect(onModelClick).toHaveBeenCalledWith('example-model')

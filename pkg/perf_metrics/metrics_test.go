@@ -181,15 +181,22 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
 			require.NoError(t, db.Migrator().DropTable(&model.PerfMetric{}))
 			require.NoError(t, db.AutoMigrate(&model.PerfMetric{}))
+			var version string
+			versionQuery := "SELECT version()"
+			if dialect.name == "sqlite" {
+				versionQuery = "SELECT sqlite_version()"
+			}
+			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("%s version: %s", dialect.name, version)
 
 			now := time.Now()
 			start, _ := queryWindow(now, 24)
 			hour := now.Unix() - now.Unix()%3600 - 3600
 			// Historical counters remain usable without reclassification or migration.
 			for _, row := range []model.PerfMetric{
-				{ModelName: "test-model", Group: "a", BucketTs: hour, RequestCount: 100, SuccessCount: 100, TotalLatencyMs: 100000, TtftCount: 100, TtftSumMs: 10000, OutputTokens: 200, GenerationMs: 40000},
-				{ModelName: "test-model", Group: "inactive", BucketTs: hour, RequestCount: 100},
-				{ModelName: "test-model", Group: "a", BucketTs: start - 3600, RequestCount: 100},
+				{ModelName: "test-model", Group: "a", BucketTs: hour, RequestCount: 100, SuccessCount: 100, TotalLatencyMs: 100000, TtftCount: 2, TtftSumMs: 200, OutputTokens: 200, GenerationMs: 40000},
+				{ModelName: "test-model", Group: "inactive", BucketTs: hour, RequestCount: 100, TtftCount: 100, TtftSumMs: 90000},
+				{ModelName: "test-model", Group: "a", BucketTs: start - 3600, RequestCount: 100, TtftCount: 100, TtftSumMs: 90000},
 			} {
 				require.NoError(t, model.UpsertPerfMetric(&row))
 			}
@@ -202,7 +209,7 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			assert.Equal(t, 100.0, businessRejected.Summary.SuccessRate)
 
 			failure := &atomicBucket{}
-			failure.add(Sample{LatencyMs: 2000})
+			failure.add(Sample{LatencyMs: 2000, HasTtft: true, TtftMs: 1000})
 			hotBuckets.Store(bucketKey{model: "test-model", group: "b", bucketTs: hour}, failure)
 			before, err := Query(QueryParams{Model: "test-model", Hours: 24, AllowedGroups: groups})
 			require.NoError(t, err)
@@ -219,6 +226,9 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			assert.Equal(t, before.Summary, summary.Summary)
 			require.Len(t, summary.Models, 1)
 			assert.Equal(t, 99.01, summary.Models[0].SuccessRate)
+			// Only three requests have TTFT samples; weight their durations,
+			// not group averages or the full 101-request count.
+			assert.Equal(t, int64(400), summary.Models[0].AvgTtftMs)
 			assert.Equal(t, 99.01, summary.Models[0].RecentSuccessSeries[0].SuccessRate)
 			encoded, err := common.Marshal(summary)
 			require.NoError(t, err)
@@ -231,6 +241,9 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, before.Summary, after.Summary)
 			assert.Equal(t, before.Series, after.Series)
+			flushedSummary, err := QuerySummaryAll(24, groups)
+			require.NoError(t, err)
+			assert.Equal(t, summary.Models, flushedSummary.Models)
 
 			RecordRelayResult(context.Background(), &relaycommon.RelayInfo{OriginModelName: "test-model", UsingGroup: "a", StartTime: now}, types.InitOpenAIError("context_length_exceeded", 400))
 			after, err = Query(QueryParams{Model: "test-model", Hours: 24, AllowedGroups: groups})
@@ -249,6 +262,7 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, 98.04, combined.Summary.SuccessRate)
 			assert.Equal(t, 99.01, combined.Models[0].SuccessRate)
+			assert.Zero(t, combined.Models[1].AvgTtftMs)
 		})
 	}
 }

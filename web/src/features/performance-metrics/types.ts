@@ -57,6 +57,7 @@ export type SuccessRatePoint = { ts: number; success_rate: number }
 
 export type PerfModelSummary = {
   model_name: string
+  avg_ttft_ms?: number
   avg_latency_ms: number
   success_rate: number
   avg_tps: number
