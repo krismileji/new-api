@@ -99,7 +99,7 @@ import {
   ChannelMonitorPrivacyNotice,
   ChannelMonitorPrivacyProvider,
 } from './components/channel-monitor-privacy'
-import { ChannelMonitorProfitValue } from './components/channel-monitor-profit'
+import { ChannelMonitorProfitOverview } from './components/channel-monitor-profit'
 import {
   ChannelMonitorSettingsDialog,
   ChannelMonitorSmartScheduleSettingsSheet,
@@ -130,7 +130,7 @@ import {
 } from './lib/format'
 import { isChannelModelDetectionRunActive } from './lib/model-detection'
 import { aggregateChannelMonitorPerformanceByChannel } from './lib/performance'
-import { formatProfitMoney, formatProfitRate } from './lib/profit-format'
+import { formatProfitMoney } from './lib/profit-format'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
   CHANNEL_MONITOR_SMART_SCHEDULE_QUERY_KEY,
@@ -1045,14 +1045,9 @@ function ChannelMonitorContent() {
     : (performanceModelOptions[0]?.value ?? '')
 
   const costOverview = costQuery.data?.data
-  const todayCostSummary = overview?.today_cost_summary
-  const todayCostOverview = todayCostSummary ?? costOverview
-  const todaySettledCount =
-    todayCostSummary?.settled_count ?? costOverview?.coverage.settled_count ?? 0
-  const todayUnresolvedCount =
-    todayCostSummary?.unresolved_count ??
-    costOverview?.coverage.unresolved_count ??
-    0
+  const profitSummary = profitOverview?.scope_summary
+  const todaySettledCount = profitSummary?.settled_count ?? 0
+  const todayUnresolvedCount = profitSummary?.unresolved_count ?? 0
   const pageRealtimeMetadata = mergeChannelMonitorRealtimeMetadata([
     overview,
     costOverview,
@@ -1061,38 +1056,21 @@ function ChannelMonitorContent() {
     smartScheduleSummaryResult,
     view === 'smart-schedule' ? smartScheduleResult : undefined,
   ])
-  const todayProbeCost = todayCostOverview?.today_probe_cost_cny ?? 0
-  const todayGroupProbeCost = todayCostOverview?.today_group_probe_cost_cny ?? 0
+  const todayProbeCost = profitSummary?.probe_cost_nano_cny ?? 0
+  const todayGroupProbeCost = profitSummary?.group_probe_cost_nano_cny ?? 0
   const todayModelDetectionCost =
-    todayCostOverview?.today_model_detection_cost_cny ?? 0
-  const todayBusinessCost = todayCostOverview
-    ? Math.max(
-        0,
-        todayCostOverview.today_cost_cny -
-          todayProbeCost -
-          todayModelDetectionCost
-      )
-    : 0
+    profitSummary?.model_detection_cost_nano_cny ?? 0
+  const todayBusinessCost = Math.max(
+    0,
+    (profitSummary?.cost_nano_cny ?? 0) -
+      todayProbeCost -
+      todayModelDetectionCost
+  )
   let costDescription = '按北京时间记录已结算成本'
-  let costSecondaryDescription = '详情中可查看成本趋势与解析情况'
-  if (costQuery.isError && !todayCostSummary) {
-    costDescription = '成本统计加载失败'
-    costSecondaryDescription = '请稍后重试或手动刷新'
-  } else if (
-    todayCostOverview &&
-    todaySettledCount + todayUnresolvedCount === 0
-  ) {
-    costDescription = '暂无已记录的上游请求尝试'
-    costSecondaryDescription = '按北京时间统计已结算成本'
-  } else if (todayCostOverview) {
-    costDescription = `业务 ${formatChannelMonitorCost(todayBusinessCost)} · 探测 ${formatChannelMonitorCost(todayProbeCost)}（分组 ${formatChannelMonitorCost(todayGroupProbeCost)}） · 模型检测 ${formatChannelMonitorCost(todayModelDetectionCost)}`
-    costSecondaryDescription = `昨日 ${formatChannelMonitorCost(costOverview?.yesterday_cost_cny)} · 今日解析率 ${formatChannelMonitorResolutionRate(
-      todaySettledCount,
-      todayUnresolvedCount
-    )}`
-    if (todayUnresolvedCount > 0) {
-      costSecondaryDescription += ` · 未解析 ${todayUnresolvedCount}`
-    }
+  let costSecondaryDescription = '成本、扣费与利润使用同一份核对结果'
+  if (profitSummary) {
+    costDescription = `业务 ${formatProfitMoney(todayBusinessCost)} · 探测 ${formatProfitMoney(todayProbeCost)}（分组 ${formatProfitMoney(todayGroupProbeCost)}） · 模型检测 ${formatProfitMoney(todayModelDetectionCost)}`
+    costSecondaryDescription = `昨日 ${formatChannelMonitorCost(costOverview?.yesterday_cost_cny)} · 今日解析率 ${formatChannelMonitorResolutionRate(todaySettledCount, todayUnresolvedCount)} · 未解析 ${todayUnresolvedCount}`
   }
   const enabledChannelCount = channels.filter(
     (channel) => channel.status === CHANNEL_STATUS.ENABLED
@@ -1188,45 +1166,11 @@ function ChannelMonitorContent() {
             <MonitorStatCard
               label='今日已结算成本'
               value={
-                <div className='flex min-w-0 flex-col items-start gap-0.5'>
-                  <div className='flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-0.5'>
-                    {costQuery.isLoading && !todayCostSummary ? (
-                      <Skeleton className='h-7 w-24' aria-label='成本加载中' />
-                    ) : (
-                      <span>
-                        {formatChannelMonitorCost(
-                          todayCostOverview?.today_cost_cny
-                        )}
-                      </span>
-                    )}
-                    <span className='inline-flex items-baseline gap-1 text-base font-normal'>
-                      <span className='text-muted-foreground text-xs'>
-                        利润
-                      </span>
-                      {profitQuery.isLoading && !profitOverview ? (
-                        <Skeleton
-                          className='h-5 w-16'
-                          aria-label='利润加载中'
-                        />
-                      ) : (
-                        <ChannelMonitorProfitValue
-                          summary={profitOverview?.scope_summary}
-                          className='text-base font-normal'
-                        />
-                      )}
-                    </span>
-                  </div>
-                  <span className='text-muted-foreground text-xs font-normal'>
-                    扣费{' '}
-                    {formatProfitMoney(
-                      profitOverview?.scope_summary.income_nano_cny
-                    )}{' '}
-                    · 利润率 {formatProfitRate(profitOverview?.scope_summary)}
-                    {profitQuery.isError && !profitOverview
-                      ? ' · 利润加载失败'
-                      : ''}
-                  </span>
-                </div>
+                <ChannelMonitorProfitOverview
+                  summary={profitSummary}
+                  loading={profitQuery.isLoading}
+                  failed={profitQuery.isError}
+                />
               }
               description={costDescription}
               secondaryDescription={costSecondaryDescription}
@@ -1758,8 +1702,7 @@ function ChannelMonitorContent() {
               costQuery.isFetching ||
               todaySuccessQuery.isFetching ||
               smartScheduleSummaryQuery.isFetching ||
-              (view === 'smart-schedule' &&
-                smartScheduleDetailQuery.isFetching)
+              (view === 'smart-schedule' && smartScheduleDetailQuery.isFetching)
             }
             onPrefetchTaskHistory={() => {
               void loadChannelMonitorTaskHistoryDialog()

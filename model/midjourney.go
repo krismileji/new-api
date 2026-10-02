@@ -24,8 +24,16 @@ type Midjourney struct {
 	Buttons     string `json:"buttons"`
 	Properties  string `json:"properties"`
 
-	TokenId          int `json:"-" gorm:"default:0"`
-	BillingChannelId int `json:"-" gorm:"default:0"`
+	TokenId          int                       `json:"-" gorm:"default:0"`
+	BillingChannelId int                       `json:"-" gorm:"default:0"`
+	PendingBilling   *MidjourneyPendingBilling `json:"-" gorm:"-"`
+}
+
+// PendingBilling is request-local intent; persisted Quota only records funds
+// that have actually committed.
+type MidjourneyPendingBilling struct {
+	Quota     int
+	ChannelID int
 }
 
 // TaskQueryParams 用于包含所有搜索条件的结构体，可以根据需求添加更多字段
@@ -97,7 +105,7 @@ func GetAllUnFinishTasks() []*Midjourney {
 	var tasks []*Midjourney
 	var err error
 	// get all tasks progress is not 100%
-	err = DB.Where("progress != ?", "100%").Find(&tasks).Error
+	err = DB.Where("progress != ? OR (status = ? AND quota > 0)", "100%", "FAILURE").Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -111,7 +119,7 @@ func GetAllUnFinishTasks() []*Midjourney {
 func HasUnfinishedMidjourneyTasks() bool {
 	var id int
 	err := DB.Model(&Midjourney{}).
-		Where("progress != ?", "100%").
+		Where("progress != ? OR (status = ? AND quota > 0)", "100%", "FAILURE").
 		Limit(1).
 		Pluck("id", &id).Error
 	return err == nil && id != 0
@@ -169,7 +177,7 @@ func (midjourney *Midjourney) Insert() error {
 
 func (midjourney *Midjourney) Update() error {
 	var err error
-	err = DB.Save(midjourney).Error
+	err = DB.Model(midjourney).Select("*").Omit("quota", "token_id", "billing_channel_id").Updates(midjourney).Error
 	return err
 }
 
@@ -192,7 +200,8 @@ func (midjourney *Midjourney) GetBillingChannelId() int {
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
 // Uses Model().Select("*").Updates() to avoid GORM Save()'s INSERT fallback.
 func (midjourney *Midjourney) UpdateWithStatus(fromStatus string) (bool, error) {
-	result := DB.Model(midjourney).Where("status = ?", fromStatus).Select("*").Updates(midjourney)
+	result := DB.Model(midjourney).Where("status = ?", fromStatus).Select("*").
+		Omit("quota", "token_id", "billing_channel_id").Updates(midjourney)
 	if result.Error != nil {
 		return false, result.Error
 	}

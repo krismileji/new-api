@@ -105,7 +105,7 @@ func TestChannelMonitorSystemProbeAnalytics(t *testing.T) {
 	} {
 		t.Run(scenario.source+"/"+strconv.FormatInt(scenario.offset, 10), func(t *testing.T) {
 			db := setupChannelMonitorControllerTestDB(t)
-			require.NoError(t, db.AutoMigrate(&model.ChannelMonitorDailyCostDetail{}, &model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeState{}, &model.ChannelDailyCostOutbox{}))
+			require.NoError(t, db.AutoMigrate(&model.ChannelMonitorDailyCostDetail{}, &model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeState{}, &model.ChannelMonitorIncomeGap{}, &model.ChannelDailyCostOutbox{}))
 			runChannelMonitorSystemProbeAnalyticsCases(t, db, model.ChannelDailyCostDayStart(common.GetTimestamp())+scenario.offset, scenario.source, scenario.name)
 			if scenario.offset == 0 {
 				var details []model.ChannelMonitorDailyCostDetail

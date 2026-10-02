@@ -233,6 +233,9 @@ func TestChannelDailyCostRecoveryReservesCleanupBeforeDeadline(t *testing.T) {
 					if tx.Statement.Table != "channel_daily_costs" {
 						return
 					}
+					deadline, ok := tx.Statement.Context.Deadline()
+					assert.True(t, ok)
+					assert.Equal(t, started.Add(wantElapsed), deadline, "记账必须在清理预算之前截止")
 					if scenario == "shutdown" {
 						cancel()
 					}
@@ -241,7 +244,9 @@ func TestChannelDailyCostRecoveryReservesCleanupBeforeDeadline(t *testing.T) {
 				}))
 				result, err := applyChannelDailyCostOutboxBatch(ctx, "cleanup-reserve-worker", claimAt, started.Unix())
 				require.ErrorIs(t, err, context.DeadlineExceeded)
-				assert.Equal(t, started.Add(wantElapsed), time.Now())
+				// Releasing the lease may retry a SQLite lock after cancellation.
+				// It has its own three-second budget, not a zero-duration budget.
+				assert.WithinRange(t, time.Now(), started.Add(wantElapsed), started.Add(wantElapsed+3*time.Second))
 				assert.EqualValues(t, 1, result.Released, "记账期限结束后仍能使用独立预算释放租约")
 				assert.Zero(t, result.Applied)
 				var row model.ChannelDailyCostOutbox

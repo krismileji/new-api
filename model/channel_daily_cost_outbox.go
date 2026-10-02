@@ -380,10 +380,17 @@ func DeleteProcessedChannelDailyCostOutboxEvents(ctx context.Context, processedB
 	var deleted int64
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var ids []int64
-		if err := tx.Model(&ChannelDailyCostOutbox{}).
+		query := tx.Model(&ChannelDailyCostOutbox{}).
 			Select("id").
 			Where("processed_at > ? AND processed_at < ?", 0, processedBefore).
-			Where("redis_projected_at > ? OR occurred_at < ?", 0, ChannelDailyCostDayStart(time.Now().Unix())-86400).
+			Where("redis_projected_at > ? OR occurred_at < ?", 0, ChannelDailyCostDayStart(time.Now().Unix())-86400)
+		if ChannelMonitorIncomeReady.Load() {
+			// A failed attribution read may still need this event's final day.
+			// Retain only existing dependencies, not all processed history.
+			query = query.Where("event_id NOT IN (?)", tx.Model(&ChannelMonitorIncome{}).
+				Select("cost_event_id").Where("cost_recorded = 0 AND cost_event_id <> ?", ""))
+		}
+		if err := query.
 			Order("id ASC").
 			Limit(limit).
 			Find(&ids).Error; err != nil {
@@ -392,8 +399,12 @@ func DeleteProcessedChannelDailyCostOutboxEvents(ctx context.Context, processedB
 		if len(ids) == 0 {
 			return nil
 		}
-		result := tx.Where("id IN ? AND processed_at > ? AND processed_at < ?", ids, 0, processedBefore).
-			Delete(&ChannelDailyCostOutbox{})
+		deletion := tx.Where("id IN ? AND processed_at > ? AND processed_at < ?", ids, 0, processedBefore)
+		if ChannelMonitorIncomeReady.Load() {
+			deletion = deletion.Where("event_id NOT IN (?)", tx.Model(&ChannelMonitorIncome{}).
+				Select("cost_event_id").Where("cost_recorded = 0 AND cost_event_id <> ?", ""))
+		}
+		result := deletion.Delete(&ChannelDailyCostOutbox{})
 		deleted = result.RowsAffected
 		return result.Error
 	})

@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -13,10 +14,10 @@ func TestChannelMonitorIncomeParityUpgrade(t *testing.T) {
 	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(engine, func(t *testing.T) {
 			db := setupChannelDailyCostBatchDatabase(t, engine)
-			require.NoError(t, db.AutoMigrate(&ChannelMonitorIncome{}, &ChannelMonitorIncomeState{}))
+			require.NoError(t, db.AutoMigrate(&ChannelMonitorIncome{}, &ChannelMonitorIncomeState{}, &ChannelMonitorIncomeGap{}))
 			ready, gap := ChannelMonitorIncomeReady.Load(), channelMonitorIncomeGap.Load()
 			t.Cleanup(func() {
-				assert.NoError(t, db.Migrator().DropTable(&ChannelMonitorIncome{}, &ChannelMonitorIncomeState{}))
+				assert.NoError(t, db.Migrator().DropTable(&ChannelMonitorIncome{}, &ChannelMonitorIncomeState{}, &ChannelMonitorIncomeGap{}))
 				ChannelMonitorIncomeReady.Store(ready)
 				channelMonitorIncomeGap.Store(gap)
 			})
@@ -58,7 +59,14 @@ func TestChannelMonitorIncomeParityUpgrade(t *testing.T) {
 				assert.Equal(t, expected, saved, "仅修正换算金额，保留身份、额度、日期和结算状态")
 				var savedState ChannelMonitorIncomeState
 				require.NoError(t, db.First(&savedState, 1).Error)
-				assert.Equal(t, state, savedState, "历史缺口仍须标记，不能因收入修正而确认利润")
+				expectedState := state
+				expectedState.GapSince = 0
+				assert.Equal(t, expectedState, savedState)
+				var gaps []ChannelMonitorIncomeGap
+				require.NoError(t, db.Find(&gaps).Error)
+				require.Len(t, gaps, 1, "重复启动不能重复创建历史缺口")
+				assert.Equal(t, ChannelDailyCostDayStart(state.GapSince), gaps[0].From)
+				assert.Equal(t, ChannelDailyCostDayStart(time.Now().Unix())+86400, gaps[0].To)
 				var savedCost ChannelDailyCost
 				require.NoError(t, db.First(&savedCost, cost.Id).Error)
 				assert.Equal(t, cost, savedCost)

@@ -1222,7 +1222,7 @@ func executeTaskSubmissionWith(
 	}
 	service.PrepareTaskChannelCost(c, task)
 	diagnostics.insertStart(task)
-	if insertErr := task.InsertWithContext(c.Request.Context(), insertOmits...); insertErr != nil {
+	if insertErr := service.PersistTaskWithBilling(c, relayInfo, task, insertOmits...); insertErr != nil {
 		common.SysError("insert task error: " + insertErr.Error())
 		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to persist task"), "task_insert_failed", http.StatusInternalServerError)
 		diagnostics.failed("insert", "database_error", taskErr, false)

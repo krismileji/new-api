@@ -48,6 +48,10 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 	taskM := make(map[string]*model.Midjourney)
 	nullTaskIds := make([]int, 0)
 	for _, task := range tasks {
+		if task.Status == "FAILURE" && task.Quota > 0 {
+			service.RefundMidjourneyQuota(ctx, task, task.FailReason)
+			continue
+		}
 		if task.MjId == "" {
 			// 统计失败的未完成任务
 			nullTaskIds = append(nullTaskIds, task.Id)
@@ -204,6 +208,7 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 			shouldReturnQuota := false
 			if (task.Progress != "100%" && responseItem.FailReason != "") || (task.Progress == "100%" && task.Status == "FAILURE") {
 				logger.LogInfo(ctx, task.MjId+" 构建失败，"+task.FailReason)
+				task.Status = "FAILURE"
 				task.Progress = "100%"
 				if task.Quota != 0 {
 					shouldReturnQuota = true

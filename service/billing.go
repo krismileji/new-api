@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
@@ -49,9 +50,26 @@ func PreConsumeBilling(c *gin.Context, preConsumedQuota int, relayInfo *relaycom
 // SettleBilling 执行计费结算。如果 RelayInfo 上有 BillingSession 则通过 session 结算，
 // 否则回退到旧的 PostConsumeQuota 路径（兼容按次计费等场景）。
 func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuota int) (err error) {
-	income := prepareChannelMonitorIncome(ctx, relayInfo, actualQuota, "request")
+	var income *model.ChannelMonitorIncome
+	session, managedSession := relayInfo.Billing.(*BillingSession)
+	if !managedSession {
+		var fundingDelta *int
+		if relayInfo.Billing == nil {
+			delta := actualQuota - relayInfo.FinalPreConsumedQuota
+			fundingDelta = &delta
+		}
+		var prepareErr error
+		income, prepareErr = prepareChannelMonitorIncomeResult(ctx, relayInfo, actualQuota, "request", fundingDelta)
+		if prepareErr != nil {
+			return prepareErr
+		}
+	}
 	legacyFundingApplied := false
+	atomicSettlement := false
 	defer func() {
+		if atomicSettlement {
+			return
+		}
 		committed := err == nil || legacyFundingApplied
 		if session, ok := relayInfo.Billing.(*BillingSession); ok {
 			committed = session.fundingCommitted()
@@ -82,8 +100,15 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 			))
 		}
 
-		if err := relayInfo.Billing.Settle(actualQuota); err != nil {
-			return err
+		var settleErr error
+		if managedSession {
+			atomicSettlement = true
+			settleErr = session.settleWithIncome(ctx, actualQuota)
+		} else {
+			settleErr = relayInfo.Billing.Settle(actualQuota)
+		}
+		if settleErr != nil {
+			return settleErr
 		}
 
 		// 发送额度通知（订阅计费使用订阅剩余额度）
@@ -99,8 +124,9 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 
 	// 回退：无 BillingSession 时使用旧路径
 	quotaDelta := actualQuota - relayInfo.FinalPreConsumedQuota
-	if quotaDelta != 0 {
-		result, settleErr := postConsumeQuotaWithResult(relayInfo, quotaDelta, relayInfo.FinalPreConsumedQuota, true)
+	if quotaDelta != 0 || income != nil {
+		atomicSettlement = income != nil
+		result, settleErr := postConsumeMonitoredIncome(ctx, relayInfo, income, quotaDelta, relayInfo.FinalPreConsumedQuota, true)
 		legacyFundingApplied = result.FundingApplied
 		return settleErr
 	}

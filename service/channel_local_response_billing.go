@@ -34,7 +34,7 @@ func (s *BillingSession) FinishWithoutCharge(ctx context.Context) error {
 	default:
 		return errors.New("该计费会话不支持本地响应退款")
 	}
-	if refund.WalletQuota+refund.TokenQuota+refund.SubscriptionQuota == 0 {
+	if refund.WalletQuota+refund.TokenQuota+refund.SubscriptionQuota == 0 && s.reservationKey == "" {
 		s.refunded = true
 		return nil
 	}

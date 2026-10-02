@@ -15,10 +15,10 @@ func TestChannelMonitorIncomePreparationDuringCostProjection(t *testing.T) {
 	// PostgreSQL does not gap-lock a missing income row. A request can finish
 	// funding while the cost worker is between matching income and committing.
 	db := setupChannelDailyCostBatchDatabase(t, "postgres")
-	require.NoError(t, db.AutoMigrate(&ChannelMonitorIncome{}, &ChannelMonitorIncomeState{}))
+	require.NoError(t, db.AutoMigrate(&ChannelMonitorIncome{}, &ChannelMonitorIncomeState{}, &ChannelMonitorIncomeGap{}))
 	previousReady, previousGap := ChannelMonitorIncomeReady.Load(), channelMonitorIncomeGap.Load()
 	t.Cleanup(func() {
-		assert.NoError(t, db.Migrator().DropTable(&ChannelMonitorIncome{}, &ChannelMonitorIncomeState{}))
+		assert.NoError(t, db.Migrator().DropTable(&ChannelMonitorIncome{}, &ChannelMonitorIncomeState{}, &ChannelMonitorIncomeGap{}))
 		ChannelMonitorIncomeReady.Store(previousReady)
 		channelMonitorIncomeGap.Store(previousGap)
 	})

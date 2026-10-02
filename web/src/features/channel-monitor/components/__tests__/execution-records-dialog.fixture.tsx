@@ -74,7 +74,7 @@ Object.defineProperty(domWindow.Element.prototype, 'getAnimations', {
 
 const { act } = await import('react')
 const { createRoot } = await import('react-dom/client')
-const { QueryClient, QueryClientProvider } =
+const { QueryClient, QueryClientProvider, notifyManager } =
   await import('@tanstack/react-query')
 const { ChannelMonitorTaskHistoryDialog } =
   await import('../channel-monitor-task-history-dialog')
@@ -126,6 +126,9 @@ const reactTestGlobals = globalThis as typeof globalThis & {
   IS_REACT_ACT_ENVIRONMENT?: boolean
 }
 reactTestGlobals.IS_REACT_ACT_ENVIRONMENT = true
+// Query notifications arrive after the adapter promise resolves; flush their
+// React updates before the DOM observer checks the resulting dialog content.
+notifyManager.setNotifyFunction((callback) => act(callback))
 
 function createTask(
   type: ChannelMonitorTask['type'],
@@ -957,4 +960,5 @@ await act(async () => restoredPreferenceRendered.root.unmount())
 restoredPreferenceRendered.container.remove()
 restoredPreferenceQueryClient.clear()
 api.defaults.adapter = originalAdapter
+notifyManager.setNotifyFunction((callback) => callback())
 domWindow.close()

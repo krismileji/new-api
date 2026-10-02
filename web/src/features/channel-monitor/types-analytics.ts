@@ -89,6 +89,7 @@ export type ChannelMonitorAnalyticsSummary = {
   probe_cost_nano_cny?: number
   model_detection_cost_nano_cny?: number
   profit_nano_cny?: number
+  group_probe_cost_nano_cny?: number
   profit_rate?: number | null
   profit_confirmed?: boolean
   pending_income_count?: number

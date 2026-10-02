@@ -119,7 +119,7 @@ func TestTaskExpressionChannelCostDatabaseMatrix(t *testing.T) {
 				t.Run(tc.name, func(t *testing.T) {
 					common.QuotaPerUnit = 500000
 					identity := fmt.Sprintf("cost-%d-%d", index, time.Now().UnixNano())
-					snap := &billingexpr.BillingSnapshot{ExprString: `u("units") * 0.01`, TaskUsageBilling: true,
+					snap := &billingexpr.BillingSnapshot{ExprString: `u("units") * 0.01`, ExprHash: billingexpr.ExprHashString(`u("units") * 0.01`), TaskUsageBilling: true,
 						QuotaPerUnit: 500000, GroupRatio: tc.group, UsageFacts: map[string]any{"units": tc.units}}
 					initial, _, err := EvaluateTaskCompletionUsage(snap, nil)
 					require.NoError(t, err)

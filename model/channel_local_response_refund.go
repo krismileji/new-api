@@ -96,6 +96,25 @@ func QueueChannelLocalResponseRefund(ctx context.Context, refund *ChannelLocalRe
 		if saved.UserID != refund.UserID || saved.TokenID != refund.TokenID || saved.SubscriptionID != refund.SubscriptionID || saved.WalletQuota != refund.WalletQuota || saved.TokenQuota != refund.TokenQuota || saved.SubscriptionQuota != refund.SubscriptionQuota {
 			return errors.New("本地响应退款请求已存在且金额不一致")
 		}
+		if ChannelMonitorIncomeReady.Load() && !saved.Applied {
+			var income ChannelMonitorIncome
+			err := lockForUpdate(tx).Where("settlement_key = ?", ChannelMonitorIncomeKey(refund.RequestID, "request")).First(&income).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			if err == nil {
+				if (income.Status != "reserved" && income.Status != "refund_pending") || income.UserID != refund.UserID ||
+					income.Quota != refund.WalletQuota+refund.SubscriptionQuota ||
+					income.FundingSubscriptionID != refund.SubscriptionID ||
+					(refund.TokenQuota > 0 && (income.FundingTokenID != refund.TokenID || refund.TokenQuota != income.Quota)) ||
+					(income.FundingTokenID > 0 && income.Quota > 0 && refund.TokenQuota == 0) {
+					return errors.New("退款与收入预扣记录不一致")
+				}
+				if err := tx.Model(&income).Updates(map[string]any{"status": "refund_pending", "updated_at": time.Now().Unix()}).Error; err != nil {
+					return err
+				}
+			}
+		}
 		if userPending != 0 {
 			var user User
 			if err := lockForUpdate(tx).Select("id", "quota").First(&user, refund.UserID).Error; err != nil {
@@ -153,6 +172,15 @@ func ApplyChannelLocalResponseRefund(ctx context.Context, requestID string) erro
 		}
 		if refund.Applied {
 			return nil
+		}
+		if ChannelMonitorIncomeReady.Load() {
+			// Queue transferred ownership under the same income-row lock used
+			// by settlement. Close that reservation together with the refund.
+			if err := tx.Model(&ChannelMonitorIncome{}).
+				Where("settlement_key = ? AND status = ?", ChannelMonitorIncomeKey(requestID, "request"), "refund_pending").
+				Updates(map[string]any{"status": "settled", "quota": 0, "income_nano_cny": 0, "cost_recorded": 1, "updated_at": time.Now().Unix()}).Error; err != nil {
+				return err
+			}
 		}
 		if refund.WalletQuota > 0 {
 			var user User

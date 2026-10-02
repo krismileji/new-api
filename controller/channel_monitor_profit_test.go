@@ -2,6 +2,9 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -17,16 +20,155 @@ func TestChannelMonitorProfitAnalyticsCombinesIncomeAndAllCostSources(t *testing
 	db := setupChannelMonitorControllerTestDB(t)
 	t.Setenv("CHANNEL_DAILY_COST_RELIABLE_OUTBOX", "true")
 	require.NoError(t, db.AutoMigrate(
-		&model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeState{},
+		&model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeState{}, &model.ChannelMonitorIncomeGap{},
 		&model.ChannelMonitorDailyCostDetail{}, &model.ChannelDailyCostOutbox{},
 	))
 
 	day := model.ChannelDailyCostDayStart(common.GetTimestamp()) - 2*24*60*60
 	runChannelMonitorProfitAnalyticsCases(t, db, day)
+	runChannelMonitorProfitCoverageCases(t, db, day+3*86400)
+}
+
+func runChannelMonitorProfitCoverageCases(t *testing.T, db *gorm.DB, day int64) {
+	t.Helper()
+	journalDir := t.TempDir()
+	t.Setenv("CHANNEL_MONITOR_INCOME_GAP_DIR", journalDir)
+	ctx := context.Background()
+	const first, second = 900241, 900242
+	for _, table := range []any{&model.ChannelMonitorIncome{}, &model.ChannelDailyCost{}, &model.ChannelDailyCostOutbox{}, &model.ChannelMonitorIncomeGap{}} {
+		require.NoError(t, db.Where("channel_id IN ?", []int{first, second}).Delete(table).Error)
+	}
+	require.NoError(t, db.Model(&model.ChannelMonitorIncomeState{}).Where("id = 1").Updates(map[string]any{"started_at": day + 3600, "retained_from": 0, "gap_since": 0}).Error)
+	for i := range 3 {
+		for _, channel := range []int{first, second} {
+			at := day + int64(i)*86400
+			require.NoError(t, db.Create(&model.ChannelDailyCost{ChannelId: channel, DayStart: at, CostNanoCNY: 30, SettledCount: 1}).Error)
+			require.NoError(t, db.Create(&model.ChannelMonitorIncome{SettlementKey: model.ChannelMonitorIncomeKey(fmt.Sprintf("%d:%d", at, channel), "coverage"), DayStart: at, ChannelID: channel, UserID: 1, BillingSource: "wallet", QuotaPerUnit: "1", USDToCNY: "1", Quota: 20, IncomeNanoCNY: 20, Status: "settled", CostRecorded: 1}).Error)
+		}
+	}
+	query := channelMonitorAnalyticsQuery{Metric: "profit", GroupBy: "day", From: day, To: day + 3*86400, Channel: first, Sort: "profit", Direction: "desc", Page: 1, PageSize: 20}
+	response, err := queryChannelMonitorProfitAnalytics(ctx, query)
+	require.NoError(t, err)
+	require.Len(t, response.Items, 3)
+	for _, item := range response.Items {
+		assert.Equal(t, item["day_start"] != day, item["profit_confirmed"])
+	}
+	assert.Equal(t, false, response.Summary["profit_confirmed"])
+	query.OnlyLoss = true
+	response, err = queryChannelMonitorProfitAnalytics(ctx, query)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, response.Total, "完整日期的亏损不能被启用日遮蔽")
+	require.NoError(t, db.Model(&model.ChannelMonitorIncomeState{}).Where("id = 1").Update("started_at", day).Error)
+	gap := model.ChannelMonitorIncomeGap{GapKey: "profit-scoped-gap", ChannelID: first, From: day + 86400, To: day + 2*86400}
+	require.NoError(t, db.Create(&gap).Error)
+	response, err = queryChannelMonitorProfitAnalytics(ctx, query)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, response.Total)
+	query.GroupBy, query.Channel = "channel", 0
+	response, err = queryChannelMonitorProfitAnalytics(ctx, query)
+	require.NoError(t, err)
+	require.Len(t, response.Items, 1)
+	assert.Equal(t, second, response.Items[0]["channel_id"], "其他渠道仍可确认")
+	query.Channel = second
+	response, err = queryChannelMonitorProfitAnalytics(ctx, query)
+	require.NoError(t, err)
+	assert.Equal(t, true, response.Summary["profit_confirmed"])
+	require.NoError(t, db.Delete(&gap).Error)
+	// A second node reads the shared journal even when no DB marker or local
+	// in-memory marker exists. Only the affected day/channel loses coverage.
+	journalPath := filepath.Join(journalDir, fmt.Sprintf("%d_%d.gap", day+86400, first))
+	require.NoError(t, os.WriteFile(journalPath, nil, 0600))
+	query.GroupBy, query.Channel = "day", first
+	response, err = queryChannelMonitorProfitAnalytics(ctx, query)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, response.Total)
+	assert.Contains(t, response.Coverage.Reasons, "income_recording_gap")
+	query.Channel = second
+	response, err = queryChannelMonitorProfitAnalytics(ctx, query)
+	require.NoError(t, err)
+	assert.True(t, response.Summary["profit_confirmed"].(bool))
+	require.NoError(t, os.Remove(journalPath))
+	t.Run("cross_day_income_gap", func(t *testing.T) {
+		t.Setenv("CHANNEL_MONITOR_INCOME_GAP_DIR", t.TempDir())
+		wasReady := model.ChannelMonitorIncomeReady.Swap(true)
+		t.Cleanup(func() { model.ChannelMonitorIncomeReady.Store(wasReady) })
+		const eventID = "profit-cross-day-gap"
+		model.MarkChannelMonitorIncomeGapForCost(ctx, first, day, eventID)
+		event := model.ChannelDailyCostOutbox{EventId: eventID, ChannelId: first, OccurredAt: day + 86400, ProcessedAt: day + 86401}
+		require.NoError(t, db.Create(&event).Error)
+		require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+			return model.ConfirmChannelMonitorCostIncome(tx, []model.ChannelDailyCostOutbox{event})
+		}))
+		gapQuery := query
+		gapQuery.Channel, gapQuery.From, gapQuery.To, gapQuery.OnlyLoss = first, day+86400, day+2*86400, false
+		response, err := queryChannelMonitorProfitAnalytics(ctx, gapQuery)
+		require.NoError(t, err)
+		assert.False(t, response.Summary["profit_confirmed"].(bool), "the end day must retain the missing income gap")
+		assert.Contains(t, response.Coverage.Reasons, "income_recording_gap")
+		gapQuery.Channel = second
+		response, err = queryChannelMonitorProfitAnalytics(ctx, gapQuery)
+		require.NoError(t, err)
+		assert.True(t, response.Summary["profit_confirmed"].(bool))
+		gapQuery.Channel, gapQuery.From, gapQuery.To = first, day+2*86400, day+3*86400
+		response, err = queryChannelMonitorProfitAnalytics(ctx, gapQuery)
+		require.NoError(t, err)
+		assert.True(t, response.Summary["profit_confirmed"].(bool), "later complete days remain usable")
+		require.NoError(t, db.Where("gap_key = ?", model.ChannelMonitorIncomeKey(eventID, "gap")).Delete(&model.ChannelMonitorIncomeGap{}).Error)
+		require.NoError(t, db.Delete(&event).Error)
+	})
+	t.Setenv("CHANNEL_MONITOR_INCOME_GAP_DIR", filepath.Join(journalDir, "unavailable"))
+	response, err = queryChannelMonitorProfitAnalytics(ctx, query)
+	require.NoError(t, err)
+	assert.False(t, response.Summary["profit_confirmed"].(bool))
+	assert.Zero(t, response.Total)
+	t.Setenv("CHANNEL_MONITOR_INCOME_GAP_DIR", journalDir)
+	outbox := model.ChannelDailyCostOutbox{EventId: "profit-scope-outbox", ChannelId: first, OccurredAt: day + 86400}
+	require.NoError(t, db.Create(&outbox).Error)
+	query.GroupBy, query.Channel = "day", first
+	response, err = queryChannelMonitorProfitAnalytics(ctx, query)
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, response.Total, "待入账事件只影响其归属日期")
+	require.NoError(t, db.Delete(&outbox).Error)
+	query.GroupBy, query.Channel = "channel", second
+	if common.RedisEnabled && common.RDB != nil {
+		for _, stream := range []string{service.ChannelDailyCostRedisStream, service.ChannelDailyCostRedisDeadLetter} {
+			payload, err := common.Marshal(map[string]any{"channel_id": first, "occurred_at": day + 86400})
+			require.NoError(t, err)
+			require.NoError(t, common.RDB.XAdd(ctx, &redis.XAddArgs{Stream: stream, Values: map[string]any{"payload": string(payload)}}).Err())
+			response, err = queryChannelMonitorProfitAnalytics(ctx, query)
+			require.NoError(t, err)
+			assert.Equal(t, true, response.Summary["profit_confirmed"], "其他渠道的队列不能阻塞此渠道")
+			query.Channel, query.To = first, day+86400
+			response, err = queryChannelMonitorProfitAnalytics(ctx, query)
+			require.NoError(t, err)
+			assert.Equal(t, true, response.Summary["profit_confirmed"], "之后日期的队列不能阻塞历史")
+			query.GroupBy, query.To = "day", day+3*86400
+			response, err = queryChannelMonitorProfitAnalytics(ctx, query)
+			require.NoError(t, err)
+			assert.EqualValues(t, 2, response.Total, "队列中的归属日期仍须待确认")
+			assert.Equal(t, false, response.Summary["profit_confirmed"])
+			query.GroupBy = "channel"
+			query.Channel, query.To = second, day+3*86400
+			require.NoError(t, common.RDB.Del(ctx, stream).Err())
+		}
+		// A trimmed message can remain pending without a payload identifying
+		// its channel/day. It must not silently disappear from coverage.
+		require.NoError(t, common.RDB.XGroupCreateMkStream(ctx, service.ChannelDailyCostRedisStream, service.ChannelDailyCostRedisConsumerGroup, "0").Err())
+		id, err := common.RDB.XAdd(ctx, &redis.XAddArgs{Stream: service.ChannelDailyCostRedisStream, Values: map[string]any{"payload": "{}"}}).Result()
+		require.NoError(t, err)
+		require.NoError(t, common.RDB.XReadGroup(ctx, &redis.XReadGroupArgs{Group: service.ChannelDailyCostRedisConsumerGroup, Consumer: "profit-test", Streams: []string{service.ChannelDailyCostRedisStream, ">"}, Count: 1}).Err())
+		require.NoError(t, common.RDB.XDel(ctx, service.ChannelDailyCostRedisStream, id).Err())
+		response, err = queryChannelMonitorProfitAnalytics(ctx, query)
+		require.NoError(t, err)
+		assert.Equal(t, false, response.Summary["profit_confirmed"])
+		assert.Contains(t, response.Coverage.Reasons, "cost_projection_pending")
+		require.NoError(t, common.RDB.Del(ctx, service.ChannelDailyCostRedisStream).Err())
+	}
 }
 
 func runChannelMonitorProfitAnalyticsCases(t *testing.T, db *gorm.DB, day int64) {
 	t.Helper()
+	t.Setenv("CHANNEL_MONITOR_INCOME_GAP_DIR", t.TempDir())
 	t.Setenv("CHANNEL_DAILY_COST_RELIABLE_OUTBOX", "true")
 	const firstChannel, secondChannel = 900211, 900222
 	channels := []int{firstChannel, secondChannel, 900233}

@@ -122,8 +122,12 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		return false
 	}
 
-	income := prepareChannelMonitorIncome(ctx, relayInfo, feeQuota, "violation")
-	result, err := postConsumeQuotaWithResult(relayInfo, feeQuota, 0, true)
+	income, prepareErr := prepareChannelMonitorIncomeResult(ctx, relayInfo, feeQuota, "violation", &feeQuota)
+	if prepareErr != nil {
+		logger.LogError(ctx, "记录违规费用结算失败: "+prepareErr.Error())
+		return false
+	}
+	result, err := postConsumeMonitoredIncome(ctx, relayInfo, income, feeQuota, 0, true)
 	if result.FundingApplied {
 		confirmChannelMonitorIncome(ctx, income)
 	}

@@ -27,6 +27,8 @@ const (
 
 const taskBillingSubscriptionSource = "subscription"
 
+var ErrTaskBillingCommitUncertain = errors.New("无法核实任务初始结算是否已提交")
+
 // SQLite reports write contention as SQLITE_BUSY/database-is-locked errors.
 // A task callback must be retried as a whole transaction: retrying individual
 // statements could commit only the funding or usage leg and leave the task
@@ -97,6 +99,87 @@ type TaskBillingApplyResult struct {
 	TokenID       int
 	TokenKey      string
 	UserID        int
+}
+
+// InsertTaskWithBilling makes the initial quota a committed funding fact before
+// the task becomes visible to polling. A failed adjustment rolls back the insert
+// as well, so the caller still owns (and may refund) the original reservation.
+func InsertTaskWithBilling(ctx context.Context, task *Task, reservedQuota int, omitColumns ...string) error {
+	if DB == nil {
+		return errors.New("任务结算数据库不可用")
+	}
+	if task == nil || task.ID != 0 || task.Quota < 0 || task.Quota > common.MaxQuota || reservedQuota < 0 || reservedQuota > common.MaxQuota {
+		return errors.New("任务初始结算参数无效")
+	}
+	delta := task.Quota - reservedQuota
+	var tokenKey string
+	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Omit(omitColumns...).Create(task).Error; err != nil {
+			return err
+		}
+		if err := applyTaskFundingDelta(tx, task, delta); err != nil {
+			return err
+		}
+		var err error
+		tokenKey, err = applyTaskTokenDelta(tx, task.PrivateData.TokenId, delta)
+		if err != nil {
+			return err
+		}
+		return correctTaskChannelMonitorIncome(tx, task, task.Quota)
+	})
+	if err != nil {
+		if task.ID == 0 {
+			return err
+		}
+		// A lost COMMIT acknowledgement does not mean rollback. Check the
+		// durable task before allowing the caller to refund its reservation.
+		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		var committed Task
+		checkErr := DB.WithContext(checkCtx).Where("id = ? AND task_id = ?", task.ID, task.TaskID).First(&committed).Error
+		if errors.Is(checkErr, gorm.ErrRecordNotFound) {
+			task.ID = 0
+			return err
+		}
+		if checkErr != nil {
+			return errors.Join(ErrTaskBillingCommitUncertain, err, checkErr)
+		}
+	}
+	if common.RedisEnabled && delta != 0 {
+		if task.PrivateData.BillingSource != taskBillingSubscriptionSource {
+			if _, err := cacheApplyUserQuotaDelta(task.UserId, -int64(delta)); err != nil {
+				common.SysError("更新任务初始结算钱包缓存失败: " + err.Error())
+			}
+		}
+		if tokenKey != "" {
+			if _, err := cacheApplyTokenQuotaDelta(task.PrivateData.TokenId, tokenKey, -int64(delta)); err != nil {
+				common.SysError("更新任务初始结算令牌缓存失败: " + err.Error())
+			}
+		}
+	}
+	return nil
+}
+
+func applyTaskTokenDelta(tx *gorm.DB, tokenID, delta int) (string, error) {
+	if tokenID <= 0 || delta == 0 {
+		return "", nil
+	}
+	var token Token
+	if err := lockForUpdate(tx).First(&token, tokenID).Error; err != nil {
+		return "", err
+	}
+	remain, ok := addTaskBillingQuota(int64(token.RemainQuota), -int64(delta))
+	if !ok {
+		return "", errors.New("令牌剩余额度超出范围")
+	}
+	used, ok := addTaskBillingQuota(int64(token.UsedQuota), int64(delta))
+	if !ok {
+		return "", errors.New("令牌已用额度超出范围")
+	}
+	err := tx.Model(&Token{}).Where("id = ?", tokenID).Updates(map[string]any{
+		"remain_quota": remain, "used_quota": used, "accessed_time": common.GetTimestamp(),
+	}).Error
+	return token.Key, err
 }
 
 // ApplyTaskBilling atomically applies a task refund or settlement to the main
@@ -212,35 +295,13 @@ func applyTaskBillingOnce(ctx context.Context, requested *Task, operation TaskBi
 				return err
 			}
 			if task.PrivateData.TokenId > 0 {
-				var token Token
-				err := lockForUpdate(tx).Where("id = ?", task.PrivateData.TokenId).First(&token).Error
+				key, err := applyTaskTokenDelta(tx, task.PrivateData.TokenId, result.QuotaDelta)
 				if err != nil {
-					// A missing token is a failed accounting leg. Abort the whole
-					// transaction instead of committing wallet/usage changes while
-					// silently losing the token ledger update.
 					return err
-				} else {
-					newRemain, ok := addTaskBillingQuota(int64(token.RemainQuota), -delta64)
-					if !ok {
-						return errors.New("token remain quota overflow")
-					}
-					newUsed, ok := addTaskBillingQuota(int64(token.UsedQuota), delta64)
-					if !ok {
-						return errors.New("token used quota overflow")
-					}
-					if err := tx.Model(&Token{}).Where("id = ?", token.Id).Updates(map[string]any{
-						"remain_quota":  int(newRemain),
-						"used_quota":    int(newUsed),
-						"accessed_time": common.GetTimestamp(),
-					}).Error; err != nil {
-						return err
-					}
-					// Redis token quota tracks remaining quota, the inverse of the
-					// billing delta (positive billing consumes remaining quota).
-					cacheTokenDelta = -delta64
-					cacheTokenID = token.Id
-					cacheTokenKey = token.Key
 				}
+				cacheTokenDelta = -delta64
+				cacheTokenID = task.PrivateData.TokenId
+				cacheTokenKey = key
 			}
 			if err := updateTaskUsageInTx(tx, task.UserId, task.ChannelId, result.QuotaDelta); err != nil {
 				return err
@@ -251,7 +312,18 @@ func applyTaskBillingOnce(ctx context.Context, requested *Task, operation TaskBi
 			cacheUserDelta = -delta64
 		}
 
-		if eventID := taskBillingCostEventID(&task); eventID != "" {
+		// The retention boundary is committed before any cost rows are deleted.
+		// Expired reporting history must not prevent a real funding correction.
+		historyExpired := false
+		if ChannelMonitorIncomeReady.Load() && tx.Migrator().HasTable(&ChannelMonitorIncomeState{}) {
+			var state ChannelMonitorIncomeState
+			err := tx.Select("id", "retained_from").First(&state, 1).Error
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				return err
+			}
+			historyExpired = task.SubmitTime > 0 && ChannelDailyCostDayStart(task.SubmitTime) < state.RetainedFrom
+		}
+		if eventID := taskBillingCostEventID(&task); eventID != "" && !historyExpired {
 			var existing ChannelTaskCostEvent
 			err := lockForUpdate(tx).Where("cost_event_id = ?", eventID).First(&existing).Error
 			if err == nil {
@@ -279,6 +351,9 @@ func applyTaskBillingOnce(ctx context.Context, requested *Task, operation TaskBi
 				}
 				cost, updateErr := updateChannelTaskCostEventTx(tx, eventID, common.GetTimestamp(), target)
 				if updateErr != nil {
+					if errors.Is(updateErr, gorm.ErrRecordNotFound) {
+						return errors.New("task cost history changed concurrently")
+					}
 					return updateErr
 				}
 				result.CostNanoCNY = cost
@@ -294,11 +369,13 @@ func applyTaskBillingOnce(ctx context.Context, requested *Task, operation TaskBi
 				// A previously resolved task must retain its cost-event row. If
 				// it disappeared, abort the whole billing transaction so a repair
 				// can recreate the event before balances are finalized.
-				return errors.New("resolved task cost event is missing")
+				return errors.New("resolved task cost event is missing or history changed concurrently")
 			}
 		}
-		if err := correctTaskChannelMonitorIncome(tx, &task, targetQuota); err != nil {
-			return err
+		if !historyExpired {
+			if err := correctTaskChannelMonitorIncome(tx, &task, targetQuota); err != nil {
+				return err
+			}
 		}
 		// Persist the task quota and the cost-resolution marker together, after
 		// every accounting leg has succeeded. If either update fails the outer
@@ -467,7 +544,9 @@ func addTaskBillingInt64(current, delta int64) (int64, bool) {
 
 func addTaskBillingQuota(current, delta int64) (int, bool) {
 	next, ok := addTaskBillingInt64(current, delta)
-	if !ok || next < int64(common.MinQuota) || next > int64(common.MaxQuota) {
+	// Per-request quota is int32-bounded at the public entry points. Wallet
+	// balances and accumulated token/user usage have a larger persisted domain.
+	if !ok || next < -int64(common.MaxWalletQuota) || next > int64(common.MaxWalletQuota) || next < int64(math.MinInt) || next > int64(math.MaxInt) {
 		return 0, false
 	}
 	return int(next), true

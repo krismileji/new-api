@@ -1296,6 +1296,12 @@ func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, pl
 
 // PreConsumeUserSubscription pre-consumes from any active subscription total quota.
 func PreConsumeUserSubscription(requestId string, userId int, modelName string, quotaType int, amount int64) (*SubscriptionPreConsumeResult, error) {
+	return preConsumeUserSubscription(DB, requestId, userId, amount, GetDBTimestamp(), false)
+}
+
+// A caller may supply its transaction to commit the reservation together with
+// other accounting facts. The public entry point retains its own transaction.
+func preConsumeUserSubscription(db *gorm.DB, requestId string, userId int, amount, now int64, requireNew bool) (*SubscriptionPreConsumeResult, error) {
 	if userId <= 0 {
 		return nil, errors.New("invalid userId")
 	}
@@ -1305,17 +1311,18 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 	if amount <= 0 {
 		return nil, errors.New("amount must be > 0")
 	}
-	now := GetDBTimestamp()
-
 	returnValue := &SubscriptionPreConsumeResult{}
 
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := db.Transaction(func(tx *gorm.DB) error {
 		var existing SubscriptionPreConsumeRecord
 		query := tx.Where("request_id = ?", requestId).Limit(1).Find(&existing)
 		if query.Error != nil {
 			return query.Error
 		}
 		if query.RowsAffected > 0 {
+			if requireNew {
+				return errors.New("订阅请求已有预扣记录，请先核对")
+			}
 			if existing.Status == "refunded" {
 				return errors.New("subscription pre-consume already refunded")
 			}
@@ -1365,6 +1372,9 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 				Status:             "consumed",
 			}
 			if err := tx.Create(record).Error; err != nil {
+				if requireNew {
+					return err
+				}
 				var dup SubscriptionPreConsumeRecord
 				if err2 := tx.Where("request_id = ?", requestId).First(&dup).Error; err2 == nil {
 					if dup.Status == "refunded" {

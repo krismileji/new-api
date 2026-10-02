@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -128,8 +129,37 @@ func cleanupEphemeralTaskBillingStatesLocked(now time.Time) {
 	}
 }
 
-// LogTaskConsumption 记录任务消费日志和统计信息（仅记录，不涉及实际扣费）。
-// 实际扣费已由 BillingSession（PreConsumeBilling + SettleBilling）完成。
+// PersistTaskWithBilling keeps the initial funding adjustment and task insert
+// atomic. The session retains ownership of its reservation until commit.
+func PersistTaskWithBilling(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task, omitColumns ...string) error {
+	session, ok := info.Billing.(*BillingSession)
+	if !ok {
+		return task.InsertWithContext(c.Request.Context(), omitColumns...)
+	}
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	if session.settled || session.refunded || session.fundingSettled {
+		return fmt.Errorf("任务预扣会话已结束")
+	}
+	prepareChannelMonitorIncome(c, info, task.Quota, "request")
+	if info.IsPlayground {
+		task.PrivateData.TokenId = 0
+	}
+	if err := model.InsertTaskWithBilling(c.Request.Context(), task, session.preConsumedQuota, omitColumns...); err != nil {
+		if errors.Is(err, model.ErrTaskBillingCommitUncertain) {
+			session.fundingSettled = true
+			logger.LogError(c, "任务初始结算提交结果未知，保留预扣额度等待核对: "+err.Error())
+		}
+		return err
+	}
+	session.fundingSettled, session.settled = true, true
+	if info.BillingSource == BillingSourceSubscription {
+		info.SubscriptionPostDelta += int64(task.Quota - session.preConsumedQuota)
+	}
+	return nil
+}
+
+// LogTaskConsumption records logs and counters after the durable task charge.
 func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model.Task) {
 	tokenName := c.GetString("token_name")
 	logContent := fmt.Sprintf("操作 %s", info.Action)
@@ -208,8 +238,8 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 			task.PrivateData.BillingContext.ChannelCostNanoCNY = settledCost
 			task.PrivateData.BillingContext.ChannelCostResolved = true
 		}
-		if incomeErr := model.CompleteChannelMonitorTaskIncome(channelMonitorPublishContext(c), info.RequestId, task.SubmitTime, err == nil && resolved); incomeErr != nil {
-			model.MarkChannelMonitorIncomeGap(channelMonitorPublishContext(c))
+		if incomeErr := model.CompleteChannelMonitorTaskIncome(channelMonitorPublishContext(c), task.ID); incomeErr != nil {
+			model.MarkChannelMonitorIncomeGapAt(channelMonitorPublishContext(c), task.ChannelId, task.SubmitTime)
 			logger.LogWarn(c, "更新任务收入日期或成本状态失败: "+incomeErr.Error())
 		}
 	} else {

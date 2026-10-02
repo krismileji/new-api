@@ -1,4 +1,6 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -8,7 +10,13 @@ import {
 } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 
-import { ChannelMonitorProfitValue } from '../channel-monitor-profit'
+import { api } from '@/lib/api'
+
+import {
+  ChannelMonitorProfitOverview,
+  ChannelMonitorProfitCell,
+  ChannelMonitorProfitValue,
+} from '../channel-monitor-profit'
 import {
   analyticsItem,
   analyticsMetrics,
@@ -18,6 +26,113 @@ import {
 
 afterEach(cleanup)
 afterEach(() => vi.useRealTimers())
+
+test.each([false, true])(
+  'independent channel profit failure is visible and retryable with previous result=%s',
+  async (hasPrevious) => {
+    const adapter = api.defaults.adapter
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    let failed = !hasPrevious
+    const summary = {
+      ...analyticsMetrics,
+      income_nano_cny: 10e9,
+      profit_nano_cny: 7e9,
+      profit_confirmed: true,
+    }
+    api.defaults.adapter = async (config) => {
+      if (failed) throw new Error('渠道利润暂不可用')
+      return {
+        config,
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        data: {
+          success: true,
+          data: analyticsResponse({ group_by: 'channel' }, [], {
+            scope_summary: summary,
+          }),
+        },
+      }
+    }
+    const view = render(
+      <QueryClientProvider client={client}>
+        <ChannelMonitorProfitCell
+          channelId={201}
+          channelName='补查渠道'
+          needsQuery
+          onOpen={() => undefined}
+        />
+      </QueryClientProvider>
+    )
+    try {
+      if (hasPrevious) {
+        await screen.findByText('¥7.0000')
+        failed = true
+        await act(async () => {
+          await client.refetchQueries({
+            queryKey: ['channel-monitor', 'analytics'],
+          })
+        })
+      }
+      const status = await screen.findByRole('status')
+      expect(status).toHaveTextContent(
+        hasPrevious ? '刷新失败，显示上次核对结果' : '利润加载失败'
+      )
+      expect(view.container).not.toHaveTextContent('¥0.0000')
+      failed = false
+      fireEvent.click(
+        screen.getByRole('button', { name: '重试渠道 补查渠道 的利润查询' })
+      )
+      await waitFor(() =>
+        expect(screen.queryByRole('status')).not.toBeInTheDocument()
+      )
+      expect(screen.getByText('¥7.0000')).toBeInTheDocument()
+    } finally {
+      view.unmount()
+      client.clear()
+      api.defaults.adapter = adapter
+    }
+  }
+)
+
+test('overview shows cost, income and profit from one snapshot and retains it on refresh failure', () => {
+  const summary = {
+    ...analyticsMetrics,
+    income_nano_cny: 10e9,
+    cost_nano_cny: 3e9,
+    profit_nano_cny: 7e9,
+    profit_rate: 0.7,
+    profit_confirmed: true,
+  }
+  const view = render(
+    <ChannelMonitorProfitOverview
+      summary={summary}
+      loading={false}
+      failed={false}
+    />
+  )
+  for (const value of ['¥3.0000', '¥7.0000']) {
+    expect(screen.getByText(value)).toBeInTheDocument()
+  }
+  expect(view.container).toHaveTextContent('扣费 ¥10.0000 · 利润率 70.0%')
+  view.rerender(
+    <ChannelMonitorProfitOverview summary={summary} loading={false} failed />
+  )
+  expect(screen.getByText('¥3.0000')).toBeInTheDocument()
+  expect(screen.getByRole('status')).toHaveTextContent(
+    '刷新失败，显示上次核对结果'
+  )
+})
+
+test('overview does not invent zero cost while the shared snapshot is loading or unavailable', () => {
+  const view = render(<ChannelMonitorProfitOverview loading failed={false} />)
+  expect(screen.getByLabelText('成本与利润加载中')).toBeInTheDocument()
+  view.rerender(<ChannelMonitorProfitOverview loading={false} failed />)
+  expect(screen.getByRole('status')).toHaveTextContent('成本与利润加载失败')
+  expect(view.container).not.toHaveTextContent('¥0.0000')
+})
 
 test('unconfirmed profit hides the misleading loss while missing data is not zero', () => {
   const view = render(

@@ -35,7 +35,7 @@ func TestKlingNativeRouteSubmitRetryPollSettleAndQuery(t *testing.T) {
 	previousRedisEnabled := common.RedisEnabled
 	previousRetryTimes := common.RetryTimes
 	previousMainDBType, previousLogDBType := common.MainDatabaseType(), common.LogDatabaseType()
-	database, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Task{}, &model.Log{}, &model.ChannelRatioMonitor{})
+	database, dialect := openTaskDialectDatabase(t, &model.User{}, &model.Channel{}, &model.Task{}, &model.Log{}, &model.ChannelRatioMonitor{}, &model.ChannelTaskCostEvent{})
 	model.DB = database
 	model.LOG_DB = database
 	common.SetMainDatabaseType(dialect)

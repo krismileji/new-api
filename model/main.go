@@ -471,6 +471,7 @@ func migrateDB() error {
 		&ChannelDailyCost{},
 		&ChannelMonitorIncome{},
 		&ChannelMonitorIncomeState{},
+		&ChannelMonitorIncomeGap{},
 		&ChannelDailyAPIKeyCost{},
 		&ChannelDailyCostOutbox{},
 		&ChannelMonitorEventOutbox{},

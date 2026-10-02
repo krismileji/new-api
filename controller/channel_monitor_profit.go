@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"strings"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -13,6 +12,8 @@ import (
 )
 
 type channelMonitorProfitRow struct {
+	GroupProbeCost            int64  `gorm:"column:group_probe_cost_nano_cny"`
+	CoverageIncomplete        int64  `gorm:"column:coverage_incomplete"`
 	DayStart                  int64  `gorm:"column:day_start"`
 	ChannelID                 int    `gorm:"column:channel_id"`
 	UserID                    int    `gorm:"column:user_id"`
@@ -38,14 +39,14 @@ type channelMonitorProfitRow struct {
 func channelMonitorProfitFacts(ctx context.Context, db *gorm.DB, query channelMonitorAnalyticsQuery) *gorm.DB {
 	income := db.WithContext(ctx).Model(&model.ChannelMonitorIncome{}).
 		Where("day_start >= ? AND day_start < ?", query.From, query.To).
-		Select("day_start, channel_id, user_id, api_key_id, api_key_key, api_key_name, model_key, model_name, 'business' AS source_kind, CASE WHEN status = 'settled' THEN income_nano_cny ELSE 0 END AS income_nano_cny, CASE WHEN status = 'settled' AND billing_source = 'wallet' THEN income_nano_cny ELSE 0 END AS wallet_income_nano_cny, CASE WHEN status = 'settled' AND billing_source = 'subscription' THEN income_nano_cny ELSE 0 END AS subscription_income_nano_cny, CASE WHEN status = 'settled' THEN 0 ELSE 1 END AS pending_income_count, CASE WHEN cost_recorded = 1 THEN 0 ELSE 1 END AS pending_cost_count, 0 AS cost_nano_cny, 0 AS probe_cost_nano_cny, 0 AS model_detection_cost_nano_cny, 0 AS settled_count, 0 AS unresolved_count")
+		Select("day_start, channel_id, user_id, api_key_id, api_key_key, api_key_name, model_key, model_name, 'business' AS source_kind, CASE WHEN status = 'settled' THEN income_nano_cny ELSE 0 END AS income_nano_cny, CASE WHEN status = 'settled' AND billing_source = 'wallet' THEN income_nano_cny ELSE 0 END AS wallet_income_nano_cny, CASE WHEN status = 'settled' AND billing_source = 'subscription' THEN income_nano_cny ELSE 0 END AS subscription_income_nano_cny, CASE WHEN status = 'settled' THEN 0 ELSE 1 END AS pending_income_count, CASE WHEN cost_recorded = 1 THEN 0 ELSE 1 END AS pending_cost_count, 0 AS cost_nano_cny, 0 AS probe_cost_nano_cny, 0 AS group_probe_cost_nano_cny, 0 AS model_detection_cost_nano_cny, 0 AS settled_count, 0 AS unresolved_count")
 	cost := db.WithContext(ctx).Model(&model.ChannelMonitorDailyCostDetail{}).
 		Where("day_start >= ? AND day_start < ?", query.From, query.To).
-		Select("day_start, channel_id, user_id, api_key_id, api_key_key, api_key_name, model_key, model_name, source_kind, 0 AS income_nano_cny, 0 AS wallet_income_nano_cny, 0 AS subscription_income_nano_cny, 0 AS pending_income_count, 0 AS pending_cost_count, cost_nano_cny, probe_cost_nano_cny, CASE WHEN source_kind = 'model_detection' THEN cost_nano_cny ELSE 0 END AS model_detection_cost_nano_cny, settled_count, unresolved_count")
+		Select("day_start, channel_id, user_id, api_key_id, api_key_key, api_key_name, model_key, model_name, source_kind, 0 AS income_nano_cny, 0 AS wallet_income_nano_cny, 0 AS subscription_income_nano_cny, 0 AS pending_income_count, 0 AS pending_cost_count, cost_nano_cny, probe_cost_nano_cny, group_probe_cost_nano_cny, CASE WHEN source_kind = 'model_detection' THEN cost_nano_cny ELSE 0 END AS model_detection_cost_nano_cny, settled_count, unresolved_count")
 	if (query.GroupBy == "channel" || query.GroupBy == "day") && !query.hasCostDetailFilter() {
 		cost = db.WithContext(ctx).Model(&model.ChannelDailyCost{}).
 			Where("day_start >= ? AND day_start < ?", query.From, query.To).
-			Select("day_start, channel_id, 0 AS user_id, 0 AS api_key_id, '' AS api_key_key, '' AS api_key_name, '' AS model_key, '' AS model_name, '' AS source_kind, 0 AS income_nano_cny, 0 AS wallet_income_nano_cny, 0 AS subscription_income_nano_cny, 0 AS pending_income_count, 0 AS pending_cost_count, cost_nano_cny, probe_cost_nano_cny, model_detection_cost_nano_cny, settled_count, unresolved_count")
+			Select("day_start, channel_id, 0 AS user_id, 0 AS api_key_id, '' AS api_key_key, '' AS api_key_name, '' AS model_key, '' AS model_name, '' AS source_kind, 0 AS income_nano_cny, 0 AS wallet_income_nano_cny, 0 AS subscription_income_nano_cny, 0 AS pending_income_count, 0 AS pending_cost_count, cost_nano_cny, probe_cost_nano_cny, group_probe_cost_nano_cny, model_detection_cost_nano_cny, settled_count, unresolved_count")
 	}
 	base := db.WithContext(ctx).Table("(? UNION ALL ?) AS facts", income, cost)
 	if query.Channel > 0 {
@@ -72,7 +73,7 @@ func channelMonitorProfitFacts(ctx context.Context, db *gorm.DB, query channelMo
 	return query.applySearch(base)
 }
 
-const channelMonitorProfitSums = "COALESCE(SUM(income_nano_cny),0) AS income_nano_cny, COALESCE(SUM(wallet_income_nano_cny),0) AS wallet_income_nano_cny, COALESCE(SUM(subscription_income_nano_cny),0) AS subscription_income_nano_cny, COALESCE(SUM(pending_income_count),0) AS pending_income_count, COALESCE(SUM(pending_cost_count),0) AS pending_cost_count, COALESCE(SUM(cost_nano_cny),0) AS cost_nano_cny, COALESCE(SUM(probe_cost_nano_cny),0) AS probe_cost_nano_cny, COALESCE(SUM(model_detection_cost_nano_cny),0) AS model_detection_cost_nano_cny, COALESCE(SUM(settled_count),0) AS settled_count, COALESCE(SUM(unresolved_count),0) AS unresolved_count"
+const channelMonitorProfitSums = "COALESCE(SUM(income_nano_cny),0) AS income_nano_cny, COALESCE(SUM(wallet_income_nano_cny),0) AS wallet_income_nano_cny, COALESCE(SUM(subscription_income_nano_cny),0) AS subscription_income_nano_cny, COALESCE(SUM(pending_income_count),0) AS pending_income_count, COALESCE(SUM(pending_cost_count),0) AS pending_cost_count, COALESCE(SUM(cost_nano_cny),0) AS cost_nano_cny, COALESCE(SUM(probe_cost_nano_cny),0) AS probe_cost_nano_cny, COALESCE(SUM(group_probe_cost_nano_cny),0) AS group_probe_cost_nano_cny, COALESCE(SUM(model_detection_cost_nano_cny),0) AS model_detection_cost_nano_cny, COALESCE(SUM(settled_count),0) AS settled_count, COALESCE(SUM(unresolved_count),0) AS unresolved_count"
 
 func channelMonitorProfitSummary(row channelMonitorProfitRow, complete bool) map[string]any {
 	profit := row.IncomeNanoCNY - row.Cost
@@ -84,13 +85,26 @@ func channelMonitorProfitSummary(row channelMonitorProfitRow, complete bool) map
 	return map[string]any{
 		"income_nano_cny": row.IncomeNanoCNY, "wallet_income_nano_cny": row.WalletIncomeNanoCNY,
 		"subscription_income_nano_cny": row.SubscriptionIncomeNanoCNY, "pending_income_count": row.PendingIncomeCount,
-		"cost_nano_cny": row.Cost, "probe_cost_nano_cny": row.ProbeCost, "model_detection_cost_nano_cny": row.ModelDetectionCostNanoCNY,
+		"cost_nano_cny": row.Cost, "probe_cost_nano_cny": row.ProbeCost, "group_probe_cost_nano_cny": row.GroupProbeCost, "model_detection_cost_nano_cny": row.ModelDetectionCostNanoCNY,
 		"profit_nano_cny": profit, "profit_rate": rate, "profit_confirmed": complete && row.PendingIncomeCount == 0 && row.PendingCostCount == 0 && row.UnresolvedCount == 0,
 		"settled_count": row.SettledCount, "unresolved_count": row.UnresolvedCount,
 	}
 }
 
 func queryChannelMonitorProfitAnalytics(ctx context.Context, query channelMonitorAnalyticsQuery) (channelMonitorAnalyticsResponse, error) {
+	queue := service.ReadChannelMonitorProfitCostQueue(ctx)
+	journal, journalErr := model.ReadChannelMonitorIncomeGapJournal()
+	if journalErr != nil {
+		queue = append(queue, service.ChannelMonitorProfitBlock{Reason: "income_recording_gap"})
+	}
+	for _, gap := range journal {
+		queue = append(queue, service.ChannelMonitorProfitBlock{From: gap.From, To: gap.To, ChannelID: gap.ChannelID, Reason: "income_recording_gap"})
+	}
+	// Capture pending markers before the DB snapshot too: flushing one while
+	// reading must not hide it from both memory and the transaction's view.
+	for _, gap := range model.PendingChannelMonitorIncomeGaps() {
+		queue = append(queue, service.ChannelMonitorProfitBlock{From: gap.From, To: gap.To, ChannelID: gap.ChannelID, Reason: "income_recording_gap"})
+	}
 	var response channelMonitorAnalyticsResponse
 	options := &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}
 	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
@@ -98,13 +112,13 @@ func queryChannelMonitorProfitAnalytics(ctx context.Context, query channelMonito
 	}
 	err := model.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var err error
-		response, err = readChannelMonitorProfitAnalytics(ctx, tx, query)
+		response, err = readChannelMonitorProfitAnalytics(ctx, tx, query, queue)
 		return err
 	}, options)
 	return response, err
 }
 
-func readChannelMonitorProfitAnalytics(ctx context.Context, db *gorm.DB, query channelMonitorAnalyticsQuery) (channelMonitorAnalyticsResponse, error) {
+func readChannelMonitorProfitAnalytics(ctx context.Context, db *gorm.DB, query channelMonitorAnalyticsQuery, queue []service.ChannelMonitorProfitBlock) (channelMonitorAnalyticsResponse, error) {
 	var state model.ChannelMonitorIncomeState
 	if err := db.WithContext(ctx).First(&state, 1).Error; err != nil {
 		return channelMonitorAnalyticsResponse{}, err
@@ -118,60 +132,11 @@ func readChannelMonitorProfitAnalytics(ctx context.Context, db *gorm.DB, query c
 	if err := channelMonitorProfitFacts(ctx, db, query).Select(channelMonitorProfitSums).Scan(&summaryRow).Error; err != nil {
 		return channelMonitorAnalyticsResponse{}, err
 	}
-	var reasons []string
-	if query.From < state.RetainedFrom {
-		reasons = append(reasons, "profit_history_expired")
-	}
-	if query.From < state.StartedAt {
-		reasons = append(reasons, "income_history_unavailable")
-	}
-	if state.GapSince > 0 && query.To > state.GapSince || model.ChannelMonitorIncomeGapSince() > 0 && query.To > model.ChannelMonitorIncomeGapSince() {
-		reasons = append(reasons, "income_recording_gap")
-	}
-	if (query.GroupBy != "channel" && query.GroupBy != "day") || query.hasCostDetailFilter() {
-		coverage, err := channelMonitorHistoricalCostDetailCoverageWithDB(ctx, db, query)
-		if err != nil {
-			return channelMonitorAnalyticsResponse{}, err
-		}
-		reasons = append(reasons, coverage.Reasons...)
-	}
-	var pending int64
-	backlog := db.WithContext(ctx).Model(&model.ChannelDailyCostOutbox{}).Where("processed_at = 0 AND occurred_at >= ? AND occurred_at < ?", query.From, query.To)
-	if query.Channel > 0 {
-		backlog = backlog.Where("channel_id = ?", query.Channel)
-	}
-	if err := backlog.Count(&pending).Error; err != nil {
+	reasons, incompleteSQL, err := channelMonitorProfitCoverage(ctx, db, query, state, queue)
+	if err != nil {
 		return channelMonitorAnalyticsResponse{}, err
 	}
-	if pending > 0 {
-		reasons = append(reasons, "cost_projection_pending")
-	}
-	// A failed attempt may have cost without any income. Check the shared
-	// producer queue too, before treating a cost-only dimension as complete.
-	if common.RedisEnabled {
-		client := common.RedisMonitorReadClient()
-		if client == nil {
-			reasons = append(reasons, "profit_cost_queue_unavailable")
-		} else {
-			queueCtx, cancel := context.WithTimeout(ctx, time.Second)
-			stream := client.XLen(queueCtx, service.ChannelDailyCostRedisStream)
-			dead := client.XLen(queueCtx, service.ChannelDailyCostRedisDeadLetter)
-			pendingStream := client.XPending(queueCtx, service.ChannelDailyCostRedisStream, service.ChannelDailyCostRedisConsumerGroup)
-			cancel()
-			if stream.Err() != nil || dead.Err() != nil || (pendingStream.Err() != nil && !strings.Contains(pendingStream.Err().Error(), "NOGROUP")) {
-				reasons = append(reasons, "profit_cost_queue_unavailable")
-			} else if stream.Val() > 0 || (pendingStream.Err() == nil && pendingStream.Val().Count > 0) {
-				reasons = append(reasons, "cost_projection_pending")
-			}
-			if dead.Err() == nil && dead.Val() > 0 {
-				reasons = append(reasons, "profit_cost_unresolved")
-			}
-		}
-	}
-	if !common.GetEnvOrDefaultBool("CHANNEL_DAILY_COST_RELIABLE_OUTBOX", true) {
-		reasons = append(reasons, "profit_cost_not_durable")
-	}
-	rowCoverageComplete := len(reasons) == 0
+	selects = append(selects, incompleteSQL+" AS coverage_incomplete")
 	if summaryRow.PendingIncomeCount > 0 {
 		reasons = append(reasons, "income_settlement_pending")
 	}
@@ -186,8 +151,8 @@ func readChannelMonitorProfitAnalytics(ctx context.Context, db *gorm.DB, query c
 	grouped := channelMonitorProfitFacts(ctx, db, query).Select(strings.Join(selects, ", ")).Group(strings.Join(columns, ", "))
 	if query.OnlyLoss {
 		grouped = grouped.Having("SUM(income_nano_cny) < SUM(cost_nano_cny) AND SUM(pending_income_count) = 0 AND SUM(pending_cost_count) = 0 AND SUM(unresolved_count) = 0")
-		if !rowCoverageComplete {
-			grouped = grouped.Where("1 = 0")
+		if incompleteSQL != "0" {
+			grouped = grouped.Having(incompleteSQL + " = 0")
 		}
 	}
 	var total int64
@@ -214,7 +179,7 @@ func readChannelMonitorProfitAnalytics(ctx context.Context, db *gorm.DB, query c
 	summary["income_started_at"] = state.StartedAt
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		item := channelMonitorProfitSummary(row, rowCoverageComplete)
+		item := channelMonitorProfitSummary(row, row.CoverageIncomplete == 0)
 		item["day_start"], item["channel_id"], item["user_id"] = row.DayStart, row.ChannelID, row.UserID
 		item["api_key_id"], item["api_key_key"], item["api_key_name"] = row.APIKeyID, row.APIKeyKey, row.APIKeyName
 		item["model_key"], item["model_name"] = row.ModelKey, row.ModelName

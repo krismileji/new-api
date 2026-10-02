@@ -57,7 +57,12 @@ func TestChannelMonitorProfitUpgrade(t *testing.T) {
 	assert.True(t, model.LOG_DB.Migrator().HasIndex(&model.Log{}, "idx_created_at_id"))
 	assert.Error(t, db.Create(&model.User{Username: "profit-upgrade", Password: "duplicate", AffCode: "duplicate"}).Error)
 	if mode != "seed" {
+		for _, column := range []string{"funding_delta", "funding_token_id", "funding_subscription_id"} {
+			assert.True(t, db.Migrator().HasColumn("channel_monitor_incomes", column), column)
+		}
 		assert.True(t, db.Migrator().HasTable("channel_monitor_incomes"))
+		assert.True(t, db.Migrator().HasTable("channel_monitor_income_gaps"))
+		assert.True(t, db.Migrator().HasIndex("channel_monitor_income_gaps", "idx_channel_monitor_income_gaps_gap_key"))
 		assert.True(t, db.Migrator().HasIndex("channel_monitor_incomes", "idx_channel_monitor_incomes_settlement_key"))
 		var startedAt int64
 		require.NoError(t, db.Table("channel_monitor_income_states").Where("id = 1").Pluck("started_at", &startedAt).Error)

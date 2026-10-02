@@ -1337,7 +1337,8 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 	if err := common.ValidateWalletQuota(quota); err != nil {
 		return err
 	}
-	if !db && common.BatchUpdateEnabled {
+	// Confirmed monitoring income requires the wallet mutation to be durable.
+	if !db && common.BatchUpdateEnabled && !ChannelMonitorIncomeReady.Load() {
 		addNewRecord(BatchUpdateTypeUserQuota, id, quota)
 		gopool.Go(func() {
 			if err := cacheIncrUserQuota(id, int64(quota)); err != nil {
@@ -1387,7 +1388,8 @@ func DecreaseUserQuota(id int, quota int, db bool) (err error) {
 			common.SysLog("failed to decrease user quota: " + err.Error())
 		}
 	})
-	if !db && common.BatchUpdateEnabled {
+	// Confirmed monitoring income requires the wallet mutation to be durable.
+	if !db && common.BatchUpdateEnabled && !ChannelMonitorIncomeReady.Load() {
 		addNewRecord(BatchUpdateTypeUserQuota, id, -quota)
 		return nil
 	}

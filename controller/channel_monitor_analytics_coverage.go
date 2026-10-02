@@ -15,6 +15,18 @@ func channelMonitorHistoricalCostDetailCoverage(ctx context.Context, query chann
 }
 
 func channelMonitorHistoricalCostDetailCoverageWithDB(ctx context.Context, db *gorm.DB, query channelMonitorAnalyticsQuery) (service.ChannelMonitorCoverage, error) {
+	gaps, err := channelMonitorHistoricalCostDetailGaps(ctx, db, query)
+	if err != nil {
+		return service.ChannelMonitorCoverage{}, err
+	}
+	var reasons []string
+	if len(gaps) > 0 {
+		reasons = append(reasons, "cost_attribution_incomplete")
+	}
+	return service.DeriveChannelMonitorCoverage(true, query.From, query.To, query.From, query.To, reasons), nil
+}
+
+func channelMonitorHistoricalCostDetailGaps(ctx context.Context, db *gorm.DB, query channelMonitorAnalyticsQuery) ([]service.ChannelMonitorProfitBlock, error) {
 	columns := "channel_id, day_start, SUM(cost_nano_cny) AS cost, SUM(settled_count) AS settled, SUM(unresolved_count) AS unresolved, SUM(probe_cost_nano_cny) AS probe, SUM(group_probe_cost_nano_cny) AS group_probe"
 	ledger := db.WithContext(ctx).Model(&model.ChannelDailyCost{}).
 		Where("day_start >= ? AND day_start < ?", query.From, query.To)
@@ -26,28 +38,33 @@ func channelMonitorHistoricalCostDetailCoverageWithDB(ctx context.Context, db *g
 	}
 	ledger = ledger.Select(columns).Group("channel_id, day_start")
 	detail = detail.Select(columns).Group("channel_id, day_start")
-	var gaps int64
+	var gaps []struct {
+		ChannelID int
+		DayStart  int64
+	}
 	err := db.WithContext(ctx).Table("(?) AS ledger", ledger).
 		Joins("LEFT JOIN (?) AS detail ON detail.channel_id = ledger.channel_id AND detail.day_start = ledger.day_start", detail).
 		Where("ledger.cost <> COALESCE(detail.cost, 0) OR ledger.settled <> COALESCE(detail.settled, 0) OR ledger.unresolved <> COALESCE(detail.unresolved, 0) OR ledger.probe <> COALESCE(detail.probe, 0) OR ledger.group_probe <> COALESCE(detail.group_probe, 0)").
-		Count(&gaps).Error
+		Select("ledger.channel_id, ledger.day_start").Scan(&gaps).Error
 	if err != nil {
-		return service.ChannelMonitorCoverage{}, err
+		return nil, err
 	}
-	if gaps == 0 {
-		err = db.WithContext(ctx).Table("(?) AS detail", detail).
-			Joins("LEFT JOIN (?) AS ledger ON detail.channel_id = ledger.channel_id AND detail.day_start = ledger.day_start", ledger).
-			Where("ledger.channel_id IS NULL AND (detail.cost <> 0 OR detail.settled <> 0 OR detail.unresolved <> 0 OR detail.probe <> 0 OR detail.group_probe <> 0)").
-			Count(&gaps).Error
-		if err != nil {
-			return service.ChannelMonitorCoverage{}, err
-		}
+	var orphaned []struct {
+		ChannelID int
+		DayStart  int64
 	}
-	var reasons []string
-	if gaps > 0 {
-		reasons = append(reasons, "cost_attribution_incomplete")
+	err = db.WithContext(ctx).Table("(?) AS detail", detail).
+		Joins("LEFT JOIN (?) AS ledger ON detail.channel_id = ledger.channel_id AND detail.day_start = ledger.day_start", ledger).
+		Where("ledger.channel_id IS NULL AND (detail.cost <> 0 OR detail.settled <> 0 OR detail.unresolved <> 0 OR detail.probe <> 0 OR detail.group_probe <> 0)").
+		Select("detail.channel_id, detail.day_start").Scan(&orphaned).Error
+	if err != nil {
+		return nil, err
 	}
-	return service.DeriveChannelMonitorCoverage(true, query.From, query.To, query.From, query.To, reasons), nil
+	var blocks []service.ChannelMonitorProfitBlock
+	for _, gap := range append(gaps, orphaned...) {
+		blocks = append(blocks, service.ChannelMonitorProfitBlock{From: gap.DayStart, To: gap.DayStart + 86400, ChannelID: gap.ChannelID, Reason: "cost_attribution_incomplete"})
+	}
+	return blocks, nil
 }
 
 // A checkpoint can prove that an idle day was observed. No checkpoint cannot

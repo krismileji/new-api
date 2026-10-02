@@ -506,7 +506,7 @@ func recordChannelDailyCostEvent(ctx *gin.Context, snapshot channelDailyCostSnap
 	}
 	if !persisted {
 		if model.ChannelMonitorIncomeReady.Load() {
-			model.MarkChannelMonitorIncomeGap(channelMonitorPublishContext(ctx))
+			model.MarkChannelMonitorIncomeGapAt(channelMonitorPublishContext(ctx), delta.ChannelId, delta.OccurredAt)
 		}
 		logger.LogError(ctx, fmt.Sprintf("记录渠道 #%d 每日成本失败，本次请求未标记为已记录", snapshot.ChannelId))
 		return false

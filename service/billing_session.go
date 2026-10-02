@@ -37,6 +37,7 @@ type BillingSession struct {
 	settled          bool // Settle 全部完成（资金 + 令牌）
 	refunded         bool // Refund 已调用
 	mu               sync.Mutex
+	reservationKey   string // Durable monitored reservation, retained for manual review after a crash.
 }
 
 // Settle 根据实际消耗额度进行结算。
@@ -47,6 +48,9 @@ func (s *BillingSession) Settle(actualQuota int) error {
 	defer s.mu.Unlock()
 	if s.settled {
 		return nil
+	}
+	if s.reservationKey != "" {
+		return errors.New("已记录预扣的请求必须通过收入结算入口完成")
 	}
 	delta := actualQuota - s.preConsumedQuota
 	if delta == 0 {
@@ -87,6 +91,13 @@ func (s *BillingSession) Refund(c *gin.Context) {
 	s.mu.Lock()
 	if s.settled || s.refunded || !s.needsRefundLocked() {
 		s.mu.Unlock()
+		return
+	}
+	if s.reservationKey != "" {
+		s.mu.Unlock()
+		if err := s.FinishWithoutCharge(c.Request.Context()); err != nil {
+			common.SysError("预扣退款未确认，保留记录等待核对: " + err.Error())
+		}
 		return
 	}
 	s.refunded = true
@@ -138,7 +149,7 @@ func (s *BillingSession) needsRefundLocked() bool {
 		// fundingSettled 时资金来源已提交结算，不能再退预扣费
 		return false
 	}
-	if s.tokenConsumed > 0 {
+	if s.reservationKey != "" || s.tokenConsumed > 0 {
 		return true
 	}
 	// 订阅可能在 tokenConsumed=0 时仍预扣了额度
@@ -158,6 +169,9 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 	defer s.mu.Unlock()
 
 	imageRequest := false
+	if s.fundingSettled && !s.settled {
+		return errors.New("计费状态待确认，不能继续预扣")
+	}
 	if s.relayInfo != nil {
 		_, imageRequest = s.relayInfo.Request.(*dto.ImageRequest)
 		imageRequest = imageRequest || s.relayInfo.ImageRequestCount > 0
@@ -168,6 +182,15 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 
 	delta := targetQuota - s.preConsumedQuota
 	if delta <= 0 {
+		return nil
+	}
+	if s.reservationKey != "" {
+		if err := s.adjustMonitoredReservation(targetQuota, imageRequest || s.relayInfo.ForcePreConsume); err != nil {
+			return err
+		}
+		if imageRequest {
+			s.trusted = false
+		}
 		return nil
 	}
 
@@ -205,6 +228,10 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 		logger.LogInfo(c, fmt.Sprintf("用户 %d 额度充足, 信任且不需要预扣费 (funding=%s)", s.relayInfo.UserId, s.funding.Source()))
 	} else if effectiveQuota > 0 {
 		logger.LogInfo(c, fmt.Sprintf("用户 %d 需要预扣费 %s (funding=%s)", s.relayInfo.UserId, logger.FormatQuota(effectiveQuota), s.funding.Source()))
+	}
+
+	if handled, err := s.prepareMonitoredReservation(c, effectiveQuota); handled {
+		return err
 	}
 
 	// ---- 1) 预扣令牌额度 ----

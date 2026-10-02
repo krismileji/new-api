@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -42,7 +43,12 @@ func TestChannelMonitorAnalyticsDatabaseMatrix(t *testing.T) {
 	require.NoError(t, db.Model(&model.ChannelMonitorIncomeState{}).Where("id = ?", 1).Update("gap_since", startedAt).Error)
 	require.NoError(t, model.InitDB())
 	db = model.DB
-	assert.Equal(t, startedAt, model.ChannelMonitorIncomeGapSince(), "repeated startup must restore the durable gap marker")
+	assert.Zero(t, model.ChannelMonitorIncomeGapSince())
+	var migratedGaps []model.ChannelMonitorIncomeGap
+	require.NoError(t, db.Where("gap_key = ?", "legacy:"+strconv.FormatInt(startedAt, 10)).Find(&migratedGaps).Error)
+	require.Len(t, migratedGaps, 1)
+	assert.Equal(t, model.ChannelDailyCostDayStart(startedAt), migratedGaps[0].From)
+	assert.Greater(t, migratedGaps[0].To, startedAt)
 	var preservedIncome model.ChannelMonitorIncome
 	require.NoError(t, db.Where("settlement_key = ?", incomeKey).First(&preservedIncome).Error)
 	assert.Equal(t, int64(20_000), preservedIncome.IncomeNanoCNY, "旧汇率收入修正为平台 1:1 口径")
@@ -55,6 +61,7 @@ func TestChannelMonitorAnalyticsDatabaseMatrix(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.Model(&model.ChannelMonitorIncomeState{}).Where("id = ?", 1).Update("gap_since", 0).Error)
 	require.NoError(t, model.InitializeChannelMonitorIncome(db, false))
+	require.NoError(t, db.Where("id = ?", migratedGaps[0].ID).Delete(&model.ChannelMonitorIncomeGap{}).Error)
 	t.Cleanup(func() {
 		assert.NoError(t, sqlDB.Close())
 		assert.NoError(t, secondSQLDB.Close())
@@ -96,4 +103,5 @@ func TestChannelMonitorAnalyticsDatabaseMatrix(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, result.Coverage.Reasons, "daily_replay_incomplete", "recovery gaps must remain visible after the day becomes historical")
 	runChannelMonitorProfitAnalyticsCases(t, db, day+7*86400)
+	runChannelMonitorProfitCoverageCases(t, db, day+10*86400)
 }
