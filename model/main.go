@@ -470,6 +470,8 @@ func migrateDB() error {
 		&ChannelRatioHistory{},
 		&ChannelDailyCost{},
 		&ChannelMonitorIncome{},
+		&ChannelMonitorFundingCacheRepair{},
+		&ChannelMonitorIncomeRecoveryCursor{},
 		&ChannelMonitorIncomeState{},
 		&ChannelMonitorIncomeGap{},
 		&ChannelDailyAPIKeyCost{},

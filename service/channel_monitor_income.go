@@ -200,18 +200,66 @@ func (channelMonitorIncomeRecoveryHandler) Run(ctx context.Context, task *model.
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	completed, err := model.RecoverChannelMonitorIncomeFunding(ctx, 100)
-	costCompleted, costErr := model.RecoverChannelMonitorIncomeCosts(ctx, 100)
-	err = errors.Join(err, costErr)
 	status, message := model.SystemTaskStatusSucceeded, ""
 	if err != nil {
 		status, message = model.SystemTaskStatusFailed, err.Error()
 	}
-	if finishErr := model.FinishSystemTask(task.TaskID, runnerID, status, map[string]any{"recovered": completed, "cost_recovered": costCompleted}, message); finishErr != nil {
+	if finishErr := model.FinishSystemTask(task.TaskID, runnerID, status, map[string]any{"recovered": completed}, message); finishErr != nil {
 		common.SysError("更新收入恢复任务状态失败: " + finishErr.Error())
 	}
 }
 
-func init() { RegisterSystemTaskHandler(channelMonitorIncomeRecoveryHandler{}) }
+// Independent task types give each queue its own lease and time budget. A
+// blocked settlement must not prevent cost attribution or cache repair.
+type channelMonitorIncomeCostRecoveryHandler struct{}
+
+func (channelMonitorIncomeCostRecoveryHandler) Type() string {
+	return "channel_monitor_income_cost_recovery"
+}
+func (channelMonitorIncomeCostRecoveryHandler) Enabled() bool {
+	return model.ChannelMonitorIncomeReady.Load()
+}
+func (channelMonitorIncomeCostRecoveryHandler) Interval() time.Duration { return time.Minute }
+func (channelMonitorIncomeCostRecoveryHandler) NewPayload() any         { return nil }
+func (channelMonitorIncomeCostRecoveryHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	completed, err := model.RecoverChannelMonitorIncomeCosts(ctx, 100)
+	status, message := model.SystemTaskStatusSucceeded, ""
+	if err != nil {
+		status, message = model.SystemTaskStatusFailed, err.Error()
+	}
+	if finishErr := model.FinishSystemTask(task.TaskID, runnerID, status, map[string]any{"cost_recovered": completed}, message); finishErr != nil {
+		common.SysError("更新收入成本恢复任务状态失败: " + finishErr.Error())
+	}
+}
+
+type channelMonitorFundingCacheRecoveryHandler struct{}
+
+func (channelMonitorFundingCacheRecoveryHandler) Type() string {
+	return "channel_monitor_funding_cache_recovery"
+}
+func (channelMonitorFundingCacheRecoveryHandler) Enabled() bool           { return common.RedisEnabled }
+func (channelMonitorFundingCacheRecoveryHandler) Interval() time.Duration { return time.Minute }
+func (channelMonitorFundingCacheRecoveryHandler) NewPayload() any         { return nil }
+func (channelMonitorFundingCacheRecoveryHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	completed, err := model.RecoverChannelMonitorFundingCaches(ctx, 500)
+	status, message := model.SystemTaskStatusSucceeded, ""
+	if err != nil {
+		status, message = model.SystemTaskStatusFailed, err.Error()
+	}
+	if finishErr := model.FinishSystemTask(task.TaskID, runnerID, status, map[string]any{"cache_recovered": completed}, message); finishErr != nil {
+		common.SysError("更新额度缓存恢复任务状态失败: " + finishErr.Error())
+	}
+}
+
+func init() {
+	RegisterSystemTaskHandler(channelMonitorIncomeRecoveryHandler{})
+	RegisterSystemTaskHandler(channelMonitorIncomeCostRecoveryHandler{})
+	RegisterSystemTaskHandler(channelMonitorFundingCacheRecoveryHandler{})
+}
 
 // Legacy Midjourney bills outside SettleBilling. Its persisted task ID also
 // lets a later refund find the income without retaining request context.

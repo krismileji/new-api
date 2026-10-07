@@ -94,7 +94,7 @@ func setupChannelDailyCostBatchDatabase(t *testing.T, engine string) *gorm.DB {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, sqlDB.Close()) })
-	tables := []any{&ChannelDailyCost{}, &ChannelDailyAPIKeyCost{}, &ChannelDailyCostOutbox{}, &ChannelMonitorDailyCostDetail{}}
+	tables := []any{&ChannelMonitorIncomeRecoveryCursor{}, &ChannelMonitorFundingCacheRepair{}, &ChannelDailyCost{}, &ChannelDailyAPIKeyCost{}, &ChannelDailyCostOutbox{}, &ChannelMonitorDailyCostDetail{}}
 	for _, table := range tables {
 		require.False(t, db.Migrator().HasTable(table), "验证必须使用空的独立测试数据库")
 	}

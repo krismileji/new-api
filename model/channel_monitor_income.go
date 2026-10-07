@@ -46,6 +46,10 @@ type ChannelMonitorIncome struct {
 	FundingDelta          int
 	FundingTokenID        int
 	FundingSubscriptionID int
+	// The latest subscription period's reservation survives upstream receipt
+	// retention. Older periods have ended and are never refunded into this one.
+	SubscriptionPeriod   *int64
+	SubscriptionReserved int64
 }
 
 type ChannelMonitorIncomeState struct {
@@ -284,9 +288,8 @@ func RecoverChannelMonitorIncomeCosts(ctx context.Context, limit int) (int, erro
 		return 0, errors.New("收入成本恢复批次大小无效")
 	}
 	processed := DB.Model(&ChannelDailyCostOutbox{}).Select("event_id").Where("processed_at > 0")
-	var records []ChannelMonitorIncome
-	if err := DB.WithContext(ctx).Where("cost_recorded = 0 AND cost_event_id IN (?)", processed).
-		Order("updated_at, id").Limit(min(limit, 100)).Find(&records).Error; err != nil {
+	records, cursor, err := loadChannelMonitorRecoveryBatch[ChannelMonitorIncome](ctx, "cost", DB.Where("cost_recorded = 0 AND cost_event_id IN (?)", processed), limit)
+	if err != nil {
 		return 0, err
 	}
 	completed := 0
@@ -295,11 +298,16 @@ func RecoverChannelMonitorIncomeCosts(ctx context.Context, limit int) (int, erro
 		if ctx.Err() != nil {
 			return completed, errors.Join(failures, ctx.Err())
 		}
-		if err := reconcileChannelMonitorIncomeCost(ctx, &record); err != nil {
+		if advanced, err := cursor.advance(ctx, record.ID); err != nil || !advanced {
+			return completed, errors.Join(failures, err)
+		}
+		// Bound a single dependency wait; durable scan progress is independent
+		// of the income row, including when its failure bookkeeping is locked.
+		recordCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err := reconcileChannelMonitorIncomeCost(recordCtx, &record)
+		cancel()
+		if err != nil {
 			failures = errors.Join(failures, fmt.Errorf("收入记录 %d 成本归属恢复失败: %w", record.ID, err))
-			if updateErr := DB.WithContext(ctx).Model(&ChannelMonitorIncome{}).Where("id = ? AND cost_recorded = 0", record.ID).Update("updated_at", time.Now().Unix()).Error; updateErr != nil {
-				failures = errors.Join(failures, updateErr)
-			}
 			continue
 		}
 		if record.CostRecorded == 1 {
@@ -373,8 +381,8 @@ func RecoverChannelMonitorIncomeFunding(ctx context.Context, limit int) (int, er
 	if limit <= 0 {
 		return 0, errors.New("收入恢复批次大小无效")
 	}
-	var records []ChannelMonitorIncome
-	if err := DB.WithContext(ctx).Where("status = ?", "funding_pending").Order("updated_at, id").Limit(min(limit, 100)).Find(&records).Error; err != nil {
+	records, cursor, err := loadChannelMonitorRecoveryBatch[ChannelMonitorIncome](ctx, "funding", DB.Where("status = ?", "funding_pending"), limit)
+	if err != nil {
 		return 0, err
 	}
 	var failures error
@@ -383,13 +391,16 @@ func RecoverChannelMonitorIncomeFunding(ctx context.Context, limit int) (int, er
 		if ctx.Err() != nil {
 			return completed, errors.Join(failures, ctx.Err())
 		}
-		if err := SettleChannelMonitorIncomeFunding(ctx, record.SettlementKey, record.UserID, record.FundingSubscriptionID, record.FundingTokenID, record.FundingDelta); err != nil {
+		if advanced, err := cursor.advance(ctx, record.ID); err != nil || !advanced {
+			return completed, errors.Join(failures, err)
+		}
+		// Keep time for other users when one account is blocked. The cursor
+		// survives this batch's timeout or a process restart.
+		recordCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		err := SettleChannelMonitorIncomeFunding(recordCtx, record.SettlementKey, record.UserID, record.FundingSubscriptionID, record.FundingTokenID, record.FundingDelta)
+		cancel()
+		if err != nil {
 			failures = errors.Join(failures, fmt.Errorf("收入记录 %d 恢复失败: %w", record.ID, err))
-			// Rotate failures so one permanently invalid record cannot starve
-			// the next batch of otherwise recoverable settlements.
-			if updateErr := DB.WithContext(ctx).Model(&ChannelMonitorIncome{}).Where("id = ? AND status = ?", record.ID, "funding_pending").Update("updated_at", time.Now().Unix()).Error; updateErr != nil {
-				failures = errors.Join(failures, updateErr)
-			}
 			continue
 		}
 		completed++

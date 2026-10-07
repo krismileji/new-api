@@ -42,7 +42,7 @@ func userAuthFenceTTLSeconds() int {
 	return cacheTTL + extra
 }
 
-func writeUserCache(user *UserBase, includeQuota bool) error {
+func writeUserCache(user *UserBase, includeQuota bool, fundingGeneration ...string) error {
 	if user == nil || user.Id <= 0 || !common.RedisEnabled {
 		return nil
 	}
@@ -55,6 +55,10 @@ func writeUserCache(user *UserBase, includeQuota bool) error {
 		includeQuotaArg = "1"
 	}
 	ttl := userCacheTTLSeconds()
+	guard, generation := "0", ""
+	if len(fundingGeneration) > 0 {
+		guard, generation = "1", fundingGeneration[0]
+	}
 	const script = `
 local incoming = tonumber(ARGV[1])
 local pending = tonumber(redis.call('GET', KEYS[2]) or '0')
@@ -62,6 +66,9 @@ local committed = tonumber(redis.call('GET', KEYS[3]) or '0')
 local current = tonumber(redis.call('HGET', KEYS[1], 'AuthVersion') or '0')
 if pending > incoming or committed > incoming or current > incoming then
   return 0
+end
+if ARGV[13] == '1' and (redis.call('GET', KEYS[4]) or '') ~= ARGV[14] then
+  return 1
 end
 if committed < incoming then
   redis.call('SET', KEYS[3], ARGV[1])
@@ -82,9 +89,9 @@ end
 redis.call('EXPIRE', KEYS[1], ARGV[12])
 return 1`
 	result, err := common.RDB.Eval(context.Background(), script,
-		[]string{getUserCacheKey(user.Id), getUserAuthFenceKey(user.Id), getUserAuthVersionKey(user.Id)},
+		[]string{getUserCacheKey(user.Id), getUserAuthFenceKey(user.Id), getUserAuthVersionKey(user.Id), "funding:generation:" + getUserCacheKey(user.Id)},
 		user.AuthVersion, user.Id, user.Group, user.Email, user.Status, user.Role,
-		user.Username, user.Setting, user.CacheSchema, includeQuotaArg, user.Quota, ttl,
+		user.Username, user.Setting, user.CacheSchema, includeQuotaArg, user.Quota, ttl, guard, generation,
 	).Int()
 	if err != nil {
 		return err

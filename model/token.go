@@ -286,14 +286,15 @@ func GetTokenByKey(key string, fromDB bool) (token *Token, err error) {
 		}
 		// Don't return error - fall through to DB
 	}
+	generation, generationErr := fundingCacheGeneration(getTokenCacheKey(key))
 	token = &Token{}
 	if err = DB.Where(commonKeyCol+" = ?", key).First(token).Error; err != nil {
 		return nil, err
 	}
-	if common.RedisEnabled {
+	if common.RedisEnabled && generationErr == nil {
 		// 冷缓存时用数据库快照初始化；已存在的哈希只刷新 TTL，
 		// 避免快照覆盖 Redis 中已被原子预扣的余额。初始化失败不影响本次读取。
-		if _, cacheErr := cacheInitToken(*token); cacheErr != nil {
+		if _, cacheErr := cacheInitToken(*token, generation); cacheErr != nil {
 			common.SysLog("failed to init token cache: " + cacheErr.Error())
 		}
 	}

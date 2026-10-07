@@ -57,10 +57,37 @@ func TestChannelMonitorProfitUpgrade(t *testing.T) {
 	assert.True(t, model.LOG_DB.Migrator().HasIndex(&model.Log{}, "idx_created_at_id"))
 	assert.Error(t, db.Create(&model.User{Username: "profit-upgrade", Password: "duplicate", AffCode: "duplicate"}).Error)
 	if mode != "seed" {
-		for _, column := range []string{"funding_delta", "funding_token_id", "funding_subscription_id"} {
+		for _, column := range []string{"funding_delta", "funding_token_id", "funding_subscription_id", "subscription_period", "subscription_reserved"} {
 			assert.True(t, db.Migrator().HasColumn("channel_monitor_incomes", column), column)
 		}
 		assert.True(t, db.Migrator().HasTable("channel_monitor_incomes"))
+		assert.True(t, db.Migrator().HasTable("channel_monitor_funding_cache_repairs"))
+		assert.True(t, db.Migrator().HasTable("channel_monitor_income_recovery_cursors"))
+		var cursorCount int64
+		require.NoError(t, db.Table("channel_monitor_income_recovery_cursors").Where("kind = ?", "funding").Count(&cursorCount).Error)
+		if cursorCount == 0 {
+			require.NoError(t, db.Table("channel_monitor_income_recovery_cursors").Create(map[string]any{"kind": "funding", "after_id": int64(4), "through_id": int64(9), "revision": "upgrade-cursor"}).Error)
+		}
+		var cursor struct {
+			AfterID   int64
+			ThroughID int64
+			Revision  string
+		}
+		require.NoError(t, db.Table("channel_monitor_income_recovery_cursors").Where("kind = ?", "funding").Take(&cursor).Error)
+		assert.EqualValues(t, 4, cursor.AfterID)
+		assert.EqualValues(t, 9, cursor.ThroughID)
+		assert.Equal(t, "upgrade-cursor", cursor.Revision)
+		assert.Error(t, db.Table("channel_monitor_income_recovery_cursors").Create(map[string]any{"kind": "funding", "after_id": int64(0), "through_id": int64(0), "revision": "duplicate"}).Error)
+		assert.True(t, db.Migrator().HasColumn("channel_local_response_refunds", "subscription_period"))
+		assert.True(t, db.Migrator().HasColumn("channel_local_response_refunds", "batch_transfer_id"))
+		var transfers int64
+		require.NoError(t, db.Table("channel_local_response_refunds").Where("request_id = ?", "upgrade-transfer").Count(&transfers).Error)
+		if transfers == 0 {
+			require.NoError(t, db.Table("channel_local_response_refunds").Create(map[string]any{"request_id": "upgrade-transfer", "user_id": 9711, "batch_transfer_id": "persisted-transfer", "applied": true, "cache_applied": true}).Error)
+		}
+		var transferID string
+		require.NoError(t, db.Table("channel_local_response_refunds").Where("request_id = ?", "upgrade-transfer").Pluck("batch_transfer_id", &transferID).Error)
+		assert.Equal(t, "persisted-transfer", transferID)
 		assert.True(t, db.Migrator().HasTable("channel_monitor_income_gaps"))
 		assert.True(t, db.Migrator().HasIndex("channel_monitor_income_gaps", "idx_channel_monitor_income_gaps_gap_key"))
 		assert.True(t, db.Migrator().HasIndex("channel_monitor_incomes", "idx_channel_monitor_incomes_settlement_key"))

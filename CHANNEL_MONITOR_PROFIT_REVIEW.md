@@ -1,6 +1,6 @@
 # 渠道监控利润功能系统复查记录
 
-> 更新日期：2026-10-07。当前方案以第 17 节为准，最新复查结果见第 18 节：按用户请求恢复官方缓存优先读取，撤回 F-13 每次读取数据库额度的方案。F-10/F-11/F-12 修正保留；F-13 仍为缓存异常时的一致性限制；本次整包回归还出现一项后台聚合租约测试失败，不能宣称全部验收通过。
+> 更新日期：2026-10-07。**最新全量复查见第 30 节：当前工作区未发现新的已确认下游利润缺陷；后端四包、前端 773 项、类型检查及构建重新通过。** F-18 修复证据见第 29 节。官方 F-14-A 按用户要求保留；旧记录缺证据仍需人工核对，纯内存批次保留既有退出边界。没有提交、推送或部署。
 > 本轮对象：提交 `30c7db2e1`，相对父提交 `f4baf15c475dee5a60848e8f446d46ebab6b4739` 的 52 个文件改动。此前“未提交”描述属于当时的历史记录。
 > 第 1 至 16 节保留此前故障、修复和验证证据；涉及 F-13 数据库直读的结论仅适用于当时版本，已由第 17 节替代。没有修改生产账目、提交或部署。
 > **前轮验证：** F-06 已按用户选择的“保留预扣待人工核对”实现；三库和中断回归通过，最后 service 整包及构建通过，前端 773 项通过。上述证据作为本轮输入，不代表第 16 节的任务已经核查完成。
@@ -16,6 +16,20 @@
 | F-07 | 已实现，三库针对性回归通过 | 初始扣费及退款分别原子提交；失败终态且有余额的任务继续重试 |
 | F-08 | 已实现，组件回归通过 | 首次失败及保留旧结果时均提示并可重试；12 个组件测试通过 |
 | F-09 | 复核新增并修复，三库通过 | 累计钱包/令牌额度不再使用单笔 int32 上限 |
+
+### 修复前待处理清单（2026-10-07，第 21 节已更新状态）
+
+以下保留修复前的五类问题及其触发条件；当前状态以第 21 节为准。详细原始归属、复现、命令和验收要求见第 20 节。
+
+| 编号 | 优先级与状态 | 触发条件及影响 | 证据与后续验收要求 |
+|---|---|---|---|
+| F-14 | **P1，未修复；分官方语义与下游扩展** | A：旧周期结算差额释放新周期额度；B：跨周期补充预扣后全额退款漏退新周期补扣 | 三库、54 个组合用例；A 遵循用户要求等待官方，不能宣称风险消失；B 是下游责任，应修复自己的分周期记录与退款 |
+| F-15 | **P1，下游缺陷，未修复** | 明确退款指令长期待恢复时，官方七天清理删除其依赖回执，退款事务持续失败 | 三库调用真实清理入口复现；在下游保存可恢复依据，不能简单改官方全局保留期 |
+| F-16 | P2，下游缺陷，未修复 | MySQL 默认 changed-rows 语义：免费 Midjourney 初始结算失败；普通任务同秒无变化成本结算误报并发冲突 | 三库对照；MySQL `clientFoundRows=false` 复现，其他两库通过；修复局部无变化更新判断，不改全局驱动参数 |
+| V-05 | P2，下游缺陷，未修复 | 自己完成的分钟仍在续期快照中，被误判失去租约，取消同批后续重建；过期清理另有残留 | 未过期、无竞争者的服务层屏障复现，加三库模型状态矩阵；需协调完成与续期，保留真实接管保护 |
+| F-13 | P2，下游缓存衔接缺口，未消除 | Redis 删除失败或旧快照回填，余额偏高或偏低，影响展示及额度判断 | 三库资金 + 隔离 Redis 故障测试；继续官方缓存优先，不能用每次查库规避，不承诺固定时间自愈 |
+
+本次只登记问题和验收要求，不表示已开始修复或已完成验收。现有整包回归通过与上述故障复现失败同时成立；未评估实际线上受影响用户或金额。
 
 ## 1. 结论与此前遗漏原因
 
@@ -1143,3 +1157,760 @@ F-10 保留结算后缓存失效，不直接恢复已证明会重复叠加的结
 源码中后台续期和完成清理并发执行；`CompleteChannelMonitorDirtyMinutes` 对租约已过期或标记再次变化的记录会保留并释放，供后续重试。因此需进一步定位续期、SQLite 写锁与完成清理的具体交错，不能只把失败归咎于测试机器负载或其他测试进程。单例和独立整包均通过，只能说明本次未再次复现，不能证明问题已经修复。
 
 这项失败直接证明的是后台聚合一次执行后仍有待修复记录，可能导致后续重复重建或统计更新延后；本次没有发现由它造成资金重复扣退的证据，也没有证实线上必然发生。涉及的聚合生产代码及该测试均无本次工作区改动。保留失败日志，尚未修改租约实现、放宽断言或延长测试租约来掩盖失败。
+
+## 19. 提交后的完整链路复查（2026-10-07）
+
+基线为 `1871733bc`。本轮开始工作区干净；复核从普通请求预扣、最终指令、后台恢复、异步任务、Midjourney 退款，到成本归属、历史清理、报表和前端展示。**新增确认 F-14（P1）一项；已有 V-05 仍未关闭并补充受控复现；F-13 继续保留。** 本轮只更新本记录，没有修改生产代码、认证逻辑、前端或正式测试断言，也没有提交、推送或部署。
+
+### F-14（P1，未修复）：旧周期订阅结算返还会冲减新周期用量
+
+位置：`model/task_billing.go:412` 的 `applyTaskFundingDelta`，尤其 425–445 行的订阅差额更新；普通结算从 `model/channel_monitor_income.go:432` 附近调用该函数。它只读取当前订阅 `AmountUsed`，对负差额直接减去并截断到零，没有确认预扣所属周期。与之相比，`model/channel_local_response_refund.go:214` 的本地退款明确检查 `LastResetTime <= record.CreatedAt`，避免旧周期退款影响新周期。
+
+本轮通过真实公开模型入口复现以下顺序，不直接调用内部算术函数：
+
+1. `ReserveChannelMonitorIncome` 对订阅预扣 100，令牌从 1000 减为 900。
+2. `PrepareChannelMonitorIncome` 保存最终费用 50、返还差额 -50 的 `funding_pending` 指令。
+3. 将订阅夹具推进到新周期（`LastResetTime` 晚于原预扣回执），新周期已有其他请求用量 25。
+4. 调用 `RecoverChannelMonitorIncomeFunding`，并再调用一次检查幂等性。
+5. **实际：新周期用量 25 → 0；期望：仍为 25。** 令牌剩余 950、收入额度 50、收入状态 `settled`；第二次恢复未重复执行。这不是重复退款，而是一次退款使用了错误的周期。
+
+SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24 均得到同一失败断言。可能给用户额外释放新周期订阅额度，使订阅消费与收入记录不一致。普通长请求或最终结算延迟至重置后即可触发这条链路，不要求用户主动并发攻击。异步任务及其他调用共用该差额函数，需要修复时一起核对，但本轮的运行证据只证明上述普通最终结算恢复场景；没有证明所有任务场景或实际线上损失。测试未补齐成本，不声称已通过 HTTP 观察到整行已确认利润错误。
+
+本地缓存读取方式与此问题无关，不能靠恢复每次查数据库修复。修复应明确预扣/调整所属周期，再处理旧周期负差额；还需验证跨周期补扣、任务回调、补充预扣和重复恢复，避免破坏用户既定的中断预扣政策。本轮未实施修复。`model/task_billing.go` 是下游文件；上游 `PostConsumeUserSubscriptionDelta` 也采用当前订阅差额更新，不能仅以“官方方式”证明周期安全，也不应将该问题误归因于最近缓存失效提交。
+
+复现使用 Go overlay 将临时用例附加到已有模型测试文件，工作区测试文件未改动：
+
+- [复现源文件](D:/temp/profit-audit-20261007-overlay-income-test.go)（新增 `TestAuditProfitSettlementAfterSubscriptionReset`）。
+- [overlay 配置](D:/temp/profit-audit-20261007-overlay.json)。
+- 命令：设置下述模型三库 DSN 后，`go test -overlay D:/temp/profit-audit-20261007-overlay.json ./model -run '^TestAuditProfitSettlementAfterSubscriptionReset$' -count=1 -v`。
+- [三库失败日志](D:/temp/profit-audit-20261007-reset-repro-three-db.log)。首次实验只有 SQLite 完成，原隔离容器在主回归后已不在 Docker 列表，MySQL/PostgreSQL 连接拒绝；该日志保留为 [首次结果](D:/temp/profit-audit-20261007-reset-repro.log)，未把连接失败算作业务缺陷。随后在新隔离容器完成三库复现。
+
+### V-05 补充：续期未完成时，过期租约使已重建分钟再次等待处理
+
+原测试本轮随 service 整包通过，前轮失败仍保留。进一步阅读后确认：`service/channel_monitor_aggregation.go:350` 附近在完成重建后直接调用清理；续期协程独立运行；`model/channel_monitor_dirty_minute.go:522` 清理只删除 `claimed_until > now` 的记录，否则保留并释放领取；主流程最后取消续期并返回。
+
+使用与原用例相同的独立 SQLite 主库/日志库及 2 秒租约、100 毫秒续期间隔，在续期 UPDATE 前设置屏障，让日志查询跨过租约期限，直到完成 DELETE 尝试才放行续期。结果重建成功、函数返回成功，但脏分钟数仍为 1，续期被取消并报告 `interrupted`，与原失败的结果一致。这给出了可产生原失败结果的具体交错，尚不能证明原日志的每个内部时序完全相同。
+
+- [overlay 源文件](D:/temp/profit-audit-20261007-overlay-lease-expired-test.go)、[配置](D:/temp/profit-audit-20261007-overlay-lease-expired.json)。
+- 命令：`go test -overlay D:/temp/profit-audit-20261007-overlay-lease-expired.json ./service -run '^TestAuditDirtyMinuteCompletionBeforeBlockedRenewal$' -count=1 -v`。
+- [复现失败日志](D:/temp/profit-audit-20261007-lease-expired-barrier.log)：3.43 秒用例内重建成功、预期 0 实际 1。
+- 对照试验只阻塞续期、不跨过租约时通过：[日志](D:/temp/profit-audit-20261007-lease-barrier.log)。另一次尝试在重建事务中通过第二连接直接改过期时间，因测试自身 SQLite 锁冲突而终止，不作为产品缺陷证据：[探索日志](D:/temp/profit-audit-20261007-lease-explicit-expiry.log)。最终保留的复现源恢复为原有慢查询方式，没有向仓库加入依赖 sleep 的新测试。
+
+影响是后台统计重复重建或延迟；未证明资金重复扣退。生产租约为 2 分钟，实验缩短为 2 秒，因此不推断线上频率或通常延迟。该项属于渠道监控共享聚合路径，不能据此称利润收入/成本账本已经算错。仍未修复，继续沿用 V-05，不重复计为新的资金缺陷。
+
+### 范围与结果矩阵
+
+| 链路 | 本轮核查 | 结论 |
+|---|---|---|
+| 金额与收入口径 | 保存的额度单位、1:1 换算、单笔边界、累计余额、安全加减与 SQL 汇总 | 既有金额、三库 parity 回归通过；前述纳元精度与总和边界仍在 |
+| 普通预扣/补扣/结算 | 事务边界、状态转换、提交不确定、重复请求、缓存失效、非批量锁 | 现有三库专项通过；新增跨周期 F-14 失败 |
+| 普通失败退款 | 持久退款接管、重复退款、订阅回执和周期、缺失令牌/订阅、缓存幂等 | 既有回归通过；不能用本地退款周期测试代表最终结算周期安全 |
+| 异步任务 | 初始差额与入库原子性、归属失败、终态校正、早到回调、历史过期后扣退 | 源码与既有回归通过；共用订阅差额函数列入 F-14 修复范围 |
+| Midjourney | 初始扣费、终态退款重试、旧快照与重复回调 | 现有三库及服务回归通过 |
+| 实时/违规收费接入 | 独立结算标识、最终指令持久化、共同成本归属、错误传播 | 源码及整包回归，未连接真实供应商或运行跨午夜 WebSocket |
+| 恢复及人工核对 | 只恢复明确指令、两执行者幂等、失败轮转、取消、人工证据与快照检查 | 三库专项通过；不改变保留孤立预扣待人工核对的政策 |
+| Redis 与批次 | 缓存命中、失效后重建、删除失败、旧快照回填、批次锁 | F-10/F-12 回归通过；F-13 未消除；本轮未新增请求 SQL |
+| 成本及覆盖 | 收入/成本并发投影、缺口跨日归属、队列/死信不可读、保留期边界 | 模型、服务、控制器回归；不可确认时保持待确认 |
+| 文件故障与清理 | 坏文件、目录不可用、超过上限、分批清理、保留资金指令 | 故障回归通过；真实共享盘与双重存储损坏未新增部署验证 |
+| 报表查询 | 一致性快照、成本单边/收入单边、汇总分页、仅亏损、逐日覆盖与下钻 | 真实 SQLite/MySQL/PostgreSQL 控制器矩阵通过 |
+| 前端 | 查询键、手动刷新、独立补查失败、待确认占位、趋势缺口、格式化 | 渠道监控 130 文件/773 测试、类型检查和构建通过；未新增浏览器人工验收 |
+| 后台分钟聚合 | 租约续期、完成清理、过期保留 | V-05 受控交错复现，未关闭 |
+| 启动/升级 | 初始化、从节点检测、缺口恢复、1:1 parity 迁移 | 源码及三库 parity 回归；本轮没有重跑旧发布版到新版本的完整主库/日志库迁移矩阵，历史证据仍见前文 |
+| 性能 | 缓存优先、同步失效、资金事务、批次锁 | 未新增生产逻辑；不重复宣称零开销；本轮没有新增 HTTP/线上规模压测 |
+
+### 实际执行与环境
+
+所有 Go 命令使用 Go 1.26.5。主模型专项先在 13318/15438 的原隔离实例完成，版本为 SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24。新增复现及分析矩阵使用新容器 `codex-profit-review-mysql-20261007`（13319）和 `codex-profit-review-postgres-20261007`（15439），镜像分别为 `mysql:5.7.44`、`postgres:9.6.24`；没有连接业务 MySQL 3306 或 Redis 6379。
+
+模型 DSN：`TEST_COST_BACKLOG_MYSQL_DSN` 指向 `127.0.0.1:13319/new_api_cost_backlog_test`（`charset=utf8mb4&parseTime=true&loc=Local&clientFoundRows=true`），`TEST_COST_BACKLOG_POSTGRES_DSN` 指向 `127.0.0.1:15439/new_api_cost_backlog_test?sslmode=disable`。分析矩阵通过 `CHANNEL_MONITOR_CONSISTENCY_DIALECT` 选择引擎，`SQL_DSN` 指向同端口专用 `new_api_cm_schema_analytics`；SQLite 的 `CM_UPGRADE_SQLITE_PATH=D:/temp/cm-consistency-verification-profit-20261007.db`。MySQL 专用分析库先误用默认字符集，中文夹具插入失败；改测试库及其新建表为 utf8mb4 后通过，未改生产代码。[初次环境失败日志](D:/temp/profit-audit-20261007-analytics-mysql.log)保留。
+
+| 命令 | 结果与日志 |
+|---|---|
+| `go test ./model -run 'TestChannelMonitorIncome\|TestChannelMonitorDirtyMinute\|TestTaskBilling\|TestMidjourneyBilling' -count=1 -v`（配置模型三库 DSN） | 通过，86.986s；[日志](D:/temp/profit-audit-20261007-comprehensive-model.log)；没有同名匹配的测试不算已执行，实际用例以日志为准 |
+| `go test ./model -count=1` | 通过，69.298s；[日志](D:/temp/profit-audit-20261007-comprehensive-model-full.log)；此整包命令未设置外部数据库 DSN，不能代替前一项三库专项 |
+| `go test ./controller ./service ./middleware -count=1` | 通过，301.459s / 113.069s / 3.089s；[日志](D:/temp/profit-audit-20261007-comprehensive-backend.log) |
+| `go test ./controller -run '^TestChannelMonitorAnalyticsReadDatabaseMatrix$' -count=1 -v`（分别设置分析矩阵环境） | SQLite 2.940s、MySQL 4.583s、PostgreSQL 3.593s 通过；[SQLite](D:/temp/profit-audit-20261007-analytics-sqlite.log)、[MySQL](D:/temp/profit-audit-20261007-analytics-mysql-utf8.log)、[PostgreSQL](D:/temp/profit-audit-20261007-analytics-postgres.log) |
+| `go build ./...` | 退出 0；[日志](D:/temp/profit-audit-20261007-comprehensive-build.log) |
+| `bun run test src/features/channel-monitor`（web） | 130 测试文件、773 项通过；[日志](D:/temp/profit-audit-20261007-comprehensive-web.log) |
+| `bun run typecheck`（web） | 退出 0；[日志](D:/temp/profit-audit-20261007-comprehensive-typecheck.log) |
+| `bun run build`（web） | 退出 0；[日志](D:/temp/profit-audit-20261007-comprehensive-web-build.log) |
+
+**当前交付结论：不能宣称利润功能没有问题。** 需要优先修复 F-14；V-05 继续待修复；F-13 沿用用户要求缓存优先后的已知限制。其余本轮列明路径未发现新的已证实缺陷，不能扩大为全供应商、线上灾难恢复或所有并发场景均已验证。
+
+## 20. 剩余问题统一复查与官方归属（2026-10-07）
+
+### 结论、基线与修复原则
+
+本次完成第 2、19 节所列利润功能链路的统一复核，并补齐周期切换、长期恢复依赖、MySQL 默认连接语义、缓存正负差额和聚合完成/续期交错的组合验证。最终归并为 **5 类未关闭问题**：F-13、F-14、F-15、F-16、V-05。同一根因的多个入口归入同一项，不将每个失败测试拆成新问题。F-14、F-15 涉及额度正确性，优先级为 P1；其余为 P2。它们尚未修复。
+
+此前复查遗漏组合场景，尤其把 `clientFoundRows=true` 的 MySQL 结果推广到默认连接配置、把单独的退款周期保护推广到“跨周期补扣再退款”、把持久退款指令误当成完整持久恢复依据。因此之前“只剩三项”的表述不充分，本节更正该结论；不能用已有测试数量为完成背书。
+
+- 下游代码基线：`1871733bc`；前轮修复提交 `30c7db2e1`。本轮只编辑本复查文件，复现通过仓库外 Go overlay 执行，没有修改生产代码或仓库测试文件，没有提交、推送或部署。
+- 官方对照：本地 `upstream/main = c2b7a9a9e`，提交日期 2026-09-25。本轮未拉取远程最新代码，故“官方已有”仅指该基线，不等同于上游今天尚未修复。
+- 遵循用户要求：官方既有问题记录并等待官方；下游新增问题在自己的实现内修复。文件属于官方并不表示其中新增的下游逻辑可以免责；文件属于下游也不表示沿用官方的业务语义应擅自改写。
+- 保留官方缓存优先读取，不恢复每次查余额数据库；不改变“孤立预扣保留、等待人工核对”的既定政策。
+
+### F-14：订阅跨周期调整（P1，两个责任边界）
+
+**A．官方已有的当前周期差额语义。** 原周期预扣 100，重置后当前已用 25，最终费用为 50。负差额 -50 作用于当前 `amount_used`，结果为 0，额外释放新周期额度。当前 `PostConsumeUserSubscriptionDelta` 与官方同名函数比较，在统一换行后内容一致。本次实际执行的是当前仓库内这个相同函数，不是独立启动官方版本。
+
+下游 `applyTaskFundingDelta` 沿用相同语义，普通直接结算、持久恢复、异步任务结算和退款也实测出现该现象。持久恢复增加了跨周期迟到的机会，但该差额规则不是最近缓存提交创造的。按用户决定，A 记录为已知风险并等待官方，不擅自改 `model/subscription.go` 的通用结算规则，也不能把“暂不改”记成“已修复”。
+
+**B．下游的补充预扣与整单退款不匹配。** 原周期预扣 100；重置后当前已用 25；`AdjustChannelMonitorReservation` 将预留从 100 补到 150，在新周期实际扣了 50，使已用变为 75。随后整单失败退款：令牌 850 回到 1000，但下游退款仅检查最初回执的周期，因其属于旧周期而跳过全部订阅退款，当前已用仍为 75；正确结果应为 25，即至少退回本次在新周期扣的 50。重复退款也不会补回这部分。
+
+代码链：`model/channel_monitor_reservation.go` 的补充预扣 → `service/channel_monitor_reservation.go` 汇总额记录 → `model/channel_local_response_refund.go` 以原始回执时间决定整个订阅退款。该分周期证据缺失属于下游，不应与 A 一起推给官方。
+
+本次矩阵为三库 × 同周期/重置后 × 9 条路径，共 54 组：官方差额、直接结算、恢复、任务结算、任务退款、单独补充预扣、本地退款、补扣后本地退款、清理回执后退款。单独本地退款跨周期保留新周期 25 的保护有效；它不能覆盖 B。正差额在新周期如何计费属于业务规则，不能以修复 B 为名顺带改官方语义。
+
+后续关闭 B 必须证明：可识别各次补扣的所属周期；同周期与跨周期部分/全额退款正确；重复、恢复、任务移交不重退；A 仍维持明确记录的官方行为。保留现有中断预扣政策。
+
+### F-15：明确退款指令的依赖先被清理（P1，下游）
+
+`CleanupSubscriptionPreConsumeRecords` 按 `updated_at` 清理历史回执，官方后台使用七天保留期。下游 `ApplyChannelLocalResponseRefund` 则必须先查到 `SubscriptionPreConsumeRecord` 才能完成退款事务。
+
+三库复现顺序：正常预扣并持久化明确退款指令 → 将该预扣回执的创建、更新时间设为八天前 → 调用真实 `CleanupSubscriptionPreConsumeRecords(7 * 86400)` → 两次应用退款。两次都返回 `gorm.ErrRecordNotFound`，退款仍 `Applied=false`，令牌仍为 900（预扣前 1000）；同周期订阅已用仍为 100，重置场景保持 25。整个退款事务回滚，系统单靠继续重试无法恢复。
+
+触发前提是退款未完成持续到回执清理，例如长期维护、失败依赖或恢复积压；没有证据证明通常请求会等七天，也没有查询线上发生频率。这里是**已经有明确退款指令**的恢复失败，与用户选择的“没有最终指令的孤立预扣不自动退款”不同。
+
+官方清理函数是既有实现；新的长期重试依赖是下游建立的。因此应由下游补足可恢复证据或依赖保留机制，不能直接把官方全局七天保留期延长当成完整修复。关闭标准：真实清理先执行和退款先执行两种顺序、同/跨周期、重复恢复均正确；已经退款的回执不能被再次用于退钱；不能为缺失证据的旧数据臆造资金事实。
+
+### F-16：MySQL 无变化 UPDATE 被当成失败（P2，下游）
+
+MySQL 默认 `clientFoundRows=false` 返回实际变化行数；SQLite/PostgreSQL 对这里的 UPDATE 返回匹配行数。此前专项 DSN 使用 `clientFoundRows=true`，掩盖了下游把“0 行变化”统一当成记录不存在或并发冲突的问题。本次验证两处实际入口，合并为同类问题。
+
+**A．免费 Midjourney 初始结算。** 零金额是合法输入，`PrepareMidjourneyTaskBilling`、`SettleMidjourneyBilling` 仅拒绝负值或越界。初始结算仍调用 `updateTaskUsageInTx(..., 0)`；用户 `used_quota` 没变化时，MySQL 返回 0，被转成 `record not found`，事务回滚。真实测试中 SQLite/PostgreSQL 的收入为 `settled`，MySQL 为 `pending`，结算标记和请求次数也未在该事务提交。HTTP 调用点只记录初始结算错误并继续响应，未发现这条初始结算的自动持久重试链。此例费用为零，不把它描述成用户现金损失。
+
+**B．普通任务无变化成本结算/重复回调。** 任务已有成本事件与相同 `private_data`，目标额度等于原额度时，`applyTaskBillingOnce` 仍因 `costContextChanged` 写同样的私有数据。若 GORM 自动更新的 `updated_at` 也在同一秒，MySQL 返回 0，错误报告 `task quota changed concurrently`。三库实验依次结算 100、150、150：固定数据库测试时钟使同秒可确定复现，MySQL 第一、三次失败，真正发生额度变化的第二次成功，SQLite/PostgreSQL 均成功。
+
+固定时钟只用于构造“时间戳没有变化”的前提，没有改生产时钟；自由时钟对照三库全部通过。生产重试跨到下一秒后可能成功，因此 B 的证据是误报冲突、额外重试和结算延迟，不是证明一定永久卡死或重复扣费。代码存在有界退避，不能将测试固定时钟下最终报错直接推广成线上必然最终失败。
+
+两处均位于下游文件 `model/midjourney_billing.go`、`model/task_billing.go`。修复应跳过不需要的额度更新或区分“记录存在且无需修改”与真正冲突，保留任务标记、请求次数、收入及成本一致性；不要改全局 MySQL 连接参数。关闭标准需覆盖零金额、同秒相同目标、真实正负差额、重复回调、真实记录缺失及 CAS 失败，在 MySQL 两种 `clientFoundRows` 设置和另两库分别验证。
+
+### V-05：后台完成与租约续期的交错（P2，下游）
+
+第 19 节的过期租约清理残留仍有效。本次新增更直接的交错，不需要租约过期或其他节点竞争：续期协程复制两条 active claims 后暂停；主流程完成并删除第一分钟；续期恢复时发现第一条不存在，将整批判断为失去租约，取消第二分钟的重建。服务层屏障测试使用两分钟未过期租约，首分钟成功、第二分钟收到 `context canceled` 和 `lease lost`，0.44 秒即复现。
+
+三库模型矩阵区分有效租约、自己完成、到期但无人接管、他人接管、重新标脏；确认当前批次续期遇到前一条不匹配会回滚后续续期。另有 MySQL 更新同一到期时间返回零行的问题，归在本类加固边界：生产租约 120 秒、续期间隔 40 秒，通常不会重复写相同截止时间，不能把这个合成场景当成常见线上故障。
+
+影响为重复工作或后台统计延后；没有证明资金重复扣退。修复范围是下游 `service/channel_monitor_aggregation.go` 与 `model/channel_monitor_dirty_minute.go` 的协调，不涉及官方请求扣费。必须区分自己完成与真实接管，覆盖完成、续期、重新标脏、到期和不同持有者的交错，不能单纯延长租约或放宽所有权保护。
+
+### F-13：缓存失效与旧快照回填（P2，下游衔接）
+
+补齐了正向扣款的对照：数据库余额 9900 扣到 9850；Redis 删除失败或先前读取的旧快照随后回填时，缓存仍为 9900。三库资金配合隔离 Redis 故障均复现；绕开失效缓存后读取 9850，重复最终结算不再次扣款。原先退款后的缓存偏低证据仍保留。
+
+影响不仅是展示：偏低可能在入口提前拒绝本可执行的请求；偏高会影响缓存额度判断。普通持久正向预扣仍有数据库钱包/令牌检查，不能说所有请求都会因此透支；信任额度、实时链路也不能只凭普通预扣测试宣称完全无影响。缓存 TTL 可被其他写入刷新，因此不承诺最多 60 秒必定恢复。
+
+官方缓存优先读法继续保留，问题在下游事务提交后的失效衔接。删除失败存在同步等待开销，当前失效超时上限为 3 秒；本轮没有压测其对实际延迟分位数的影响。后续方案必须同时覆盖失效失败、旧快照迟到回填、扣款和退款两方向，并验证正常命中时没有新增数据库读取；不能只做失效重试就宣称所有竞态已解决。
+
+### 完整范围收口
+
+本节针对同一代码基线扩展第 19 节验证；无生产改动，因此沿用其整包后端、构建、前端 773 项、类型检查和报表三库证据，不反复执行相同检查。各类仍以失败复现为准，不能被整包通过覆盖。
+
+| 范围 | 已执行或复用的证据 | 本轮结论 |
+|---|---|---|
+| 普通钱包/订阅预扣、补扣、终结与恢复 | 第 19 节原子事务/重复恢复/提交不确定；本次九路径周期矩阵 | 钱包已有修复未见新确定回归；订阅归入 F-14/F-15 |
+| 普通本地失败退款与人工核对 | 既有幂等、失败轮转与人工证据测试；本次真实七天清理、跨周期补扣再退款 | 明确指令依赖缺陷记录 F-15；不改变孤立预扣政策 |
+| 异步任务和 Midjourney | 初始差额、终态退款、成本早到/迟到、过期历史；本次默认 MySQL、同秒/自由时钟对照 | F-14 共用语义及 F-16；未发现额外独立的重复资金扣退证据 |
+| 实时、违规扣费 | 第 19 节接入、结算标识、归属与整包回归 | 共享资金问题按 F-13/F-14 处理；无真实供应商跨午夜验收 |
+| 成本、缺口、队列与历史清理 | 原故障回归和报表三库矩阵；本次清理资金依赖 | 利润不可确认保护保留；新依赖缺陷 F-15 单列 |
+| 后台聚合 | 原慢查询实验、本次无竞争者服务屏障与三库状态矩阵 | V-05 未关闭 |
+| 查询与前端 | 同基线控制器三库、773 项前端测试、类型检查及构建 | 未确认新的独立问题；测试不替代线上数据验收 |
+| 缓存与请求开销 | 命中时拒绝 SQL 的既有测试；正负差额、删除失败和旧快照回填 | F-13；不新增余额直读，未证明零延迟影响 |
+| 启动、迁移与部署 | 第 19 节初始化/parity 与此前迁移证据 | 本轮无 schema 修改，没有重跑完整发布版升级矩阵 |
+
+本次范围内的源码核对、组合实验和归属分析已完成，结果集中在上述五类。保留原 R-01 至 R-05 边界：真实多节点共享目录、双重存储损坏与完整灾难恢复、线上规模、真实供应商长连接等不在这些隔离测试的证明范围；没有查生产用户账目，也没有新增 HTTP 吞吐/延迟压测。这些是明确的验证边界，不等于又发现了五个确定缺陷，也不应删除后宣称不存在未知问题。
+
+### 可复查的执行证据
+
+运行环境：Go 1.26.5；SQLite 3.50.4；MySQL 5.7.44；PostgreSQL 9.6.24。仍使用第 19 节专用隔离容器和 13319/15439 端口，模型库 `new_api_cost_backlog_test`。没有操作业务 MySQL 3306 或 Redis 6379。缓存故障使用测试隔离 Redis。
+
+模型 overlay：[源文件](D:/temp/profit-closure-20261007-model.go)、[映射](D:/temp/profit-closure-20261007-model.json)。它在仓库外附加到已有 `model/channel_monitor_income_test.go`，因此日志行号属于 overlay 内容，不是仓库源码的新增行。服务屏障同理：[源文件](D:/temp/profit-closure-20261007-lease.go)、[映射](D:/temp/profit-closure-20261007-lease.json)。
+
+模型环境变量沿用第 19 节账号和端口，DSN 形状如下（不重复记录测试密码）：
+
+```text
+TEST_COST_BACKLOG_MYSQL_DSN=root:<测试密码>@tcp(127.0.0.1:13319)/new_api_cost_backlog_test?charset=utf8mb4&parseTime=true&loc=Local&clientFoundRows=false
+TEST_COST_BACKLOG_POSTGRES_DSN=postgres://postgres:<测试密码>@127.0.0.1:15439/new_api_cost_backlog_test?sslmode=disable
+```
+
+前面的订阅扩展矩阵使用 `clientFoundRows=true`；末尾清理专项、默认 MySQL 行数专项及现有收入专项使用 `false`。MySQL 模型专用库起初默认 latin1，现有中文夹具插入失败；改该测试库默认字符集为 utf8mb4 后，现有专项最终通过，未改生产连接或数据库。[首次环境失败日志](D:/temp/profit-closure-20261007-default-mysql.log)保留，不将字符集夹具故障计为产品缺陷。
+
+| 实际命令（`go` 为上述 SDK） | 结果与证据 |
+|---|---|
+| `go test -overlay D:/temp/profit-closure-20261007-model.json ./model -run '^TestAuditProfitRemainingSubscriptionMatrix$' -count=1 -v` | 54 组现状刻画通过，7.379s；[日志](D:/temp/profit-closure-20261007-subscription-expanded.log) |
+| `go test -overlay D:/temp/profit-closure-20261007-model.json ./model -run '^TestAuditProfitRemainingSubscriptionMatrix$/./receipt_cleanup_refund' -count=1 -v` | 六组确认清理后持续退款失败，4.148s；[日志](D:/temp/profit-closure-20261007-cleanup.log) |
+| `go test -overlay D:/temp/profit-closure-20261007-model.json ./model -run '^TestAuditProfitLeaseSnapshotMatrix$' -count=1 -v` | 三库状态对照；MySQL 同截止时间断言失败，其余预设现状成立；[日志](D:/temp/profit-closure-20261007-lease-default-mysql.log) |
+| `go test -overlay D:/temp/profit-closure-20261007-lease.json ./service -run '^TestAuditProfitLeaseOwnCompletedSnapshot$' -count=1 -v` | 失败复现，2.432s；[日志](D:/temp/profit-closure-20261007-lease.log) |
+| `go test -overlay D:/temp/profit-closure-20261007-model.json ./model -run '^TestAuditProfit(ZeroMidjourneyCharge\|CacheStalePositiveCharge)$' -count=1 -v` | MySQL 免费 MJ 失败，另外两库成功；六组缓存陈旧现状成立；整条命令 FAIL，4.694s；[日志](D:/temp/profit-closure-20261007-cache-and-zero.log) |
+| `go test -overlay D:/temp/profit-closure-20261007-model.json ./model -run '^TestAuditProfitTaskCostReplay$' -count=1 -v` | 自由时钟三库通过4.935s，[对照](D:/temp/profit-closure-20261007-task-replay.log)；固定时钟 MySQL 无变化更新失败、另两库通过4.947s，[确定性复现](D:/temp/profit-closure-20261007-task-replay-fixed-clock.log)。overlay 最终保留固定时钟版本 |
+| `go test ./model -run '^TestChannelMonitorIncome' -count=1 -v` | 三库、MySQL 默认 changed-rows、utf8mb4 测试库，最终通过54.226s；[日志](D:/temp/profit-closure-20261007-existing-final.log) |
+
+**结果解读：** 订阅、清理和缓存的现状刻画用例断言的是“当前错误结果确实出现”，PASS 不是修复验收通过。MJ、任务重放和服务屏障用例断言期望行为，FAIL 是本次确认缺陷的证据。不能把 PowerShell 最后读取日志的退出码当成前面 `go test` 成功。临时证据位于本机 `D:/temp`，没有随仓库提交，后续验收应将必要的行为断言整合到现有回归文件。
+
+**本次交付状态：分析与记录完成；五类剩余问题没有在本轮修复。** 官方 A 类行为按用户要求保留待上游；其余下游问题需按各项关闭标准修复和验收，不能宣称“都改完了”或“已经没有严重问题”。
+
+## 21. 逐项修复与修复后统一复查（2026-10-07）
+
+### 当前交付结论
+
+用户授权逐项修复，并明确选择“接受短暂滞后，后台可靠恢复”。本轮按该口径完成下游修复和复查。没有修改官方订阅差额规则，没有修改官方七天回执清理策略，没有提交、推送或部署，也没有操作生产资金。
+
+| 问题 | 当前状态 | 改动及复查结果 |
+|---|---|---|
+| F-14-A | 官方已知行为，按用户要求保留 | 旧周期最终结算差额仍作用于当前周期；官方 `PostConsumeUserSubscriptionDelta` 未修改，下游共用差额语义也未另行重写。风险没有消失，不算修复完成 |
+| F-14-B | 下游修复完成 | 订阅预扣记录当前周期和该周期实际预扣额度；每次跨周期补扣重新累计当前周期份额。全额退款仅返还仍属于当前周期的份额。三库验证同/跨周期、再次重置及重复退款 |
+| F-15 | 新记录恢复链修复完成，旧缺失证据有明确边界 | 在资金事务保存周期证据，退款排队时复制到退款记录。官方回执清理前后都能完成有证据的退款；排队后再重置不冲减新周期。已升级的旧行不伪造周期证据；回执已丢失、跨周期补扣无法区分的旧行保留人工核对 |
+| F-16 | 两处下游判断已修复 | 零金额只验证资金归属存在，不写无变化用量；任务行已锁定时，同额度且相同私有数据的无变化更新视为成功，真实额度 CAS 仍要求更新一行。MySQL 两种行数设置和另外两库验证通过 |
+| V-05 | 下游修复完成 | 完成清理和从活动列表移除，与续期快照/更新串行协调；到期但无人接管允许完成，仍校验领取者、领取时刻和标脏次数；MySQL 相同期限续期验证所有权后成功。慢重建、两分钟并发屏障、三库到期/接管/重新标脏回归通过 |
+| F-13 | 按用户接受的最终一致性口径完成 | 资金事务内写入可重试缓存清理任务；Redis 删除失败、进程重启后后台可继续。清理同时更新缓存代次，回填在读取数据库前取代次、Lua 写入时比较，拒绝失效前旧快照。正常命中不增加 SQL，不恢复每次查库 |
+
+### 修复后复查范围与关键边界
+
+资金：保留官方最终差额行为，修正下游整单失败退款。新周期补扣 50 后退款，当前已用由 75 回到 25；补扣后再次重置再补扣，只退最后周期实际扣的部分。三库组合扩展为 12 路径 × 同周期/重置后 × 3 引擎，72 组；额外覆盖清理先于排队、排队后再重置、重复恢复。原有资金原子性、提交确认丢失、人工核对、任务早到/迟到及历史清理专项仍通过。
+
+旧数据：新增周期字段使用可空值区分“旧版没有证据”与合法周期时间 0。旧版同周期预扣可继续补扣并获得证据；旧版跨周期预扣没有足够证据时拒绝继续自动调整。旧退款若回执仍在，沿用既有退款保护；回执已经丢失或旧跨周期补扣无法归属时不推测退款。这属于存量数据核对限制，不声称升级能够自动修复历史错误余额。旧记录升级两次后金额、状态、唯一索引不变，周期字段保持 NULL。
+
+缓存：每个用户/令牌缓存键保存一条 SQL 修复任务，令牌键仅含 HMAC。资金和任务同事务提交或回滚；修复 ACK 按随机修订号删除，后台处理期间出现的新资金变动不会被误删。保留最早待处理时间，避免活跃用户一直排到积压末尾。主节点现有恢复任务每分钟处理至多 500 个键，Redis 故障时保留任务，恢复成功后再确认；使用独立监控 Redis 写连接池，测试回退到共享测试客户端。
+
+缓存代次不设 TTL，每个涉及的账户/令牌增加一个小 Redis 键，避免长暂停的旧读取跨过代次有效期后回填。当前所有生产额度回填入口已传入数据库读取前的代次；不读取资金状态的用户资料更新沿用原逻辑。Redis 全量回滚、代次键被外部清理/驱逐等灾难恢复不在此保证内，仍属于原 R-03 部署边界。故障期间允许旧缓存继续服务是用户明确选择，不能描述成强一致、零滞后或固定一分钟必定恢复；恢复速度取决于调度、Redis/数据库可用性及积压。
+
+请求开销：正常缓存命中路径没有新增 Redis 命令或 SQL；未命中后的数据库回填增加一次 Redis GET（200 毫秒上下文预算，失败不阻断数据库回源）。开启 Redis 时每次下游钱包/令牌资金变动增加对应的修复任务 UPSERT，订阅初始预扣/补扣也增加周期快照读取；这有实际开销，不能宣称完全不影响请求速度。同步失效预算从 3 秒降至 200 毫秒，失败留给后台；现有 go-redis v8.11.5 的连接读写 deadline 使用上下文期限。没有做线上 HTTP 吞吐/延迟压测，不将暖缓存零 SQL 测试等同于整体零开销。
+
+聚合：删去“名义到期就不能完成”的限制，未删所有权和标脏保护。实际接管通过数据库原子领取修改持有者/领取时刻；旧持有者无法删除新持有者记录。重新标脏仍保留标记等待下一轮。后台续期互斥不进入用户请求扣费路径。旧慢查询回归和新屏障回归同时通过。
+
+认证边界：本次需改缓存回填 Lua，因此读取了 OWASP Authentication、Session Management Cheat Sheets，并核对 ASVS 5.0.0 V7（7.2.1、7.4.1、7.4.2 相关服务端验证/失效原则）。资金代次不替代认证版本：认证 fence 与 committed floor 检查先执行；取不到资金代次时仍执行认证检查，只禁止未知代次回填。认证版本回滚/过期、迟到回填、单调 floor、令牌 fence 和新增资金代次交错测试通过。修复任务和新增日志不保存可用 API key、密码或会话令牌。没有更改登录、会话生命周期或恢复机制，也不宣称完成全站 ASVS 合规审计。
+
+参考：[Authentication Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authentication_Cheat_Sheet.html)、[Session Management Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)、[ASVS 5.0.0 V7](https://github.com/OWASP/ASVS/blob/v5.0.0/5.0/en/0x16-V7-Session-Management.md)。
+
+### 官方文件改动边界
+
+对照本地 `upstream/main c2b7a9a9e`，本轮生产变更中 5 个文件属于官方已有文件：
+
+| 文件 | 最小接入原因 |
+|---|---|
+| `model/main.go` | 在现有迁移表清单注册下游缓存修复表，增加一行 |
+| `model/user_cache.go` | 仅在缓存未命中后、读 DB 前取资金代次，传给回填；命中返回不变 |
+| `model/token.go` | 同样在令牌缓存未命中后取代次；正常验证入口与命中行为不变 |
+| `model/user_auth_cache.go` | 在现有原子 Lua 内增加资金代次比较；认证版本检查保留且先执行 |
+| `model/token_cache.go` | 在现有原子 Lua 内增加代次比较；原令牌变更 fence、完整哈希和活跃额度保护保留 |
+
+其余生产逻辑均在下游已有文件或新增下游 `model/channel_monitor_funding_cache.go`。单纯在下游结算后重复 DEL 无法拦住官方回填入口中已经读出的旧快照，故上述窄接入不可由“只加后台重试”替代；没有复制官方缓存实现或重写官方扣费机制。没有修改 `model/subscription.go`、官方回执清理、通用配额读取、定价表达式或供应商协议。新增测试主要整合在已有收入回归文件，聚合屏障整合在已有聚合测试，未散建测试文件。
+
+### 验证命令、版本及结果
+
+Go 1.26.5；SQLite 3.50.4；MySQL 5.7.44；PostgreSQL 9.6.24。数据库仍是隔离容器 `codex-profit-review-mysql-20261007`（13319）和 `codex-profit-review-postgres-20261007`（15439）。模型矩阵使用 `new_api_cost_backlog_test`；MySQL DSN 与第 20 节相同，分别使用 `clientFoundRows=false/true`。没有使用业务 3306/6379。缓存故障测试采用 miniredis，不冒充真实 Redis 服务验证。
+
+| 命令 | 观测结果 |
+|---|---|
+| `go test ./model -run 'TestChannelMonitorIncome\|TestChannelMonitorDirtyMinute\|TestTaskBilling\|TestMidjourneyBilling' -count=1 -v`（三库、false） | 通过66.257s；[日志](D:/temp/profit-fix-20261007-model-matrix.log) |
+| `go test ./model -count=1`（不带外部 DSN） | 完整模型包通过107.190s；[日志](D:/temp/profit-fix-20261007-model-full.log)。后续只增加边界测试、认证代次读取失败保护及队列公平性，另跑最终专项 |
+| `go test ./service ./controller ./middleware -count=1` | 109.082s / 300.462s / 1.101s 通过；[日志](D:/temp/profit-fix-20261007-backend.log) |
+| `go test ./model -run 'TestChannelMonitorIncome(PreservesCacheFirstReads\|FundingCacheRepairKeepsNewerIntent\|DirtyLeaseCompletionMatrix)' -count=1 -v`（三库、false） | 通过9.531s；[日志](D:/temp/profit-fix-20261007-cache-lease.log) |
+| `go test ./model -run 'TestChannelMonitorIncomePeriodUpgrade\|TestChannelMonitorIncomePreservesCacheFirstReads\|TestChannelMonitorIncomeFundingCacheRepair' -count=1 -v` | 通过6.560s；[旧下游结构升级和缓存](D:/temp/profit-fix-20261007-upgrade-cache.log) |
+| `go test ./model -run 'TestChannelMonitorIncome(SubscriptionRefundPeriods\|ZeroMidjourneyCharge\|TaskCostReplay\|PreservesCacheFirstReads\|FundingCacheRepair\|DirtyLeaseCompletionMatrix)' -count=1 -v`（三库、true） | 通过16.959s；[日志](D:/temp/profit-fix-20261007-final-true.log) |
+| `go test ./model -run 'TestChannelMonitorIncome\|TestChannelMonitorDirtyMinute\|TestTaskBilling\|TestMidjourneyBilling\|TestUserAuth\|TestPendingUserAuth\|TestCommittedUserAuth\|TestTokenCacheInit' -count=1 -v`（最终三库、false） | 通过72.543s；[最终专项](D:/temp/profit-fix-20261007-final-false.log) |
+| `go test ./service -run 'TestRepairChannelMonitorDirtyMinutes\|TestRunChannelMonitorAggregation' -count=1 -v` | 通过8.324s；[聚合和新屏障](D:/temp/profit-fix-20261007-aggregation.log) |
+| `go test ./service -run 'TestRepairChannelMonitorDirtyMinutes\|TestChannelMonitorIncome' -count=1` | 最终通过6.278s；[日志](D:/temp/profit-fix-20261007-final-service.log) |
+| `go build ./...` | 最终退出0；[日志](D:/temp/profit-fix-20261007-final-build.log) |
+| `bun run test src/features/channel-monitor`（web） | 130 文件、773 项通过，92.50s；[日志](D:/temp/profit-fix-20261007-web.log)。没有前端源码变更，沿用第19节类型检查/前端构建证据 |
+
+表结构：从远程只读标签查询确认当前最新 `v1.0.0-rc.41`，SHA `2035a82aeb5414253a728bd937d4b8f97aa99b9b`，导出源码在隔离目录生成发布版数据库。三库分别执行 fresh 初始化 + 两次 verify，以及发布版 seed + 当前代码两次 verify，**18 个阶段全部通过**；覆盖真实主库和独立日志库，保留用户额度、渠道及日志数据、唯一约束和索引，确认新增表/字段存在。另由 `TestChannelMonitorIncomePeriodUpgradePreservesLegacyEvidence` 验证本次修改前的下游收入/退款表升级两次，旧金额与状态不变、周期 NULL、唯一约束有效。
+
+[完整升级执行脚本](D:/temp/profit-fix-schema-20261007/validate.ps1)，同目录 `{engine}-{fresh|upgrade}-{0|1|2}.log` 保存结果。独立库名前缀为 `new_api_profit_fix_20261007_`；SQLite 文件为 `profit-validation-{fresh|upgrade}.db` 与独立 log 文件。没有使用 mock 或只测 SQLite 代替三库。
+
+本轮修复后统一复查已完成：上述下游故障有实现及验收证据；官方已知风险、旧证据缺失和原 R-01 至 R-05 部署验证边界保留。未发现新的已证实阻断项，不承诺所有部署条件或未来未知缺陷均已排除。新增缓存恢复依赖主节点任务正常运行，升级应先停旧节点、主节点完成迁移后再启新版节点，避免混合版本写入缺少新证据。
+
+最后将冷回填代次读取也限制为 200 毫秒，随后执行 go test ./model -run 'TestChannelMonitorIncomePreservesCacheFirstReads|TestChannelMonitorIncomeFundingGeneration|TestUserAuth|TestPendingUserAuth|TestCommittedUserAuth|TestTokenCacheInit' -count=1，退出 0，2.261s；[末次缓存与认证回归](D:/temp/profit-fix-20261007-final-cache-auth.log)。
+
+## 22. 当前工作区再次完整复查（2026-10-07）
+
+### 当前结论
+
+复查对象为 `HEAD 1871733bc` 加第 21 节尚未提交的修复，包括新增的缓存修复表及后台接入；官方归属基线仍为本地 `upstream/main c2b7a9a9e`。本次检查资金事务、预扣与最终结算、订阅周期、普通及任务退款、人工核对边界、成本归属、利润查询、缓存恢复、聚合租约和升级证据。**确认一处尚未关闭的 P2 下游问题，归入 F-13；不能继续将 F-13 标记为完整修复。** 没有发现新的已证实 P0/P1 缺陷；这不撤销原有 F-14-A 官方 P1 风险。
+
+本轮仅审查并更新本记录，没有修改生产代码，没有提交、推送或部署。第 21 节列明的其他修复回归仍通过；旧记录证据不足和 R-01 至 R-05 验证边界继续保留。
+
+### F-13-C：前序恢复耗尽共享预算，阻止独立缓存修复（P2，下游，未修复）
+
+位置：`service/channel_monitor_income.go` 的 `channelMonitorIncomeRecoveryHandler.Run`，第 200 至 204 行。资金恢复、成本归属恢复、缓存恢复依次使用同一个 45 秒 context，缓存排在最后。前两步若因慢查询、锁等待或积压处理耗尽该预算，后面的缓存修复查询会立即收到 `context deadline exceeded`，即使 Redis 已恢复、缓存修复表可正常访问，也没有执行机会。若该前序故障持续在每轮触发，缓存恢复就持续被连带阻塞。
+
+影响：资金已经提交的用户或令牌可能继续使用陈旧额度，影响展示和缓存额度判断。SQL 修复记录没有丢失，数据库资金没有因本实验重复扣退；前序负载恢复正常后仍可补偿。因此这是恢复隔离不足，不是证明余额永久损坏，也不能声称每次后台任务都会触发。用户接受的是 Redis 故障期间短暂滞后，不能据此把无关收入恢复持续阻止缓存清理当成已经满足“后台可靠恢复”。
+
+归属：`service/channel_monitor_income.go` 是下游文件；本轮修复把新增缓存恢复追加到已有共享预算的末尾，引入这处衔接遗漏。它不是官方缓存优先策略的问题，不需要修改官方余额读取、订阅规则或回执保留策略。
+
+确定性复现：在仓库外 overlay 的服务测试中，通过 GORM 查询回调让第一条收入恢复查询等待生产代码真实的 45 秒 deadline；没有缩短生产 timeout，没有取消父 context，没有给 Redis 或缓存修复表注入故障。调用真实 handler 后，验证修复记录仍为 1 条、旧缓存仍存在，父 context 与 Redis PING 正常。随后以存活的 context 直接调用同一缓存恢复函数，成功处理 1 条并清除旧缓存。该实验模拟收入查询超时，不是线上负载压测，也未实测真实数据库锁等待的发生频率。
+
+本用例以“确认现有缺陷”的现状断言通过，**PASS 不代表该问题已修复**。日志同时记录成本恢复与缓存修复查询收到已过期 context。既有模型缓存恢复用例直接调用模型恢复函数，缺少 handler 层“前序超时 + 独立修复可用”的组合，因而先前全通过没有覆盖这个遗漏。
+
+关闭要求：让缓存修复获得独立调度机会和合理执行预算，同时继续服从系统任务自身的取消/租约丢失。可使用独立下游系统任务，或对各恢复阶段分配独立且有界的预算；不能只增大共享 timeout，也不能脱离父任务取消无限运行。验收至少覆盖资金恢复超时、成本恢复超时、Redis 恢复、父任务取消以及新修订号不会被旧 ACK 删除；无需把用户请求改为每次读数据库。
+
+### 全范围复核结果
+
+| 范围 | 本次复核及证据 | 结论 |
+|---|---|---|
+| 钱包/令牌预扣、补扣、最终结算 | 事务路径及提交不确定分支；重新执行三库收入、任务、MJ 回归 | 未发现新的确定资金原子性或重复扣退回归 |
+| 订阅周期、回执清理、普通退款 | 重读持久周期证据及排队/执行分支；三库同/跨周期、清理及重复退款用例 | F-14-B/F-15 修复保持；F-14-A 和旧证据缺失仍按既定边界保留 |
+| 异步任务、MJ、实时与本地失败 | 三库任务/MJ及服务生命周期、实时收入、任务成本更正回归 | F-16 保持通过，未确认新的独立问题 |
+| 缓存失败、迟到回填、恢复 ACK | 重读生成代次与队列修订号逻辑，重跑三库缓存专项；新增 handler 超时实验 | 模型层修复通过，但服务调度遗漏 F-13-C 未关闭 |
+| 成本归属、缺口与保留期 | 重读恢复顺序、查询确认条件；收入及保留期、归属失败回归 | 未发现新的确定归属回归；恢复预算问题统一归入 F-13-C |
+| 后台聚合、完成与续期 | 重读锁范围、所有权保护；三库租约矩阵及服务慢重建/交错回归 | V-05 保持通过 |
+| 利润报表与界面 | 重读利润汇总、缺口、亏损筛选及快照查询；重跑控制器利润用例；界面未变，沿用第 21 节 773 项前端回归和此前类型检查/构建证据 | 未确认新的查询/展示缺陷；本轮没有重新运行前端检查 |
+| 初始化、升级与官方边界 | 核对模型注册、可空周期字段、当前 diff；重跑三库旧下游结构升级用例；发布版 fresh/upgrade 18 阶段沿用第 21 节同一代码证据 | 本轮没有 schema 改动，没有重复执行发布版全矩阵；不扩大既有兼容性证明范围 |
+
+上述检查覆盖当前利润功能和本次修复相关路径；没有把“重新检查”解释为重新审计全部供应商定价表达式、所有认证流程或整个上游项目。已保存的同代码验证可复用，但明确区分本轮新执行与沿用。没有进行生产账目核对、多节点实机验收或线上 HTTP 吞吐/延迟压测，不能据此承诺不存在任何未知缺陷。
+
+### 本轮实际执行证据
+
+Go 1.26.5。模型使用真实 SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24；沿用隔离端口 13319/15439 和 `new_api_cost_backlog_test`，MySQL `clientFoundRows=false`。本轮服务/控制器测试使用其 SQLite 测试夹具，缓存使用 miniredis。没有操作业务 3306/6379。
+
+| 实际命令 | 结果 |
+|---|---|
+| `go test -overlay D:/temp/profit-rereview-20261007-service.json ./service -run '^TestAuditProfitRecoveryBudgetIsolation$' -count=1 -v` | 现状刻画 PASS，47.063s，确认 F-13-C；[日志](D:/temp/profit-rereview-20261007-budget.log) |
+| `go test ./model -run 'TestChannelMonitorIncome\|TestChannelMonitorDirtyMinute\|TestTaskBilling\|TestMidjourneyBilling\|TestChannelLocalResponseRefund' -count=1 -v`（上述三库 DSN） | PASS，75.438s；[日志](D:/temp/profit-rereview-20261007-model.log) |
+| `go test ./service ./controller -run 'TestChannelMonitorIncome\|TestSettleBillingPersistsFinalWalletChargeForProfit\|TestTaskIncome\|TestRealtimeProfit\|TestTaskBillingCorrections\|TestRepairChannelMonitorDirtyMinutes\|TestRunChannelMonitorAggregation\|TestChannelMonitorProfit' -count=1 -v` | service PASS 10.665s；controller PASS 2.574s；[日志](D:/temp/profit-rereview-20261007-service-controller.log) |
+
+[复现执行脚本](D:/temp/profit-rereview-20261007-run.ps1)、[overlay 源码](D:/temp/profit-rereview-20261007-service.go)、[映射](D:/temp/profit-rereview-20261007-service.json)均在仓库外。后续修复时应将必要的期望行为断言整合到已有服务回归文件。当前复查记录是本轮唯一仓库改动，其他未提交代码来自第 21 节，不能混称为本轮新修复。
+
+## 23. 恢复调度修复及最终交付复核（2026-10-07）
+
+### 交付结论
+
+用户要求“你自己检查好了修复完成再给我”。按此前确定的约束继续修复：官方缓存优先、尽量不增加请求开销、官方已知行为等待上游、允许 Redis 故障期间短暂滞后并由后台可靠恢复、无证据的中断预扣不得自动退钱。本轮已经关闭 F-13-C；当前没有已确认但尚未处理的下游利润功能缺陷。F-14-B、F-15、F-16、V-05 的验收结果保持有效。该结论以明确测试和审查范围为限，不代表已修复官方 F-14-A，或证明所有线上环境不存在未知故障。
+
+### F-13-C 的最终实现
+
+资金结算、成本归属、缓存清理分别注册为独立系统任务：`channel_monitor_income_recovery`、`channel_monitor_income_cost_recovery`、`channel_monitor_funding_cache_recovery`。每类任务每分钟调度，有自己的任务记录、租约、45 秒执行预算和完成状态。资金和成本恢复每次至多处理 100 条，缓存恢复每次至多处理 500 个键。保留现有主节点执行器，不修改官方任务框架。
+
+资金或成本查询占用自己的预算时，其他任务仍可领取和执行。缓存任务只依赖 Redis 启用，利润记录未就绪时也可修复已有缓存指令。每个执行 context 仍继承系统任务的取消信号，不以独立恢复为由绕过租约失效保护。成本归属也独立，避免资金恢复耗尽预算后成本持续没有执行机会。
+
+回归通过真实调度入口创建任务、真实领取建立不同类型的租约，然后在查询回调设置可控屏障：分别阻塞资金及成本查询，证明其他两类任务在屏障未释放时成功，缓存记录被处理、旧缓存被删除；随后取消被阻塞任务，验证其停止并进入失败状态。另验证 Redis 不可用时保留记录、父 context 取消时不清理、不丢记录，以及 Redis 恢复后的下一次调度成功。这些测试无依赖睡眠的竞态判定，未缩短生产预算。
+
+原最终结算服务用例同步更新为分别调用资金和成本任务，保留精确用户余额、令牌额度、收入状态和成本日期断言，并覆盖成本先于资金完成的顺序。不是删除原断言来获得通过。模型层对新修订号 ACK 保护、事务回滚、重复恢复、迟到快照和缓存命中零 SQL 的回归仍保留。
+
+### 请求速度、官方边界和使用文档
+
+本轮仅变更下游 `service/channel_monitor_income.go` 的后台注册/执行、已有 `service/channel_monitor_income_test.go` 及文档。没有新增请求路径的数据库读取或 Redis 命令，没有继续扩大第 21 节的 5 个官方文件接入点。完整未提交改动中，官方已有文件仍只有 `model/main.go`、`model/user_cache.go`、`model/token.go`、`model/user_auth_cache.go`、`model/token_cache.go`，原因见第 21 节；本轮重新以本地 `upstream/main` 核对了归属。
+
+代价是每分钟多两类后台任务记录/领取和独立恢复的数据库工作；请求路径成本仍以第 21 节说明为准，不能声称整个利润功能零开销。独立任务解决共享预算问题，不隔离数据库物理故障或 Redis 服务故障。没有通过修改官方订阅规则、清理期限或每次余额查库规避问题。
+
+已同步更新 `docs/downstream/channel-monitor/profit.md` 的任务类型与恢复边界，以及目录索引。运行记录仅在本文件，不写入功能文档。
+
+### 最终验证证据
+
+环境：Go 1.26.5；真实 SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24。新增调度三库验证使用专用库 `new_api_profit_recovery_test`，仍在隔离端口 13319/15439；MySQL 使用默认 `clientFoundRows=false`。此外启动专用 Redis 8.8.0 容器 `codex-profit-review-redis-20261007`，只绑定 127.0.0.1:16389，使用隔离 DB 15。没有使用业务 3306/6379。
+
+| 实际执行 | 结果与证据 |
+|---|---|
+| `go test ./service -run 'TestChannelMonitorIncomeRecoveryQueues\|TestChannelMonitorIncomeCacheRecovery\|TestSystemTask' -count=1 -v` | SQLite 调度隔离、取消、故障恢复和原调度器用例通过 2.021s；[日志](D:/temp/profit-final-20261007-recovery.log) |
+| `go test -overlay D:/temp/profit-final-20261007-recovery-matrix.json ./service -run 'TestChannelMonitorIncomeRecoveryQueues\|TestChannelMonitorIncomeCacheRecovery' -count=1 -v`，分别设置 `AUDIT_RECOVERY_ENGINE=mysql/postgres` | MySQL 3.734s、PostgreSQL 3.159s 通过；overlay 仅切换新增用例的数据库夹具，生产代码未替换。[MySQL](D:/temp/profit-final-20261007-recovery-mysql.log)、[PostgreSQL](D:/temp/profit-final-20261007-recovery-postgres.log)、[脚本](D:/temp/profit-final-20261007-recovery-matrix.ps1) |
+| `go test -overlay D:/temp/profit-final-20261007-real-redis.json ./model -run '^TestAuditProfitRealRedisRecovery$' -count=1 -v`，三库 DSN 沿用第 22 节 | 3.456s 通过；三库各测扣款/退款两方向，真实 Redis 执行 Lua。人为错误凭据使 Redis 操作失败，SQL 修复记录保留；恢复有效客户端后清理成功，旧快照回填被拒绝、余额正确、重复结算不重扣退。[日志](D:/temp/profit-final-20261007-real-redis.log)、[脚本](D:/temp/profit-final-20261007-real-redis.ps1) |
+| `go test ./model ./service ./controller ./middleware -count=1` | model 110.971s、controller 282.190s、middleware 4.069s 通过；首次 service 失败，原因及处置见下文。整条命令当时退出 1，不能记为全通过。[原始日志](D:/temp/profit-final-20261007-backend.log) |
+| `go test ./service -run 'TestChannelMonitorIncome\|TestFetchChannelMonitorCustomUpstreamRatioReusesRequest\|TestSystemTask' -count=1` | 更新原调用顺序后通过 2.147s；[专项](D:/temp/profit-final-20261007-service-regression.log) |
+| `go test -p 1 ./service -count=1` | 最终完整 service 通过 69.741s；[日志](D:/temp/profit-final-20261007-service-full.log) |
+| `go build ./...` | 最终构建退出 0；[日志](D:/temp/profit-final-20261007-build.log) |
+| `git diff --check`、`git diff --stat` | 最终检查通过；核对含此前未提交修复及新增未跟踪缓存文件，未执行提交 |
+
+首次整包 service 的两处失败均保留原始证据：一是旧回归只运行原资金任务，任务拆分后未执行独立成本恢复，导致成本日期断言失败，已按新调度契约补齐调用，未放宽断言；二是无关自定义上游 HTTP 测试遇到 Windows `bind: ... lacked sufficient buffer space or ... queue was full`，该测试源码未改，单项和后续完整 service 均通过。未把这次失败隐藏成首次整包成功。
+
+沿用且重新检查了文件和日志的证据：第 22 节三库模型资金/退款/保留期/租约回归 75.438s；第 21 节 MySQL 两种 affected-rows 设置和三库修复矩阵；三库发布版 `v1.0.0-rc.41` fresh/upgrade、两次重启的 18 阶段全部通过；旧下游周期字段迁移两次后仍为 NULL，金额和唯一性保持。此次没有进一步修改表结构或资金模型，因此没有重复执行发布版全迁移。前端没有变更，沿用 130 文件/773 项通过及此前类型检查/构建证据。
+
+### 逐项完成审计
+
+| 用户要求/验收项 | 最终证据及判定 |
+|---|---|
+| 修复自己的资金问题，保留官方语义 | F-14-B/F-15/F-16 对应三库行为和升级证据通过；F-14-A 明确按原要求留给上游，未改官方订阅代码 |
+| 后台可靠恢复，避免旧缓存重新污染 | 同事务 SQL 指令、修订号 ACK、代次 Lua；三库 + 真实 Redis 正负差额恢复通过；F-13-C 独立调度和取消测试通过，已关闭 |
+| 尽量不影响用户请求速度 | 缓存命中零新增 SQL 的回归保留；本轮只改后台；第 21 节新增事务 UPSERT/冷回填读取的开销如实保留 |
+| 中断预扣不猜测退款 | reserved 不由恢复任务消费；三库及进程中断原用例有效；无最终依据仍需人工核对 |
+| 统计不错误确认利润 | 原子确认、成本归属/缺口/历史范围与查询回归通过；前端待确认和失败提示的同代码验证有效 |
+| 聚合并发与租约 | 三库所有权矩阵和服务层慢重建、完成/续期屏障通过；未取消接管和重新标脏保护 |
+| 三库兼容与升级 | 真实最低支持系列 MySQL 5.7.44/PG 9.6.24 + SQLite；资金与迁移证据完整；新增任务领取/完成三库通过 |
+| 根目录记录完整结果 | 本节统一当前状态，保留历史失败与修复过程；开头已指向本节，不再把 F-13-C 列为当前未修复 |
+| 修复后再次复查 | 检查事务、退款、缓存交错、恢复调度、清理、聚合、查询及所有本轮 diff；四个相关后端包最终通过、构建通过，没有新的已证实下游未关闭项 |
+
+交付范围为当前工作区代码与验证记录，尚未提交或部署。旧证据缺失、共享目录/基础设施故障、金额精度和真实供应商/线上规模等 R-01 至 R-05 既定边界没有被测试结果抹去。本轮新增真实 Redis 证据只证明所测客户端故障、恢复与 Lua 行为，不冒充全量 Redis 数据回滚或灾难恢复验收。
+
+## 24. 用户再次确认范围后的最终复查与修复（2026-10-07）
+
+### 范围与结论
+
+用户明确回复“仍保留官方行为，只修复下游问题”。本节遵循该范围，F-14-A 官方订阅周期差额不改；无证据中断预扣仍不自动退款，Redis 故障期间短暂滞后仍允许。重新读取当前代码和未提交 diff，未直接沿用上一轮完成判断。
+
+补查发现并修复恢复链同一队列内部的单条慢记录阻塞，记为 **F-13-D（P2，下游恢复隔离，已修复）**。此前 F-13-C 已将不同队列分离，但不能据此推导同一队列中的每条记录也隔离。最终三库验证表明单条资金/成本恢复及失败轮转超时后，同批正常记录仍可处理；恢复依赖解除后重试可完成原指令，不重复扣款。没有新增确认而留待用户再次要求修复的下游项。
+
+### F-13-D 的复现、修复和验收
+
+修复前 `RecoverChannelMonitorIncomeFunding` 和 `RecoverChannelMonitorIncomeCosts` 每条操作直接复用整批 context。若最前一条记录的依赖长期等待，它会耗尽整批预算，之后更新失败时间的轮转也使用已过期 context，下一条正常账户/成本事件没有恢复机会。重复发生时，后续记录持续延后。没有证明资金丢失；持久指令仍在，问题是后台恢复进度。
+
+先执行期望行为用例：两个独立用户，首条资金查询等待 context 截止，第二条正常。修复前 15 秒批次结束后，恢复数为 0、第二个用户余额仍 900、收入仍 `funding_pending`，断言失败。该测试通过 GORM 回调模拟依赖等待，不声称真实数据库锁等待频率或线上受影响规模。[修复前失败日志](D:/temp/profit-closure2-20261007-slow-before.log)。
+
+最终代码给每条资金及成本恢复分别加 5 秒子 context，失败记录轮转也用独立 5 秒子 context；均继承批次取消和截止时间。资金提交结果核对继续沿用原有最多 5 秒的只读核对，未删除提交不确定保护。因此“5 秒”是单步预算，不能把整个资金记录处理声称为严格 5 秒。请求中的预扣、结算、读取和退款路径未添加任何新操作。
+
+最终回归同时让首条恢复和其失败轮转等待至各自截止，使用 20 秒父预算：父 context 仍有效，第二条恢复数为 1；首条超时事务不改余额。解除故障后，只处理原失败记录，已成功记录不重复处理。资金与成本 × SQLite/MySQL/PostgreSQL 共 6 个组合通过，使用生产的 5 秒预算，没有缩短超时或以 sleep 猜测竞态。
+
+额外新增三库并行恢复同一收入的屏障用例：资金恢复与成本归属均先加载快照，再同时放行；最终钱包 900→850、令牌 900→850、令牌已用 100→150、收入 settled 且 Quota=150、成本归属为保存的前一天。SQLite 若发生可重试写竞争，事务失败后下轮恢复，最终精确断言一致。MySQL/PostgreSQL 不允许吞掉其他错误。本次三个引擎均通过，没有发现字段覆盖或重复资金变化。
+
+### 本轮验证
+
+环境仍为 Go 1.26.5、SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24。使用专用测试库 `new_api_cost_backlog_test` 与隔离端口 13319/15439，MySQL `clientFoundRows=false`，未操作业务 3306/6379。
+
+| 实际命令 | 结果 |
+|---|---|
+| `go test ./model -run '^TestChannelMonitorIncomeRecoveryContinuesAfterSlowRecord/sqlite/funding$' -count=1 -v` | 修复前 FAIL，16.786s，保留原始证据 |
+| `go test ./model -run '^TestChannelMonitorIncomeRecoveryContinuesAfterSlowRecord$' -count=1 -v`（三库） | 第一步修复通过34.369s；后续追加失败轮转等待验证，以最终矩阵为准。[阶段日志](D:/temp/profit-closure2-20261007-slow-after.log) |
+| `go test ./model -run 'TestChannelMonitorIncome\|TestChannelMonitorDirtyMinute\|TestTaskBilling\|TestMidjourneyBilling\|TestChannelLocalResponseRefund' -count=1 -v`（三库） | 最终通过135.702s，包含六组慢记录及失败轮转测试64.32s，无数据库 skip；[日志](D:/temp/profit-closure2-20261007-matrix.log) |
+| `go test ./model -run '^TestChannelMonitorIncomeFundingAndCostRecoverConcurrently$' -count=1 -v`（三库） | 通过2.921s；[日志](D:/temp/profit-closure2-20261007-concurrent.log) |
+| `go test -p 1 ./service -count=1` | 最终整包通过70.339s；[日志](D:/temp/profit-closure2-20261007-service.log) |
+| `go build ./...` | 最终退出0；[日志](D:/temp/profit-closure2-20261007-build.log) |
+| `git diff --check`、`git diff --stat`、修改文件 `gofmt -l` | 完成最终格式与变更范围检查 |
+
+### 当前交付审计
+
+- 下游资金、退款与数据库兼容：本轮三库资金、订阅周期证据、回执清理、任务/MJ、缓存、租约及旧结构升级回归通过；本轮仅增加后台 context 边界，没有再改 schema。第 21 节发布版 fresh/upgrade 18 阶段仍适用。
+- 恢复调度：第 23 节独立队列/独立租约/父取消回归保持有效；本轮单条超时与失败轮转的实际故障测试补齐队列内隔离，三库资金/成本并行验证完成。
+- 请求速度与官方改动：本轮生产改动只有下游 `model/channel_monitor_income.go` 的两个后台循环；没有修改官方文件、请求查询或定价规则。完整工作区的 5 个官方窄接入文件仍以第 21 节说明为准。本轮再次以 `upstream/main` 核对所改模型及测试均属下游。
+- 全链路复查：普通预扣/最终结算/中断、任务/MJ、订阅退款证据、成本归属/清理、利润确认和缓存恢复的前轮证明仍保留，本轮重跑覆盖受影响链路；第 23 节真实 Redis、控制器/中间件整包和前端 773 项证据没有被本次修改涉及。没有以单个新增测试替代此前全面验证。
+- 文档：根目录记录保留修复前失败和最终成功，顶部指向本节；利润使用文档补充单条恢复等待上限。未提交、推送或部署，未读取生产账目。
+
+**交付结论：在用户再次确认的“保留官方行为、只修复下游”范围内，本轮确认的问题均已修复并重新验证，当前没有已证实且未关闭的下游利润缺陷。** F-14-A、旧数据缺失证据和 R-01 至 R-05 的既定部署/容量边界继续如实保留，不将它们改写成已修复，也不承诺不存在未知缺陷。
+
+## 25. 再次全量复查：缓存恢复隔离遗漏（2026-10-07）
+
+### 当前结论与审查对象
+
+用户要求“再重新全量复查一遍还有没有问题”。审查对象为 HEAD `1871733bc` 加当前全部未提交利润改动，包括未跟踪文件 `model/channel_monitor_funding_cache.go`；官方归属基准为本地 `upstream/main` `c2b7a9a9e`。本轮是复查，仓库内只更新本记录，没有修改生产代码或仓库测试，没有提交、推送或部署。
+
+**新增确认 1 项下游 P2 问题 F-13-E，尚未修复；本轮未确认其他新的 P0/P1 问题。** 官方已知 F-14-A 仍按用户决定保留，不能写成不存在严重风险。第 24 节给资金/成本队列增加超时，但遗漏了缓存队列中的同类故障隔离；此前复查没有将三个独立队列逐一套用单条失败矩阵，这是本轮再次发现问题的具体原因。既有正常回归通过不能替代故障隔离验证。
+
+### F-13-E：缓存恢复确认被阻塞后，后续正常键无法恢复（P2，下游，未修复）
+
+位置：`model/channel_monitor_funding_cache.go:72-81`，`RecoverChannelMonitorFundingCaches`。恢复按最早时间顺序读取记录；每条先清理 Redis，再按缓存键与修订号删除 SQL 指令作为确认。两个步骤共用整批 context，任一步返回错误就退出整个循环。生产服务每批最多 500 个键、预算 45 秒。
+
+触发条件：第一条缓存指令的 SQL 行被另一个事务持锁，或者其确认删除发生记录相关错误。即使 Redis 正常且该键已清理，SQL 确认仍可能等待至批次结束或报错；后续无关键没有执行机会。该指令仍按原最早时间排列，持续或反复故障会继续延后其他账户的余额缓存恢复。事务内更新同一缓存指令也可能竞争该行锁；本轮没有测量线上竞争频率。
+
+影响是余额缓存滞后时间延长，进而影响展示及缓存额度判断；不等于资金被重复扣退或修复指令丢失。本轮实验未证明这两种后果。问题属于新增的下游恢复代码，不是官方订阅或官方缓存优先策略本身的问题。
+
+两组独立复现：
+
+1. SQLite + miniredis，通过数据库回调仅让第一条指令的 DELETE 确认失败。连续两次恢复均中止，首个 Redis 键已删除，第二个仍在；撤掉故障后两条指令均恢复完成。这是确定性错误隔离实验。
+2. 真实 MySQL 5.7.44 + miniredis，在独立事务中对第一条缓存指令执行实际行锁，调用真实恢复函数。使用 **1 秒调用预算** 加速复现，SQL DELETE 等待约 996ms 后超时；第二个 Redis 键仍在，Redis 本身可正常响应。释放行锁后恢复处理两条记录，第二个键被清理。**没有实际等待生产的 45 秒，也没有把 miniredis 写成真实 Redis。** 该实验验证的是实际 SQL 行锁与恢复控制流。
+
+修复验收要求：每个键的 Redis 清理和 SQL 确认应有受父 context 约束的等待边界；记录局部失败应保留持久指令并允许其他正常键继续。还需验证超过单批上限时失败记录不会长期占满队首，以及修订号变化时不误确认新指令。仅把 `return` 改为 `continue` 不能解决慢等待耗尽整批预算和跨批公平性。保持官方缓存命中路径与当前资金事务原子性，不以请求每次读数据库规避该问题。
+
+### 全量复核范围及结果
+
+| 范围 | 本轮复核与结果 |
+|---|---|
+| 普通预扣、最终结算、补扣/返还与中断 | 重读 reservation、收入状态与服务接入；三库模型及服务整包覆盖原子资金、重复处理、提交不确定与无证据中断政策；未确认新的重复扣退款问题 |
+| 订阅周期证据与回执清理 | 核对持久周期字段、退款依据及清理后的恢复；F-14-B/F-15 的修复仍在，F-14-A 官方语义与旧数据缺证据边界保留 |
+| 异步任务、MJ、实时与本地失败 | 核对初始结算、任务校正、退款事务和成本关联；F-16 修复及原有资金/成本断言保留，未确认新的独立缺陷 |
+| 成本归属、缺口、保留期 | 核对收入清理、成本日期、缺口数据库/文件记录、查询确认条件；未确认新的利润错误确认缺陷 |
+| 恢复调度与缓存 | 独立任务、资金/成本单条预算、修订号确认、代次检查和冷缓存回填均纳入核对；新增 F-13-E，不能继续声称恢复隔离完整 |
+| 聚合、脏分钟与租约 | 检查本轮相关变更并重跑模型/服务回归；原有完成与续期协调、所有权保护保持通过 |
+| 报表查询与前端 | 核对利润汇总、覆盖范围、亏损筛选、日期及前端查询、趋势和金额展示；渠道监控 130 文件/773 项通过，类型检查通过 |
+| 数据库与官方边界 | 本轮模型测试连接真实 SQLite/MySQL/PostgreSQL；没有再改 schema 或官方代码。第 21 节发布版 fresh/upgrade 18 阶段、第 23 节真实 Redis 专项沿用原证据，不冒充本轮重新执行 |
+
+全量是当前利润功能相关链路和工作区变更的完整复核范围，不是重新审计所有供应商协议、整个认证体系或全站计费表达式。没有访问生产流水、进行真实供应商跨午夜请求、多节点实机验收或线上负载压测；R-01 至 R-05 的既定边界继续保留。
+
+### 本轮实际验证证据
+
+环境：Go 1.26.5；SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24。整包模型矩阵使用 `TEST_COST_BACKLOG_MYSQL_DSN` / `TEST_COST_BACKLOG_POSTGRES_DSN`，隔离端口 13319/15439、库 `new_api_cost_backlog_test`，MySQL `clientFoundRows=false`。行锁复现使用独立 `new_api_profit_recovery_test`，避免与整包测试共享数据。没有访问业务 3306/6379。
+
+| 实际命令 | 结果 |
+|---|---|
+| `go test -overlay D:/temp/profit-review3-20261007-cache-ack.json ./model -run '^TestAuditProfitCacheAckFailureIsolation$' -count=1 -v` | 现状刻画 PASS 1.988s，证明缺陷可复现，不是修复验收通过；[日志](D:/temp/profit-review3-20261007-cache-ack.log)、[脚本](D:/temp/profit-review3-20261007-cache-ack.ps1) |
+| `go test -overlay D:/temp/profit-review3-20261007-real-lock.json ./model -run '^TestAuditProfitCacheAckActualRowLock$' -count=1 -v` | 真实 MySQL 行锁现状刻画 PASS 2.532s；[日志](D:/temp/profit-review3-20261007-real-lock.log)、[脚本](D:/temp/profit-review3-20261007-real-lock.ps1) |
+| `go test -p 1 ./model ./service ./controller ./middleware -count=1`（上述三库环境） | 全部 PASS，退出 0：model 189.311s、service 68.424s、controller 233.289s、middleware 2.311s；[日志](D:/temp/profit-review3-20261007-backend.log) |
+| `bun run test src/features/channel-monitor`（`web/`） | 130 文件、773 项 PASS，88.11s；[日志](D:/temp/profit-review3-20261007-web.log) |
+| `bun run typecheck`（`web/`） | 退出 0；[日志](D:/temp/profit-review3-20261007-typecheck.log) |
+| `go build ./...` | 退出 0；[日志](D:/temp/profit-review3-20261007-build.log) |
+| `git diff --check`、`git diff --stat` | 通过；仅提示已有 CRLF 后续转 LF，未报告空白错误。统计含此前未提交改动，另用 `git status --short` 核对未跟踪缓存文件 |
+
+临时复现源码和 overlay 保存在仓库外，只加入测试函数，没有替换生产实现。本轮发现项已经登记；F-13-E 当前保持未关闭，不能用既有测试通过将它改写成“全部修好”。
+
+## 26. 循环修复与同类路径复查（2026-10-07）
+
+### 范围及本轮修复
+
+用户目标为“修复、修复完后进行复查，循环执行，直到全部没问题再交付给我”。仍遵循此前确认的官方行为边界：F-14-A 不修改；缓存优先、允许故障期间暂时滞后；无资金依据的 reserved 不猜测退款。本轮继续处理已确认下游问题，并将同一故障矩阵应用到资金、成本、缓存三个恢复队列。
+
+**F-13-E（P2）：缓存确认失败阻断后续键。** 增加每条 5 秒操作预算，失败保留 SQL 指令并累计错误，继续处理其他键。扫描位置保存在独立 Redis 键中，通过 Lua 比较旧值并写入带随机修订号的新位置；随机修订号避免游标绕回原位置后误接纳旧任务更新。每轮固定最大键，分批向前，到边界后重新扫描失败及新指令。进度在尝试前写入，整批预算耗尽或进程退出后下一任务继续；新一轮仍会重试未确认记录。Redis 游标缺失或 JSON 损坏会重新扫描，资金修复依据始终在 SQL，不会因游标丢失被删除。ACK 仍限定原修订号，不能删除并发资金提交产生的新指令。
+
+**F-13-F（P2）：资金/成本失败轮转更新也失败时，后续批次仍反复选中队首。** 这是进一步核查 F-13-D 后发现的同类遗漏；单步超时不足以证明跨批公平性。新增回归在首条依赖和失败轮转均注入错误、批次大小为 1 时，第二次调用仍无法触及正常记录；修复前 SQLite 的资金、成本两种场景均失败，证据为 [日志](D:/temp/profit-fix4-rotation-before.log)。
+
+最终资金和成本恢复分别使用独立 SQL 扫描进度，按收入 ID 扫描并保存每轮固定上界，不再依赖修改故障收入的更新时间。新表 `channel_monitor_income_recovery_cursors` 只保存 funding/cost 两行；每条尝试前按修订号更新进度，CAS 失败说明另一任务已推进，本任务退出而不覆盖。进度提交响应丢失时读回精确修订号及边界，确认确实提交后才继续；不能仅凭目标 ID 推定成功。失败资金事务及成本记录仍保留，下轮重扫，不因进度推进而当作已结算；原资金事务幂等和提交不确定核对保持不变。Redis 关闭时资金/成本恢复仍可工作。
+
+### 修复后审查与验证范围
+
+| 要求 | 当前证据 |
+|---|---|
+| 单条失败不挡同批其他账户 | 缓存三库确定性 ACK 错误；MySQL/PG 真实行锁等待生产 5 秒子预算后，父 20 秒预算仍有效，两个正常键被清理 |
+| 跨批公平性及持久进度 | 缓存 limit=1 跨批测试，更换 Redis 客户端继续；固定扫描上界后新增键不能阻止回到旧失败记录；资金/成本 × 三库首条与轮转失败后下一批完成正常记录 |
+| 失败不丢依据、重试不重复扣退 | 缓存 SQL 指令失败后仍在，释放依赖后清理；资金余额精确断言，原跨进程退出和重复恢复、并发退款回归保持 |
+| 并发和提交不确定 | 原三库并发恢复及丢失提交响应回归不放宽断言；首次新增游标提前退出导致测试失败，已修正精确读回确认后重跑通过 |
+| 数据库升级 | SQLite/MySQL/PG fresh、发布版 seed 后 upgrade、两次 verify 共 18 阶段通过；独立日志库数据和索引保留，新增游标值及主键唯一性跨重启保留 |
+| Redis 实际脚本 | Redis 8.8.0 + 三库，正/负资金差额，错误凭据故障、恢复、迟到回填及幂等通过；隔离 16389/DB15，测试后停止临时容器 |
+| 请求速度和官方边界 | 本轮变化都在后台恢复；请求缓存命中、预扣和结算路径未增加操作。官方文件本轮仅 `model/main.go` 增加一项必要模型注册；未改订阅语义、官方清理期限或驱动参数 |
+| 全链路利润功能 | 延续第 25 节普通/订阅/任务/MJ/实时、成本归属/缺口/保留期、聚合租约、报表/前端检查；再次执行四个相关后端包。前端本轮无变更，沿用第 25 节 773 项和类型检查结果 |
+
+完整工作区此前的官方接入仍为第 21 节的五个文件；本轮没有新增第六个官方修改文件。新增扫描实现位于下游模型文件；唯一 schema 注册使用既有主库迁移列表，不复制官方迁移机制。代价是后台每条扫描进度写入和少量批次查询；不声称整个利润功能零开销，也没有做线上吞吐压测。
+
+### 实际命令与结果
+
+Go 1.26.5；真实 SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24。行为测试采用隔离端口 13319/15439、`new_api_cost_backlog_test`，MySQL `clientFoundRows=false`；升级另建 `new_api_profit_fix4_20261007_*` 主库和日志库，SQLite 使用独立临时文件。没有访问业务 3306/6379。
+
+| 命令 | 结果/记录 |
+|---|---|
+| `go test ./model -run '^TestChannelMonitorIncomeFundingCache' -count=1 -v`（三库） | 18.275s PASS，真实行锁及跨批故障回归；[日志](D:/temp/profit-fix4-cache-matrix.log) |
+| `go test ./model -run '^TestChannelMonitorIncomeRecoveryAdvancesWhenRotationFails/sqlite' -count=1 -v` | 修复前 FAIL 2.204s，资金/成本均证明 F-13-F；未隐藏失败 |
+| `go test ./model -run 'TestChannelMonitorIncomeRecovery\|TestChannelMonitorIncomeFundingCache\|TestChannelMonitorIncomeFundingAndCost' -count=1 -v`（三库） | 阶段测试 60.229s；新隔离矩阵通过，原并发用例因游标竞争报错而失败；最终实现将竞争视作另一任务接手后退出，见后续复测。[阶段日志](D:/temp/profit-fix4-recovery-matrix.log) |
+| `go test ./model -run 'TestChannelMonitorIncomeFundingConfirmationIsAtomic\|TestChannelMonitorIncomeRecoveryFairnessAndConcurrentWorkers' -count=1 -v`（三库） | 最终 PASS 9.188s，保留原精确资金断言；[日志](D:/temp/profit-fix4-ack-concurrent.log) |
+| `D:/temp/profit-fix4-schema/validate.ps1`；各阶段执行 `go test ./scripts/channel-monitor-profit-upgrade -run '^TestChannelMonitorProfitUpgrade$' -count=1 -v` | 18 阶段通过；[脚本](D:/temp/profit-fix4-schema/validate.ps1)、[汇总](D:/temp/profit-fix4-schema/run.log)，同目录各引擎 fresh/upgrade 0/1/2 日志。发布版种子沿用第 21 节导出的 rc.41 源码，当前升级连续两次验证 |
+| `go test -overlay D:/temp/profit-fix4-real-redis.json ./model -run '^TestAuditProfitRealRedisRecovery$' -count=1 -v` | 4.268s PASS；[日志](D:/temp/profit-fix4-real-redis.log)、[脚本](D:/temp/profit-fix4-real-redis.ps1) |
+| `go test -p 1 ./model ./service ./controller ./middleware -count=1`（三库） | 首次 model 176.584s FAIL，因新增进度提交响应丢失未读回；service 72.205s、controller 317.225s、middleware 2.266s PASS。整条命令退出 1，后续 model/service 按最终修复单独完整重跑；[原始日志](D:/temp/profit-fix4-backend.log) |
+| `go test -p 1 ./model -count=1`（三库） | 最终 PASS 239.091s，退出 0；[日志](D:/temp/profit-fix4-model-final.log) |
+| `go test -p 1 ./service -count=1` | 最终 PASS 112.190s，退出 0；[日志](D:/temp/profit-fix4-service-final.log) |
+| `go build ./...` | 最终退出 0；[日志](D:/temp/profit-fix4-final-build.log) |
+| `git diff --check`、`git diff --stat`、修改 Go 文件 `gofmt -l`、`git status --short` | 最终通过；两个未跟踪模型文件已纳入审查。官方归属仍仅五个文件，本轮在 `model/main.go` 增加注册，未修改其他四个官方接入点 |
+
+### 最终完成审计
+
+F-13-E/F-13-F 的故障复现、实现、同类复查和修复后验证均完成；验证中发现的游标并发退出与提交响应丢失问题也已闭环，没有放宽原资金结果断言。最终模型整包包含前述专项、资金/成本并发、订阅周期、历史清理、任务/MJ、慢记录、缓存和进程退出等回归；服务整包按最终实现重跑。控制器/中间件此前整包在本轮通过，之后只增加模型内部的游标提交读回确认，报表及中间件未进一步修改。前端 773 项与类型检查沿用第 25 节同一前端代码的实际结果。
+
+重新检查事务边界、缓存失效与确认顺序、失败后的持久状态、固定扫描上界、进程退出后的重试、并发进度更新及升级注册，没有新的已确认下游未关闭项。资金恢复仍有原来的提交不确定只读核对预算；每条扫描进度写入和恢复分别受限，不能将整个资金处理总耗时声称为严格 5 秒。SQLite 持有数据库级写锁、数据库整体故障、Redis 不可用等共享基础服务问题仍需要依赖恢复，不承诺固定恢复时限。
+
+**在用户确认的“保留官方行为、只修复下游”范围内，本次循环修复与复查已完成，所有已确认下游问题均已修复并验证。** F-14-A 按既定授权留给官方，旧记录缺证据及 R-01 至 R-05 的部署、容量和生产验证边界不因本轮通过而消失。没有声称全部线上环境不存在未知问题；没有提交、推送或部署。
+
+## 27. 全量复查及独立退款队列遗漏（2026-10-07）
+
+### 当前结论
+
+用户要求“再全量复查一遍还有问题吗”。本轮重新读取 HEAD `1871733bc` 加全部未提交改动，含两个未跟踪模型文件；归属基准仍为 `upstream/main c2b7a9a9e`。**确认 1 项新增下游 P2 问题 F-17，尚未修复；未确认其他新的 P0/P1 问题。** F-14-A 为用户决定保留的官方已知问题，这不等于严重风险已经消失。
+
+本轮只复查并更新此记录，未修改生产代码或仓库测试。以下实验源码/overlay 全部在仓库外，调用实际生产函数；没有替换生产实现。上一轮三个恢复队列的修复并未回退，问题出在另一条独立退款队列：此前检查了其退款事务与重复调用，却遗漏了它自己的后台批量调度隔离。这是前轮全量复查覆盖不足，不能归因于“每次复查自然都会有新问题”。
+
+### F-17：独立退款队列缺少单条等待边界（P2，下游，未修复）
+
+位置：`service/channel_local_response_billing.go:60-72`，`channelLocalResponseRefundHandler.Run`；等待实际发生于 `model/channel_local_response_refund.go:199-227` 的退款事务。此队列处理普通监控请求失败和本地响应的持久退款，不属于第 26 节的资金最终结算、成本归属或额度缓存三个队列。
+
+处理流程按 `updated_at, id` 读取最多 100 条 `cache_applied=false` 记录，每条 `ApplyChannelLocalResponseRefund` 直接使用任务 context，失败后的更新时间更新也使用同一 context，且忽略该更新结果。首条用户/退款/订阅依赖等待会推迟后续无关退款；context 过期时更新时间轮转也失败，下一次仍可能从相同首条开始。该 handler 本身没有独立时间上限；系统任务的 `runWithLeaseHeartbeat` 只提供取消及续租，租约 TTL 不是任务执行超时。因此不能把前轮其他 handler 的 45 秒预算套用到这里。
+
+影响：已经持久化且可以退款的后续账户延迟拿回预扣，利润继续待确认；单条退款执行期间还持有进程内用户/令牌批次互斥锁，其他依赖这些锁的操作也可能等待。本轮没有做并发用户请求延迟压测，不给出实际延迟、流量或受影响金额。**未观察到重复退款、已提交资金丢失或退款指令被删除。** 归属为原有下游实现（路径不在 upstream/main，最近相关提交 `30c7db2e1`），不是官方订阅行为，也不是第 26 节新增游标逻辑引入的回归。
+
+复现证据：
+
+- SQLite 文件数据库：创建两名各有 900 余额、各待退 100 的用户，通过查询回调让第一名用户依赖等待到 context 截止。真实创建并领取退款任务，连续两次运行 handler，第二名余额始终为 900，两条指令均未执行；解除故障后再运行，两人均为 1000。使用 1 秒调用 context 加速场景，不表示生产 handler 有 1 秒超时。
+- 真实 PostgreSQL 9.6.24：独立事务对第一名用户执行实际 `SELECT ... FOR UPDATE`，不使用等待回调。相同两次任务每次约 995ms 后 context 截止，第二名仍未退款；释放行锁后两笔均正常完成。运行在隔离端口 15439、新建库 `new_api_profit_review5_refund`，没有接触业务数据库。
+
+修复验收应同时包括：单条执行和整批预算、失败/超时后的跨批进度、轮转本身失败、父取消与租约、资金幂等、原订阅周期证据及缺失回执边界；检查进程级锁的持有范围对独立账户的影响。仅增加 `continue` 或给整批套超时不能证明关闭该问题。必须保留官方行为及请求缓存优先，不能以跳过退款或猜测历史扣款来消除积压。
+
+### 本轮完整复核范围
+
+| 路径 | 结果及边界 |
+|---|---|
+| 普通预扣、追加预扣、最终结算、提交不确定 | 重读记录与会话状态转换、身份和额度校验、事务提交/读回；三库模型及服务整包回归通过，未确认新的资金原子性缺陷 |
+| 失败退款、本地响应、订阅周期及回执清理 | 单笔退款和周期证据保持有效；追踪独立后台 handler 后确认 F-17。官方 F-14-A 与旧数据无证据的人工核对规则保持 |
+| 任务/MJ/实时、重复回调与成本校正 | 检查任务锁、金额/成本共同更新、保留期判断、收入校正及服务接入；现有整包断言保持通过，未确认新的独立问题 |
+| 三个恢复队列与新增游标 | 重新检查固定上界、修订号 CAS、扫描回绕、失败记录保留与提交响应丢失处理；增加“保存进度后取消”实验，三条路径均能继续正常记录、重试原记录且不重复处理 |
+| 缓存读写及请求路径 | 检查冷回填的资金代次、热命中及持久修复指令；没有恢复余额每次查库，没有修改官方行为。本轮未运行请求吞吐或延迟压测 |
+| 成本缺口、文件日志、清理与跨日 | 核对缺口持久化、解析失败、保留期、成本归属迁移及查询阻断；保持保守待确认，无新增确定缺陷 |
+| 聚合、脏分钟与租约 | 复核完成/续租互斥及所有权条件，重跑模型/服务整包；未确认新的回归 |
+| 利润报表及前端 | 重读收入/成本 UNION、快照、覆盖、亏损筛选、分页、逐日趋势、查询刷新和金额格式；130 文件/773 项通过，类型检查通过 |
+| 初始化/升级与官方归属 | 本轮无 schema/代码变更，沿用第 26 节真实三库 18 阶段迁移及 Redis 8.8.0 专项的同代码证据，不冒充本轮重新执行 |
+
+### 实际验证与记录
+
+Go 1.26.5；模型整包连接真实 SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24，环境变量仍为 `TEST_COST_BACKLOG_MYSQL_DSN` / `TEST_COST_BACKLOG_POSTGRES_DSN`，库 `new_api_cost_backlog_test`，端口 13319/15439，MySQL `clientFoundRows=false`。前端未修改。没有访问生产账目、业务 3306/6379，没有提交、推送或部署。
+
+| 实际命令 | 结果 |
+|---|---|
+| `go test -p 1 ./model ./service ./controller ./middleware -count=1`（三库环境） | 全部 PASS，退出 0：model 182.984s、service 70.598s、controller 238.344s、middleware 2.342s；[日志](D:/temp/profit-review5-backend.log) |
+| `bun run test src/features/channel-monitor`（`web/`） | 130 文件/773 项 PASS，93.38s；[日志](D:/temp/profit-review5-web.log) |
+| `bun run typecheck`（`web/`） | 退出 0；[日志](D:/temp/profit-review5-typecheck.log) |
+| `go test -overlay D:/temp/profit-review5-interrupted.json ./model -run '^TestAuditProfitRecoveryInterruptedAfterProgress$' -count=1 -v` | PASS 3.555s；资金/成本/缓存保存进度后取消，下一批先处理正常记录，再重试原记录；[日志](D:/temp/profit-review5-interrupted.log)、[脚本](D:/temp/profit-review5-interrupted.ps1) |
+| `go test -overlay D:/temp/profit-review5-refund.json ./service -run '^TestAuditProfitRefundQueueBlockedByOneRecord$' -count=1 -v` | 现状刻画 PASS 4.745s，确认 F-17，不是修复验收通过；[日志](D:/temp/profit-review5-refund.log)、[脚本](D:/temp/profit-review5-refund.ps1) |
+| `go test -overlay D:/temp/profit-review5-refund-pg.json ./service -run '^TestAuditProfitRefundQueueBlockedByOneRecord$' -count=1 -v` | 真实 PostgreSQL 行锁现状刻画 PASS 4.794s；[日志](D:/temp/profit-review5-refund-pg.log)、[脚本](D:/temp/profit-review5-refund-pg.ps1) |
+| `git diff --check`、`git diff --stat`、`git status --short` | 完成范围与格式检查，包含此前未提交修改及两个未跟踪文件；本轮仓库变更仅此记录 |
+
+临时夹具调整说明：中断实验最初回调匹配了构造成本子查询而提前取消，改为已读取到指定成本事件后取消，生产代码未变；退款实验最初使用内存 SQLite，context 取消后连接关闭导致库表消失，改为独立文件库后复现稳定。保留 [中断夹具初版日志](D:/temp/profit-review5-interrupted-fixture-before.log) 与 [退款夹具初版日志](D:/temp/profit-review5-refund-fixture-before.log)，不把夹具失败计为产品缺陷。
+
+本轮收口为 **1 项新增、未修复下游 P2：F-17**。没有以正常测试全部通过覆盖真实故障复现，也没有继续保留“全部没有问题”的当前结论。R-01 至 R-05、真实供应商跨午夜、多节点实机、基础服务灾难恢复及线上容量等既定未验证边界继续保留。
+
+## 28. 退款队列修复验收与再次全量复核（2026-10-07）
+
+### 当前结论
+
+审查对象仍为 HEAD `1871733bc` 加工作区全部利润相关改动，含两个未跟踪模型文件；官方归属基准为 `upstream/main c2b7a9a9e`。承接上一轮尚在执行的 F-17 修复，本轮完成其三库验收，再复核相邻的退款事务、批次和提交不确定路径。**F-17 的队列阻塞问题已修复；新确认 F-18（P1，下游），尚未修复。不能称“所有下游问题已经解决”，当前不建议提交。** 普通整包回归全通过与专项故障复现失败同时成立。
+
+### F-17 修复及验收
+
+- 独立退款任务整批预算为 45 秒，每条 Apply 操作为父 context 下的 5 秒子预算。
+- 复用既有恢复游标表，增加 `refund` 类型的独立进度；未添加新字段或新表。资金、成本仍各用自己的类型。采用固定上界、尝试前持久推进、修订号 CAS；失败记录不会被当作已退款，下轮重新扫描。查询辅助函数泛型化，资金/成本原有提交确认丢失与并发回归也重新执行。
+- 非批量模式不再获取全局用户/令牌批次锁；批量退款用 TryLock，竞争时保留持久指令供重试；资金事务提交及内存批次移除后先释放锁，再执行 Redis 与缓存确认。入队尚未完成所有权移交，仍保留批量模式原有的等待锁行为。这不是保证所有请求无等待，也没有修改官方批次写入器。
+- 三库专项覆盖同批第一条慢依赖、limit=1 跨批失败重试、MySQL/PG 实际行锁、用户/令牌批次竞争，以及直接模式下其他批次锁已占用时仍可退款。解除故障后重试，最终余额逐一精确核对，无重复退款。
+- 真实 PostgreSQL 9.6 handler 验收：实际事务锁住首名用户，调用 20 秒父预算；首条在约 5 秒后失败，第二名当批由 900 退回 1000；连续两次仍保留首条，解除锁后首条也到 1000。调用真实任务创建、领取和 handler，不替换生产实现。
+
+### F-18：退款同步内存批次遇到 COMMIT 响应丢失，增量可能重复应用（P1，下游，未修复）
+
+位置：`model/channel_local_response_refund.go` 的 `QueueChannelLocalResponseRefund` 与 `ApplyChannelLocalResponseRefund`。两者都会将当前用户/令牌的待写批次增量计入 SQL 余额，但只有 `Transaction` 返回 nil 才从内存批次移除。若数据库实际提交成功、客户端收到提交错误，函数直接返回，已提交的增量仍留在内存；后台退款重试或普通 `batchUpdate` 随后再次应用同一增量。
+
+确定性复现使用真实数据库事务，在实际 COMMIT 成功后注入响应丢失错误，并继续调用真实退款与普通批次写入器。SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24 × 入队/退款两个阶段，6 个场景均失败：
+
+1. 钱包和令牌余额各为 900，已用额度为 100，有一笔待退 100 的持久请求。
+2. 同一账户/令牌另有正常待写增量 -25。
+3. 在退款入队或实际退款阶段，COMMIT 已成功但调用者收到错误。
+4. 重试退款并执行正常批次刷新后，正确余额应为 975、令牌已用应为 25；实际钱包和令牌余额都为 **950**、已用为 **50**，重复扣了 25。
+
+这不是重复执行退款金额本身，而是退款事务吸收的批次增量被再次应用。未测量线上发生频率或实际受影响金额。触发需要启用批量更新、同账户/令牌有非零待写增量、数据库提交响应不确定；普通单笔、无批次或正常提交测试不能排除此问题。利润记录启用后钱包常规扣费直写减少了钱包批次来源，但令牌既有路径仍可进入批次，不能据此判定不可达。
+
+归属：退款文件不存在于 `upstream/main`，历史最近修改为 `30c7db2e1`；“事务出错直接返回、仅成功后删除批次”的行为在本轮隔离修复前已经存在。本轮只缩小互斥锁范围和新增恢复进度，没有创造这一提交确认处理方式。因此是**既有下游问题，不是官方订阅 F-14-A，也不是单纯数据库驱动问题**。
+
+修复验收必须同时覆盖入队和退款、钱包和令牌、正负待写增量、确实回滚、已提交但响应丢失，以及提交后读回也失败的情形。不能在错误时一律删除批次（可能丢失未提交增量），也不能只在读回成功时处理而放任读回失败后普通写入器重放。应为批次所有权移交提供可核对的幂等依据或避免退款重复接管这些增量；保持官方缓存优先和用户确认的订阅边界。**本轮只确认并登记此项，尚未实施 F-18 修复。**
+
+### 全量复核覆盖与限制
+
+| 范围 | 结果 |
+|---|---|
+| 预扣、追加预扣、普通最终结算、实时 | 重核预扣/最终指令与恢复事务边界；模型及服务整包通过，未新增确认其他资金错误 |
+| 订阅、失败请求及本地响应退款 | F-17 验收通过；扩大提交不确定矩阵后确认 F-18；官方 F-14-A 保留，历史缺证据不猜退 |
+| 异步任务、MJ、收入校正 | 检查失败任务退款重试、任务资金及收入共同更新、缓存失效接入；整包原有断言通过 |
+| 资金/成本/缓存/退款四种恢复任务 | 逐一检查预算、失败保留、持久进度、独立租约与固定扫描上界；本轮退款实际行锁和跨批矩阵通过 |
+| 聚合、租约、成本缺口、清理与跨日 | 延续第 27 节审查并重跑最终模型/服务/控制器包；未确认新的独立缺陷，已有保守待确认规则保留 |
+| 查询与前端 | 重读利润查询缓存键、按日期/渠道查询、金额换算、失败提示、逐日确认与趋势；没有前端改动，沿用第 27 节同代码的 130 文件/773 项及 typecheck 结果，不冒充本轮重跑 |
+| 数据库升级与官方边界 | 本轮仅复用游标表，无新增 schema；沿用第 26 节 18 阶段 fresh/发布版 upgrade/两次启动证据。新增行为有真实三库验证；未修改官方文件的新接入 |
+
+工作区官方文件仍只有 `model/main.go`（必要模型注册）、`model/token.go` / `model/user_cache.go`（冷回填前读取资金代次）、`model/token_cache.go` / `model/user_auth_cache.go`（发布旧资金快照时的代次检查），原因和此前验证见第 21 至 27 节。本轮 F-17 实现全部位于下游文件；没有新增官方改动，也没有审计或修改官方订阅语义和全站认证体系。热缓存读取未增加数据库查询；后台增加退款扫描进度读写，未做线上延迟或吞吐压测。
+
+“全量”指当前利润相关链路、已有问题和本次变更范围；不是全站供应商协议或未知线上环境的无缺陷保证。R-01 至 R-05、真实供应商跨午夜、多节点实机、生产流水及基础服务灾难恢复等既定限制继续保留。
+
+### 实际验证证据
+
+Go 1.26.5；SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24、Redis 8.8.0。三库专项/整包使用隔离 13319/15439、`new_api_cost_backlog_test`，MySQL `clientFoundRows=false`。真实 handler 使用独立 `new_api_profit_fix6_refund`；普通退款与真实 Redis 使用独立 `new_api_profit_fix6_local_refund`、16389/DB14。未访问业务 3306/6379。
+
+| 命令 | 结果 |
+|---|---|
+| `go test ./model -run 'TestChannelMonitorIncomeRefundRecoveryIsolation\|TestChannelMonitorIncomeRecoveryFairnessAndConcurrentWorkers\|TestChannelMonitorIncomeFundingAndCostRecoverConcurrently\|TestChannelMonitorIncomeFundingConfirmationIsAtomic' -count=1 -v`（三库） | PASS 42.928s；[日志](D:/temp/profit-fix6-matrix-final.log) |
+| `go test -overlay D:/temp/profit-fix6-refund-pg.json ./service -run '^TestAuditProfitRefundQueueBlockedByOneRecord$' -count=1 -v` | 修复验收 PASS 12.924s；[日志](D:/temp/profit-fix6-refund-pg.log)、[测试源码](D:/temp/profit-fix6-refund-pg.go) |
+| `go test -overlay D:/temp/profit-fix6-real-refund.json ./model -run '^TestChannelSmallInputResponseRefundDatabase$' -count=1 -v`（真实三库 + Redis） | PASS 4.240s；直接/批量、重复退款、订阅、缺失令牌回滚、Redis Lua；[日志](D:/temp/profit-fix6-real-refund.log)。overlay 仅给现有测试补迁移缓存修复表，没有替换生产函数 |
+| `go test -overlay D:/temp/profit-fix6-commit-matrix.json ./model -run '^TestAuditProfitRefundBatchCommitLoss$' -count=1 -v`（三库） | **FAIL 6.254s，6 场景均复现 F-18**；[日志](D:/temp/profit-fix6-commit-matrix.log)、[测试源码](D:/temp/profit-fix6-commit-matrix.go)。不能写成通过 |
+| `go test -p 1 ./model ./service ./controller ./middleware -count=1`（三库） | PASS：model 209.533s、service 70.950s、controller 235.984s、middleware 2.166s；[日志](D:/temp/profit-fix6-backend.log) |
+| `go build ./...` | 退出 0；[日志](D:/temp/profit-fix6-build.log) |
+| `git diff --check`、`git diff --stat`、上游文件归属核对 | 已检查；统计包含此前未提交改动及两个未跟踪文件，未提交/推送/部署 |
+
+测试夹具修正：最初同批慢查询回调在检查结果时仍生效，测试读取没有 deadline 而等待，已停止该测试并把故障解除移到结果读取之前，最终矩阵重新通过。没有放宽金额或处理顺序断言，也未把这个夹具等待当成产品缺陷。真实 Redis 退款夹具补迁移当前缓存修复表后才运行。所有外部实验源码均保留在 `D:/temp/`，不向仓库加入临时 overlay。
+
+本轮结论：**F-17 已闭环，F-18 未关闭；官方 F-14-A 继续保留。全量正常回归通过不能抵消已复现的资金错误。**
+## 29. F-18 修复、同类路径复查与完成审计（2026-10-07）
+
+### 修复结果
+
+按用户持续目标“修复、复查、继续修复下游问题”处理第 28 节确认的 F-18。**F-18 已修复并验收；当前利润功能范围没有已确认未关闭的下游问题。** 官方 F-14-A 保持原有行为，未把用户接受的历史缺证据、基础服务故障和部署边界改写为已解决。
+
+最终实现分开两种资金责任：
+
+1. **实际退款只退该笔请求。** 入队已将其预扣与退款指令共同持久化，Apply 不再吸收其他请求的用户/令牌内存批次，也不再获取全局批次锁。退款金额与 Applied 仍在同一 SQL 事务；提交响应丢失时，后续按 Applied 重试。普通批次写入仍按原流程处理自己的增量。
+2. **入队同步批次带唯一标识。** 新增可空的 `batch_transfer_id varchar(36)`，与退款指令及本机当时待写增量共同提交。正常入队后从普通批次移除一次。若事务已尝试提交但结果不确定，捕获的批次从普通写入器隔离，保留原请求与标识供重试，不因提交错误直接再次放回。若确实在 COMMIT 前失败，原批次仍留在普通写入器。
+3. **重试不依赖成功读回一次。** 同标识行存在，说明该批次已共同提交，结束接管；不存在则重新执行同一事务。数据库不可读时继续保留原批次，后续新请求的增量独立写入。另一节点先成功保存同一退款时，只把本机未提交批次还给普通写入器，不重复退款。归还同时检查溢出与两类锁竞争，失败保留记录，不截断额度。
+4. **重复入队不会吞并新批次。** 已存在的同请求直接使用原记录，验证归属和金额；不会把后续请求的新批次计入旧退款。冲突金额仍拒绝。模型不接受调用方伪造 Applied、CacheApplied 或批次标识。
+5. **会话与后台接入。** 入队提交不确定会关闭该会话的普通退款权，避免调用方再执行非幂等退款。本机确认循环复用已有下游成本后台运行模块，在主从节点、Redis 关闭时均运行，并随模块 context 停止；每分钟一轮、父预算 45 秒、单条 5 秒，独立扫描固定上界，旧失败记录不会被新记录无限推后。数据库中已提交的退款仍由原独立退款任务执行。
+
+没有改官方批次写入器、官方订阅结算语义或驱动参数。最终没有修改 `service/system_task.go`：中间方案的启动接入已替换为下游 `service/channel_daily_cost_outbox.go`，归属核对确认该文件不在 `upstream/main`。工作区官方改动仍是第 28 节列出的五处既有缓存/迁移接入，本轮没有新增官方修改。
+
+### 资金及性能影响、明确边界
+
+原 F-18 在内存增量 -25 时会重复扣减；最终三库断言逐项检查用户余额、令牌余额、令牌已用，确保每笔独立增量仅应用一次。测试还加入后续 -10 与 -5，最终必须为 `1000 + 原增量 - 15`，不能只检查队列状态或错误返回。
+
+实际退款减少进程级互斥锁及无关批次处理；入队新增一个请求标识查重读取和持久标识，正常请求缓存命中没有增加数据库查询。本轮没有做线上延迟、吞吐或容量压测，不宣称零开销。后台只在存在未确认转移时访问其 SQL/Redis；空队列无需 SQL 查询。
+
+**纯内存边界不扩大为持久承诺：** 未实际提交的普通批量额度原本就在进程内，强制退出仍可能丢失这些尚未持久化的批次；本次没有重写官方批量系统。已实际提交的退款指令和批次标识在进程退出后可恢复，已用独立子进程验证。监控预扣的 reserved 原本已有资金依据，未形成持久退款指令而退出时仍按既定规则保留待人工核对。不能把“提交已成功后的恢复”当成“所有纯内存状态均能跨进程保留”。
+
+### 修复后的同类复查
+
+| 要求/路径 | 证据和结论 |
+|---|---|
+| 入队/实际退款，COMMIT 成功但响应丢失 | 三库正负增量矩阵通过，原多扣复现不再出现 |
+| COMMIT 实际回滚、COMMIT 前确定失败 | 同矩阵分别注入；未提交增量不丢失，重试不重复，断言不放宽 |
+| 提交后读回也失败，新请求继续产生批次 | 保留原转移并运行真实普通批次写入；恢复后最终余额准确 |
+| 另一节点先完成同一退款 | 本机转移标识与对方不同，归还本机未提交增量，金额三库验证通过 |
+| 旧退款重复入队/重复执行 | 后续新 -5 批次只写一次，原退款无第二次加款 |
+| 首条失败、跨批、取消、进程退出 | 本机转移 limit=1 公平性/取消；已提交但未确认的退款经子进程退出后恢复，余额 975 且再次恢复 0 条 |
+| 会话结束与普通退款互斥 | service overlay 调用真实 BillingSession；提交不确定后 NeedsRefund=false，调用 Refund 不重复返款；恢复后钱包/令牌均 1000 |
+| 原 F-17 四队列故障隔离 | 模型整包包含退款慢依赖、实际 MySQL/PG 行锁、跨批及资金/成本/缓存旧故障矩阵；批量锁已占用时实际退款现在仍可完成 |
+| 预扣/最终结算/订阅/任务/MJ/成本归属 | 重核利润预扣不吸收待写批次、最终资金共同提交、历史清理、周期证据、缺口与幂等入口；既有模型/服务/控制器回归通过，无新确认缺陷 |
+| 聚合租约、报表、前端 | 原修复保持，后端四包通过。利润前端本轮没有修改，沿用第 27 节同代码 773 项及类型检查；不将同时进行的 group-monitor 改动计入本任务验证 |
+| 数据库升级 | 新字段实际三库 fresh、发布版 seed 后 upgrade、两次 verify 共 18 阶段通过；标识跨重启保留，主库/独立日志库数据与索引保留 |
+| 官方边界与用户速度要求 | 无新增官方生产修改；热缓存路径不变，实际退款移除全局锁，未进行线上性能压测 |
+
+### 实际命令与结果
+
+Go 1.26.5；SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24；真实 Redis 8.8.0，隔离 16389/DB14。行为矩阵使用 13319/15439、`new_api_cost_backlog_test`，MySQL `clientFoundRows=false`。升级另建 `new_api_profit_fix7_20261007_*` 主库和日志库；SQLite 使用独立文件。未接触业务 3306/6379，Redis 测试容器已停止。
+
+| 实际命令 | 观察结果 |
+|---|---|
+| `go test ./model -run '^TestChannelMonitorIncomeRefund' -count=1 -v`（三库，阶段验证） | PASS 47.876s，原隔离回归和第一版 18 场景资金矩阵；[日志](D:/temp/profit-fix7-refund-matrix.log) |
+| `go test ./model -run '^TestChannelMonitorIncomeRefundBatchCommitLoss$' -count=1 -v`（三库） | PASS 17.822s，30 场景；[日志](D:/temp/profit-fix7-batch-final.log) |
+| `go test ./model -run '^TestChannelMonitorIncomeRefundTransfer' -count=1 -v` | PASS 2.300s，取消/公平性和实际子进程退出恢复；[日志](D:/temp/profit-fix7-transfer-lifecycle.log) |
+| `go test -overlay D:/temp/profit-fix7-session.json ./service -run '^TestAuditProfitRefundSessionCommitLoss$' -count=1 -v` | PASS 2.149s，真实会话幂等与循环停止；[日志](D:/temp/profit-fix7-session.log)、[实验源码](D:/temp/profit-fix7-session.go) |
+| `go test -overlay D:/temp/profit-fix7-real-refund.json ./model -run '^TestChannelSmallInputResponseRefundDatabase$' -count=1 -v`（三库 + 真实 Redis） | PASS 4.890s，直接/批量、订阅、回滚、缓存 Lua；[日志](D:/temp/profit-fix7-real-refund.log) |
+| `D:/temp/profit-fix7-schema/validate.ps1`；各阶段 `go test ./scripts/channel-monitor-profit-upgrade -run '^TestChannelMonitorProfitUpgrade$' -count=1 -v` | 18 阶段 PASS；[脚本](D:/temp/profit-fix7-schema/validate.ps1)、[汇总](D:/temp/profit-fix7-schema/run.log)。release seed 沿用此前 rc.41 源码，当前 verify 重跑两次 |
+| `go test -p 1 ./model ./service ./controller ./middleware -count=1`（三库） | PASS，退出 0：model 224.185s、service 68.810s、controller 266.182s、middleware 2.206s；[日志](D:/temp/profit-fix7-backend.log) |
+| `go test -p 1 ./service -count=1`（最终后台接入） | PASS 100.406s，退出 0；[日志](D:/temp/profit-fix7-service-final.log)。包含现有 runtime 启停、Redis 关闭及停用生产者后的继续恢复回归 |
+| `go build ./...`（最终生产代码） | 退出 0；[日志](D:/temp/profit-fix7-build.log) |
+| `git diff --check`、`git diff --stat`、修改 Go 文件 `gofmt -l`、`git status --short` | 完成；两个未跟踪模型文件纳入范围；本轮新增后端改动全部是下游文件 |
+
+初次编译曾因尚未接入扫描代码的 `slices` 未使用而失败，完成恢复实现后所有相关验证重跑通过；未隐藏为通过。模型整包运行后只追加两项上述独立运行通过的生命周期测试，未再改模型生产实现。服务最终接入从官方启动文件移至下游 runtime 后，服务整包重新执行，构建和会话专项均按最终实现运行。
+
+### 完成审计
+
+F-18 的复现、修复、已提交/未提交/读回失败/并发所有权/重复调用/进程退出证据均已具备；第 28 节的失败日志保留为历史证据。重新检查了四类持久恢复与本机转移的职责、原退款与普通批次各自资金归属、会话退款权、锁竞争、缓存、迁移及上下游文件边界。所有已确认下游利润缺陷现已关闭，官方 F-14-A 和原 R-01 至 R-05 继续保留。
+
+工作区同时出现的 `docs/downstream/channel-monitor/model-market-monitoring.md`、`web/src/features/group-monitor/` 修改由其他工作产生，本任务未编辑或回退，也不把其验证归入利润修复。共享索引保留同时存在的修改。本轮未提交、推送或部署，不作“所有未知线上环境绝对无缺陷”的保证。
+
+## 30. 当前工作区再次全量复查（2026-10-07）
+
+### 结论和审查基线
+
+本轮审查 HEAD `819360aea0f14db1ce79f173487b1ae76f276310` 加全部未提交利润改动，包含未跟踪的 `model/channel_monitor_funding_cache.go`、`model/channel_monitor_income_recovery.go`；官方归属基准仍为 `upstream/main c2b7a9a9e0b548c2051a949fceabb59029adcb49`。HEAD 的 group-monitor 提交不属于本次利润修改。
+
+**本轮未发现新的已确认下游利润缺陷；没有重新打开 F-18 或其他已关闭问题。** 这是当前代码检查及回归的结果，不能解释为消除了官方 F-14-A，或验证了所有线上故障。此次只补充本记录，没有修改生产代码、测试代码、数据库结构或官方行为，没有提交、推送或部署。
+
+### 覆盖清单
+
+| 范围 | 本轮复核内容与结果 |
+|---|---|
+| 钱包、令牌、订阅预扣 | 核对 reserved 与资金共同提交、追加预扣、周期证据及失败后的退款责任；原资金、订阅与缺失记录回归重新通过 |
+| 普通结算、实时和异步任务 | 核对最终收入指令、资金确认、提交错误后的重试、任务及 Midjourney 退款、免费/同秒无变化更新；模型、服务整包通过 |
+| F-18 退款与批次接管 | 重读入队查重、唯一转移标识、提交不确定时隔离批次、另节点先入队后的归还、后续批次独立写入；真实三库提交丢失/回滚矩阵及进程退出用例随模型整包重新通过；Apply 仍只处理本笔退款 |
+| 四类持久恢复与本机确认 | 核对各自预算、游标、固定上界、CAS、取消、单条失败保留及本机循环启动/停止；真实行锁、故障隔离、公平性及并发回归随整包通过 |
+| 缓存与用户请求速度 | 核对资金事务内修复指令、修订号确认、旧资金快照回填代次；仍优先读取热缓存，没有改为每次请求查库。冷缓存额外代次读取和后台扫描有成本，本轮未进行容量或线上延迟压测 |
+| 成本、缺口与清理 | 核对资金/成本分别恢复时的归属、收入缺口内存及日志、过期清理、订阅回执清理后的独立退款依据；不将缺证据的 reserved 猜测为可退款 |
+| 聚合租约 | 核对续期、完成与移除的同步范围及真实接管保护；服务回归重新通过 |
+| 利润报表 | 重读收入/成本 UNION、只收入/只成本维度、同一 SQL 快照、缺口和队列覆盖、按维度汇总、分页排序、确认后亏损筛选；控制器整包通过 |
+| 前端 | 核对查询键、手动刷新、单渠道补查、失败提示、人民币换算、利润率、逐日确认与趋势；渠道监控 130 文件/773 项重新通过，类型检查通过 |
+| 初始化、升级及官方归属 | 核对现有模型注册与新增字段；本轮没有 schema 变化，没有重跑发布版升级矩阵。第 29 节的升级结果是历史记录，不能标成此次执行 |
+
+退款批次锁的疑点已对照实际调用链检查：普通额度批次写入、快照与本机归还都受对应 mutation lock 保护；退款 Apply 不再持有这两类锁。首次入队仍等待批次锁，本机待确认集合扫描仍随积压数量增长，因此不承诺所有故障下零等待或固定恢复时长。没有通过随机压力循环或仅观察日志将这些容量边界误判为已验证。
+
+### 本轮实际验证
+
+使用 Go 1.26.5。模型三库回归配置真实 SQLite 3.50.4、MySQL 5.7.44、PostgreSQL 9.6.24；MySQL/PG 使用隔离端口 13319/15439、专用库 `new_api_cost_backlog_test`，通过 `TEST_COST_BACKLOG_MYSQL_DSN`、`TEST_COST_BACKLOG_POSTGRES_DSN` 配置，MySQL 保持 `clientFoundRows=false`。
+
+| 实际命令 | 观察结果 |
+|---|---|
+| `go test -p 1 ./model ./service ./controller ./middleware -count=1`（上述三库环境） | 退出 0；model 225.243s、service 67.985s、controller 235.721s、middleware 2.190s；[日志](D:/temp/profit-review8-backend.log) |
+| `bun run test src/features/channel-monitor`（web） | 130 文件、773 项全部通过，79.01s；[日志](D:/temp/profit-review8-web.log) |
+| `bun run typecheck`（web） | 退出 0；[日志](D:/temp/profit-review8-typecheck.log) |
+| `go build ./...` | 退出 0；[日志](D:/temp/profit-review8-build.log) |
+| `git diff --check`、`git diff --stat`、`git status --short`、对照 `upstream/main` 文件归属 | 完成；包含既有改动及两个未跟踪模型文件。仅文档存在 Git 的 CRLF 转 LF 提示，没有 diff 格式错误 |
+
+整包通过不代表所有使用其他环境变量的可选外部服务测试都已运行。本轮真实 Redis 专项及 fresh/发布版 upgrade/两次启动的 18 阶段矩阵没有重新执行；第 29 节记录的外部 `D:/temp/profit-fix7-*` 临时文件在本轮检查时已不可读取，不能将历史链接作为本轮仍可独立重放的附件。此次验证日志使用独立 `profit-review8-*` 文件保存。隔离 Redis 容器保持停止，未操作业务 3306/6379。
+
+工作区相对 HEAD 的官方文件修改仍为五个：`model/main.go` 注册下游模型；`model/token.go`、`model/user_cache.go` 在冷回填前读取资金代次；`model/token_cache.go`、`model/user_auth_cache.go` 发布资金快照时检查代次。未增加新的官方文件修改，未改变认证版本检查顺序，也未进行全站认证合规审计。
+
+### 保留事项
+
+- **官方 F-14-A**：订阅跨周期结算原语义仍按用户明确选择保留，等待上游处理；不是“全部问题消失”。
+- **已接受边界**：Redis 故障期间余额允许短暂滞后，依靠后台持续重试；缺证据历史预扣人工核对；未提交的纯内存批次沿用既有进程退出边界。
+- **未验证部署范围**：R-01 至 R-05、真实供应商跨午夜、多节点实机、生产账目及容量、基础服务灾难恢复仍不在此次验收证据内。
+
+本轮收口：利润相关代码链路与现有故障回归已复查完成，新增确认缺陷为 0；没有用测试通过掩盖既有官方问题或未验证边界。

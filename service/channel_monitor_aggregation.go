@@ -287,12 +287,14 @@ func repairChannelMonitorDirtyMinutes(
 			case <-ticker.C:
 				leaseMu.Lock()
 				snapshot := append([]model.ChannelMonitorDirtyMinute(nil), activeClaims...)
-				leaseMu.Unlock()
 				if len(snapshot) == 0 {
+					leaseMu.Unlock()
 					return
 				}
 				lockUntil := common.GetTimestamp() + int64(channelMonitorDirtyRepairLeaseDuration/time.Second)
-				if err := model.RenewChannelMonitorDirtyMinutes(workCtx, claimer, snapshot, lockUntil); err != nil {
+				err := model.RenewChannelMonitorDirtyMinutes(workCtx, claimer, snapshot, lockUntil)
+				leaseMu.Unlock()
+				if err != nil {
 					// A rebuild may hold the SQLite writer lock while replacing metric
 					// rows. Treat transient renewal failures as retryable; only a
 					// confirmed fencing loss should cancel the in-flight rebuild.
@@ -311,8 +313,6 @@ func repairChannelMonitorDirtyMinutes(
 		}
 	}()
 	removeActiveClaim := func(claim model.ChannelMonitorDirtyMinute) {
-		leaseMu.Lock()
-		defer leaseMu.Unlock()
 		for index := range activeClaims {
 			if activeClaims[index].Id == claim.Id && activeClaims[index].ClaimedAt == claim.ClaimedAt {
 				activeClaims = append(activeClaims[:index], activeClaims[index+1:]...)
@@ -344,13 +344,20 @@ func repairChannelMonitorDirtyMinutes(
 			releaseErr := model.ReleaseChannelMonitorDirtyMinutes(ctx, claimer, claims[index:])
 			return errors.Join(err, releaseErr, getLeaseErr())
 		}
-		if err := model.CompleteChannelMonitorDirtyMinutes(ctx, claimer, []model.ChannelMonitorDirtyMinute{claim}); err != nil {
+		// Serialize completion and removal with renewal. A snapshot must never
+		// retain a row that this worker has already deleted itself.
+		leaseMu.Lock()
+		completeErr := model.CompleteChannelMonitorDirtyMinutes(ctx, claimer, []model.ChannelMonitorDirtyMinute{claim})
+		if completeErr == nil {
+			removeActiveClaim(claim)
+		}
+		leaseMu.Unlock()
+		if completeErr != nil {
 			cancel()
 			<-renewDone
 			releaseErr := model.ReleaseChannelMonitorDirtyMinutes(ctx, claimer, claims[index:])
-			return errors.Join(fmt.Errorf("完成渠道监控脏分钟失败: %w", err), releaseErr, getLeaseErr())
+			return errors.Join(fmt.Errorf("完成渠道监控脏分钟失败: %w", completeErr), releaseErr, getLeaseErr())
 		}
-		removeActiveClaim(claim)
 		if getLeaseErr() != nil {
 			cancel()
 			<-renewDone

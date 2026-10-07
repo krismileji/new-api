@@ -173,6 +173,9 @@ func applyTaskTokenDelta(tx *gorm.DB, tokenID, delta int) (string, error) {
 	err := tx.Model(&Token{}).Where("id = ?", tokenID).Updates(map[string]any{
 		"remain_quota": remain, "used_quota": used, "accessed_time": common.GetTimestamp(),
 	}).Error
+	if err == nil {
+		err = queueChannelMonitorFundingCacheRepair(tx, getTokenCacheKey(token.Key))
+	}
 	return token.Key, err
 }
 
@@ -384,7 +387,9 @@ func applyTaskBillingOnce(ctx context.Context, requested *Task, operation TaskBi
 			if updatedTask.Error != nil {
 				return updatedTask.Error
 			}
-			if updatedTask.RowsAffected != 1 {
+			// The row is locked above. MySQL reports zero changed rows for an
+			// identical private_data snapshot in the same updated_at second.
+			if updatedTask.RowsAffected != 1 && result.QuotaDelta != 0 {
 				return errors.New("task quota changed concurrently")
 			}
 		}
@@ -463,10 +468,24 @@ func applyTaskFundingDelta(tx *gorm.DB, task *Task, delta int) error {
 	if result.RowsAffected != 1 {
 		return gorm.ErrRecordNotFound
 	}
-	return nil
+	return queueChannelMonitorFundingCacheRepair(tx, getUserCacheKey(task.UserId))
 }
 
 func updateTaskUsageInTx(tx *gorm.DB, userID, channelID, delta int) error {
+	if delta == 0 {
+		// A free request still needs valid accounting owners.
+		if userID > 0 {
+			if err := lockForUpdate(tx).Select("id").First(&User{}, userID).Error; err != nil {
+				return err
+			}
+		}
+		if channelID > 0 {
+			if err := lockForUpdate(tx).Select("id").First(&Channel{}, channelID).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	if userID > 0 {
 		var user User
 		if err := lockForUpdate(tx).Where("id = ?", userID).First(&user).Error; err != nil {

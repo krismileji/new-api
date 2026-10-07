@@ -228,6 +228,9 @@ func StartChannelDailyCostOutboxRuntime() (*ChannelDailyCostOutboxRuntime, error
 
 func (runtime *ChannelDailyCostOutboxRuntime) run(ctx context.Context) {
 	defer close(runtime.done)
+	// This runtime runs on every node, including without Redis. Uncertain
+	// local batch handoffs cannot be recovered by the master-only task runner.
+	runtime.operationWait.Go(func() { runChannelLocalRefundTransferRecovery(ctx) })
 	runtime.lastDBRecoveryAt.Store(time.Now().Unix())
 	runtime.lastRedisConsumerAt.Store(time.Now().Unix())
 	runtime.operationWait.Add(1)

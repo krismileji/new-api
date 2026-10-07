@@ -15,7 +15,9 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/alicebob/miniredis/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
@@ -33,7 +35,7 @@ func TestSettleBillingPersistsFinalWalletChargeForProfit(t *testing.T) {
 		model.ChannelMonitorIncomeReady.Store(oldReady)
 		common.QuotaPerUnit, operation_setting.USDExchangeRate = oldQuotaPerUnit, oldExchangeRate
 	})
-	require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorIncome{}, &model.ChannelDailyCostOutbox{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeRecoveryCursor{}, &model.ChannelDailyCostOutbox{}))
 	require.NoError(t, model.DB.Exec("DELETE FROM channel_monitor_incomes").Error)
 
 	seedUser(t, 890, 10_000)
@@ -118,7 +120,7 @@ func TestChannelMonitorIncomePreConsumeCompatibility(t *testing.T) {
 	})
 	t.Setenv("CHANNEL_MONITOR_INCOME_GAP_DIR", t.TempDir())
 	t.Setenv("CHANNEL_DAILY_COST_RELIABLE_OUTBOX", "false")
-	require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeGap{}, &model.ChannelDailyCostOutbox{}, &model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeRecoveryCursor{}, &model.ChannelMonitorIncomeGap{}, &model.ChannelDailyCostOutbox{}, &model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}))
 	for i, tc := range []struct {
 		name, preference, source              string
 		wallet, total, reserve, final         int
@@ -219,7 +221,7 @@ func TestChannelMonitorIncomeRecoveryOwnsFailedFinalSettlement(t *testing.T) {
 	oldReady := model.ChannelMonitorIncomeReady.Swap(true)
 	t.Cleanup(func() { model.ChannelMonitorIncomeReady.Store(oldReady) })
 	t.Setenv("CHANNEL_MONITOR_INCOME_GAP_DIR", t.TempDir())
-	require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeGap{}, &model.ChannelDailyCostOutbox{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeRecoveryCursor{}, &model.ChannelMonitorIncomeGap{}, &model.ChannelDailyCostOutbox{}))
 	for _, final := range []int{50, 100, 150} {
 		t.Run(strconv.Itoa(final), func(t *testing.T) {
 			truncate(t)
@@ -269,16 +271,22 @@ func TestChannelMonitorIncomeRecoveryOwnsFailedFinalSettlement(t *testing.T) {
 			require.NoError(t, model.DB.Model(&model.ChannelMonitorIncomeGap{}).Where("channel_id = ?", info.ChannelId).Count(&recordedGaps).Error)
 			assert.Zero(t, recordedGaps, "post-insert read failures must remain recoverable without a permanent gap")
 			info.Billing = nil // The recovery handler has no request or session.
-			handler := channelMonitorIncomeRecoveryHandler{}
-			task, err := model.CreateSystemTask(handler.Type(), nil, nil)
-			require.NoError(t, err)
-			task, claimed, err := model.ClaimSystemTask(task.ID, handler.Type(), "income-recovery-test", time.Now().Unix()+60)
-			require.NoError(t, err)
-			require.True(t, claimed)
-			handler.Run(context.Background(), task, "income-recovery-test")
-			finished, err := model.GetSystemTaskByTaskID(task.TaskID)
-			require.NoError(t, err)
-			assert.Equal(t, model.SystemTaskStatusSucceeded, finished.Status, finished.Error)
+			handlers := []SystemTaskHandler{channelMonitorIncomeRecoveryHandler{}, channelMonitorIncomeCostRecoveryHandler{}}
+			if final == 50 {
+				// Independent queues may attribute cost before funding succeeds.
+				handlers[0], handlers[1] = handlers[1], handlers[0]
+			}
+			for _, handler := range handlers {
+				task, err := model.CreateSystemTask(handler.Type(), nil, nil)
+				require.NoError(t, err)
+				task, claimed, err := model.ClaimSystemTask(task.ID, handler.Type(), "income-recovery-test", time.Now().Unix()+60)
+				require.NoError(t, err)
+				require.True(t, claimed)
+				handler.Run(t.Context(), task, "income-recovery-test")
+				finished, err := model.GetSystemTaskByTaskID(task.TaskID)
+				require.NoError(t, err)
+				assert.Equal(t, model.SystemTaskStatusSucceeded, finished.Status, finished.Error)
+			}
 			require.NoError(t, model.DB.First(&user, info.UserId).Error)
 			assert.Equal(t, 10000-final, user.Quota)
 			var token model.Token
@@ -307,7 +315,7 @@ func TestChannelMonitorIncomeReservedSessionLifecycle(t *testing.T) {
 	ready := model.ChannelMonitorIncomeReady.Swap(true)
 	t.Cleanup(func() { model.ChannelMonitorIncomeReady.Store(ready) })
 	t.Setenv("CHANNEL_MONITOR_INCOME_GAP_DIR", t.TempDir())
-	require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeGap{}, &model.ChannelDailyCostOutbox{}, &model.ChannelLocalResponseRefund{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeRecoveryCursor{}, &model.ChannelMonitorIncomeGap{}, &model.ChannelDailyCostOutbox{}, &model.ChannelLocalResponseRefund{}))
 	for _, scenario := range []string{"zero_refund", "supplement_refund", "supplement_rejected", "local_refund_recovery", "lost_final_instruction", "channel_retry", "selected_before_handler"} {
 		t.Run(scenario, func(t *testing.T) {
 			truncate(t)
@@ -414,7 +422,7 @@ func TestChannelMonitorIncomeEarlyRefundAndBatchFunding(t *testing.T) {
 		model.ChannelMonitorIncomeReady.Store(previousReady)
 		common.BatchUpdateEnabled = previousBatch
 	})
-	require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorIncome{}, &model.ChannelDailyCostOutbox{}))
+	require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeRecoveryCursor{}, &model.ChannelDailyCostOutbox{}))
 	for _, scenario := range []string{"early_midjourney_refund", "batch_funding"} {
 		t.Run(scenario, func(t *testing.T) {
 			truncate(t)
@@ -486,7 +494,7 @@ func TestTaskIncomeAttributionFailureDoesNotCommitTaskFunding(t *testing.T) {
 			assert.NoError(t, sqlDB.Close())
 		})
 	}
-	tables := []any{&model.Task{}, &model.User{}, &model.Token{}, &model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeGap{}, &model.ChannelDailyCostOutbox{}, &model.ChannelLocalResponseRefund{}}
+	tables := []any{&model.Task{}, &model.User{}, &model.Token{}, &model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeRecoveryCursor{}, &model.ChannelMonitorIncomeGap{}, &model.ChannelDailyCostOutbox{}, &model.ChannelLocalResponseRefund{}}
 	var created []any
 	for _, table := range tables {
 		if !model.DB.Migrator().HasTable(table) {
@@ -551,7 +559,7 @@ func TestTaskIncomeReconcilesCompletionBeforeInitialSettlement(t *testing.T) {
 			previous := model.ChannelMonitorIncomeReady.Load()
 			model.ChannelMonitorIncomeReady.Store(true)
 			t.Cleanup(func() { model.ChannelMonitorIncomeReady.Store(previous) })
-			require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorIncome{}, &model.ChannelDailyCostOutbox{}))
+			require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeRecoveryCursor{}, &model.ChannelDailyCostOutbox{}))
 			require.NoError(t, model.DB.Where("channel_id = ?", 919).Delete(&model.ChannelMonitorIncome{}).Error)
 			const identity, initial, charge = 919, 10000, 1000
 			seedUser(t, identity, initial)
@@ -685,4 +693,148 @@ func TestTaskBillingCorrectionsReplaceChannelMonitorIncomeSnapshot(t *testing.T)
 	assert.Zero(t, saved.Quota)
 	assert.Zero(t, saved.IncomeNanoCNY)
 	assert.Equal(t, "settled", saved.Status)
+}
+
+func setupChannelMonitorIncomeRecoveryTest(t *testing.T) *miniredis.Miniredis {
+	t.Helper()
+	tables := []any{&model.SystemTaskLock{}, &model.SystemTask{}, &model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeRecoveryCursor{}, &model.ChannelDailyCostOutbox{}, &model.ChannelMonitorFundingCacheRepair{}}
+	require.NoError(t, model.DB.AutoMigrate(tables...))
+	for _, table := range tables {
+		require.NoError(t, model.DB.Where("1 = 1").Delete(table).Error)
+		t.Cleanup(func() { assert.NoError(t, model.DB.Where("1 = 1").Delete(table).Error) })
+	}
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr(), MaxRetries: -1})
+	oldRedis, oldRDB, oldWriter := common.RedisEnabled, common.RDB, common.RDBMonitorWrite
+	oldReady := model.ChannelMonitorIncomeReady.Swap(true)
+	common.RedisEnabled, common.RDB, common.RDBMonitorWrite = true, client, client
+	t.Cleanup(func() {
+		common.RedisEnabled, common.RDB, common.RDBMonitorWrite = oldRedis, oldRDB, oldWriter
+		model.ChannelMonitorIncomeReady.Store(oldReady)
+		assert.NoError(t, client.Close())
+	})
+	withSystemTaskRegistry(t, channelMonitorIncomeRecoveryHandler{}, channelMonitorIncomeCostRecoveryHandler{}, channelMonitorFundingCacheRecoveryHandler{})
+	return server
+}
+
+func TestChannelMonitorIncomeRecoveryQueuesAreIndependent(t *testing.T) {
+	for _, blockedHandler := range []ScheduledSystemTaskHandler{channelMonitorIncomeRecoveryHandler{}, channelMonitorIncomeCostRecoveryHandler{}} {
+		t.Run(blockedHandler.Type(), func(t *testing.T) {
+			server := setupChannelMonitorIncomeRecoveryTest(t)
+			const key = "user:recovery-isolation"
+			require.NoError(t, common.RDB.HSet(t.Context(), key, "Quota", 9900).Err())
+			require.NoError(t, model.DB.Create(&model.ChannelMonitorFundingCacheRepair{CacheKey: key, Revision: "pending", UpdatedAt: 1}).Error)
+			runSystemTaskScheduler()
+			blockedTask, err := model.GetLatestSystemTask(blockedHandler.Type())
+			require.NoError(t, err)
+			require.NotNil(t, blockedTask)
+			_, claimed, err := model.ClaimSystemTask(blockedTask.ID, blockedTask.Type, "blocked-runner", common.GetTimestamp()+120)
+			require.NoError(t, err)
+			require.True(t, claimed)
+
+			// Stall the real recovery query. Other queues must finish while this
+			// query is still waiting, without relying on expiry or sleep timing.
+			type stalledQueryKey struct{}
+			ctx, cancel := context.WithCancel(context.WithValue(t.Context(), stalledQueryKey{}, true))
+			entered, finished := make(chan struct{}, 1), make(chan struct{})
+			require.NoError(t, model.DB.Callback().Query().Before("gorm:query").Register("test:stalled_income_recovery", func(tx *gorm.DB) {
+				if tx.Statement.Table == "channel_monitor_incomes" && tx.Statement.Context.Value(stalledQueryKey{}) == true {
+					entered <- struct{}{}
+					<-tx.Statement.Context.Done()
+					tx.AddError(tx.Statement.Context.Err())
+				}
+			}))
+			t.Cleanup(func() {
+				cancel()
+				select {
+				case <-finished:
+				case <-time.After(5 * time.Second):
+					t.Error("recovery handler did not honor parent cancellation")
+				}
+				assert.NoError(t, model.DB.Callback().Query().Remove("test:stalled_income_recovery"))
+			})
+			go func() {
+				defer close(finished)
+				blockedHandler.Run(ctx, blockedTask, "blocked-runner")
+			}()
+			select {
+			case <-entered:
+			case <-time.After(5 * time.Second):
+				t.Fatal("recovery query did not reach the barrier")
+			}
+			for _, handler := range registeredSystemTaskHandlers() {
+				if handler.Type() == blockedHandler.Type() {
+					continue
+				}
+				task, err := model.GetLatestSystemTask(handler.Type())
+				require.NoError(t, err)
+				require.NotNil(t, task, "scheduler must create each independent queue")
+				_, claimed, err := model.ClaimSystemTask(task.ID, task.Type, "healthy-runner", common.GetTimestamp()+120)
+				require.NoError(t, err)
+				require.True(t, claimed, "a different queue must not share the blocked lease")
+				handler.Run(t.Context(), task, "healthy-runner")
+				saved, err := model.GetLatestSystemTask(task.Type)
+				require.NoError(t, err)
+				assert.Equal(t, model.SystemTaskStatusSucceeded, saved.Status)
+			}
+			assert.False(t, server.Exists(key), "cache repair must not wait for the income query")
+			var pending int64
+			require.NoError(t, model.DB.Model(&model.ChannelMonitorFundingCacheRepair{}).Count(&pending).Error)
+			assert.Zero(t, pending)
+			cancel()
+			select {
+			case <-finished:
+			case <-time.After(5 * time.Second):
+				t.Fatal("recovery did not stop after parent cancellation")
+			}
+			saved, err := model.GetLatestSystemTask(blockedTask.Type)
+			require.NoError(t, err)
+			assert.Equal(t, model.SystemTaskStatusFailed, saved.Status)
+		})
+	}
+}
+
+func TestChannelMonitorIncomeCacheRecoveryRetriesAndHonorsCancellation(t *testing.T) {
+	server := setupChannelMonitorIncomeRecoveryTest(t)
+	model.ChannelMonitorIncomeReady.Store(false)
+	const key = "user:recovery-retry"
+	require.NoError(t, common.RDB.HSet(t.Context(), key, "Quota", 9900).Err())
+	require.NoError(t, model.DB.Create(&model.ChannelMonitorFundingCacheRepair{CacheKey: key, Revision: "pending", UpdatedAt: 1}).Error)
+	handler := channelMonitorFundingCacheRecoveryHandler{}
+	for _, scenario := range []string{"redis_unavailable", "parent_canceled", "redis_recovered"} {
+		t.Run(scenario, func(t *testing.T) {
+			// Recovery remains scheduled with profit recording disabled. This
+			// also covers durable intents left by local refunds or older runs.
+			runSystemTaskScheduler()
+			task, err := model.GetLatestSystemTask(handler.Type())
+			require.NoError(t, err)
+			require.NotNil(t, task)
+			_, claimed, err := model.ClaimSystemTask(task.ID, task.Type, "cache-runner", common.GetTimestamp()+120)
+			require.NoError(t, err)
+			require.True(t, claimed)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if scenario == "parent_canceled" {
+				cancel()
+			} else if scenario == "redis_unavailable" {
+				server.SetError("Redis unavailable")
+			}
+			handler.Run(ctx, task, "cache-runner")
+			server.SetError("")
+			saved, err := model.GetLatestSystemTask(handler.Type())
+			require.NoError(t, err)
+			var pending int64
+			require.NoError(t, model.DB.Model(&model.ChannelMonitorFundingCacheRepair{}).Count(&pending).Error)
+			if scenario == "redis_recovered" {
+				assert.Equal(t, model.SystemTaskStatusSucceeded, saved.Status)
+				assert.Zero(t, pending)
+				assert.False(t, server.Exists(key))
+			} else {
+				assert.Equal(t, model.SystemTaskStatusFailed, saved.Status)
+				assert.Equal(t, int64(1), pending)
+				assert.True(t, server.Exists(key))
+			}
+			require.NoError(t, model.DB.Model(saved).Update("updated_at", common.GetTimestamp()-120).Error)
+		})
+	}
 }

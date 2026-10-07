@@ -42,6 +42,11 @@ func (s *BillingSession) FinishWithoutCharge(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	if err := model.QueueChannelLocalResponseRefund(ctx, &refund); err != nil {
+		if errors.Is(err, model.ErrTaskBillingCommitUncertain) {
+			// The local transfer owns both outcomes of an ambiguous commit.
+			// A separate ordinary refund could credit the same debit twice.
+			s.refunded = true
+		}
 		return err
 	}
 	s.refunded = true
@@ -58,25 +63,34 @@ func (channelLocalResponseRefundHandler) Enabled() bool           { return true 
 func (channelLocalResponseRefundHandler) Interval() time.Duration { return time.Minute }
 func (channelLocalResponseRefundHandler) NewPayload() any         { return nil }
 func (channelLocalResponseRefundHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
-	var records []model.ChannelLocalResponseRefund
-	err := model.DB.WithContext(ctx).Where("cache_applied = ?", false).Order("updated_at, id").Limit(100).Find(&records).Error
-	for _, record := range records {
-		if ctx.Err() != nil {
-			err = ctx.Err()
-			break
-		}
-		if applyErr := model.ApplyChannelLocalResponseRefund(ctx, record.RequestID); applyErr != nil {
-			err = errors.Join(err, applyErr)
-			model.DB.WithContext(ctx).Model(&record).Update("updated_at", time.Now().Unix())
-		}
-	}
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	defer cancel()
+	completed, err := model.RecoverChannelLocalResponseRefunds(ctx, 100)
 	status, message := model.SystemTaskStatusSucceeded, ""
 	if err != nil {
 		status, message = model.SystemTaskStatusFailed, err.Error()
 	}
-	if finishErr := model.FinishSystemTask(task.TaskID, runnerID, status, nil, message); finishErr != nil {
+	if finishErr := model.FinishSystemTask(task.TaskID, runnerID, status, map[string]any{"refunded": completed}, message); finishErr != nil {
 		common.SysError(finishErr.Error())
 	}
 }
 
 func init() { RegisterSystemTaskHandler(channelLocalResponseRefundHandler{}) }
+
+func runChannelLocalRefundTransferRecovery(ctx context.Context) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+		batchCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+		_, err := model.RecoverChannelLocalRefundTransfers(batchCtx, 100)
+		cancel()
+		if err != nil {
+			common.SysError("本机退款入队确认失败，保留批次稍后重试: " + err.Error())
+		}
+	}
+}

@@ -515,13 +515,14 @@ func CompleteChannelMonitorDirtyMinutes(ctx context.Context, claimer string, cla
 	if claimer == "" {
 		return errors.New("channel monitor dirty minute claimer is required")
 	}
-	now := common.GetTimestamp()
 	return withChannelMonitorDirtyMinuteRetry(ctx, func() error {
 		return DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 			for _, claim := range claims {
 				deleted := tx.Where(
-					"id = ? AND claimed_by = ? AND claimed_at = ? AND mark_count = ? AND claimed_until > ?",
-					claim.Id, claimer, claim.ClaimedAt, claim.MarkCount, now,
+					// Expiry permits takeover; ownership only changes when the
+					// atomic claim succeeds. Keep both fencing and mark guards.
+					"id = ? AND claimed_by = ? AND claimed_at = ? AND mark_count = ?",
+					claim.Id, claimer, claim.ClaimedAt, claim.MarkCount,
 				).Delete(&ChannelMonitorDirtyMinute{})
 				if deleted.Error != nil {
 					return deleted.Error
@@ -609,7 +610,14 @@ func RenewChannelMonitorDirtyMinutes(
 					return result.Error
 				}
 				if result.RowsAffected == 0 {
-					return ErrChannelMonitorDirtyMinuteLeaseLost
+					var owned ChannelMonitorDirtyMinute
+					err := lockForUpdate(tx).Where("id = ? AND claimed_by = ? AND claimed_at = ?", claim.Id, claimer, claim.ClaimedAt).First(&owned).Error
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						return ErrChannelMonitorDirtyMinuteLeaseLost
+					}
+					if err != nil {
+						return err
+					}
 				}
 			}
 			return nil

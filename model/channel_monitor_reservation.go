@@ -63,7 +63,16 @@ func ReserveChannelMonitorIncome(ctx context.Context, record *ChannelMonitorInco
 				return err
 			}
 			record.FundingSubscriptionID = subscription.UserSubscriptionId
-			if err := tx.Model(record).Update("funding_subscription_id", record.FundingSubscriptionID).Error; err != nil {
+			var sub UserSubscription
+			if err := tx.First(&sub, subscription.UserSubscriptionId).Error; err != nil {
+				return err
+			}
+			record.SubscriptionPeriod = &sub.LastResetTime
+			record.SubscriptionReserved = record.Quota
+			if err := tx.Model(record).Updates(map[string]any{
+				"funding_subscription_id": record.FundingSubscriptionID,
+				"subscription_period":     sub.LastResetTime, "subscription_reserved": record.Quota,
+			}).Error; err != nil {
 				return err
 			}
 		} else {
@@ -129,6 +138,25 @@ func AdjustChannelMonitorReservation(ctx context.Context, key string, userID, ex
 			}
 		}
 		task := Task{UserId: userID, PrivateData: TaskPrivateData{BillingSource: saved.BillingSource, SubscriptionId: saved.FundingSubscriptionID}}
+		if delta > 0 && saved.BillingSource == taskBillingSubscriptionSource {
+			var sub UserSubscription
+			if err := lockForUpdate(tx).First(&sub, saved.FundingSubscriptionID).Error; err != nil {
+				return err
+			}
+			if saved.SubscriptionPeriod == nil {
+				// Older reservations cannot safely infer cross-period supplements.
+				if sub.LastResetTime > saved.CreatedAt {
+					return errors.New("旧版订阅预扣缺少周期证据，请先核对")
+				}
+				saved.SubscriptionPeriod = &sub.LastResetTime
+				saved.SubscriptionReserved = saved.Quota
+			}
+			if *saved.SubscriptionPeriod != sub.LastResetTime {
+				saved.SubscriptionReserved = 0
+			}
+			saved.SubscriptionPeriod = &sub.LastResetTime
+			saved.SubscriptionReserved += int64(delta)
+		}
 		if err := applyTaskFundingDelta(tx, &task, delta); err != nil {
 			return err
 		}
@@ -151,6 +179,10 @@ func AdjustChannelMonitorReservation(ctx context.Context, key string, userID, ex
 			return err
 		}
 		updates := map[string]any{"quota": target, "income_nano_cny": amount, "updated_at": time.Now().Unix()}
+		if saved.SubscriptionPeriod != nil {
+			updates["subscription_period"] = *saved.SubscriptionPeriod
+			updates["subscription_reserved"] = saved.SubscriptionReserved
+		}
 		if err := tx.Model(&saved).Updates(updates).Error; err != nil {
 			return err
 		}
@@ -183,9 +215,9 @@ func invalidateChannelMonitorFundingCache(userID int, source, tokenKey string, d
 	if len(keys) == 0 {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	if err := common.RDB.Del(ctx, keys...).Err(); err != nil {
+	if err := invalidateFundingCacheKeys(ctx, common.RDB, keys); err != nil {
 		common.SysError("清理结算余额缓存失败: " + err.Error())
 	}
 }

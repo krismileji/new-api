@@ -53,7 +53,7 @@ func invalidateTokenCacheForMutation(key string) error {
 // pre-consume decrements Redis first, so a snapshot must never overwrite any
 // field of a live hash.
 // 返回值：0=被 fence 拦截，1=完成初始化，2=哈希已存在，仅刷新 TTL。
-func cacheInitToken(token Token) (int, error) {
+func cacheInitToken(token Token, fundingGeneration ...string) (int, error) {
 	if !common.RedisEnabled {
 		return 0, nil
 	}
@@ -61,7 +61,14 @@ func cacheInitToken(token Token) (int, error) {
 	if token.AllowIps != nil {
 		allowIps = *token.AllowIps
 	}
+	guard, generation := "0", ""
+	if len(fundingGeneration) > 0 {
+		guard, generation = "1", fundingGeneration[0]
+	}
 	const script = `
+if ARGV[18] == '1' and (redis.call('GET', KEYS[3]) or '') ~= ARGV[19] then
+  return 0
+end
 if redis.call('EXISTS', KEYS[2]) == 1 then
   return 0
 end
@@ -79,14 +86,14 @@ redis.call('EXPIRE', KEYS[1], ARGV[17])
 return 1`
 
 	return common.RDB.Eval(context.Background(), script, []string{
-		getTokenCacheKey(token.Key), getTokenCacheFenceKey(token.Key),
+		getTokenCacheKey(token.Key), getTokenCacheFenceKey(token.Key), "funding:generation:" + getTokenCacheKey(token.Key),
 	},
 		token.Id, token.UserId, token.Status, token.Name,
 		token.CreatedTime, token.AccessedTime, token.ExpiredTime,
 		strconv.FormatBool(token.UnlimitedQuota), strconv.FormatBool(token.ModelLimitsEnabled),
 		token.ModelLimits, allowIps, token.Group, strconv.FormatBool(token.CrossGroupRetry),
 		token.AutoGroups, token.RemainQuota, token.UsedQuota,
-		tokenCacheTTLSeconds(),
+		tokenCacheTTLSeconds(), guard, generation,
 	).Int()
 }
 
