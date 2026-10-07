@@ -33,16 +33,19 @@ func ReserveChannelMonitorIncome(ctx context.Context, record *ChannelMonitorInco
 	record.ModelKey = ChannelMonitorDailyCostModelKey(record.ModelName)
 	record.CreatedAt = time.Now().Unix()
 	record.UpdatedAt, record.DayStart = record.CreatedAt, ChannelDailyCostDayStart(record.CreatedAt)
-	// Do not consume against a DB balance with an older local batch outstanding.
-	// Its normal writer can flush it; refusing before money moves is safe even
-	// when a batch COMMIT acknowledgement is uncertain.
-	userQuotaBatchMutationLock.Lock()
-	defer userQuotaBatchMutationLock.Unlock()
-	tokenQuotaBatchMutationLock.Lock()
-	defer tokenQuotaBatchMutationLock.Unlock()
-	if batchUpdateStores[BatchUpdateTypeUserQuota][record.UserID] != 0 ||
-		batchUpdateStores[BatchUpdateTypeTokenQuota][record.FundingTokenID] != 0 {
-		return nil, errors.New("预扣前仍有额度批次待落库，请稍后重试")
+	// Batch mode is fixed at startup. Without it there are no local quota
+	// batches, and unrelated accounts must rely on DB row locks rather than
+	// serialize behind process-wide batch locks.
+	if common.BatchUpdateEnabled {
+		userQuotaBatchMutationLock.Lock()
+		defer userQuotaBatchMutationLock.Unlock()
+		tokenQuotaBatchMutationLock.Lock()
+		defer tokenQuotaBatchMutationLock.Unlock()
+		// A legacy batch must be flushed before consuming its DB balance.
+		if batchUpdateStores[BatchUpdateTypeUserQuota][record.UserID] != 0 ||
+			batchUpdateStores[BatchUpdateTypeTokenQuota][record.FundingTokenID] != 0 {
+			return nil, errors.New("预扣前仍有额度批次待落库，请稍后重试")
+		}
 	}
 	var subscription *SubscriptionPreConsumeResult
 	var tokenKey string
@@ -89,7 +92,7 @@ func ReserveChannelMonitorIncome(ctx context.Context, record *ChannelMonitorInco
 		}
 		return nil
 	})
-	syncChannelMonitorReservationCache(record, tokenKey, int(record.Quota))
+	invalidateChannelMonitorFundingCache(record.UserID, record.BillingSource, tokenKey, int(record.Quota))
 	if err != nil {
 		// Even a lost COMMIT reply returns an error and stops upstream work.
 		// If committed, the reserved row remains available for manual review.
@@ -154,7 +157,7 @@ func AdjustChannelMonitorReservation(ctx context.Context, key string, userID, ex
 		commitAttempted = true
 		return nil
 	})
-	syncChannelMonitorReservationCache(&saved, tokenKey, delta)
+	invalidateChannelMonitorFundingCache(saved.UserID, saved.BillingSource, tokenKey, delta)
 	if err != nil {
 		if commitAttempted {
 			return errors.Join(ErrTaskBillingCommitUncertain, err)
@@ -164,15 +167,15 @@ func AdjustChannelMonitorReservation(ctx context.Context, key string, userID, ex
 	return nil
 }
 
-func syncChannelMonitorReservationCache(record *ChannelMonitorIncome, tokenKey string, delta int) {
+func invalidateChannelMonitorFundingCache(userID int, source, tokenKey string, delta int) {
 	if !common.RedisEnabled || common.RDB == nil || delta == 0 {
 		return
 	}
 	// The DB is authoritative. Invalidate even after an uncertain COMMIT;
 	// applying a delta could double-count a cache hydrated after that commit.
 	var keys []string
-	if record.BillingSource == "wallet" && record.UserID > 0 {
-		keys = append(keys, getUserCacheKey(record.UserID))
+	if source != taskBillingSubscriptionSource && userID > 0 {
+		keys = append(keys, getUserCacheKey(userID))
 	}
 	if tokenKey != "" {
 		keys = append(keys, getTokenCacheKey(tokenKey))
@@ -183,6 +186,6 @@ func syncChannelMonitorReservationCache(record *ChannelMonitorIncome, tokenKey s
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	if err := common.RDB.Del(ctx, keys...).Err(); err != nil {
-		common.SysError("清理预扣余额缓存失败: " + err.Error())
+		common.SysError("清理结算余额缓存失败: " + err.Error())
 	}
 }

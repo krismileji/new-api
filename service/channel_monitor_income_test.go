@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -17,6 +18,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -101,6 +104,115 @@ func TestSettleBillingPersistsFinalWalletChargeForProfit(t *testing.T) {
 	require.NoError(t, model.DB.Where("settlement_key = ?", failedRefundKey).First(&failedRefundIncome).Error)
 	assert.Equal(t, "settled", failedRefundIncome.Status, "a failed refund must keep the original charge confirmed")
 	assert.Equal(t, int64(7_000_000_000), failedRefundIncome.IncomeNanoCNY)
+}
+
+func TestChannelMonitorIncomePreConsumeCompatibility(t *testing.T) {
+	ready, oldTrust := model.ChannelMonitorIncomeReady.Swap(true), operation_setting.GetQuotaSetting().TrustQuotaUSD
+	oldLogs, oldBatch := common.LogConsumeEnabled, common.BatchUpdateEnabled
+	common.LogConsumeEnabled, common.BatchUpdateEnabled = false, false
+	operation_setting.GetQuotaSetting().TrustQuotaUSD = 0
+	t.Cleanup(func() {
+		model.ChannelMonitorIncomeReady.Store(ready)
+		operation_setting.GetQuotaSetting().TrustQuotaUSD = oldTrust
+		common.LogConsumeEnabled, common.BatchUpdateEnabled = oldLogs, oldBatch
+	})
+	t.Setenv("CHANNEL_MONITOR_INCOME_GAP_DIR", t.TempDir())
+	t.Setenv("CHANNEL_DAILY_COST_RELIABLE_OUTBOX", "false")
+	require.NoError(t, model.DB.AutoMigrate(&model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeGap{}, &model.ChannelDailyCostOutbox{}, &model.SubscriptionPlan{}, &model.SubscriptionPreConsumeRecord{}))
+	for i, tc := range []struct {
+		name, preference, source              string
+		wallet, total, reserve, final         int
+		unlimited, playground, trusted, probe bool
+	}{
+		{name: "wallet", preference: "wallet_only", source: "wallet", wallet: 10000, reserve: 100, final: 50},
+		{name: "subscription", preference: "subscription_only", source: "subscription", wallet: 10000, total: 1000, reserve: 100, final: 50},
+		{name: "wallet_fallback", preference: "wallet_first", source: "subscription", wallet: 10, total: 1000, reserve: 100, final: 50},
+		{name: "subscription_fallback", preference: "subscription_first", source: "wallet", wallet: 10000, total: 10, reserve: 100, final: 50},
+		{name: "wallet_zero", preference: "wallet_only", source: "wallet", wallet: 10000},
+		{name: "subscription_zero", preference: "subscription_only", source: "subscription", wallet: 10000, total: 1000},
+		{name: "unlimited_token", preference: "wallet_only", source: "wallet", wallet: 10000, reserve: 100, final: 50, unlimited: true},
+		{name: "playground", preference: "wallet_only", source: "wallet", wallet: 10000, reserve: 100, final: 50, playground: true},
+		{name: "trusted", preference: "wallet_only", source: "wallet", wallet: 10000, reserve: 100, final: 50, trusted: true},
+		{name: "probe", preference: "wallet_only", source: "wallet", wallet: 10000, reserve: 100, final: 50, probe: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			truncate(t)
+			id := 9850 + i
+			seedUser(t, id, tc.wallet)
+			seedToken(t, id, id, "compat-"+tc.name, 10000)
+			if tc.unlimited {
+				require.NoError(t, model.DB.Model(&model.Token{}).Where("id = ?", id).Updates(map[string]any{"unlimited_quota": true, "remain_quota": 0}).Error)
+			}
+			if tc.total > 0 {
+				plan := model.SubscriptionPlan{Id: id, Title: tc.name, QuotaResetPeriod: "never"}
+				require.NoError(t, model.DB.Create(&plan).Error)
+				seedSubscription(t, id, id, int64(tc.total), 0)
+				require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", id).Updates(map[string]any{"plan_id": id, "allow_wallet_overflow": true}).Error)
+				t.Cleanup(func() { assert.NoError(t, model.DB.Delete(&plan).Error); model.InvalidateSubscriptionPlanCache(id) })
+			}
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+			ctx.Set("channel_id", id)
+			ctx.Set("token_quota", 10000)
+			ctx.Set(model.ChannelMonitorStatusProbeLogKey, tc.probe)
+			info := &relaycommon.RelayInfo{RequestId: "compat-" + tc.name, UserId: id, TokenId: id, TokenKey: "compat-" + tc.name, TokenUnlimited: tc.unlimited, IsPlayground: tc.playground, ForcePreConsume: !tc.trusted, UserSetting: dto.UserSetting{BillingPreference: tc.preference}}
+			if tc.trusted {
+				operation_setting.GetQuotaSetting().TrustQuotaUSD = 1 / common.QuotaPerUnit
+			}
+			t.Cleanup(func() {
+				operation_setting.GetQuotaSetting().TrustQuotaUSD = 0
+				assert.NoError(t, model.DB.Where("user_id = ?", id).Delete(&model.ChannelMonitorIncome{}).Error)
+				assert.NoError(t, model.DB.Where("user_id = ?", id).Delete(&model.SubscriptionPreConsumeRecord{}).Error)
+			})
+			require.Nil(t, PreConsumeBilling(ctx, tc.reserve, info))
+			assert.Equal(t, tc.source, info.BillingSource)
+			if tc.trusted {
+				assert.Zero(t, info.Billing.GetPreConsumedQuota())
+			}
+			if tc.name == "subscription_zero" {
+				assert.Equal(t, 1, info.Billing.GetPreConsumedQuota())
+			}
+			info.InitChannelMeta(ctx)
+			require.NoError(t, SettleBilling(ctx, info, tc.final))
+			require.NoError(t, SettleBilling(ctx, info, tc.final))
+			var user model.User
+			var token model.Token
+			require.NoError(t, model.DB.First(&user, id).Error)
+			require.NoError(t, model.DB.First(&token, id).Error)
+			wantWallet := tc.wallet
+			if tc.source == "wallet" {
+				wantWallet -= tc.final
+			}
+			assert.Equal(t, wantWallet, user.Quota)
+			if tc.total > 0 {
+				var sub model.UserSubscription
+				require.NoError(t, model.DB.First(&sub, id).Error)
+				wantUsed := 0
+				if tc.source == "subscription" {
+					wantUsed = tc.final
+				}
+				assert.EqualValues(t, wantUsed, sub.AmountUsed)
+			}
+			wantRemain, wantUsed := 10000-tc.final, tc.final
+			if tc.unlimited {
+				wantRemain = -tc.final
+			}
+			if tc.playground {
+				wantRemain, wantUsed = 10000, 0
+			}
+			assert.Equal(t, wantRemain, token.RemainQuota)
+			assert.Equal(t, wantUsed, token.UsedQuota)
+			var records []model.ChannelMonitorIncome
+			require.NoError(t, model.DB.Where("user_id = ?", id).Find(&records).Error)
+			if tc.probe {
+				assert.Empty(t, records)
+			} else {
+				require.Len(t, records, 1)
+				assert.Equal(t, "settled", records[0].Status)
+				assert.EqualValues(t, tc.final, records[0].Quota)
+			}
+		})
+	}
 }
 
 func TestChannelMonitorIncomeRecoveryOwnsFailedFinalSettlement(t *testing.T) {
@@ -340,6 +452,96 @@ func TestChannelMonitorIncomeEarlyRefundAndBatchFunding(t *testing.T) {
 			assert.NotEmpty(t, income.CostEventID, "early refund must keep the eventual cost association")
 		})
 	}
+}
+
+func TestTaskIncomeAttributionFailureDoesNotCommitTaskFunding(t *testing.T) {
+	if dsn := os.Getenv("TEST_PROFIT_TASK_MYSQL_DSN"); dsn != "" {
+		require.Contains(t, dsn, "127.0.0.1:13318")
+		require.Contains(t, dsn, "/new_api_cost_backlog_test?")
+		db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+		require.NoError(t, err)
+		previous, previousType := model.DB, common.MainDatabaseType()
+		model.DB = db
+		common.SetMainDatabaseType(common.DatabaseTypeMySQL)
+		t.Cleanup(func() {
+			model.DB = previous
+			common.SetMainDatabaseType(previousType)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			assert.NoError(t, sqlDB.Close())
+		})
+	} else if dsn := os.Getenv("TEST_PROFIT_TASK_POSTGRES_DSN"); dsn != "" {
+		require.Contains(t, dsn, "127.0.0.1:15438")
+		require.Contains(t, dsn, "/new_api_cost_backlog_test?")
+		db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
+		require.NoError(t, err)
+		previous, previousType := model.DB, common.MainDatabaseType()
+		model.DB = db
+		common.SetMainDatabaseType(common.DatabaseTypePostgreSQL)
+		t.Cleanup(func() {
+			model.DB = previous
+			common.SetMainDatabaseType(previousType)
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			assert.NoError(t, sqlDB.Close())
+		})
+	}
+	tables := []any{&model.Task{}, &model.User{}, &model.Token{}, &model.ChannelMonitorIncome{}, &model.ChannelMonitorIncomeGap{}, &model.ChannelDailyCostOutbox{}, &model.ChannelLocalResponseRefund{}}
+	var created []any
+	for _, table := range tables {
+		if !model.DB.Migrator().HasTable(table) {
+			created = append(created, table)
+		}
+	}
+	require.NoError(t, model.DB.AutoMigrate(tables...))
+	t.Cleanup(func() {
+		for _, table := range created {
+			assert.NoError(t, model.DB.Migrator().DropTable(table))
+		}
+	})
+	ready := model.ChannelMonitorIncomeReady.Swap(true)
+	t.Cleanup(func() { model.ChannelMonitorIncomeReady.Store(ready) })
+	t.Setenv("CHANNEL_MONITOR_INCOME_GAP_DIR", t.TempDir())
+	const id = 9865
+	seedUser(t, id, 10000)
+	seedToken(t, id, id, "task-attribution-failure", 10000)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/v1/videos", nil)
+	info := &relaycommon.RelayInfo{RequestId: "task-attribution-failure", UserId: id, TokenId: id, TokenKey: "task-attribution-failure", ChannelMeta: &relaycommon.ChannelMeta{ChannelId: id}, ForcePreConsume: true, UserSetting: dto.UserSetting{BillingPreference: "wallet_only"}}
+	require.Nil(t, PreConsumeBilling(ctx, 100, info))
+	info.ChannelMeta.ChannelId = id + 1
+	task := makeTask(id, id+1, 150, id, BillingSourceWallet, 0)
+	task.PrivateData.Execution = &model.TaskExecutionSnapshot{RequestID: info.RequestId}
+	failed := false
+	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register("task-attribution-failure", func(tx *gorm.DB) {
+		if tx.Statement.Table == "channel_monitor_incomes" && !failed {
+			failed = true
+			tx.AddError(errors.New("injected final channel attribution failure"))
+		}
+	}))
+	err := PersistTaskWithBilling(ctx, info, task)
+	require.NoError(t, model.DB.Callback().Update().Remove("task-attribution-failure"))
+	assert.Error(t, err)
+	var count int64
+	require.NoError(t, model.DB.Model(&model.Task{}).Where("task_id = ?", task.TaskID).Count(&count).Error)
+	assert.Zero(t, count, "an attribution failure must not commit a charge against the previous channel")
+	var user model.User
+	var income model.ChannelMonitorIncome
+	require.NoError(t, model.DB.First(&user, id).Error)
+	require.NoError(t, model.DB.Where("user_id = ?", id).First(&income).Error)
+	assert.Equal(t, 9900, user.Quota)
+	assert.Equal(t, "reserved", income.Status)
+	info.Billing.Refund(ctx)
+	require.NoError(t, model.DB.First(&user, id).Error)
+	assert.Equal(t, 10000, user.Quota)
+	t.Cleanup(func() {
+		assert.NoError(t, model.DB.Where("user_id = ?", id).Delete(&model.ChannelMonitorIncome{}).Error)
+		assert.NoError(t, model.DB.Where("request_id = ?", info.RequestId).Delete(&model.ChannelLocalResponseRefund{}).Error)
+		assert.NoError(t, model.DB.Where("channel_id = ?", id+1).Delete(&model.ChannelMonitorIncomeGap{}).Error)
+		assert.NoError(t, model.DB.Where("user_id = ?", id).Delete(&model.Task{}).Error)
+		assert.NoError(t, model.DB.Unscoped().Delete(&model.Token{}, id).Error)
+		assert.NoError(t, model.DB.Unscoped().Delete(&model.User{}, id).Error)
+	})
 }
 
 func TestTaskIncomeReconcilesCompletionBeforeInitialSettlement(t *testing.T) {

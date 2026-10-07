@@ -3,14 +3,12 @@ package model
 import (
 	"context"
 	"errors"
-	"fmt"
 	"maps"
 	"math"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 )
@@ -113,6 +111,7 @@ func InsertTaskWithBilling(ctx context.Context, task *Task, reservedQuota int, o
 	}
 	delta := task.Quota - reservedQuota
 	var tokenKey string
+	var commitAttempted bool
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Omit(omitColumns...).Create(task).Error; err != nil {
 			return err
@@ -125,8 +124,15 @@ func InsertTaskWithBilling(ctx context.Context, task *Task, reservedQuota int, o
 		if err != nil {
 			return err
 		}
-		return correctTaskChannelMonitorIncome(tx, task, task.Quota)
+		if err := correctTaskChannelMonitorIncome(tx, task, task.Quota); err != nil {
+			return err
+		}
+		commitAttempted = true
+		return nil
 	})
+	if commitAttempted {
+		invalidateChannelMonitorFundingCache(task.UserId, task.PrivateData.BillingSource, tokenKey, delta)
+	}
 	if err != nil {
 		if task.ID == 0 {
 			return err
@@ -143,18 +149,6 @@ func InsertTaskWithBilling(ctx context.Context, task *Task, reservedQuota int, o
 		}
 		if checkErr != nil {
 			return errors.Join(ErrTaskBillingCommitUncertain, err, checkErr)
-		}
-	}
-	if common.RedisEnabled && delta != 0 {
-		if task.PrivateData.BillingSource != taskBillingSubscriptionSource {
-			if _, err := cacheApplyUserQuotaDelta(task.UserId, -int64(delta)); err != nil {
-				common.SysError("更新任务初始结算钱包缓存失败: " + err.Error())
-			}
-		}
-		if tokenKey != "" {
-			if _, err := cacheApplyTokenQuotaDelta(task.PrivateData.TokenId, tokenKey, -int64(delta)); err != nil {
-				common.SysError("更新任务初始结算令牌缓存失败: " + err.Error())
-			}
 		}
 	}
 	return nil
@@ -226,9 +220,7 @@ func ApplyTaskBilling(ctx context.Context, task *Task, operation TaskBillingOper
 
 func applyTaskBillingOnce(ctx context.Context, requested *Task, operation TaskBillingOperation, actualQuota int) (TaskBillingApplyResult, error) {
 	result := TaskBillingApplyResult{}
-	var cacheUserDelta int64
-	var cacheTokenDelta int64
-	var cacheTokenID int
+	var fundingSource string
 	var cacheTokenKey string
 	var costContextChanged bool
 	err := DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
@@ -247,6 +239,7 @@ func applyTaskBillingOnce(ctx context.Context, requested *Task, operation TaskBi
 
 		result.TaskID = task.ID
 		result.UserID = task.UserId
+		fundingSource = task.PrivateData.BillingSource
 		result.PreviousQuota = task.Quota
 		result.TokenID = task.PrivateData.TokenId
 		if task.Quota < 0 || task.Quota > common.MaxQuota {
@@ -299,17 +292,12 @@ func applyTaskBillingOnce(ctx context.Context, requested *Task, operation TaskBi
 				if err != nil {
 					return err
 				}
-				cacheTokenDelta = -delta64
-				cacheTokenID = task.PrivateData.TokenId
 				cacheTokenKey = key
 			}
 			if err := updateTaskUsageInTx(tx, task.UserId, task.ChannelId, result.QuotaDelta); err != nil {
 				return err
 			}
 			result.Applied = true
-			// Redis user quota tracks wallet balance, so it moves opposite to
-			// the consume-positive billing delta.
-			cacheUserDelta = -delta64
 		}
 
 		// The retention boundary is committed before any cost rows are deleted.
@@ -402,28 +390,14 @@ func applyTaskBillingOnce(ctx context.Context, requested *Task, operation TaskBi
 		}
 		return nil
 	})
+	// The database is authoritative. Invalidate after commit instead of
+	// applying a delta: a reader may hydrate the committed balance between the
+	// commit and this callback, which would otherwise apply the delta twice.
+	if result.Applied {
+		invalidateChannelMonitorFundingCache(result.UserID, fundingSource, cacheTokenKey, result.QuotaDelta)
+	}
 	if err != nil {
 		return TaskBillingApplyResult{}, err
-	}
-
-	// Keep Redis quota caches aligned after the durable DB commit. Cache
-	// failures are observable and do not invalidate the committed transaction;
-	// the normal cache hydration path will recover from the database.
-	if cacheUserDelta != 0 && common.RedisEnabled {
-		userID, delta := result.UserID, cacheUserDelta
-		gopool.Go(func() {
-			if _, cacheErr := cacheApplyUserQuotaDelta(userID, delta); cacheErr != nil {
-				common.SysLog(fmt.Sprintf("failed to sync task billing user quota cache: %s", cacheErr.Error()))
-			}
-		})
-	}
-	if cacheTokenDelta != 0 && common.RedisEnabled && cacheTokenKey != "" {
-		delta, tokenID, key := cacheTokenDelta, cacheTokenID, cacheTokenKey
-		gopool.Go(func() {
-			if _, cacheErr := cacheApplyTokenQuotaDelta(tokenID, key, delta); cacheErr != nil {
-				common.SysLog(fmt.Sprintf("failed to sync task billing token quota cache: %s", cacheErr.Error()))
-			}
-		})
 	}
 	return result, nil
 }

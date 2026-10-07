@@ -2,12 +2,14 @@ package model
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -298,6 +300,163 @@ func TestChannelMonitorIncomeReservationDatabase(t *testing.T) {
 	}
 }
 
+func TestChannelMonitorIncomeIndependentReservationsDoNotWaitForBatchLocks(t *testing.T) {
+	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			db := setupChannelDailyCostBatchDatabase(t, engine)
+			tables := []any{&ChannelMonitorIncome{}, &User{}, &Token{}}
+			require.NoError(t, db.AutoMigrate(tables...))
+			oldBatch, oldRedis := common.BatchUpdateEnabled, common.RedisEnabled
+			common.BatchUpdateEnabled, common.RedisEnabled = false, false
+			t.Cleanup(func() {
+				common.BatchUpdateEnabled, common.RedisEnabled = oldBatch, oldRedis
+				assert.NoError(t, db.Migrator().DropTable(tables...))
+			})
+			for _, id := range []int{98901, 98902} {
+				require.NoError(t, db.Create(&User{Id: id, Username: fmt.Sprint(id), AffCode: fmt.Sprint(id), Quota: 1000}).Error)
+				require.NoError(t, db.Create(&Token{Id: id, UserId: id, Key: fmt.Sprint(id), RemainQuota: 1000}).Error)
+			}
+			entered, release := make(chan struct{}), make(chan struct{})
+			require.NoError(t, db.Callback().Create().Before("gorm:create").Register("hold-first-reservation", func(tx *gorm.DB) {
+				if income, ok := tx.Statement.Dest.(*ChannelMonitorIncome); ok && income.UserID == 98901 {
+					close(entered)
+					<-release
+				}
+			}))
+			firstDone, secondDone := make(chan error, 1), make(chan error, 1)
+			go func() {
+				income := ChannelMonitorIncome{SettlementKey: ChannelMonitorIncomeKey("independent-first", "request"), UserID: 98901, ChannelID: 1, FundingTokenID: 98901, BillingSource: "wallet", Quota: 100, QuotaPerUnit: "100"}
+				_, err := ReserveChannelMonitorIncome(t.Context(), &income, "independent-first")
+				firstDone <- err
+			}()
+			select {
+			case <-entered:
+			case err := <-firstDone:
+				t.Fatalf("first reservation did not reach the held transaction: %v", err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			go func() {
+				income := ChannelMonitorIncome{SettlementKey: ChannelMonitorIncomeKey("independent-second", "request"), UserID: 98902, ChannelID: 1, FundingTokenID: 98902, BillingSource: "wallet", Quota: 100, QuotaPerUnit: "100"}
+				_, err := ReserveChannelMonitorIncome(ctx, &income, "independent-second")
+				secondDone <- err
+			}()
+			select {
+			case err := <-secondDone:
+				assert.NoError(t, err, "independent account must finish while the first transaction has not written")
+				close(release)
+			case <-ctx.Done():
+				close(release)
+				assert.NoError(t, <-secondDone, "batching disabled: another account must not consume this request's deadline")
+				t.Error("independent reservation waited for the first account")
+			}
+			require.NoError(t, <-firstDone)
+			require.NoError(t, db.Callback().Create().Remove("hold-first-reservation"))
+			for _, id := range []int{98901, 98902} {
+				var user User
+				var token Token
+				require.NoError(t, db.First(&user, id).Error)
+				require.NoError(t, db.First(&token, id).Error)
+				assert.Equal(t, 900, user.Quota)
+				assert.Equal(t, 900, token.RemainQuota)
+			}
+			common.BatchUpdateEnabled = true
+			addNewRecord(BatchUpdateTypeUserQuota, 98902, -10)
+			addNewRecord(BatchUpdateTypeTokenQuota, 98902, -10)
+			income := ChannelMonitorIncome{SettlementKey: ChannelMonitorIncomeKey("batch-protected", "request"), UserID: 98902, ChannelID: 1, FundingTokenID: 98902, BillingSource: "wallet", Quota: 100, QuotaPerUnit: "100"}
+			_, err := ReserveChannelMonitorIncome(t.Context(), &income, "batch-protected")
+			require.ErrorContains(t, err, "批次待落库")
+			batchUpdate()
+			_, err = ReserveChannelMonitorIncome(t.Context(), &income, "batch-protected")
+			require.NoError(t, err)
+			var user User
+			var token Token
+			require.NoError(t, db.First(&user, 98902).Error)
+			require.NoError(t, db.First(&token, 98902).Error)
+			assert.Equal(t, 790, user.Quota)
+			assert.Equal(t, 790, token.RemainQuota)
+			assert.Equal(t, 210, token.UsedQuota)
+		})
+	}
+}
+
+func TestChannelMonitorIncomeRefundPreservesSubscriptionPeriodAndMissingRecords(t *testing.T) {
+	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			db := setupChannelDailyCostBatchDatabase(t, engine)
+			tables := []any{&ChannelMonitorIncome{}, &ChannelLocalResponseRefund{}, &User{}, &Token{}, &SubscriptionPlan{}, &UserSubscription{}, &SubscriptionPreConsumeRecord{}}
+			require.NoError(t, db.AutoMigrate(tables...))
+			ready, redisEnabled := ChannelMonitorIncomeReady.Swap(true), common.RedisEnabled
+			common.RedisEnabled = false
+			t.Cleanup(func() {
+				ChannelMonitorIncomeReady.Store(ready)
+				common.RedisEnabled = redisEnabled
+				assert.NoError(t, db.Migrator().DropTable(tables...))
+			})
+			for i, scenario := range []string{"reset", "expired", "deleted_subscription", "deleted_token"} {
+				t.Run(scenario, func(t *testing.T) {
+					id := 98800 + i
+					key := fmt.Sprintf("refund-period-%d", i)
+					user := User{Id: id, Username: key, AffCode: key, Quota: 1000}
+					token := Token{Id: id, UserId: id, Key: key, RemainQuota: 1000}
+					plan := SubscriptionPlan{Id: id, Title: key, QuotaResetPeriod: "never"}
+					sub := UserSubscription{Id: id, UserId: id, PlanId: id, AmountTotal: 1000, Status: "active", EndTime: time.Now().Unix() + 86400}
+					require.NoError(t, db.Create(&user).Error)
+					require.NoError(t, db.Create(&token).Error)
+					require.NoError(t, db.Create(&plan).Error)
+					require.NoError(t, db.Create(&sub).Error)
+					income := ChannelMonitorIncome{SettlementKey: ChannelMonitorIncomeKey(key, "request"), UserID: id, ChannelID: id, FundingTokenID: id, BillingSource: "subscription", Quota: 100, QuotaPerUnit: "100"}
+					_, err := ReserveChannelMonitorIncome(t.Context(), &income, key)
+					require.NoError(t, err)
+					refund := ChannelLocalResponseRefund{RequestID: key, UserID: id, TokenID: id, SubscriptionID: id, TokenQuota: 100, SubscriptionQuota: 100}
+					require.NoError(t, QueueChannelLocalResponseRefund(t.Context(), &refund))
+					require.NoError(t, db.First(&sub, id).Error)
+					require.NoError(t, db.First(&token, id).Error)
+					wantUsed := int64(0)
+					switch scenario {
+					case "reset":
+						var receipt SubscriptionPreConsumeRecord
+						require.NoError(t, db.Where("request_id = ?", key).First(&receipt).Error)
+						require.NoError(t, db.Model(&sub).Updates(map[string]any{"last_reset_time": receipt.CreatedAt + 1, "amount_used": 25}).Error)
+						wantUsed = 25
+					case "expired":
+						require.NoError(t, db.Model(&sub).Updates(map[string]any{"status": "expired", "end_time": time.Now().Unix() - 1}).Error)
+					case "deleted_subscription":
+						require.NoError(t, db.Unscoped().Delete(&sub).Error)
+					case "deleted_token":
+						require.NoError(t, db.Unscoped().Delete(&token).Error)
+					}
+					if scenario == "deleted_subscription" || scenario == "deleted_token" {
+						require.Error(t, ApplyChannelLocalResponseRefund(t.Context(), key))
+						require.NoError(t, db.First(&income, income.ID).Error)
+						assert.Equal(t, "refund_pending", income.Status)
+						require.NoError(t, db.First(&refund, refund.ID).Error)
+						assert.False(t, refund.Applied)
+						if scenario == "deleted_subscription" {
+							require.NoError(t, db.Create(&sub).Error)
+						} else {
+							require.NoError(t, db.Create(&token).Error)
+						}
+					}
+					for range 2 {
+						require.NoError(t, ApplyChannelLocalResponseRefund(t.Context(), key))
+					}
+					require.NoError(t, db.First(&sub, id).Error)
+					require.NoError(t, db.First(&token, id).Error)
+					require.NoError(t, db.First(&user, id).Error)
+					require.NoError(t, db.First(&income, income.ID).Error)
+					assert.Equal(t, wantUsed, sub.AmountUsed)
+					assert.Equal(t, 1000, token.RemainQuota)
+					assert.Zero(t, token.UsedQuota)
+					assert.Equal(t, 1000, user.Quota)
+					assert.Equal(t, "settled", income.Status)
+					assert.Zero(t, income.Quota)
+				})
+			}
+		})
+	}
+}
+
 func TestChannelMonitorIncomeManualReconciliationPreservesFunds(t *testing.T) {
 	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
 		t.Run(engine, func(t *testing.T) {
@@ -360,6 +519,336 @@ func TestChannelMonitorIncomeManualReconciliationPreservesFunds(t *testing.T) {
 			assert.Equal(t, 9950, token.RemainQuota)
 			assert.Equal(t, 50, token.UsedQuota)
 			assert.EqualValues(t, 50, sub.AmountUsed)
+		})
+	}
+}
+
+type channelMonitorIncomeCommitPool struct {
+	*sql.DB
+	afterCommit func() error
+}
+
+func (pool channelMonitorIncomeCommitPool) BeginTx(ctx context.Context, options *sql.TxOptions) (gorm.ConnPool, error) {
+	tx, err := pool.DB.BeginTx(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	return &channelMonitorIncomeCommitTx{Tx: tx, afterCommit: pool.afterCommit}, nil
+}
+
+type channelMonitorIncomeCommitTx struct {
+	*sql.Tx
+	afterCommit func() error
+}
+
+func (tx channelMonitorIncomeCommitTx) Commit() error {
+	if err := tx.Tx.Commit(); err != nil {
+		return err
+	}
+	return tx.afterCommit()
+}
+
+func TestChannelMonitorIncomePreservesCacheFirstReads(t *testing.T) {
+	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			t.Cleanup(initCol)
+			db := setupChannelDailyCostBatchDatabase(t, engine)
+			initCol()
+			tables := []any{&ChannelMonitorIncome{}, &User{}, &Token{}}
+			require.NoError(t, db.AutoMigrate(tables...))
+			t.Cleanup(func() { assert.NoError(t, db.Migrator().DropTable(tables...)) })
+			server := miniredis.RunT(t)
+			client := redis.NewClient(&redis.Options{Addr: server.Addr(), MaxRetries: -1})
+			oldRDB, oldRedis, oldReady := common.RDB, common.RedisEnabled, ChannelMonitorIncomeReady.Swap(true)
+			common.RDB, common.RedisEnabled = client, true
+			t.Cleanup(func() {
+				common.RDB, common.RedisEnabled = oldRDB, oldRedis
+				ChannelMonitorIncomeReady.Store(oldReady)
+				assert.NoError(t, client.Close())
+			})
+			for i, scenario := range []string{"invalidation_failure", "late_snapshot"} {
+				t.Run(scenario, func(t *testing.T) {
+					defer server.SetError("")
+					id := 98101 + i
+					key := fmt.Sprintf("stale-funding-%d", id)
+					user := User{Id: id, Username: key, AffCode: key, Quota: 9900}
+					token := Token{Id: id, UserId: id, Key: key, Status: common.TokenStatusEnabled,
+						ExpiredTime: -1, RemainQuota: 9900, UsedQuota: 100}
+					income := ChannelMonitorIncome{SettlementKey: key, UserID: id, BillingSource: "wallet",
+						Status: "funding_pending", FundingTokenID: id, FundingDelta: -50}
+					require.NoError(t, db.Create(&user).Error)
+					require.NoError(t, db.Create(&token).Error)
+					require.NoError(t, db.Create(&income).Error)
+					_, err := GetUserCache(id)
+					require.NoError(t, err)
+					_, err = GetTokenByKey(key, false)
+					require.NoError(t, err)
+					// A warm read must not query the database just because monitoring
+					// is ready. Treat any attempted SQL query as a regression.
+					require.NoError(t, db.Callback().Query().Before("gorm:query").Register("audit:cache_hit_query", func(tx *gorm.DB) {
+						tx.AddError(errors.New("warm cache read unexpectedly queried database"))
+					}))
+					t.Cleanup(func() { assert.NoError(t, db.Callback().Query().Remove("audit:cache_hit_query")) })
+					warmQuota, err := GetUserQuota(id, false)
+					require.NoError(t, err)
+					assert.Equal(t, 9900, warmQuota)
+					warmUser, err := GetUserCache(id)
+					require.NoError(t, err)
+					assert.Equal(t, 9900, warmUser.Quota)
+					warmToken, err := ValidateUserToken(key)
+					require.NoError(t, err)
+					assert.Equal(t, 9900, warmToken.RemainQuota)
+					require.NoError(t, db.Callback().Query().Remove("audit:cache_hit_query"))
+					if scenario == "invalidation_failure" {
+						server.SetError("injected Redis outage")
+					}
+					err = SettleChannelMonitorIncomeFunding(t.Context(), key, id, 0, id, -50)
+					server.SetError("")
+					require.NoError(t, err)
+					if scenario == "late_snapshot" {
+						require.NoError(t, populateUserCache(user))
+						_, err := cacheInitToken(token)
+						require.NoError(t, err)
+					}
+					assert.Equal(t, "9900", server.HGet(getUserCacheKey(id), "Quota"))
+					assert.Equal(t, "9900", server.HGet(getTokenCacheKey(key), "RemainQuota"))
+					// Official cache-first semantics are eventually consistent on a
+					// failed invalidation. Preserve the evidence, then expire the old
+					// snapshots without sleeping and verify DB fallback and hydration.
+					quota, err := GetUserQuota(id, false)
+					require.NoError(t, err)
+					assert.Equal(t, 9900, quota)
+					server.FastForward(time.Duration(max(userCacheTTLSeconds(), tokenCacheTTLSeconds())+1) * time.Second)
+					quota, err = GetUserQuota(id, false)
+					require.NoError(t, err)
+					assert.Equal(t, 9950, quota)
+					cachedUser, err := GetUserCache(id)
+					require.NoError(t, err)
+					assert.Equal(t, 9950, cachedUser.Quota)
+					cachedToken, err := ValidateUserToken(key)
+					require.NoError(t, err)
+					assert.Equal(t, 9950, cachedToken.RemainQuota)
+					assert.Equal(t, 50, cachedToken.UsedQuota)
+					server.SetError("injected Redis read outage")
+					fallbackQuota, err := GetUserQuota(id, false)
+					require.NoError(t, err)
+					assert.Equal(t, 9950, fallbackQuota)
+					fallbackToken, err := GetTokenByKey(key, false)
+					require.NoError(t, err)
+					assert.Equal(t, 9950, fallbackToken.RemainQuota)
+					require.NoError(t, SettleChannelMonitorIncomeFunding(t.Context(), key, id, 0, id, -50))
+					require.NoError(t, db.First(&user, id).Error)
+					assert.Equal(t, 9950, user.Quota, "cache failure must not repeat a committed refund")
+				})
+			}
+		})
+	}
+}
+
+func TestChannelMonitorIncomeFundingCacheMatchesCommittedBalance(t *testing.T) {
+	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			t.Cleanup(initCol)
+			db := setupChannelDailyCostBatchDatabase(t, engine)
+			initCol()
+			tables := []any{&ChannelMonitorIncome{}, &User{}, &Token{}, &UserSubscription{}}
+			require.NoError(t, db.AutoMigrate(tables...))
+			t.Cleanup(func() { assert.NoError(t, db.Migrator().DropTable(tables...)) })
+			server := miniredis.RunT(t)
+			client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+			oldRDB, oldRedis := common.RDB, common.RedisEnabled
+			common.RDB, common.RedisEnabled = client, true
+			t.Cleanup(func() {
+				common.RDB, common.RedisEnabled = oldRDB, oldRedis
+				assert.NoError(t, client.Close())
+			})
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			id := 9900
+			for _, source := range []string{"wallet", "subscription"} {
+				for _, delta := range []int{-50, 50} {
+					for _, scenario := range []string{"warm", "hydrate_after_commit", "ack_lost", "ack_and_readback_lost"} {
+						t.Run(fmt.Sprintf("%s/%d/%s", source, delta, scenario), func(t *testing.T) {
+							t.Cleanup(func() { DB = db })
+							id++
+							key := fmt.Sprintf("funding-cache-%d", id)
+							user := User{Id: id, Username: key, AffCode: key, Quota: 9900}
+							token := Token{Id: id, UserId: id, Key: key, RemainQuota: 9900, UsedQuota: 100}
+							sub := UserSubscription{Id: id, UserId: id, AmountUsed: 100}
+							income := ChannelMonitorIncome{SettlementKey: key, UserID: id, BillingSource: source, Status: "funding_pending", FundingTokenID: id, FundingSubscriptionID: id, FundingDelta: delta}
+							require.NoError(t, db.Create(&user).Error)
+							require.NoError(t, db.Create(&token).Error)
+							require.NoError(t, db.Create(&sub).Error)
+							require.NoError(t, db.Create(&income).Error)
+							if scenario == "warm" || scenario == "ack_and_readback_lost" {
+								_, err := GetUserCache(id)
+								require.NoError(t, err)
+								_, err = GetTokenByKey(key, false)
+								require.NoError(t, err)
+							}
+							commitDB := db.WithContext(t.Context())
+							commitDB.Statement.ConnPool = &channelMonitorIncomeCommitPool{DB: sqlDB, afterCommit: func() error {
+								if scenario == "hydrate_after_commit" || scenario == "ack_lost" {
+									// A concurrent reader sees the newly committed DB values
+									// before the settlement caller updates Redis.
+									_, err := GetUserCache(id)
+									require.NoError(t, err)
+									_, err = GetTokenByKey(key, false)
+									require.NoError(t, err)
+								}
+								if scenario == "ack_and_readback_lost" {
+									require.NoError(t, db.Callback().Query().Before("gorm:query").Register("income-readback-failure", func(tx *gorm.DB) {
+										if tx.Statement.Table == "channel_monitor_incomes" {
+											tx.AddError(errors.New("injected readback failure"))
+										}
+									}))
+								}
+								if scenario == "ack_lost" || scenario == "ack_and_readback_lost" {
+									return context.DeadlineExceeded
+								}
+								return nil
+							}}
+							DB = commitDB
+							err := SettleChannelMonitorIncomeFunding(t.Context(), key, id, id, id, delta)
+							DB = db
+							if scenario == "ack_and_readback_lost" {
+								require.NoError(t, db.Callback().Query().Remove("income-readback-failure"))
+								require.ErrorIs(t, err, ErrTaskBillingCommitUncertain)
+							} else {
+								require.NoError(t, err)
+							}
+							require.NoError(t, db.First(&user, id).Error)
+							require.NoError(t, db.First(&token, id).Error)
+							require.NoError(t, db.First(&sub, id).Error)
+							wantWallet := 9900
+							if source == "wallet" {
+								wantWallet -= delta
+								assert.EqualValues(t, 100, sub.AmountUsed)
+							} else {
+								assert.EqualValues(t, 100+delta, sub.AmountUsed)
+							}
+							assert.Equal(t, wantWallet, user.Quota)
+							assert.Equal(t, 9900-delta, token.RemainQuota)
+							for range 2 {
+								cachedUser, err := GetUserCache(id)
+								require.NoError(t, err)
+								cachedToken, err := GetTokenByKey(key, false)
+								require.NoError(t, err)
+								assert.Equal(t, user.Quota, cachedUser.Quota)
+								assert.Equal(t, token.RemainQuota, cachedToken.RemainQuota)
+								assert.Equal(t, token.UsedQuota, cachedToken.UsedQuota)
+								require.NoError(t, SettleChannelMonitorIncomeFunding(t.Context(), key, id, id, id, delta))
+							}
+							server.FlushAll()
+						})
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestChannelMonitorIncomeTaskCacheMatchesCommittedBalance(t *testing.T) {
+	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			t.Cleanup(initCol)
+			db := setupChannelDailyCostBatchDatabase(t, engine)
+			initCol()
+			tables := []any{&User{}, &Token{}, &Channel{}, &Task{}, &Midjourney{}, &UserSubscription{}}
+			require.NoError(t, db.AutoMigrate(tables...))
+			server := miniredis.RunT(t)
+			client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+			oldRDB, oldRedis, ready := common.RDB, common.RedisEnabled, ChannelMonitorIncomeReady.Swap(false)
+			common.RDB, common.RedisEnabled = client, true
+			t.Cleanup(func() {
+				common.RDB, common.RedisEnabled = oldRDB, oldRedis
+				ChannelMonitorIncomeReady.Store(ready)
+				assert.NoError(t, client.Close())
+				assert.NoError(t, db.Migrator().DropTable(tables...))
+			})
+			sqlDB, err := db.DB()
+			require.NoError(t, err)
+			id := 9950
+			for _, tc := range []struct {
+				operation, source string
+				delta             int
+			}{
+				{"initial", "wallet", -50}, {"initial", "subscription", 50},
+				{"settle", "wallet", 50}, {"settle", "subscription", -50},
+				{"refund", "wallet", -100}, {"refund", "subscription", -100},
+				{"mj_charge", "wallet", 100}, {"mj_refund", "wallet", -100},
+			} {
+				for _, ackLost := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/%s/ack_lost_%t", tc.operation, tc.source, ackLost), func(t *testing.T) {
+						t.Cleanup(func() { DB = db })
+						id++
+						key := fmt.Sprintf("task-cache-%d", id)
+						user := User{Id: id, Username: key, AffCode: key, Quota: 9900, UsedQuota: 100}
+						token := Token{Id: id, UserId: id, Key: key, RemainQuota: 9900, UsedQuota: 100}
+						sub := UserSubscription{Id: id, UserId: id, AmountUsed: 100}
+						channel := Channel{Id: id, UsedQuota: 100}
+						require.NoError(t, db.Create(&user).Error)
+						require.NoError(t, db.Create(&token).Error)
+						require.NoError(t, db.Create(&sub).Error)
+						require.NoError(t, db.Create(&channel).Error)
+						task := Task{TaskID: key, UserId: id, ChannelId: id, Quota: 100, Status: TaskStatusInProgress, PrivateData: TaskPrivateData{TokenId: id, SubscriptionId: id, BillingSource: tc.source}}
+						mj := Midjourney{UserId: id, ChannelId: id, TokenId: id, Status: "IN_PROGRESS"}
+						switch tc.operation {
+						case "initial":
+							task.Quota += tc.delta
+						case "mj_charge", "mj_refund":
+							if tc.operation == "mj_refund" {
+								mj.Quota, mj.BillingChannelId = 100, id
+							}
+							require.NoError(t, db.Create(&mj).Error)
+						default:
+							require.NoError(t, db.Create(&task).Error)
+						}
+						commitDB := db.WithContext(t.Context())
+						commitDB.Statement.ConnPool = &channelMonitorIncomeCommitPool{DB: sqlDB, afterCommit: func() error {
+							_, err := GetUserCache(id)
+							require.NoError(t, err)
+							_, err = GetTokenByKey(key, false)
+							require.NoError(t, err)
+							if ackLost {
+								return context.DeadlineExceeded
+							}
+							return nil
+						}}
+						DB = commitDB
+						switch tc.operation {
+						case "initial":
+							err = InsertTaskWithBilling(t.Context(), &task, 100)
+						case "settle":
+							_, err = ApplyTaskBilling(t.Context(), &task, TaskBillingOperationSettle, 100+tc.delta)
+						case "refund":
+							_, err = ApplyTaskBilling(t.Context(), &task, TaskBillingOperationRefund, 0)
+						case "mj_charge":
+							_, _, err = SettleMidjourneyBilling(t.Context(), mj.Id, MidjourneyPendingBilling{Quota: 100, ChannelID: id}, id)
+						case "mj_refund":
+							_, err = RefundMidjourneyBilling(t.Context(), mj.Id)
+						}
+						DB = db
+						if ackLost && tc.operation != "initial" {
+							require.Error(t, err)
+						} else {
+							require.NoError(t, err)
+						}
+						cachedUser, err := GetUserCache(id)
+						require.NoError(t, err)
+						cachedToken, err := GetTokenByKey(key, false)
+						require.NoError(t, err)
+						wantWallet := 9900
+						if tc.source == "wallet" {
+							wantWallet -= tc.delta
+						}
+						assert.Equal(t, wantWallet, cachedUser.Quota)
+						assert.Equal(t, 9900-tc.delta, cachedToken.RemainQuota)
+						assert.Equal(t, 100+tc.delta, cachedToken.UsedQuota)
+						server.FlushAll()
+					})
+				}
+			}
 		})
 	}
 }
@@ -465,6 +954,102 @@ func TestChannelMonitorIncomeFundingConfirmationIsAtomic(t *testing.T) {
 			assert.Zero(t, completed, "settled and legacy pending records are not replayed")
 			require.NoError(t, db.First(&legacy, legacy.ID).Error)
 			assert.Equal(t, "pending", legacy.Status)
+		})
+	}
+}
+
+func TestChannelMonitorIncomeRecoveryFairnessAndConcurrentWorkers(t *testing.T) {
+	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			db := setupChannelDailyCostBatchDatabase(t, engine)
+			tables := []any{&ChannelMonitorIncome{}, &User{}, &Token{}}
+			require.NoError(t, db.AutoMigrate(tables...))
+			previousRedis := common.RedisEnabled
+			common.RedisEnabled = false
+			t.Cleanup(func() {
+				common.RedisEnabled = previousRedis
+				assert.NoError(t, db.Migrator().DropTable(tables...))
+			})
+			user := User{Id: 98201, Username: "income-worker", AffCode: "income-worker", Quota: 900}
+			token := Token{Id: user.Id, UserId: user.Id, Key: "income-worker", RemainQuota: 900, UsedQuota: 100}
+			require.NoError(t, db.Create(&user).Error)
+			require.NoError(t, db.Create(&token).Error)
+			invalid := ChannelMonitorIncome{SettlementKey: "invalid-worker-record", UserID: user.Id,
+				BillingSource: "wallet", Status: "funding_pending", Quota: 150, FundingDelta: 50,
+				FundingTokenID: token.Id + 1, UpdatedAt: 1}
+			valid := invalid
+			valid.SettlementKey, valid.FundingTokenID, valid.UpdatedAt = "valid-worker-record", token.Id, 2
+			require.NoError(t, db.Create(&invalid).Error)
+			require.NoError(t, db.Create(&valid).Error)
+			completed, err := RecoverChannelMonitorIncomeFunding(t.Context(), 1)
+			require.Error(t, err)
+			assert.Zero(t, completed)
+			require.NoError(t, db.First(&user, user.Id).Error)
+			assert.Equal(t, 900, user.Quota, "missing token rolls back the wallet")
+			completed, err = RecoverChannelMonitorIncomeFunding(t.Context(), 1)
+			require.NoError(t, err)
+			assert.Equal(t, 1, completed, "failed oldest record must not starve the next batch")
+			require.NoError(t, db.First(&user, user.Id).Error)
+			assert.Equal(t, 850, user.Quota)
+			require.NoError(t, db.Delete(&invalid).Error)
+			// A separate final instruction refunds 50. Both workers must read it
+			// before either enters settlement; the transaction owns idempotency.
+			valid.ID, valid.SettlementKey, valid.Status = 0, "two-worker-record", "funding_pending"
+			valid.Quota, valid.FundingDelta = 50, -50
+			require.NoError(t, db.Create(&valid).Error)
+			canceled, cancel := context.WithCancel(t.Context())
+			cancel()
+			completed, err = RecoverChannelMonitorIncomeFunding(canceled, 1)
+			require.ErrorIs(t, err, context.Canceled)
+			assert.Zero(t, completed)
+			ctx, stop := context.WithTimeout(t.Context(), 10*time.Second)
+			defer stop()
+			loaded, release := make(chan struct{}, 2), make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			var workers sync.WaitGroup
+			t.Cleanup(func() {
+				unblock()
+				stop()
+				workers.Wait()
+				assert.NoError(t, db.Callback().Query().Remove("audit:recovery_snapshot"))
+			})
+			require.NoError(t, db.Callback().Query().After("gorm:query").Register("audit:recovery_snapshot", func(tx *gorm.DB) {
+				if _, ok := tx.Statement.Dest.(*[]ChannelMonitorIncome); !ok || tx.Error != nil {
+					return
+				}
+				loaded <- struct{}{}
+				select {
+				case <-release:
+				case <-ctx.Done():
+					tx.AddError(ctx.Err())
+				}
+			}))
+			results := make(chan error, 2)
+			for range 2 {
+				workers.Go(func() {
+					_, err := RecoverChannelMonitorIncomeFunding(ctx, 1)
+					results <- err
+				})
+			}
+			for range 2 {
+				select {
+				case <-loaded:
+				case <-ctx.Done():
+					require.NoError(t, ctx.Err())
+				}
+			}
+			unblock()
+			workers.Wait()
+			for range 2 {
+				require.NoError(t, <-results)
+			}
+			require.NoError(t, db.First(&user, user.Id).Error)
+			require.NoError(t, db.First(&token, token.Id).Error)
+			require.NoError(t, db.First(&valid, valid.ID).Error)
+			assert.Equal(t, 900, user.Quota)
+			assert.Equal(t, 900, token.RemainQuota)
+			assert.Equal(t, 100, token.UsedQuota)
+			assert.Equal(t, "settled", valid.Status)
 		})
 	}
 }

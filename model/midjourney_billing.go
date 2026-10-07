@@ -70,18 +70,11 @@ func SettleMidjourneyBilling(ctx context.Context, taskID int, pending Midjourney
 		}
 		return nil
 	})
+	if applied {
+		invalidateChannelMonitorFundingCache(task.UserId, "wallet", tokenKey, task.Quota)
+	}
 	if err != nil {
 		return Midjourney{}, false, err
-	}
-	if applied && common.RedisEnabled {
-		if _, err := cacheApplyUserQuotaDelta(task.UserId, -int64(task.Quota)); err != nil {
-			common.SysError("更新 Midjourney 扣费钱包缓存失败: " + err.Error())
-		}
-		if tokenKey != "" {
-			if _, err := cacheApplyTokenQuotaDelta(tokenID, tokenKey, -int64(task.Quota)); err != nil {
-				common.SysError("更新 Midjourney 扣费令牌缓存失败: " + err.Error())
-			}
-		}
 	}
 	return task, applied, nil
 }
@@ -151,18 +144,11 @@ func RefundMidjourneyBilling(ctx context.Context, taskID int) (Midjourney, error
 		refunded = task
 		return nil
 	})
+	if refunded.Quota > 0 {
+		invalidateChannelMonitorFundingCache(refunded.UserId, "wallet", tokenKey, -refunded.Quota)
+	}
 	if err != nil {
 		return Midjourney{}, err
-	}
-	if refunded.Quota > 0 && common.RedisEnabled {
-		if _, err := cacheApplyUserQuotaDelta(refunded.UserId, int64(refunded.Quota)); err != nil {
-			common.SysError("更新 Midjourney 退款钱包缓存失败: " + err.Error())
-		}
-		if tokenKey != "" {
-			if _, err := cacheApplyTokenQuotaDelta(refunded.TokenId, tokenKey, int64(refunded.Quota)); err != nil {
-				common.SysError("更新 Midjourney 退款令牌缓存失败: " + err.Error())
-			}
-		}
 	}
 	return refunded, nil
 }

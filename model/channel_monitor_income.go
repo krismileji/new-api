@@ -447,6 +447,11 @@ func SettleChannelMonitorIncomeFunding(ctx context.Context, key string, userID, 
 		applied = true
 		return nil
 	})
+	if applied {
+		// A reader may already have cached the committed balance. Never apply
+		// the delta again, and invalidate even if COMMIT/readback is uncertain.
+		invalidateChannelMonitorFundingCache(userID, source, tokenKey, delta)
+	}
 	if err != nil {
 		checkCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
@@ -457,18 +462,6 @@ func SettleChannelMonitorIncomeFunding(ctx context.Context, key string, userID, 
 		}
 		if income.Status != "settled" || income.UserID != userID {
 			return err
-		}
-	}
-	if applied && delta != 0 && common.RedisEnabled {
-		if source != taskBillingSubscriptionSource {
-			if _, err := cacheApplyUserQuotaDelta(userID, -int64(delta)); err != nil {
-				common.SysError("更新收入结算钱包缓存失败: " + err.Error())
-			}
-		}
-		if tokenKey != "" {
-			if _, err := cacheApplyTokenQuotaDelta(tokenID, tokenKey, -int64(delta)); err != nil {
-				common.SysError("更新收入结算令牌缓存失败: " + err.Error())
-			}
 		}
 	}
 	return nil

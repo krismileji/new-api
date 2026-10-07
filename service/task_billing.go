@@ -141,7 +141,9 @@ func PersistTaskWithBilling(c *gin.Context, info *relaycommon.RelayInfo, task *m
 	if session.settled || session.refunded || session.fundingSettled {
 		return fmt.Errorf("任务预扣会话已结束")
 	}
-	prepareChannelMonitorIncome(c, info, task.Quota, "request")
+	if _, err := prepareChannelMonitorIncomeResult(c, info, task.Quota, "request", nil); err != nil {
+		return err
+	}
 	if info.IsPlayground {
 		task.PrivateData.TokenId = 0
 	}
