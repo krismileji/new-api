@@ -494,32 +494,15 @@ export function GroupMonitorContent(props: { result: PricingGroupMonitor }) {
                           {props.result.show_cache_rate ? (
                             <div
                               className='min-w-0'
-                              title={`近 ${props.result.display_value} ${DISPLAY_UNIT_LABEL[props.result.display_unit]}内，先按用户 API Key 汇总本分组流式请求的缓存读取 Token / 总输入 Token（包含缓存读写，不含输出），再取最高值和等权平均值；无有效样本的 Key 不参与统计${(props.result.cache_min_context_k ?? 0) > 0 ? `；仅统计输入上下文 ≥ ${props.result.cache_min_context_k} K tokens 的流式请求（1 K = 1000 tokens），修改监控配置后清空统计并重新累计` : ''}`}
+                              title={`近 ${props.result.display_value} ${DISPLAY_UNIT_LABEL[props.result.display_unit]}内，先按用户 API Key 汇总本分组流式请求的缓存读取 Token / 总输入 Token（包含缓存读写，不含输出），再取各 Key 的最高值作为缓存率；无有效样本的 Key 不参与统计${(props.result.cache_min_context_k ?? 0) > 0 ? `；仅统计输入上下文 ≥ ${props.result.cache_min_context_k} K tokens 的流式请求（1 K = 1000 tokens），修改监控配置后清空统计并重新累计` : ''}`}
                             >
                               <dt className='text-muted-foreground mb-1 text-[11px] lg:sr-only'>
                                 缓存率
                               </dt>
-                              <dd className='space-y-1 text-xs tabular-nums'>
-                                <div className='flex flex-wrap justify-between gap-x-2'>
-                                  <span className='text-muted-foreground'>
-                                    最高
-                                  </span>
-                                  <span className='font-mono font-medium'>
-                                    {item.cache_rate_max == null
-                                      ? '暂无数据'
-                                      : formatRate(item.cache_rate_max)}
-                                  </span>
-                                </div>
-                                <div className='flex flex-wrap justify-between gap-x-2'>
-                                  <span className='text-muted-foreground'>
-                                    平均
-                                  </span>
-                                  <span className='font-mono font-medium'>
-                                    {item.cache_rate_average == null
-                                      ? '暂无数据'
-                                      : formatRate(item.cache_rate_average)}
-                                  </span>
-                                </div>
+                              <dd className='font-mono text-xs font-medium tabular-nums'>
+                                {item.cache_rate_max == null
+                                  ? '暂无数据'
+                                  : formatRate(item.cache_rate_max)}
                               </dd>
                             </div>
                           ) : null}
@@ -630,7 +613,7 @@ export function GroupMonitor() {
                   成功率按近 {result.display_value}{' '}
                   {DISPLAY_UNIT_LABEL[result.display_unit]}内的有效逻辑探测统计
                   {result.show_cache_rate
-                    ? '；缓存率先按用户 API Key 汇总同一时间范围内本分组流式请求的缓存读取 Token / 总输入 Token，再展示最高值和各 Key 的等权平均值；输入包含缓存读写，不含输出，无有效样本的 Key 不参与统计'
+                    ? '；缓存率先按用户 API Key 汇总同一时间范围内本分组流式请求的缓存读取 Token / 总输入 Token，再取各 Key 的最高值；输入包含缓存读写，不含输出，无有效样本的 Key 不参与统计'
                     : null}
                   {result.show_cache_rate &&
                   (result.cache_min_context_k ?? 0) > 0

@@ -130,7 +130,7 @@ test.each([false, undefined])(
   }
 )
 
-test('开启缓存率后同时展示 API Key 最高值与平均值，区分零命中与无有效样本', () => {
+test('开启缓存率后仅以 API Key 最高值展示缓存率，区分零命中与无有效样本', () => {
   const result = categoryMonitorResult([
     { group: 'hit' },
     { group: 'miss' },
@@ -142,22 +142,26 @@ test('开启缓存率后同时展示 API Key 最高值与平均值，区分零�
   result.items[0].cache_rate_average = 60
   result.items[1].cache_rate_max = 0
   result.items[1].cache_rate_average = 0
-  result.items[2].cache_rate = 80 // Legacy weighted data must not stand in for per-key statistics.
+  result.items[2].cache_rate = 80
+  result.items[2].cache_rate_average = 60 // Other aggregates must not stand in for the maximum.
   render(<GroupMonitorContent result={result} />)
 
   const hit = within(screen.getByRole('article', { name: 'hit' }))
   expect(hit.getByText('缓存率')).toBeInTheDocument()
-  expect(hit.getByText('最高').parentElement).toHaveTextContent('90.0%')
-  expect(hit.getByText('平均').parentElement).toHaveTextContent('60.0%')
+  expect(hit.getByText('缓存率').parentElement).toHaveTextContent('90.0%')
+  expect(hit.getByText('90.0%')).toBeVisible()
+  expect(hit.queryByText('最高')).not.toBeInTheDocument()
+  expect(hit.queryByText('平均')).not.toBeInTheDocument()
+  expect(hit.queryByText('60.0%')).not.toBeInTheDocument()
   expect(hit.queryByText('72.5%')).not.toBeInTheDocument()
   expect(
     within(screen.getByRole('article', { name: 'miss' })).getAllByText('0.0%')
-  ).toHaveLength(2)
+  ).toHaveLength(1)
   expect(
     within(screen.getByRole('article', { name: 'empty' })).getAllByText(
       '暂无数据'
     )
-  ).toHaveLength(2)
+  ).toHaveLength(1)
   expect(hit.getByText('缓存率').closest('dl')).toHaveClass(
     'grid-cols-2',
     'sm:grid-cols-4',
@@ -171,7 +175,7 @@ test('修改状态展示范围后缓存率说明同步更新', () => {
   const view = render(<GroupMonitorContent result={result} />)
 
   expect(
-    screen.getByTitle(/近 60 分钟内，先按用户 API Key.*最高值和等权平均值/)
+    screen.getByTitle(/近 60 分钟内，先按用户 API Key.*最高值作为缓存率/)
   ).toBeVisible()
 
   view.rerender(
@@ -180,7 +184,7 @@ test('修改状态展示范围后缓存率说明同步更新', () => {
     />
   )
   expect(
-    screen.getByTitle(/近 3 小时内，先按用户 API Key.*最高值和等权平均值/)
+    screen.getByTitle(/近 3 小时内，先按用户 API Key.*最高值作为缓存率/)
   ).toBeVisible()
 
   view.rerender(
@@ -189,7 +193,7 @@ test('修改状态展示范围后缓存率说明同步更新', () => {
     />
   )
   expect(
-    screen.getByTitle(/近 7 天内，先按用户 API Key.*最高值和等权平均值/)
+    screen.getByTitle(/近 7 天内，先按用户 API Key.*最高值作为缓存率/)
   ).toBeVisible()
 })
 
