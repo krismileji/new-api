@@ -118,6 +118,7 @@ export const MAX_PROBE_RESPONSE_ALLOWED_IPS_LENGTH = 4_096
 export const MAX_PROBE_RESPONSE_ALLOWED_IP_COUNT = 64
 export const MAX_PROBE_RESPONSE_DELAY_MS = 600_000
 export const MAX_PROBE_RESPONSE_TOKEN_COUNT = 1_000_000
+export const MAX_PROBE_RESPONSE_RULES = 32
 export const MAX_SMART_SCHEDULE_MIN_SAMPLES = 100_000
 export const MAX_SMART_SCHEDULE_MODEL_COUNT = 100
 export const MAX_SMART_SCHEDULE_GROUP_COUNT = 100
@@ -153,6 +154,44 @@ export const MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_COUNT = 10
 export const MAX_SMART_SCHEDULE_FAST_FAILURE_SAME_CHANNEL_RETRY_DELAY_MS = 60_000
 
 const probeResponseIPAddressSchema = z.union([z.ipv4(), z.ipv6()])
+export const probeResponseRulesSchema = z
+  .array(
+    z.object({
+      matchInput: z
+        .string()
+        .trim()
+        .min(1, '探针匹配输入不能为空')
+        .max(
+          MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH,
+          '探针匹配输入不能超过 4096 个字符'
+        ),
+      responseText: z
+        .string()
+        .trim()
+        .min(1, '探针响应文本不能为空')
+        .max(
+          MAX_PROBE_RESPONSE_TEXT_LENGTH,
+          '探针响应文本不能超过 16384 个字符'
+        ),
+    })
+  )
+  .min(1, '请至少配置一组探针输入输出')
+  .max(MAX_PROBE_RESPONSE_RULES, '探针输入输出不能超过 32 组')
+  .superRefine((rules, context) => {
+    const inputs = new Set<string>()
+    for (const [index, rule] of rules.entries()) {
+      const input = rule.matchInput.toLowerCase()
+      if (inputs.has(input)) {
+        context.addIssue({
+          code: 'custom',
+          path: [index, 'matchInput'],
+          message: '探针匹配输入不能重复',
+        })
+      }
+      inputs.add(input)
+    }
+  })
+
 const probeResponseAllowedIPsSchema = z
   .string()
   .trim()
@@ -1286,22 +1325,12 @@ export function createChannelMonitorSettingsSchema() {
       errorMessageKeywords: errorMessageKeywordsSchema,
       probeResponseEnabled: z.boolean(),
       probeResponseAllowedIPs: probeResponseAllowedIPsSchema,
-      probeResponseMatchInput: z
-        .string()
-        .trim()
-        .min(1, '探针匹配输入不能为空')
-        .max(
-          MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH,
-          '探针匹配输入不能超过 4096 个字符'
-        ),
-      probeResponseText: z
-        .string()
-        .trim()
-        .min(1, '探针响应文本不能为空')
-        .max(
-          MAX_PROBE_RESPONSE_TEXT_LENGTH,
-          '探针响应文本不能超过 16384 个字符'
-        ),
+      probeResponseRules: probeResponseRulesSchema.default([
+        {
+          matchInput: DEFAULT_PROBE_RESPONSE_MATCH_INPUT,
+          responseText: DEFAULT_PROBE_RESPONSE_TEXT,
+        },
+      ]),
       probeResponseMinDelayMs: z.coerce
         .number()
         .int('探针最小延迟必须是整数')

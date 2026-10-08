@@ -16,8 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { UseFormReturn } from 'react-hook-form'
+import { Add01Icon, Delete02Icon } from '@hugeicons/core-free-icons'
+import { HugeiconsIcon } from '@hugeicons/react'
+import { useFieldArray, useWatch, type UseFormReturn } from 'react-hook-form'
 
+import { Button } from '@/components/ui/button'
+import { FieldGroup, FieldSet } from '@/components/ui/field'
 import {
   FormControl,
   FormField,
@@ -40,6 +44,7 @@ import {
   MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH,
   MAX_PROBE_RESPONSE_TEXT_LENGTH,
   MAX_PROBE_RESPONSE_TOKEN_COUNT,
+  MAX_PROBE_RESPONSE_RULES,
   type ChannelMonitorSettingsFormValues,
 } from '../lib/schema'
 import { ChannelMonitorFieldInfo } from './channel-monitor-field-info'
@@ -105,7 +110,14 @@ function ProbeResponseNumberField(props: {
 export function ChannelMonitorProbeResponseFields(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
 }) {
-  const enabled = props.form.watch('probeResponseEnabled')
+  const enabled = useWatch({
+    control: props.form.control,
+    name: 'probeResponseEnabled',
+  })
+  const rules = useFieldArray({
+    control: props.form.control,
+    name: 'probeResponseRules',
+  })
 
   return (
     <div className='flex flex-col gap-5'>
@@ -141,30 +153,95 @@ export function ChannelMonitorProbeResponseFields(props: {
         data-disabled={!enabled || undefined}
         aria-label='探针响应配置'
       >
-        <FormField
-          control={props.form.control}
-          name='probeResponseMatchInput'
-          render={({ field }) => (
-            <FormItem>
-              <div className='flex items-center gap-1'>
-                <FormLabel>匹配输入</FormLabel>
-                <ChannelMonitorFieldInfo
-                  label='匹配输入'
-                  description='去除首尾空白后进行不区分大小写的完整匹配。'
-                />
-              </div>
-              <FormControl>
-                <Input
-                  maxLength={MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH}
-                  autoComplete='off'
-                  disabled={!enabled}
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+        <div className='flex min-w-0 flex-col gap-3'>
+          <div className='flex items-center justify-between gap-3'>
+            <div className='flex items-center gap-1'>
+              <p className='text-sm font-medium'>输入输出</p>
+              <ChannelMonitorFieldInfo
+                label='输入输出'
+                description='每组匹配输入对应一段响应文本，最多 32 组。去除首尾空白后完整匹配，不区分大小写，匹配输入不能重复。'
+              />
+            </div>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              disabled={
+                !enabled || rules.fields.length >= MAX_PROBE_RESPONSE_RULES
+              }
+              onClick={() => rules.append({ matchInput: '', responseText: '' })}
+            >
+              <HugeiconsIcon icon={Add01Icon} aria-hidden='true' />
+              添加输入输出
+            </Button>
+          </div>
+          <FieldGroup className='gap-3'>
+            {rules.fields.map((rule, index) => (
+              <FieldSet
+                key={rule.id}
+                className='min-w-0 gap-3 rounded-lg border p-3'
+                aria-label={`输入输出 ${index + 1}`}
+              >
+                <div className='flex items-center justify-between gap-3'>
+                  <p className='text-sm font-medium'>第 {index + 1} 组</p>
+                  <Button
+                    type='button'
+                    variant='ghost'
+                    size='icon-sm'
+                    disabled={!enabled || rules.fields.length === 1}
+                    onClick={() => rules.remove(index)}
+                    aria-label={`删除输入输出 ${index + 1}`}
+                  >
+                    <HugeiconsIcon icon={Delete02Icon} aria-hidden='true' />
+                  </Button>
+                </div>
+                <FieldGroup className='gap-3'>
+                  <FormField
+                    control={props.form.control}
+                    name={`probeResponseRules.${index}.matchInput`}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>匹配输入</FormLabel>
+                        <FormControl>
+                          <Input
+                            maxLength={MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH}
+                            autoComplete='off'
+                            disabled={!enabled}
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                  <FormField
+                    control={props.form.control}
+                    name={`probeResponseRules.${index}.responseText`}
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>响应文本</FormLabel>
+                        <FormControl>
+                          <Textarea
+                            className='min-h-24 resize-y'
+                            maxLength={MAX_PROBE_RESPONSE_TEXT_LENGTH}
+                            disabled={!enabled}
+                            {...field}
+                          />
+                        </FormControl>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </FieldGroup>
+              </FieldSet>
+            ))}
+          </FieldGroup>
+          {props.form.formState.errors.probeResponseRules?.root?.message ? (
+            <p role='alert' className='text-destructive text-sm'>
+              {props.form.formState.errors.probeResponseRules.root.message}
+            </p>
+          ) : null}
+        </div>
 
         <FormField
           control={props.form.control}
@@ -186,31 +263,6 @@ export function ChannelMonitorProbeResponseFields(props: {
                   autoCapitalize='none'
                   autoComplete='off'
                   spellCheck={false}
-                  disabled={!enabled}
-                  {...field}
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-
-        <FormField
-          control={props.form.control}
-          name='probeResponseText'
-          render={({ field }) => (
-            <FormItem>
-              <div className='flex items-center gap-1'>
-                <FormLabel>响应文本</FormLabel>
-                <ChannelMonitorFieldInfo
-                  label='响应文本'
-                  description='本地探针命中后返回的文本内容。'
-                />
-              </div>
-              <FormControl>
-                <Textarea
-                  className='min-h-24 resize-y'
-                  maxLength={MAX_PROBE_RESPONSE_TEXT_LENGTH}
                   disabled={!enabled}
                   {...field}
                 />

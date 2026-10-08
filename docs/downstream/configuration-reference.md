@@ -129,6 +129,7 @@
 | --- | --- | --- |
 | `ChannelMonitorProbeResponseEnabled` | `false` | 总开关 |
 | `ChannelMonitorProbeResponseAllowedIPs` | 空 | 最多 `64` 个 IP，总长 `4096`；空表示不限制。配置非法时运行时关闭探针 |
+| `ChannelMonitorProbeResponseRules` | 从旧单组配置或默认值读取 | `1..32` 组输入输出的 JSON 数组；`match_input` 与 `response_text` 一一对应，最长分别为 `4096`、`16384`，匹配输入不能重复 |
 | `ChannelMonitorProbeResponseMatchInput` | `hi` | 非空，最长 `4096` |
 | `ChannelMonitorProbeResponseText` | `Hi. What are you working on?` | 非空，最长 `16384` |
 | `ChannelMonitorProbeResponseMinDelayMilliseconds` | `500` | `0..600000`，不能大于最大延迟 |

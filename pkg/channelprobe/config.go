@@ -17,6 +17,7 @@ const (
 	AllowedIPsOptionKey       = "ChannelMonitorProbeResponseAllowedIPs"
 	MatchInputOptionKey       = "ChannelMonitorProbeResponseMatchInput"
 	ResponseTextOptionKey     = "ChannelMonitorProbeResponseText"
+	RulesOptionKey            = "ChannelMonitorProbeResponseRules"
 	MinDelayMsOptionKey       = "ChannelMonitorProbeResponseMinDelayMilliseconds"
 	MaxDelayMsOptionKey       = "ChannelMonitorProbeResponseMaxDelayMilliseconds"
 	InputTokensOptionKey      = "ChannelMonitorProbeResponseInputTokens"
@@ -39,13 +40,20 @@ const (
 	MaxAllowedIPCount     = 64
 	MaxDelayMs            = 600_000
 	MaxTokenCount         = constant.ChannelProbeMaxInputTokens
+	MaxResponseRules      = 32
 )
+
+type ResponseRule struct {
+	MatchInput   string `json:"match_input"`
+	ResponseText string `json:"response_text"`
+}
 
 type ResponseConfig struct {
 	Enabled          bool
 	AllowedIPs       string
 	MatchInput       string
 	ResponseText     string
+	Rules            []ResponseRule
 	MinDelayMs       int
 	MaxDelayMs       int
 	InputTokens      int
@@ -75,6 +83,7 @@ func GetResponseConfig() ResponseConfig {
 		AllowedIPsOptionKey:       common.OptionMap[AllowedIPsOptionKey],
 		MatchInputOptionKey:       common.OptionMap[MatchInputOptionKey],
 		ResponseTextOptionKey:     common.OptionMap[ResponseTextOptionKey],
+		RulesOptionKey:            common.OptionMap[RulesOptionKey],
 		MinDelayMsOptionKey:       common.OptionMap[MinDelayMsOptionKey],
 		MaxDelayMsOptionKey:       common.OptionMap[MaxDelayMsOptionKey],
 		InputTokensOptionKey:      common.OptionMap[InputTokensOptionKey],
@@ -98,6 +107,18 @@ func ResponseConfigFromOptions(options map[string]string) ResponseConfig {
 	}
 	config.MatchInput = parseResponseTextOption(options[MatchInputOptionKey], config.MatchInput, MaxMatchInputLength)
 	config.ResponseText = parseResponseTextOption(options[ResponseTextOptionKey], config.ResponseText, MaxResponseTextLength)
+	if raw := strings.TrimSpace(options[RulesOptionKey]); raw != "" {
+		var rules []ResponseRule
+		if common.UnmarshalJsonStr(raw, &rules) != nil {
+			config.Enabled = false
+		} else if normalized, err := NormalizeResponseRules(rules); err != nil {
+			config.Enabled = false
+		} else {
+			config.Rules = normalized
+			config.MatchInput = normalized[0].MatchInput
+			config.ResponseText = normalized[0].ResponseText
+		}
+	}
 	config.MinDelayMs = parseResponseIntOption(options[MinDelayMsOptionKey], config.MinDelayMs, 0, MaxDelayMs)
 	config.MaxDelayMs = parseResponseIntOption(options[MaxDelayMsOptionKey], config.MaxDelayMs, 0, MaxDelayMs)
 	if config.MinDelayMs > config.MaxDelayMs {
@@ -118,20 +139,14 @@ func NormalizeResponseConfig(config ResponseConfig) (ResponseConfig, error) {
 	}
 	config.AllowedIPs = normalizedAllowedIPs
 
-	config.MatchInput = strings.TrimSpace(config.MatchInput)
-	if config.MatchInput == "" {
-		return ResponseConfig{}, fmt.Errorf("探针匹配输入不能为空")
+	rules, err := NormalizeResponseRules(config.ResponseRules())
+	if err != nil {
+		return ResponseConfig{}, err
 	}
-	if utf8.RuneCountInString(config.MatchInput) > MaxMatchInputLength {
-		return ResponseConfig{}, fmt.Errorf("探针匹配输入不能超过 %d 个字符", MaxMatchInputLength)
-	}
-
-	config.ResponseText = strings.TrimSpace(config.ResponseText)
-	if config.ResponseText == "" {
-		return ResponseConfig{}, fmt.Errorf("探针响应文本不能为空")
-	}
-	if utf8.RuneCountInString(config.ResponseText) > MaxResponseTextLength {
-		return ResponseConfig{}, fmt.Errorf("探针响应文本不能超过 %d 个字符", MaxResponseTextLength)
+	config.MatchInput = rules[0].MatchInput
+	config.ResponseText = rules[0].ResponseText
+	if config.Rules != nil {
+		config.Rules = rules
 	}
 
 	if config.MinDelayMs < 0 || config.MinDelayMs > MaxDelayMs {
@@ -158,6 +173,44 @@ func NormalizeResponseConfig(config ResponseConfig) (ResponseConfig, error) {
 		}
 	}
 	return config, nil
+}
+
+// ResponseRules preserves the single-pair contract for existing deployments.
+func (config ResponseConfig) ResponseRules() []ResponseRule {
+	if config.Rules != nil {
+		return config.Rules
+	}
+	return []ResponseRule{{MatchInput: config.MatchInput, ResponseText: config.ResponseText}}
+}
+
+func NormalizeResponseRules(rules []ResponseRule) ([]ResponseRule, error) {
+	if len(rules) == 0 || len(rules) > MaxResponseRules {
+		return nil, fmt.Errorf("探针输入输出必须配置 1 到 %d 组", MaxResponseRules)
+	}
+	normalized := make([]ResponseRule, len(rules))
+	for i, rule := range rules {
+		rule.MatchInput = strings.TrimSpace(rule.MatchInput)
+		rule.ResponseText = strings.TrimSpace(rule.ResponseText)
+		if rule.MatchInput == "" {
+			return nil, fmt.Errorf("第 %d 组探针匹配输入不能为空", i+1)
+		}
+		if utf8.RuneCountInString(rule.MatchInput) > MaxMatchInputLength {
+			return nil, fmt.Errorf("第 %d 组探针匹配输入不能超过 %d 个字符", i+1, MaxMatchInputLength)
+		}
+		if rule.ResponseText == "" {
+			return nil, fmt.Errorf("第 %d 组探针响应文本不能为空", i+1)
+		}
+		if utf8.RuneCountInString(rule.ResponseText) > MaxResponseTextLength {
+			return nil, fmt.Errorf("第 %d 组探针响应文本不能超过 %d 个字符", i+1, MaxResponseTextLength)
+		}
+		for _, previous := range normalized[:i] {
+			if strings.EqualFold(previous.MatchInput, rule.MatchInput) {
+				return nil, fmt.Errorf("第 %d 组探针匹配输入与已有配置重复", i+1)
+			}
+		}
+		normalized[i] = rule
+	}
+	return normalized, nil
 }
 
 func (config ResponseConfig) AllowsClientIP(rawClientIP string) bool {

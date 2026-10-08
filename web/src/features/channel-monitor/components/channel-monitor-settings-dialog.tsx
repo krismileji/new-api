@@ -864,11 +864,18 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       errorMessageKeywords: props.settings.error_message_keywords ?? '',
       probeResponseEnabled: props.settings.probe_response_enabled ?? false,
       probeResponseAllowedIPs: props.settings.probe_response_allowed_ips ?? '',
-      probeResponseMatchInput:
-        props.settings.probe_response_match_input ??
-        DEFAULT_PROBE_RESPONSE_MATCH_INPUT,
-      probeResponseText:
-        props.settings.probe_response_text ?? DEFAULT_PROBE_RESPONSE_TEXT,
+      probeResponseRules: props.settings.probe_response_rules?.map((rule) => ({
+        matchInput: rule.match_input,
+        responseText: rule.response_text,
+      })) ?? [
+        {
+          matchInput:
+            props.settings.probe_response_match_input ??
+            DEFAULT_PROBE_RESPONSE_MATCH_INPUT,
+          responseText:
+            props.settings.probe_response_text ?? DEFAULT_PROBE_RESPONSE_TEXT,
+        },
+      ],
       probeResponseMinDelayMs:
         props.settings.probe_response_min_delay_ms ??
         DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS,

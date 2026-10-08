@@ -1,22 +1,22 @@
 # 本地探针响应
 
-渠道监控可以通过 `ChannelMonitorProbeResponseEnabled` 开启本地探针响应，默认关闭。开关和响应参数位于“渠道监控设置 > 探针响应”。历史部署未保存新参数时，会继续使用下表默认值。
+渠道监控可以通过 `ChannelMonitorProbeResponseEnabled` 开启本地探针响应，默认关闭。开关和响应参数位于“渠道监控设置 > 探针响应”。输入和输出按组配置，点击“添加输入输出”可同时录入多组，每组包含一个匹配输入和对应的响应文本，支持删除，至少保留一组，最多 32 组。历史部署的单组配置会作为第一组保留；未保存参数时使用下表默认值。
 
 ## 命中规则
 
 本地响应仅处理 `/v1/responses` 和 `/v1/chat/completions`，并要求请求是单轮纯文本探针：
 
-- 唯一的用户输入在去除首尾空白后等于配置的“匹配输入”（默认 `hi`），匹配不区分大小写。
+- 唯一的用户输入在去除首尾空白后等于任意一组的“匹配输入”（默认 `hi`），匹配不区分大小写，并返回该组对应的响应文本。各组匹配输入不能重复，包括仅大小写或首尾空白不同的输入。
 - 允许请求携带 system、developer 或 Responses `instructions` 指令。
 - 存在历史 assistant 消息、多个 user 消息、`previous_response_id`、conversation、图片、文件、音频、工具结果或其他文本时不命中。
-- 可配置生效 IP 白名单。空表示不限制；最多 64 个 IP，总长 4096。客户端 IP 不在名单中时不命中。配置非法时运行时关闭探针，避免误命中。
+- 所有组共用生效 IP、延迟和 Usage 配置。IP 白名单为空表示不限制；最多 64 个 IP，总长 4096。客户端 IP 不在名单中时不命中。IP 或输入输出列表配置非法时运行时关闭探针，避免误命中。
 - 其他端点和未命中的请求继续执行正常渠道选择、计费和中继流程。
 
 渠道管理和渠道监控发起的连通性测试直接调用渠道适配器，不经过公开中继入口，因此始终真实请求上游，不会被本功能误判为成功。它们属于 automated probe，始终按测试链路写入带监控标记的消费日志，并记录渠道成本；本地响应开关不会改变这些后台探测的真实请求行为。
 
 ## 返回行为
 
-命中后，服务在配置的最小和最大延迟（默认 `500-2000` 毫秒）之间随机等待，并返回配置的响应文本（默认）：
+命中后，服务在配置的最小和最大延迟（默认 `500-2000` 毫秒）之间随机等待，并返回匹配组的响应文本（默认）：
 
 ```text
 Hi. What are you working on?
@@ -29,8 +29,9 @@ Responses API 的非流式返回按请求模型填充响应字段，包括完整
 | 管理端字段 | Option 键 | 默认值 | 有效范围 |
 | --- | --- | --- | --- |
 | 生效 IP | `ChannelMonitorProbeResponseAllowedIPs` | 空（不限制） | 最多 64 个 IP，总长 4096；非法配置会使探针关闭 |
-| 匹配输入 | `ChannelMonitorProbeResponseMatchInput` | `hi` | 去首尾空白后不能为空，最长 4096 个字符 |
-| 响应文本 | `ChannelMonitorProbeResponseText` | `Hi. What are you working on?` | 去首尾空白后不能为空，最长 16384 个字符 |
+| 输入输出列表 | `ChannelMonitorProbeResponseRules` | 从旧单组配置或默认值读取 | JSON 数组，1..32 组；每组包含 `match_input` 和 `response_text`，各自去首尾空白后不能为空，最长分别为 4096、16384 个字符 |
+| 旧匹配输入 | `ChannelMonitorProbeResponseMatchInput` | `hi` | 兼容旧部署；保存列表时同步第一组 |
+| 旧响应文本 | `ChannelMonitorProbeResponseText` | `Hi. What are you working on?` | 兼容旧部署；保存列表时同步第一组 |
 | 最小延迟 | `ChannelMonitorProbeResponseMinDelayMilliseconds` | `500` | `0..600000` 毫秒，不能大于最大延迟 |
 | 最大延迟 | `ChannelMonitorProbeResponseMaxDelayMilliseconds` | `2000` | `0..600000` 毫秒，不能小于最小延迟 |
 | 输入 Token | `ChannelMonitorProbeResponseInputTokens` | `4387` | `0..1000000` |
@@ -39,6 +40,19 @@ Responses API 的非流式返回按请求模型填充响应字段，包括完整
 | 输出 Token | `ChannelMonitorProbeResponseOutputTokens` | `14` | `0..1000000` |
 
 等待过程监听客户端请求上下文。客户端断开后立即停止，不继续占用计时器或写响应。
+
+管理 API 的 `GET /api/channel_monitor/settings` 返回 `probe_response_rules` 数组，`PUT /api/channel_monitor/settings` 使用同名字段完整保存列表，例如：
+
+```json
+{
+  "probe_response_rules": [
+    { "match_input": "hi", "response_text": "hello" },
+    { "match_input": "ping", "response_text": "pong" }
+  ]
+}
+```
+
+更新 IP、延迟、Usage 或其他设置会保留全部输入输出组。旧客户端使用 `probe_response_match_input` 或 `probe_response_text` 更新时，只修改第一组；请求同时携带列表和旧字段时，以列表为准。
 
 ## 请求链路
 

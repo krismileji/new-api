@@ -262,6 +262,8 @@ type channelMonitorSettings struct {
 	ChannelOrder                          []int                      `json:"-"`
 	GroupRatios                           map[string]float64         `json:"-"`
 	GroupCoefficients                     map[string]float64         `json:"-"`
+
+	ProbeResponseRules []channelprobe.ResponseRule `json:"probe_response_rules"`
 }
 
 type channelMonitorSettingsUpdateRequest struct {
@@ -323,6 +325,8 @@ type channelMonitorSettingsUpdateRequest struct {
 	SmartScheduleRateLimitCooldownSeconds *int                        `json:"smart_schedule_rate_limit_cooldown_seconds"`
 	SmartScheduleControlRevision          *string                     `json:"smart_schedule_control_revision"`
 	SmartScheduleForceReset               *bool                       `json:"smart_schedule_force_reset"`
+
+	ProbeResponseRules *[]channelprobe.ResponseRule `json:"probe_response_rules"`
 }
 
 type channelMonitorOrderUpdateRequest struct {
@@ -388,6 +392,7 @@ func loadChannelMonitorSettings(ctx context.Context) (channelMonitorSettings, er
 		channelMonitorProbeResponseAllowedIPsOption,
 		channelMonitorProbeResponseMatchInputOption,
 		channelMonitorProbeResponseTextOption,
+		channelprobe.RulesOptionKey,
 		channelMonitorProbeResponseMinDelayMsOption,
 		channelMonitorProbeResponseMaxDelayMsOption,
 		channelMonitorProbeResponseInputTokensOption,
@@ -686,6 +691,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		ProbeResponseAllowedIPs:               probeResponseConfig.AllowedIPs,
 		ProbeResponseMatchInput:               probeResponseConfig.MatchInput,
 		ProbeResponseText:                     probeResponseConfig.ResponseText,
+		ProbeResponseRules:                    probeResponseConfig.ResponseRules(),
 		ProbeResponseMinDelayMs:               probeResponseConfig.MinDelayMs,
 		ProbeResponseMaxDelayMs:               probeResponseConfig.MaxDelayMs,
 		ProbeResponseInputTokens:              probeResponseConfig.InputTokens,
@@ -1025,6 +1031,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.ProbeResponseAllowedIPs == nil &&
 		request.ProbeResponseMatchInput == nil &&
 		request.ProbeResponseText == nil &&
+		request.ProbeResponseRules == nil &&
 		request.ProbeResponseMinDelayMs == nil &&
 		request.ProbeResponseMaxDelayMs == nil &&
 		request.ProbeResponseInputTokens == nil &&
@@ -1443,6 +1450,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.ProbeResponseAllowedIPs != nil ||
 		request.ProbeResponseMatchInput != nil ||
 		request.ProbeResponseText != nil ||
+		request.ProbeResponseRules != nil ||
 		request.ProbeResponseMinDelayMs != nil ||
 		request.ProbeResponseMaxDelayMs != nil ||
 		request.ProbeResponseInputTokens != nil ||
@@ -1455,6 +1463,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 			AllowedIPs:       settings.ProbeResponseAllowedIPs,
 			MatchInput:       settings.ProbeResponseMatchInput,
 			ResponseText:     settings.ProbeResponseText,
+			Rules:            append([]channelprobe.ResponseRule(nil), settings.ProbeResponseRules...),
 			MinDelayMs:       settings.ProbeResponseMinDelayMs,
 			MaxDelayMs:       settings.ProbeResponseMaxDelayMs,
 			InputTokens:      settings.ProbeResponseInputTokens,
@@ -1473,6 +1482,13 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		}
 		if request.ProbeResponseText != nil {
 			probeResponseConfig.ResponseText = *request.ProbeResponseText
+		}
+		if request.ProbeResponseRules != nil {
+			probeResponseConfig.Rules = *request.ProbeResponseRules
+		} else {
+			// Legacy scalar updates edit only the first pair, preserving the rest.
+			probeResponseConfig.Rules[0].MatchInput = probeResponseConfig.MatchInput
+			probeResponseConfig.Rules[0].ResponseText = probeResponseConfig.ResponseText
 		}
 		if request.ProbeResponseMinDelayMs != nil {
 			probeResponseConfig.MinDelayMs = *request.ProbeResponseMinDelayMs
@@ -1501,6 +1517,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		settings.ProbeResponseAllowedIPs = normalizedProbeResponseConfig.AllowedIPs
 		settings.ProbeResponseMatchInput = normalizedProbeResponseConfig.MatchInput
 		settings.ProbeResponseText = normalizedProbeResponseConfig.ResponseText
+		settings.ProbeResponseRules = normalizedProbeResponseConfig.ResponseRules()
 		settings.ProbeResponseMinDelayMs = normalizedProbeResponseConfig.MinDelayMs
 		settings.ProbeResponseMaxDelayMs = normalizedProbeResponseConfig.MaxDelayMs
 		settings.ProbeResponseInputTokens = normalizedProbeResponseConfig.InputTokens
@@ -1513,10 +1530,14 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		if request.ProbeResponseAllowedIPs != nil {
 			values[channelMonitorProbeResponseAllowedIPsOption] = settings.ProbeResponseAllowedIPs
 		}
-		if request.ProbeResponseMatchInput != nil {
+		if request.ProbeResponseRules != nil || request.ProbeResponseMatchInput != nil || request.ProbeResponseText != nil {
+			rulesJSON, err := common.Marshal(settings.ProbeResponseRules)
+			if err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			values[channelprobe.RulesOptionKey] = string(rulesJSON)
 			values[channelMonitorProbeResponseMatchInputOption] = settings.ProbeResponseMatchInput
-		}
-		if request.ProbeResponseText != nil {
 			values[channelMonitorProbeResponseTextOption] = settings.ProbeResponseText
 		}
 		if request.ProbeResponseMinDelayMs != nil {
@@ -1770,6 +1791,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"probe_response_enabled":                     settings.ProbeResponseEnabled,
 		"probe_response_match_input":                 settings.ProbeResponseMatchInput,
 		"probe_response_text":                        settings.ProbeResponseText,
+		"probe_response_rules":                       settings.ProbeResponseRules,
 		"probe_response_min_delay_ms":                settings.ProbeResponseMinDelayMs,
 		"probe_response_max_delay_ms":                settings.ProbeResponseMaxDelayMs,
 		"probe_response_input_tokens":                settings.ProbeResponseInputTokens,

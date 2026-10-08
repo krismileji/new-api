@@ -95,8 +95,10 @@ export function createChannelMonitorSettingsUpdatePayload(
     error_message_keywords: values.errorMessageKeywords,
     probe_response_enabled: values.probeResponseEnabled,
     probe_response_allowed_ips: values.probeResponseAllowedIPs,
-    probe_response_match_input: values.probeResponseMatchInput,
-    probe_response_text: values.probeResponseText,
+    probe_response_rules: values.probeResponseRules.map((rule) => ({
+      match_input: rule.matchInput,
+      response_text: rule.responseText,
+    })),
     probe_response_min_delay_ms: values.probeResponseMinDelayMs,
     probe_response_max_delay_ms: values.probeResponseMaxDelayMs,
     probe_response_input_tokens: values.probeResponseInputTokens,

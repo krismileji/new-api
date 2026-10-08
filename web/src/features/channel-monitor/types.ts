@@ -827,6 +827,7 @@ export type ChannelMonitorSettings = {
   probe_response_allowed_ips?: string
   probe_response_match_input?: string
   probe_response_text?: string
+  probe_response_rules?: { match_input: string; response_text: string }[]
   probe_response_min_delay_ms?: number
   probe_response_max_delay_ms?: number
   probe_response_input_tokens?: number

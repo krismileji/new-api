@@ -234,7 +234,16 @@ func tryChannelProbeResponse(c *gin.Context) bool {
 		return false
 	}
 	c.Set(validatedRequestContextKey, validatedRequest{format: relayFormat, request: request})
-	if !matchesChannelProbeRequest(relayMode, request, config.MatchInput) {
+	matched := false
+	for _, rule := range config.ResponseRules() {
+		if matchesChannelProbeRequest(relayMode, request, rule.MatchInput) {
+			config.MatchInput = rule.MatchInput
+			config.ResponseText = rule.ResponseText
+			matched = true
+			break
+		}
+	}
+	if !matched {
 		return false
 	}
 

@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { useForm } from 'react-hook-form'
@@ -27,9 +27,10 @@ import { describe, expect, test } from 'vitest'
 import { Form } from '@/components/ui/form'
 
 import { DEFAULT_CHANNEL_MONITOR_SMART_SCHEDULE_POLICY_CONTROLS } from '../../constants'
-import type {
-  ChannelMonitorSettingsFormValues,
-  ChannelMonitorSmartSchedulePolicyFormValues,
+import {
+  MAX_PROBE_RESPONSE_RULES,
+  type ChannelMonitorSettingsFormValues,
+  type ChannelMonitorSmartSchedulePolicyFormValues,
 } from '../../lib/schema'
 import { ChannelMonitorProbeResponseFields } from '../channel-monitor-probe-response-fields'
 import {
@@ -134,13 +135,17 @@ function RetryDelayFieldFixture() {
   )
 }
 
-function ProbeResponseFieldsFixture() {
+function ProbeResponseFieldsFixture(props: {
+  enabled?: boolean
+  rules?: ChannelMonitorSettingsFormValues['probeResponseRules']
+}) {
   const form = useForm<ChannelMonitorSettingsFormValues>({
     defaultValues: {
-      probeResponseEnabled: true,
+      probeResponseEnabled: props.enabled ?? true,
       probeResponseAllowedIPs: '203.0.113.10\n2001:db8::10',
-      probeResponseMatchInput: 'hi',
-      probeResponseText: 'Hi. What are you working on?',
+      probeResponseRules: props.rules ?? [
+        { matchInput: 'hi', responseText: 'Hi. What are you working on?' },
+      ],
       probeResponseMinDelayMs: 500,
       probeResponseMaxDelayMs: 2000,
       probeResponseInputTokens: 4387,
@@ -456,6 +461,70 @@ describe('channel monitor settings dialog', () => {
     assert.ok(markup.includes('/v1/responses'))
     assert.ok(markup.includes('/v1/chat/completions'))
     assert.ok(markup.includes('渠道连通性测试不经过此拦截'))
+  })
+
+  test('adding and removing a probe pair keeps each input with its own output', async () => {
+    render(<ProbeResponseFieldsFixture />)
+    const user = userEvent.setup()
+
+    await user.click(screen.getByRole('button', { name: '添加输入输出' }))
+    const secondPair = within(screen.getByRole('group', { name: '输入输出 2' }))
+    const input = secondPair.getByRole('textbox', { name: '匹配输入' })
+    expect(input).toHaveFocus()
+    await user.type(input, 'ping')
+    await user.type(
+      secondPair.getByRole('textbox', { name: '响应文本' }),
+      'pong'
+    )
+
+    await user.click(screen.getByRole('button', { name: '删除输入输出 1' }))
+    const remainingPair = within(
+      screen.getByRole('group', { name: '输入输出 1' })
+    )
+    expect(
+      remainingPair.getByRole('textbox', { name: '匹配输入' })
+    ).toHaveValue('ping')
+    expect(
+      remainingPair.getByRole('textbox', { name: '响应文本' })
+    ).toHaveValue('pong')
+    expect(
+      screen.getByRole('button', { name: '删除输入输出 1' })
+    ).toBeDisabled()
+  })
+
+  test('disabling the probe prevents editing pairs and preserves them when re-enabled', async () => {
+    render(<ProbeResponseFieldsFixture enabled={false} />)
+    const pair = within(screen.getByRole('group', { name: '输入输出 1' }))
+    expect(pair.getByRole('textbox', { name: '匹配输入' })).toBeDisabled()
+    expect(pair.getByRole('textbox', { name: '响应文本' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '添加输入输出' })).toBeDisabled()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('switch', { name: '启用本地探针响应' }))
+    expect(pair.getByRole('textbox', { name: '匹配输入' })).toBeEnabled()
+    expect(pair.getByRole('textbox', { name: '响应文本' })).toHaveValue(
+      'Hi. What are you working on?'
+    )
+  })
+
+  test('reaching the pair limit disables adding until a pair is removed', async () => {
+    render(
+      <ProbeResponseFieldsFixture
+        rules={Array.from({ length: MAX_PROBE_RESPONSE_RULES }, (_, index) => ({
+          matchInput: `probe ${index}`,
+          responseText: 'healthy',
+        }))}
+      />
+    )
+    const addButton = screen.getByRole('button', { name: '添加输入输出' })
+    expect(addButton).toBeDisabled()
+
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: '删除输入输出 32' }))
+    expect(addButton).toBeEnabled()
+    expect(
+      screen.queryByRole('group', { name: '输入输出 32' })
+    ).not.toBeInTheDocument()
   })
 
   test('top-aligns runtime settings without repeating response wait help', () => {

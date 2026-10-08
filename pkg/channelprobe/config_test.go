@@ -126,3 +126,40 @@ func TestGetResponseConfigDisablesProbeForInvalidStoredAllowedIPs(t *testing.T) 
 	assert.False(t, config.Enabled)
 	assert.Equal(t, "not-an-ip", config.AllowedIPs)
 }
+
+func TestResponseConfigReadsAndValidatesInputOutputPairs(t *testing.T) {
+	config := ResponseConfigFromOptions(map[string]string{
+		OptionKey:      "true",
+		RulesOptionKey: `[{"match_input":" hi ","response_text":" hello "},{"match_input":" ping ","response_text":" pong "}]`,
+	})
+	assert.True(t, config.Enabled)
+	assert.Equal(t, []ResponseRule{{MatchInput: "hi", ResponseText: "hello"}, {MatchInput: "ping", ResponseText: "pong"}}, config.ResponseRules())
+	assert.Equal(t, "hi", config.MatchInput)
+	assert.Equal(t, "hello", config.ResponseText)
+
+	for _, raw := range []string{
+		`{`, `null`, `[]`,
+		`[{"match_input":" ","response_text":"hello"}]`,
+		`[{"match_input":"hi","response_text":" "}]`,
+		`[{"match_input":"hi","response_text":"hello"},{"match_input":" HI ","response_text":"another output"}]`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			config := ResponseConfigFromOptions(map[string]string{OptionKey: "true", RulesOptionKey: raw})
+			assert.False(t, config.Enabled, "invalid pair configuration must not fall back to intercepting requests")
+		})
+	}
+
+	for _, test := range []struct {
+		name  string
+		rules []ResponseRule
+	}{
+		{"oversized input", []ResponseRule{{MatchInput: strings.Repeat("x", MaxMatchInputLength+1), ResponseText: "hello"}}},
+		{"oversized output", []ResponseRule{{MatchInput: "hi", ResponseText: strings.Repeat("x", MaxResponseTextLength+1)}}},
+		{"too many pairs", make([]ResponseRule, MaxResponseRules+1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NormalizeResponseRules(test.rules)
+			require.Error(t, err)
+		})
+	}
+}

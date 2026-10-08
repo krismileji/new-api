@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
-import { describe, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
 import { createChannelMonitorCustomFormConfig } from '../custom-upstream'
 import { DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES } from '../email-notification'
@@ -66,6 +66,10 @@ import {
   MAX_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS,
   MAX_PROBE_RESPONSE_DELAY_MS,
   MAX_PROBE_RESPONSE_TOKEN_COUNT,
+  MAX_PROBE_RESPONSE_RULES,
+  MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH,
+  MAX_PROBE_RESPONSE_TEXT_LENGTH,
+  probeResponseRulesSchema,
   MAX_RELAY_RESPONSE_HEADER_TIMEOUT_SECONDS,
   MAX_SMART_SCHEDULE_RATE_LIMIT_COOLDOWN_SECONDS,
   MAX_SMART_SCHEDULE_REALTIME_RETENTION_MINUTES,
@@ -108,6 +112,66 @@ const upstreamConfigBase = {
   subscriptionDailyUsd: 1,
   customConfig: createChannelMonitorCustomFormConfig(undefined),
 }
+
+describe('probe input/output pairs', () => {
+  test('multiple pairs are trimmed without mixing their outputs', () => {
+    expect(
+      probeResponseRulesSchema.parse([
+        { matchInput: ' hi ', responseText: ' hello ' },
+        { matchInput: ' ping ', responseText: ' pong ' },
+      ])
+    ).toEqual([
+      { matchInput: 'hi', responseText: 'hello' },
+      { matchInput: 'ping', responseText: 'pong' },
+    ])
+  })
+
+  test.each([
+    { name: 'empty list', rules: [] },
+    {
+      name: 'empty input',
+      rules: [{ matchInput: ' ', responseText: 'hello' }],
+    },
+    { name: 'empty output', rules: [{ matchInput: 'hi', responseText: ' ' }] },
+    {
+      name: 'oversized input',
+      rules: [
+        {
+          matchInput: 'x'.repeat(MAX_PROBE_RESPONSE_MATCH_INPUT_LENGTH + 1),
+          responseText: 'hello',
+        },
+      ],
+    },
+    {
+      name: 'oversized output',
+      rules: [
+        {
+          matchInput: 'hi',
+          responseText: 'x'.repeat(MAX_PROBE_RESPONSE_TEXT_LENGTH + 1),
+        },
+      ],
+    },
+    {
+      name: 'too many pairs',
+      rules: Array.from(
+        { length: MAX_PROBE_RESPONSE_RULES + 1 },
+        (_, index) => ({
+          matchInput: `probe ${index}`,
+          responseText: 'healthy',
+        })
+      ),
+    },
+    {
+      name: 'duplicate inputs',
+      rules: [
+        { matchInput: 'hi', responseText: 'hello' },
+        { matchInput: ' HI ', responseText: 'another output' },
+      ],
+    },
+  ])('rejects $name', ({ rules }) => {
+    expect(probeResponseRulesSchema.safeParse(rules).success).toBe(false)
+  })
+})
 
 describe('Sub2API token schema', () => {
   test('requires a manual token for a new configuration', () => {
@@ -416,8 +480,10 @@ describe('channel monitor settings schema', () => {
       errorMessageKeywords: '',
       probeResponseEnabled: true,
       probeResponseAllowedIPs: ' 203.0.113.10,\n2001:db8::10 ',
-      probeResponseMatchInput: ' health check ',
-      probeResponseText: ' healthy ',
+      probeResponseRules: [
+        { matchInput: ' health check ', responseText: ' healthy ' },
+        { matchInput: 'ping', responseText: 'pong' },
+      ],
       probeResponseMinDelayMs: 125,
       probeResponseMaxDelayMs: 875,
       probeResponseInputTokens: 7,
@@ -463,8 +529,10 @@ describe('channel monitor settings schema', () => {
       settings.probeResponseAllowedIPs,
       '203.0.113.10,\n2001:db8::10'
     )
-    assert.equal(settings.probeResponseMatchInput, 'health check')
-    assert.equal(settings.probeResponseText, 'healthy')
+    expect(settings.probeResponseRules).toEqual([
+      { matchInput: 'health check', responseText: 'healthy' },
+      { matchInput: 'ping', responseText: 'pong' },
+    ])
     assert.equal(settings.probeResponseMinDelayMs, 125)
     assert.equal(settings.probeResponseMaxDelayMs, 875)
     assert.equal(settings.probeResponseInputTokens, 7)
@@ -498,8 +566,9 @@ describe('channel monitor settings schema', () => {
       notificationEmail: 'alerts@example.com',
       emailNotificationTypes: [],
       probeResponseEnabled: false,
-      probeResponseMatchInput: 'hi',
-      probeResponseText: 'Hi. What are you working on?',
+      probeResponseRules: [
+        { matchInput: 'hi', responseText: 'Hi. What are you working on?' },
+      ],
       probeResponseMinDelayMs: 500,
       probeResponseMaxDelayMs: 2000,
       probeResponseInputTokens: 4387,
@@ -549,8 +618,9 @@ describe('channel monitor settings schema', () => {
       errorMessageKeywords: '',
       probeResponseEnabled: false,
       probeResponseAllowedIPs: '',
-      probeResponseMatchInput: 'hi',
-      probeResponseText: 'Hi. What are you working on?',
+      probeResponseRules: [
+        { matchInput: 'hi', responseText: 'Hi. What are you working on?' },
+      ],
       probeResponseMinDelayMs: 500,
       probeResponseMaxDelayMs: 2000,
       probeResponseInputTokens: 4387,
@@ -568,7 +638,7 @@ describe('channel monitor settings schema', () => {
     }
     const schema = createChannelMonitorSettingsSchema()
     for (const patch of [
-      { probeResponseMatchInput: '' },
+      { probeResponseRules: [{ matchInput: '', responseText: 'hello' }] },
       { probeResponseAllowedIPs: 'not-an-ip' },
       {
         probeResponseAllowedIPs: Array.from(
@@ -576,7 +646,7 @@ describe('channel monitor settings schema', () => {
           (_, index) => `192.0.2.${(index % 254) + 1}`
         ).join('\n'),
       },
-      { probeResponseText: '' },
+      { probeResponseRules: [{ matchInput: 'hi', responseText: '' }] },
       { probeResponseMinDelayMs: -1 },
       { probeResponseMaxDelayMs: MAX_PROBE_RESPONSE_DELAY_MS + 1 },
       { probeResponseMinDelayMs: 2001, probeResponseMaxDelayMs: 2000 },
@@ -1048,8 +1118,9 @@ describe('channel monitor settings schema', () => {
       notificationEmail: '',
       emailNotificationTypes: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
       probeResponseEnabled: false,
-      probeResponseMatchInput: 'hi',
-      probeResponseText: 'Hi. What are you working on?',
+      probeResponseRules: [
+        { matchInput: 'hi', responseText: 'Hi. What are you working on?' },
+      ],
       probeResponseMinDelayMs: 500,
       probeResponseMaxDelayMs: 2000,
       probeResponseInputTokens: 4387,

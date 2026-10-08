@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -24,8 +26,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/go-redis/redis/v8"
+	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -585,6 +590,135 @@ func TestUpdateChannelMonitorProbeResponseSettingsValidatesAndPersists(t *testin
 		var option model.Option
 		require.NoError(t, db.Where("key = ?", key).First(&option).Error)
 		assert.Equal(t, want, option.Value)
+	}
+}
+
+func TestChannelMonitorProbeResponseRulesDatabaseMatrix(t *testing.T) {
+	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			var dialector gorm.Dialector
+			databaseType := common.DatabaseTypeSQLite
+			switch engine {
+			case "mysql":
+				dsn := os.Getenv("PROBE_RULES_MYSQL_DSN")
+				if dsn == "" {
+					t.Skip("需要配置专用的 PROBE_RULES_MYSQL_DSN")
+				}
+				config, err := mysqlDriver.ParseDSN(dsn)
+				require.NoError(t, err)
+				require.Equal(t, "new_api_probe_rules_test", config.DBName)
+				require.Equal(t, "tcp", config.Net)
+				require.True(t, strings.HasPrefix(config.Addr, "127.0.0.1:"))
+				dialector, databaseType = mysql.Open(dsn), common.DatabaseTypeMySQL
+			case "postgres":
+				dsn := os.Getenv("PROBE_RULES_POSTGRES_DSN")
+				if dsn == "" {
+					t.Skip("需要配置专用的 PROBE_RULES_POSTGRES_DSN")
+				}
+				parsed, err := url.Parse(dsn)
+				require.NoError(t, err)
+				require.Equal(t, "127.0.0.1", parsed.Hostname())
+				require.Equal(t, "/new_api_probe_rules_test", parsed.Path)
+				dialector = postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true})
+				databaseType = common.DatabaseTypePostgreSQL
+			}
+			db := setupChannelMonitorControllerTestDB(t)
+			if dialector != nil {
+				sqliteDB := db
+				var err error
+				db, err = gorm.Open(dialector, &gorm.Config{})
+				require.NoError(t, err)
+				sqlDB, err := db.DB()
+				require.NoError(t, err)
+				model.DB = db
+				common.SetDatabaseTypes(databaseType, common.DatabaseTypeSQLite)
+				t.Cleanup(func() {
+					model.DB = sqliteDB
+					common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+					assert.NoError(t, sqlDB.Close())
+				})
+				tables := []any{&model.Option{}, &model.User{}}
+				for _, table := range tables {
+					require.False(t, db.Migrator().HasTable(table), "必须使用空的专用测试数据库")
+				}
+				t.Cleanup(func() { assert.NoError(t, db.Migrator().DropTable(tables...)) })
+				require.NoError(t, db.AutoMigrate(tables...))
+			}
+			versionQuery := "SELECT version()"
+			if engine == "sqlite" {
+				versionQuery = "SELECT sqlite_version()"
+			}
+			var version string
+			require.NoError(t, db.Raw(versionQuery).Scan(&version).Error)
+			t.Logf("database=%s version=%s", engine, version)
+			require.NoError(t, db.Create(&model.User{
+				Id: 1, Username: "root", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "default",
+			}).Error)
+			usePersistedChannelMonitorOptions(t, db, map[string]string{
+				channelMonitorProbeResponseOption:           "true",
+				channelMonitorProbeResponseMatchInputOption: "legacy input",
+				channelMonitorProbeResponseTextOption:       "legacy output",
+			})
+			settings, err := loadChannelMonitorSettings(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, []channelprobe.ResponseRule{{MatchInput: "legacy input", ResponseText: "legacy output"}}, settings.ProbeResponseRules)
+			wantRules := []channelprobe.ResponseRule{
+				{MatchInput: "hi", ResponseText: "hello"},
+				{MatchInput: "你好", ResponseText: "服务正常\n可以请求"},
+			}
+			ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
+				"probe_response_match_input": "unused legacy input",
+				"probe_response_text":        "unused legacy output",
+				"probe_response_rules": []channelprobe.ResponseRule{
+					{MatchInput: " hi ", ResponseText: " hello "},
+					{MatchInput: " 你好 ", ResponseText: " 服务正常\n可以请求 "},
+				},
+			})
+			UpdateChannelMonitorSettings(ctx)
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			var response channelMonitorSettingsAPIResponse
+			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+			require.True(t, response.Success, response.Message)
+			assert.Equal(t, wantRules, response.Data.ProbeResponseRules)
+			var option model.Option
+			require.NoError(t, db.Where(&model.Option{Key: channelprobe.RulesOptionKey}).First(&option).Error)
+			var storedRules []channelprobe.ResponseRule
+			require.NoError(t, common.UnmarshalJsonStr(option.Value, &storedRules))
+			assert.Equal(t, wantRules, storedRules)
+
+			invalidRules := [][]channelprobe.ResponseRule{
+				{},
+				{{MatchInput: "hi", ResponseText: "hello"}, {MatchInput: " HI ", ResponseText: "another output"}},
+				{{MatchInput: " ", ResponseText: "hello"}},
+				{{MatchInput: "hi", ResponseText: " "}},
+				{{MatchInput: strings.Repeat("x", channelprobe.MaxMatchInputLength+1), ResponseText: "hello"}},
+				{{MatchInput: "hi", ResponseText: strings.Repeat("x", channelprobe.MaxResponseTextLength+1)}},
+				make([]channelprobe.ResponseRule, channelprobe.MaxResponseRules+1),
+			}
+			for _, rules := range invalidRules {
+				ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{"probe_response_rules": rules})
+				UpdateChannelMonitorSettings(ctx)
+				assert.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+				settings, err = loadChannelMonitorSettings(t.Context())
+				require.NoError(t, err)
+				assert.Equal(t, wantRules, settings.ProbeResponseRules, "无效更新不能覆盖已保存的输入输出")
+			}
+			for _, patch := range []map[string]any{
+				{"probe_response_min_delay_ms": 0},
+				{"auto_update_retry_count": 2},
+				{"probe_response_match_input": "ping", "probe_response_text": "pong"},
+			} {
+				ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", patch)
+				UpdateChannelMonitorSettings(ctx)
+				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+				if _, legacyUpdate := patch["probe_response_match_input"]; legacyUpdate {
+					wantRules[0] = channelprobe.ResponseRule{MatchInput: "ping", ResponseText: "pong"}
+				}
+				settings, err = loadChannelMonitorSettings(t.Context())
+				require.NoError(t, err)
+				assert.Equal(t, wantRules, settings.ProbeResponseRules)
+			}
+		})
 	}
 }
 

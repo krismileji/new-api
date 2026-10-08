@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
 
-import { describe, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
 import type { ChannelMonitorSettingsFormValues } from '../../lib/schema'
 import { createChannelMonitorSettingsUpdatePayload } from '../../lib/settings-update'
@@ -105,9 +105,11 @@ const formValues = {
   errorMessageWhitelist: 'provider_specific_error\n503',
   errorMessageKeywords: 'secret\nupstream',
   probeResponseEnabled: true,
+  probeResponseRules: [
+    { matchInput: 'health check', responseText: 'healthy' },
+    { matchInput: 'ping', responseText: 'pong' },
+  ],
   probeResponseAllowedIPs: '203.0.113.10\n2001:db8::10',
-  probeResponseMatchInput: 'health check',
-  probeResponseText: 'healthy',
   probeResponseMinDelayMs: 125,
   probeResponseMaxDelayMs: 875,
   probeResponseInputTokens: 7,
@@ -187,6 +189,17 @@ const formValues = {
 } as ChannelMonitorSettingsFormValues
 
 describe('channel monitor settings submit payload', () => {
+  test('general settings submit all probe inputs with their corresponding outputs', () => {
+    const payload = createChannelMonitorSettingsUpdatePayload(
+      'general',
+      formValues,
+      'revision-a'
+    )
+    expect(payload.probe_response_rules).toEqual([
+      { match_input: 'health check', response_text: 'healthy' },
+      { match_input: 'ping', response_text: 'pong' },
+    ])
+  })
   test('requires every retention and cleanup field in the API contract', () => {
     assert.equal(storageSettingsAreRequired, true)
   })
@@ -422,11 +435,10 @@ describe('channel monitor settings submit payload', () => {
       'probe_response_cached_tokens',
       'probe_response_enabled',
       'probe_response_input_tokens',
-      'probe_response_match_input',
       'probe_response_max_delay_ms',
       'probe_response_min_delay_ms',
       'probe_response_output_tokens',
-      'probe_response_text',
+      'probe_response_rules',
       'ratio_history_retention_days',
       'ratio_monitor_task_retention_days',
       'route_metric_retention_days',
@@ -480,8 +492,6 @@ describe('channel monitor settings submit payload', () => {
       payload.probe_response_allowed_ips,
       '203.0.113.10\n2001:db8::10'
     )
-    assert.equal(payload.probe_response_match_input, 'health check')
-    assert.equal(payload.probe_response_text, 'healthy')
     assert.equal(payload.probe_response_min_delay_ms, 125)
     assert.equal(payload.probe_response_max_delay_ms, 875)
     assert.equal(payload.probe_response_input_tokens, 7)

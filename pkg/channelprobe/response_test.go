@@ -261,6 +261,82 @@ func TestMiddlewareRoutesProbeRequestsBeforeDownstream(t *testing.T) {
 	})
 }
 
+func TestMiddlewareReturnsTheOutputPairedWithEachProbeInput(t *testing.T) {
+	useProbeResponseOptionMap(t, map[string]string{
+		OptionKey:           "true",
+		RulesOptionKey:      `[{"match_input":"hi","response_text":"hello"},{"match_input":"ping","response_text":"pong"}]`,
+		MinDelayMsOptionKey: "0",
+		MaxDelayMsOptionKey: "0",
+	})
+	for _, test := range []struct {
+		name string
+		path string
+		body string
+		want string
+	}{
+		{"responses first pair", "/v1/responses", `{"model":"gpt-5.6-sol","input":" HI "}`, "hello"},
+		{"responses second pair", "/v1/responses", `{"model":"gpt-5.6-sol","input":"ping"}`, "pong"},
+		{"responses stream second pair", "/v1/responses", `{"model":"gpt-5.6-sol","input":"ping","stream":true}`, "pong"},
+		{"chat first pair", "/v1/chat/completions", `{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"hi"}]}`, "hello"},
+		{"chat second pair", "/v1/chat/completions", `{"model":"gpt-5.6-sol","messages":[{"role":"user","content":" PING "}]}`, "pong"},
+		{"chat stream second pair", "/v1/chat/completions", `{"model":"gpt-5.6-sol","messages":[{"role":"user","content":"ping"}],"stream":true}`, "pong"},
+		{"unmatched input passes through", "/v1/responses", `{"model":"gpt-5.6-sol","input":"ordinary request"}`, ""},
+		{"history still passes through", "/v1/chat/completions", `{"model":"gpt-5.6-sol","messages":[{"role":"assistant","content":"hello"},{"role":"user","content":"ping"}]}`, ""},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			router := gin.New()
+			router.Use(Middleware())
+			router.POST(test.path, func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			request := httptest.NewRequest(http.MethodPost, test.path, strings.NewReader(test.body))
+			request.Header.Set("Content-Type", "application/json")
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, request)
+			if test.want == "" {
+				assert.Equal(t, http.StatusNoContent, recorder.Code)
+				return
+			}
+			require.Equal(t, http.StatusOK, recorder.Code)
+			if recorder.Header().Get("Content-Type") == "text/event-stream" {
+				var output strings.Builder
+				for line := range strings.SplitSeq(recorder.Body.String(), "\n") {
+					data, ok := strings.CutPrefix(line, "data: ")
+					if !ok || data == "[DONE]" {
+						continue
+					}
+					if test.path == "/v1/responses" {
+						var event channelProbeResponsesEvent
+						require.NoError(t, common.UnmarshalJsonStr(data, &event))
+						if event.Type == "response.output_text.delta" {
+							output.WriteString(event.Delta)
+						}
+					} else {
+						var chunk dto.ChatCompletionsStreamResponse
+						require.NoError(t, common.UnmarshalJsonStr(data, &chunk))
+						for _, choice := range chunk.Choices {
+							output.WriteString(choice.Delta.GetContentString())
+						}
+					}
+				}
+				assert.Equal(t, test.want, output.String())
+				return
+			}
+			if test.path == "/v1/responses" {
+				var response channelProbeResponsesResponse
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+				require.Len(t, response.Output, 1)
+				require.Len(t, response.Output[0].Content, 1)
+				assert.Equal(t, test.want, response.Output[0].Content[0].Text)
+			} else {
+				var response channelProbeChatResponse
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+				require.Len(t, response.Choices, 1)
+				assert.Equal(t, test.want, response.Choices[0].Message.Content)
+			}
+		})
+	}
+}
+
 func TestMiddlewareRestrictsProbeResponsesToAllowedClientIPs(t *testing.T) {
 	useProbeResponseOptionMap(t, map[string]string{
 		OptionKey:             "true",
