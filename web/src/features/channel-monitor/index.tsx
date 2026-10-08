@@ -83,7 +83,6 @@ import {
   updateMonitoredChannelStatus,
 } from './api'
 import { ChannelGroupMonitorSettingsSheet } from './components/channel-group-monitor-settings-sheet'
-import { ChannelMonitorAnalyticsCoverage } from './components/channel-monitor-analytics-coverage'
 import { ChannelMonitorAnalyticsDialog } from './components/channel-monitor-analytics-dialog'
 import { ChannelMonitorChannelView } from './components/channel-monitor-channel-view'
 import { ChannelMonitorGroupView } from './components/channel-monitor-group-view'
@@ -99,7 +98,10 @@ import {
   ChannelMonitorPrivacyNotice,
   ChannelMonitorPrivacyProvider,
 } from './components/channel-monitor-privacy'
-import { ChannelMonitorProfitOverview } from './components/channel-monitor-profit'
+import {
+  ChannelMonitorProfitNotice,
+  ChannelMonitorProfitOverview,
+} from './components/channel-monitor-profit'
 import {
   ChannelMonitorSettingsDialog,
   ChannelMonitorSmartScheduleSettingsSheet,
@@ -1168,6 +1170,7 @@ function ChannelMonitorContent() {
               value={
                 <ChannelMonitorProfitOverview
                   summary={profitSummary}
+                  coverage={profitOverview?.coverage}
                   loading={profitQuery.isLoading}
                   failed={profitQuery.isError}
                 />
@@ -1186,9 +1189,9 @@ function ChannelMonitorContent() {
             onOpen={() => openSuccessAnalytics()}
           />
         </div>
-        <ChannelMonitorAnalyticsCoverage
+        <ChannelMonitorProfitNotice
+          summary={profitSummary}
           coverage={profitOverview?.coverage}
-          scope='今日利润'
         />
         <Tabs
           value={view}
@@ -1503,6 +1506,7 @@ function ChannelMonitorContent() {
                 onOpenCostHistory={openCostHistory}
                 onOpenProfitHistory={openProfitHistory}
                 profitByChannel={profitByChannel}
+                profitCoverage={profitOverview?.coverage}
                 profitHasMore={
                   (profitOverview?.total ?? 0) >
                   (profitOverview?.items.length ?? 0)

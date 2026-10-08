@@ -1,9 +1,14 @@
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 
 import { formatChannelMonitorBeijingDate } from '../lib/cost-date'
 import type { ChannelMonitorAnalyticsResponse } from '../types-analytics'
 import { ChannelMonitorAnalyticsCoverage } from './channel-monitor-analytics-coverage'
+import { ChannelMonitorProfitNotice } from './channel-monitor-profit'
 
 export function ChannelMonitorProfitStatus(props: {
   response: ChannelMonitorAnalyticsResponse
@@ -38,17 +43,50 @@ export function ChannelMonitorProfitStatus(props: {
 
   return (
     <section aria-label='利润统计核对' className='space-y-2'>
-      <ChannelMonitorAnalyticsCoverage
-        coverage={props.response.coverage}
-        scope='利润'
-      />
-      <Alert>
-        <AlertTitle>
-          {summary.profit_confirmed === true
-            ? '当前范围利润已确认'
-            : '当前范围暂不能判断盈亏'}
-        </AlertTitle>
-        <AlertDescription className='space-y-2'>
+      <div className='flex flex-wrap items-center justify-between gap-2'>
+        <ChannelMonitorProfitNotice
+          summary={summary}
+          coverage={props.response.coverage}
+        />
+        <div className='flex flex-wrap gap-2'>
+          <Button
+            variant='outline'
+            size='sm'
+            disabled={props.refreshing}
+            onClick={() => void props.onRefresh()}
+          >
+            {props.refreshing ? '正在核对…' : '刷新核对'}
+          </Button>
+          {historyMissing &&
+          firstCompleteDate &&
+          firstCompleteDate <= props.today ? (
+            <Button
+              variant='outline'
+              size='sm'
+              onClick={() => props.onSelectCompleteDates(selectableDate)}
+            >
+              仅看完整日期
+            </Button>
+          ) : null}
+        </div>
+      </div>
+      <Collapsible>
+        <CollapsibleTrigger className='cursor-pointer rounded-sm text-xs underline-offset-4 hover:underline focus-visible:outline-2'>
+          统计说明
+        </CollapsibleTrigger>
+        <CollapsibleContent className='text-muted-foreground mt-2 space-y-2 text-xs'>
+          <p>
+            账面毛利 = 已确认用户扣费 − 已结算渠道成本（含探测和模型检测）。
+            待确认收入与未解析成本暂未计入，补账后利润和利润率可能变化，暂估负数不代表已确认亏损。
+          </p>
+          <p>
+            平台按 1:1 记账：用户扣费 7，收入也记 7，不乘美元展示汇率。
+            订阅为名义消耗；退款、补扣修正原记录。
+          </p>
+          <ChannelMonitorAnalyticsCoverage
+            coverage={props.response.coverage}
+            scope='利润'
+          />
           {historyMissing ? (
             <>
               <p>
@@ -73,37 +111,9 @@ export function ChannelMonitorProfitStatus(props: {
               请启用可靠成本记录并重启相关节点，再核对停用期间的记录是否完整。
             </p>
           ) : null}
-          <p>
-            核对新请求：使用独立 API
-            Key，在明细中记录调用前后的用户扣费，完成正常付费调用后点击“刷新核对”，
-            将扣费增量与该请求消费日志的最终扣费按平台 1:1 口径核对，不再乘美元展示汇率，避免混入其他请求。探测和模型检测只有成本，不产生用户收入。
-          </p>
-          <p>
-            收入增加仅能验证收入记录正在写入；利润确认还需要成本入账、解析完成且统计范围没有缺口。
-          </p>
-          <div className='flex flex-wrap gap-2'>
-            <Button
-              variant='outline'
-              size='sm'
-              disabled={props.refreshing}
-              onClick={() => void props.onRefresh()}
-            >
-              {props.refreshing ? '正在核对…' : '刷新核对'}
-            </Button>
-            {historyMissing &&
-            firstCompleteDate &&
-            firstCompleteDate <= props.today ? (
-              <Button
-                variant='outline'
-                size='sm'
-                onClick={() => props.onSelectCompleteDates(selectableDate)}
-              >
-                仅看完整日期
-              </Button>
-            ) : null}
-          </div>
-        </AlertDescription>
-      </Alert>
+          <p>收入和成本完整入账后，自动取消「暂估」标记。</p>
+        </CollapsibleContent>
+      </Collapsible>
     </section>
   )
 }

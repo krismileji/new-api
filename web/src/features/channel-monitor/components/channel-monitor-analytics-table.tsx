@@ -44,6 +44,7 @@ import type {
   ChannelMonitorAnalyticsItem,
   ChannelMonitorAnalyticsMetric,
   ChannelMonitorAnalyticsQuery,
+  ChannelMonitorAnalyticsResponse,
   ChannelMonitorAnalyticsSort,
 } from '../types-analytics'
 import { ChannelMonitorAnalyticsCoverage } from './channel-monitor-analytics-coverage'
@@ -61,6 +62,7 @@ type ChannelMonitorAnalyticsTableProps = {
   metric: ChannelMonitorAnalyticsMetric
   groupBy: ChannelMonitorAnalyticsGroupBy
   items: readonly ChannelMonitorAnalyticsItem[]
+  coverage?: ChannelMonitorAnalyticsResponse['coverage']
   channels: ReadonlyMap<number, ChannelMonitorAnalyticsChannel>
   onSelect?: (item: ChannelMonitorAnalyticsItem) => void
   expandedKey?: string
@@ -232,6 +234,7 @@ function AnalyticsTableRow(props: {
   metric: ChannelMonitorAnalyticsMetric
   groupBy: ChannelMonitorAnalyticsGroupBy
   item: ChannelMonitorAnalyticsItem
+  coverage?: ChannelMonitorAnalyticsResponse['coverage']
   channels: ReadonlyMap<number, ChannelMonitorAnalyticsChannel>
   onSelect?: (item: ChannelMonitorAnalyticsItem) => void
   expandedKey?: string
@@ -283,7 +286,11 @@ function AnalyticsTableRow(props: {
           {item.model_name || item.model_key || '未知模型'}
         </TableCell>
       ) : null}
-      <AnalyticsTableMetricCells metric={props.metric} item={item} />
+      <AnalyticsTableMetricCells
+        metric={props.metric}
+        item={item}
+        coverage={props.coverage}
+      />
     </TableRow>
   )
 }
@@ -291,10 +298,17 @@ function AnalyticsTableRow(props: {
 function AnalyticsTableMetricCells(props: {
   metric: ChannelMonitorAnalyticsMetric
   item: ChannelMonitorAnalyticsItem
+  coverage?: ChannelMonitorAnalyticsResponse['coverage']
   successMode?: ChannelMonitorSuccessMode
 }) {
   if (props.metric === 'profit') {
-    return <ChannelMonitorProfitCells summary={props.item} />
+    return (
+      <ChannelMonitorProfitCells
+        summary={props.item}
+        coverage={props.coverage}
+        dayStart={props.item.day_start}
+      />
+    )
   }
   if (props.metric === 'performance') {
     return (
@@ -492,6 +506,7 @@ function AnalyticsExpandableTableRow(props: {
   metric: ChannelMonitorAnalyticsMetric
   groupBy: ChannelMonitorAnalyticsGroupBy
   item: ChannelMonitorAnalyticsItem
+  coverage?: ChannelMonitorAnalyticsResponse['coverage']
   channels: ReadonlyMap<number, ChannelMonitorAnalyticsChannel>
   context: ChannelMonitorAnalyticsExpansionContext
   depth: number
@@ -630,6 +645,7 @@ function AnalyticsExpandableTableRow(props: {
           metric={props.metric}
           groupBy={childGroupBy}
           item={item}
+          coverage={childResponse.coverage}
           channels={props.channels}
           context={childContext ?? props.context}
           depth={props.depth + 1}
@@ -671,6 +687,7 @@ function AnalyticsExpandableTableRow(props: {
         <AnalyticsTableMetricCells
           metric={props.metric}
           item={props.item}
+          coverage={props.coverage}
           successMode={props.context.successMode}
         />
       </TableRow>
@@ -762,6 +779,7 @@ type ChannelMonitorAnalyticsExpandableTableProps = {
   metric: ChannelMonitorAnalyticsMetric
   groupBy: ChannelMonitorAnalyticsGroupBy
   items: readonly ChannelMonitorAnalyticsItem[]
+  coverage?: ChannelMonitorAnalyticsResponse['coverage']
   channels: ReadonlyMap<number, ChannelMonitorAnalyticsChannel>
   context: ChannelMonitorAnalyticsExpansionContext
   onSort: (sort: ChannelMonitorAnalyticsSort) => void
@@ -806,6 +824,7 @@ export function ChannelMonitorAnalyticsExpandableTable(
               metric={props.metric}
               groupBy={props.groupBy}
               item={item}
+              coverage={props.coverage}
               channels={props.channels}
               context={props.context}
               depth={0}
@@ -845,6 +864,7 @@ export function ChannelMonitorAnalyticsTable(
               metric={props.metric}
               groupBy={props.groupBy}
               item={item}
+              coverage={props.coverage}
               channels={props.channels}
               onSelect={props.onSelect}
               expandedKey={props.expandedKey}

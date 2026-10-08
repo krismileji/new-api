@@ -19,7 +19,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 
 import { useChannelMonitorAnalytics } from '../hooks/use-channel-monitor-analytics'
 import { formatChannelMonitorBeijingDate } from '../lib/cost-date'
-import { formatProfitMoney } from '../lib/profit-format'
+import { formatProfitMoney, getProfitDisplayStatus } from '../lib/profit-format'
 import type { ChannelMonitorAnalyticsQuery } from '../types-analytics'
 import { ChannelMonitorAnalyticsCoverage } from './channel-monitor-analytics-coverage'
 import { ChannelMonitorProfitValue } from './channel-monitor-profit'
@@ -58,17 +58,26 @@ export function ChannelMonitorProfitTrend({
   const rows = [...response.items].sort(
     (a, b) => (a.day_start ?? 0) - (b.day_start ?? 0)
   )
-  const data = rows.map((row) => ({
-    date: formatChannelMonitorBeijingDate(
-      new Date((row.day_start ?? 0) * 1000)
-    ),
-    income: (row.income_nano_cny ?? 0) / 1e9,
-    cost: (row.cost_nano_cny ?? 0) / 1e9,
-    profit:
-      row.profit_confirmed === true && row.profit_nano_cny != null
-        ? row.profit_nano_cny / 1e9
-        : null,
-  }))
+  const estimated = rows.some(
+    (row) =>
+      getProfitDisplayStatus(row, response.coverage, row.day_start) ===
+      'estimated'
+  )
+  const data = rows.map((row) => {
+    const status = getProfitDisplayStatus(row, response.coverage, row.day_start)
+    return {
+      date: formatChannelMonitorBeijingDate(
+        new Date((row.day_start ?? 0) * 1000)
+      ),
+      income: (row.income_nano_cny ?? 0) / 1e9,
+      cost: (row.cost_nano_cny ?? 0) / 1e9,
+      profit:
+        (status === 'confirmed' || status === 'estimated') &&
+        row.profit_nano_cny != null
+          ? row.profit_nano_cny / 1e9
+          : null,
+    }
+  })
   return (
     <section aria-label='利润历史趋势' className='rounded-lg border p-3'>
       <div className='mb-2 text-sm font-medium'>每日趋势（人民币）</div>
@@ -77,7 +86,10 @@ export function ChannelMonitorProfitTrend({
         config={{
           income: { label: '用户扣费', color: 'var(--chart-1)' },
           cost: { label: '成本', color: 'var(--chart-2)' },
-          profit: { label: '利润', color: 'var(--chart-3)' },
+          profit: {
+            label: estimated ? '利润（含暂估）' : '利润',
+            color: 'var(--chart-3)',
+          },
         }}
       >
         <LineChart data={data} accessibilityLayer>
@@ -116,10 +128,14 @@ export function ChannelMonitorProfitTrend({
           />
         </LineChart>
       </ChartContainer>
-      <ChannelMonitorAnalyticsCoverage
-        coverage={response.coverage}
-        scope='趋势'
-      />
+      {response.coverage.reasons.includes('income_history_unavailable') ||
+      response.coverage.reasons.includes('profit_history_expired') ||
+      response.coverage.status === 'unavailable' ? (
+        <ChannelMonitorAnalyticsCoverage
+          coverage={response.coverage}
+          scope='趋势'
+        />
+      ) : null}
       <details className='mt-2 text-xs'>
         <summary className='cursor-pointer'>查看每日数值</summary>
         <div className='mt-2 overflow-x-auto'>
@@ -143,7 +159,11 @@ export function ChannelMonitorProfitTrend({
                   <td>{formatProfitMoney(row.income_nano_cny)}</td>
                   <td>{formatProfitMoney(row.cost_nano_cny)}</td>
                   <td>
-                    <ChannelMonitorProfitValue summary={row} />
+                    <ChannelMonitorProfitValue
+                      summary={row}
+                      coverage={response.coverage}
+                      dayStart={row.day_start}
+                    />
                   </td>
                 </tr>
               ))}

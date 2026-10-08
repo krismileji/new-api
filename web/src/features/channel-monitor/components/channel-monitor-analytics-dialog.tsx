@@ -44,6 +44,7 @@ import type {
   ChannelMonitorAnalyticsGroupBy,
   ChannelMonitorAnalyticsMetric,
   ChannelMonitorAnalyticsQuery,
+  ChannelMonitorAnalyticsResponse,
   ChannelMonitorAnalyticsSort,
   ChannelMonitorAnalyticsSummary,
 } from '../types-analytics'
@@ -233,6 +234,7 @@ function ChannelMonitorAnalyticsDateRangeControl(props: {
 function AnalyticsSummary(props: {
   metric: ChannelMonitorAnalyticsMetric
   summary: ChannelMonitorAnalyticsSummary | undefined
+  coverage?: ChannelMonitorAnalyticsResponse['coverage']
   successMode?: ChannelMonitorSuccessMode
 }) {
   const summary = props.summary
@@ -269,8 +271,15 @@ function AnalyticsSummary(props: {
     values.push(
       ['用户扣费', formatProfitMoney(summary.income_nano_cny)],
       ['总成本', formatProfitMoney(summary.cost_nano_cny)],
-      ['利润', <ChannelMonitorProfitValue key='profit' summary={summary} />],
-      ['利润率', formatProfitRate(summary)]
+      [
+        '利润',
+        <ChannelMonitorProfitValue
+          key='profit'
+          summary={summary}
+          coverage={props.coverage}
+        />,
+      ],
+      ['利润率', formatProfitRate(summary, props.coverage)]
     )
   } else if (props.metric === 'success') {
     const final = props.successMode === 'final'
@@ -487,7 +496,7 @@ export function ChannelMonitorAnalyticsDialog(
   } else if (props.metric === 'profit') {
     title = '渠道利润分析'
     description =
-      '账面毛利 = 用户最终扣费 − 渠道总成本（含探测和模型检测）。平台按 1:1 记账：用户扣费 7，收入也记 7，不乘美元展示汇率。订阅为名义消耗；退款、补扣修正原记录。未确认成本或收入不会按零认定利润。'
+      '利润 = 已确认用户扣费 − 已结算渠道成本。数据未完整时显示暂估值，补账后自动更新。'
   } else if (props.metric === 'success') {
     title = '成功率与缓存分析'
     description = `${props.successMode === 'final' ? '成功率按请求最终结果统计。' : '成功率按实际派发的上游尝试统计，包含重试。'}缓存利用率按流式请求的输入 Token 加权；缓存写入次数包含流式和非流式请求。`
@@ -523,6 +532,7 @@ export function ChannelMonitorAnalyticsDialog(
         metric={props.metric}
         groupBy={rootGroupBy}
         items={response?.items ?? []}
+        coverage={coverage}
         channels={channels}
         context={expansionContext}
         onSort={handleSort}
@@ -593,6 +603,7 @@ export function ChannelMonitorAnalyticsDialog(
           <AnalyticsSummary
             metric={props.metric}
             successMode={props.successMode}
+            coverage={coverage}
             summary={
               coverage?.status === 'unavailable'
                 ? undefined
@@ -643,10 +654,7 @@ export function ChannelMonitorAnalyticsDialog(
                 · 模型检测{' '}
                 {formatProfitMoney(
                   response.scope_summary.model_detection_cost_nano_cny
-                )}{' '}
-                · 待确认扣费/退款{' '}
-                {response.scope_summary.pending_income_count ?? 0} 笔 ·
-                未解析成本 {response.scope_summary.unresolved_count ?? 0} 笔
+                )}
               </p>
               {response.scope_summary.income_started_at ? (
                 <p className='text-muted-foreground text-xs'>
@@ -698,7 +706,7 @@ export function ChannelMonitorAnalyticsDialog(
                 title='仅显示已确认的亏损行；待确认或未解析的行不计入筛选。顶部汇总和趋势仍展示完整范围。'
                 onClick={() => setOnlyLoss((value) => !value)}
               >
-                仅展示亏损行
+                仅看已确认亏损
               </Button>
             ) : null}
             <div className='text-muted-foreground flex items-center gap-2 text-xs'>

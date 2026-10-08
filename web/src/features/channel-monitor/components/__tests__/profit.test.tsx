@@ -12,6 +12,7 @@ import { afterEach, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
+import { formatProfitRate } from '../../lib/profit-format'
 import {
   ChannelMonitorProfitOverview,
   ChannelMonitorProfitCell,
@@ -134,7 +135,7 @@ test('overview does not invent zero cost while the shared snapshot is loading or
   expect(view.container).not.toHaveTextContent('¥0.0000')
 })
 
-test('unconfirmed profit hides the misleading loss while missing data is not zero', () => {
+test('unconfirmed profit shows a neutral estimate while missing data is not zero', () => {
   const view = render(
     <ChannelMonitorProfitValue
       summary={{
@@ -144,12 +145,12 @@ test('unconfirmed profit hides the misleading loss while missing data is not zer
       }}
     />
   )
-  expect(screen.getByText('利润待确认')).toBeInTheDocument()
-  expect(screen.queryByText(/1\.0000/)).not.toBeInTheDocument()
+  expect(screen.getByText('暂估')).toBeInTheDocument()
+  expect(screen.getByText('-¥1.0000')).toBeInTheDocument()
   expect(view.container.querySelector('.text-destructive')).toBeNull()
   view.rerender(<ChannelMonitorProfitValue />)
-  expect(view.container.textContent).toBe('-')
-  expect(screen.queryByText('利润待确认')).not.toBeInTheDocument()
+  expect(view.container.textContent).toBe('—')
+  expect(screen.queryByText('暂估')).not.toBeInTheDocument()
 })
 
 test('confirmed losses remain visible and turn neutral if confirmation is withdrawn', () => {
@@ -160,14 +161,186 @@ test('confirmed losses remain visible and turn neutral if confirmation is withdr
   }
   const view = render(<ChannelMonitorProfitValue summary={summary} />)
   expect(screen.getByText('-¥2.0000')).toHaveClass('text-destructive')
-  expect(screen.queryByText('利润待确认')).not.toBeInTheDocument()
+  expect(screen.queryByText('暂估')).not.toBeInTheDocument()
   view.rerender(
     <ChannelMonitorProfitValue
       summary={{ ...summary, profit_confirmed: false }}
     />
   )
-  expect(screen.queryByText(/2\.0000/)).not.toBeInTheDocument()
-  expect(screen.getByText('利润待确认')).toBeInTheDocument()
+  expect(screen.getByText('-¥2.0000')).not.toHaveClass('text-destructive')
+  expect(screen.getByText('暂估')).toBeInTheDocument()
+})
+
+test('estimated zero remains visible while zero income has no profit rate', () => {
+  const summary = {
+    ...analyticsMetrics,
+    income_nano_cny: 0,
+    cost_nano_cny: 0,
+    profit_nano_cny: 0,
+    profit_rate: null,
+    profit_confirmed: false,
+  }
+  const view = render(
+    <ChannelMonitorProfitOverview
+      summary={summary}
+      loading={false}
+      failed={false}
+    />
+  )
+  expect(view.container).toHaveTextContent('¥0.0000')
+  expect(view.container).toHaveTextContent('暂估')
+  expect(view.container).toHaveTextContent('利润率 —')
+})
+
+test.each([undefined, Number.NaN, Number.POSITIVE_INFINITY])(
+  'missing or invalid profit %s keeps amount and rate unavailable',
+  (profit) => {
+    const summary = {
+      ...analyticsMetrics,
+      profit_nano_cny: profit,
+      profit_rate: 0.7,
+      profit_confirmed: false,
+    }
+    const view = render(<ChannelMonitorProfitValue summary={summary} />)
+    expect(view.container.textContent).toBe('—')
+    expect(formatProfitRate(summary)).toBe('—')
+  }
+)
+
+test.each([
+  ['income_history_unavailable', '历史收入缺失'],
+  ['profit_history_expired', undefined],
+  ['data_source_unavailable', undefined],
+])(
+  '%s keeps overview and channel profit unavailable instead of estimating incomplete history',
+  (reason, label) => {
+    const summary = {
+      ...analyticsMetrics,
+      income_nano_cny: 10e9,
+      cost_nano_cny: 3e9,
+      profit_nano_cny: 7e9,
+      profit_rate: 0.7,
+      profit_confirmed: false,
+    }
+    const coverage = {
+      status:
+        reason === 'data_source_unavailable'
+          ? ('unavailable' as const)
+          : ('partial' as const),
+      covered_from: 1,
+      covered_through: 2,
+      reasons: [reason ?? ''],
+    }
+    const view = render(
+      <ChannelMonitorProfitOverview
+        summary={summary}
+        coverage={coverage}
+        loading={false}
+        failed={false}
+      />
+    )
+    expect(view.container).not.toHaveTextContent('¥7.0000')
+    expect(view.container).toHaveTextContent('利润率 —')
+    expect(screen.queryByText('暂估')).not.toBeInTheDocument()
+    if (label) expect(screen.getByText(label)).toBeInTheDocument()
+    view.unmount()
+
+    const client = new QueryClient()
+    const channel = render(
+      <QueryClientProvider client={client}>
+        <ChannelMonitorProfitCell
+          channelId={7}
+          channelName='渠道 A'
+          summary={summary}
+          coverage={coverage}
+          onOpen={() => undefined}
+        />
+      </QueryClientProvider>
+    )
+    expect(channel.container).not.toHaveTextContent('¥7.0000')
+    expect(channel.container).toHaveTextContent('—')
+    if (label) expect(screen.getByText(label)).toBeInTheDocument()
+    channel.unmount()
+    client.clear()
+  }
+)
+
+test('incomplete ledger shows estimated profit and rate in overview, channel, details and trend', async () => {
+  const summary = {
+    ...analyticsMetrics,
+    income_nano_cny: 10e9,
+    cost_nano_cny: 3e9,
+    profit_nano_cny: 7e9,
+    profit_rate: 0.7,
+    profit_confirmed: false,
+    pending_income_count: 18,
+    unresolved_count: 1778,
+  }
+  const overview = render(
+    <ChannelMonitorProfitOverview
+      summary={summary}
+      loading={false}
+      failed={false}
+    />
+  )
+  expect(overview.container).toHaveTextContent('¥7.0000')
+  expect(overview.container).toHaveTextContent('暂估')
+  expect(overview.container).toHaveTextContent('利润率 70.0%')
+  overview.unmount()
+
+  const client = new QueryClient()
+  const channel = render(
+    <QueryClientProvider client={client}>
+      <ChannelMonitorProfitCell
+        channelId={7}
+        channelName='渠道 A'
+        summary={summary}
+        onOpen={() => undefined}
+      />
+    </QueryClientProvider>
+  )
+  expect(channel.container).toHaveTextContent('¥7.0000')
+  expect(channel.container).toHaveTextContent('暂估')
+  channel.unmount()
+  client.clear()
+
+  renderAnalyticsQuery('profit', (params) =>
+    analyticsResponse(
+      params,
+      [
+        analyticsItem('7', {
+          ...summary,
+          channel_id: 7,
+          day_start: 1790524800,
+        }),
+      ],
+      {
+        scope_summary: summary,
+        summary,
+        coverage: {
+          status: 'partial',
+          covered_from: 1790524800,
+          covered_through: 1790611200,
+          reasons: [
+            'cost_projection_pending',
+            'income_settlement_pending',
+            'profit_cost_unresolved',
+          ],
+        },
+      }
+    )
+  )
+  await screen.findByRole('button', { name: '查看渠道 A明细' })
+  expect(screen.getAllByText('¥7.0000')).toHaveLength(2)
+  expect(screen.getAllByText('70.0%')).toHaveLength(2)
+  expect(screen.getByRole('status')).toHaveTextContent(
+    '成本入账中 · 扣费/退款待确认 18 笔 · 未解析成本 1,778 笔'
+  )
+  const trend = await screen.findByRole('region', { name: '利润历史趋势' })
+  fireEvent.click(within(trend).getByText('查看每日数值'))
+  expect(within(trend).getByText('¥7.0000')).toBeInTheDocument()
+  expect(within(trend).getByText('暂估')).toBeInTheDocument()
+  expect(screen.queryByText('当前范围暂不能判断盈亏')).not.toBeInTheDocument()
 })
 
 test('launch-day history gaps hide profit and rate in summaries, rows and daily values', async () => {
@@ -203,19 +376,78 @@ test('launch-day history gaps hide profit and rate in summaries, rows and daily 
     )
   )
   await screen.findByRole('button', { name: '查看渠道 A明细' })
-  expect(screen.getByText(/平台按 1:1 记账/)).toHaveTextContent(
-    '用户扣费 7，收入也记 7，不乘美元展示汇率'
-  )
   const trend = await screen.findByRole('region', { name: '利润历史趋势' })
   fireEvent.click(within(trend).getByText('查看每日数值'))
   expect(screen.queryAllByText('-¥90.0000')).toHaveLength(0)
   expect(screen.queryAllByText('-900.0%')).toHaveLength(0)
-  expect(screen.getAllByText('利润待确认').length).toBeGreaterThan(1)
+  expect(screen.getAllByText('历史收入缺失').length).toBeGreaterThan(1)
+  fireEvent.click(screen.getByRole('button', { name: '统计说明' }))
+  expect(screen.getByText(/平台按 1:1 记账/)).toHaveTextContent(
+    '用户扣费 7，收入也记 7，不乘美元展示汇率'
+  )
   expect(
     screen.getByText('历史缺失不会通过等待或刷新补齐。')
   ).toBeInTheDocument()
   expect(within(trend).getByText(/10\.0000/)).toBeInTheDocument()
   expect(within(trend).getByText(/100\.0000/)).toBeInTheDocument()
+})
+
+test('history gaps hide only affected days while later confirmed and estimated daily profits remain visible', async () => {
+  vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(
+    new DOMRect(0, 0, 640, 192)
+  )
+  const day = new Date('2026-09-27T00:00:00+08:00').getTime() / 1000
+  const summary = {
+    ...analyticsMetrics,
+    income_nano_cny: 10e9,
+    cost_nano_cny: 3e9,
+    profit_nano_cny: 7e9,
+    profit_rate: 0.7,
+    profit_confirmed: false,
+    income_started_at: day + 3600,
+  }
+  renderAnalyticsQuery('profit', (params) =>
+    analyticsResponse(
+      params,
+      params.group_by === 'day'
+        ? [
+            analyticsItem('launch', {
+              ...summary,
+              day_start: day,
+              profit_nano_cny: -90e9,
+            }),
+            analyticsItem('complete', {
+              ...summary,
+              day_start: day + 86400,
+              profit_confirmed: true,
+              profit_nano_cny: 8e9,
+            }),
+            analyticsItem('pending', {
+              ...summary,
+              day_start: day + 2 * 86400,
+            }),
+          ]
+        : [analyticsItem('7', { ...summary, channel_id: 7 })],
+      {
+        scope_summary: summary,
+        summary,
+        coverage: {
+          status: 'partial',
+          covered_from: summary.income_started_at,
+          covered_through: day + 3 * 86400,
+          reasons: ['income_history_unavailable', 'income_settlement_pending'],
+        },
+      }
+    )
+  )
+  const trend = await screen.findByRole('region', { name: '利润历史趋势' })
+  fireEvent.click(within(trend).getByText('查看每日数值'))
+  expect(within(trend).getByText('历史收入缺失')).toBeInTheDocument()
+  expect(within(trend).queryByText('-¥90.0000')).not.toBeInTheDocument()
+  expect(within(trend).getByText('¥8.0000')).toBeInTheDocument()
+  expect(within(trend).getByText('¥7.0000')).toBeInTheDocument()
+  expect(within(trend).getByText('暂估')).toBeInTheDocument()
+  expect(within(trend).getByText('利润（含暂估）')).toBeInTheDocument()
 })
 
 test('profit refresh reloads both income summary and trend for a new charged request', async () => {
@@ -276,7 +508,7 @@ test('loss filter changes only the list and retains full scope summary and trend
     )
   }
   await screen.findByText('所选日期暂无利润记录')
-  const filter = screen.getByRole('button', { name: '仅展示亏损行' })
+  const filter = screen.getByRole('button', { name: '仅看已确认亏损' })
   expect(filter).toHaveAttribute('aria-pressed', 'false')
   fireEvent.click(filter)
   await waitFor(() =>
@@ -330,12 +562,12 @@ test('selecting full dates excludes launch-day history without clearing an indep
     expect(
       screen.getByRole('button', { name: '统计日期范围' })
     ).toHaveTextContent('当日')
-    expect(screen.getByText(/收入或成本曾写入失败/)).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent('收入或成本记录有缺口')
     expect(
       screen.queryByText('历史缺失不会通过等待或刷新补齐。')
     ).not.toBeInTheDocument()
   })
-  expect(screen.getByText('当前范围暂不能判断盈亏')).toBeInTheDocument()
+  expect(screen.queryByText('当前范围暂不能判断盈亏')).not.toBeInTheDocument()
   expect(view.requests.at(-1)?.from).toBe('2026-09-28')
 })
 
@@ -394,7 +626,7 @@ test('expanding a loss row keeps profitable and unconfirmed children filtered ou
   })
 
   await screen.findByRole('button', { name: '查看渠道 A明细' })
-  fireEvent.click(screen.getByRole('button', { name: '仅展示亏损行' }))
+  fireEvent.click(screen.getByRole('button', { name: '仅看已确认亏损' }))
   await waitFor(() =>
     expect(
       view.requests.some(

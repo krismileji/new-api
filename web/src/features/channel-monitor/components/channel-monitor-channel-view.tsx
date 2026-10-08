@@ -62,7 +62,10 @@ import type {
   ChannelMonitorSuccessSummary,
   ChannelMonitorSmartScheduleRoute,
 } from '../types'
-import type { ChannelMonitorAnalyticsSummary } from '../types-analytics'
+import type {
+  ChannelMonitorAnalyticsResponse,
+  ChannelMonitorAnalyticsSummary,
+} from '../types-analytics'
 import { ChannelMonitorBalanceCell } from './channel-monitor-balance-cell'
 import { ChannelMonitorPerformanceDetailButton } from './channel-monitor-performance-detail-button'
 import {
@@ -107,6 +110,7 @@ type ChannelMonitorChannelViewProps = {
   onOpenCostHistory: (channel: ChannelMonitorItem) => void
   onOpenProfitHistory?: (channel: ChannelMonitorItem) => void
   profitByChannel?: ReadonlyMap<number, ChannelMonitorAnalyticsSummary>
+  profitCoverage?: ChannelMonitorAnalyticsResponse['coverage']
   profitHasMore?: boolean
   onOpenSuccessDetail: (channel: ChannelMonitorItem) => void
   onOpenPerformanceDetail: (channel: ChannelMonitorItem) => void
@@ -443,6 +447,7 @@ export function ChannelMonitorChannelView(
                         channelId={channel.id}
                         channelName={channel.name}
                         summary={props.profitByChannel?.get(channel.id)}
+                        coverage={props.profitCoverage}
                         needsQuery={
                           props.profitHasMore &&
                           !props.profitByChannel?.has(channel.id)
