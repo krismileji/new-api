@@ -164,6 +164,26 @@ func runChannelMonitorProfitCoverageCases(t *testing.T, db *gorm.DB, day int64) 
 		assert.Contains(t, response.Coverage.Reasons, "cost_projection_pending")
 		require.NoError(t, common.RDB.Del(ctx, service.ChannelDailyCostRedisStream).Err())
 	}
+	t.Run("retained_dates_preserve_independent_daily_coverage", func(t *testing.T) {
+		retainedFrom := day + 86400
+		require.NoError(t, db.Model(&model.ChannelMonitorIncomeState{}).Where("id = 1").Update("retained_from", retainedFrom).Error)
+		require.NoError(t, db.Model(&model.ChannelMonitorIncome{}).Where("channel_id = ? AND day_start = ?", second, day+2*86400).Update("status", "pending").Error)
+		t.Cleanup(func() {
+			assert.NoError(t, db.Model(&model.ChannelMonitorIncomeState{}).Where("id = 1").Update("retained_from", 0).Error)
+			assert.NoError(t, db.Model(&model.ChannelMonitorIncome{}).Where("channel_id = ? AND day_start = ?", second, day+2*86400).Update("status", "settled").Error)
+		})
+		dailyQuery := query
+		dailyQuery.GroupBy, dailyQuery.Channel, dailyQuery.OnlyLoss = "day", second, false
+		response, err := queryChannelMonitorProfitAnalytics(ctx, dailyQuery)
+		require.NoError(t, err)
+		assert.Equal(t, retainedFrom, response.Coverage.CoveredFrom, "coverage must begin at the reporting retention boundary")
+		assert.Contains(t, response.Coverage.Reasons, "profit_history_expired")
+		assert.Contains(t, response.Coverage.Reasons, "income_settlement_pending")
+		require.Len(t, response.Items, 3)
+		for _, item := range response.Items {
+			assert.Equal(t, item["day_start"] == retainedFrom, item["profit_confirmed"])
+		}
+	})
 }
 
 func runChannelMonitorProfitAnalyticsCases(t *testing.T, db *gorm.DB, day int64) {

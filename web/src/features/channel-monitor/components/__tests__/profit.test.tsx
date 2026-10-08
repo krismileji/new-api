@@ -13,6 +13,8 @@ import { afterEach, expect, test, vi } from 'vitest'
 import { api } from '@/lib/api'
 
 import { formatProfitRate } from '../../lib/profit-format'
+import type { ChannelMonitorAnalyticsGroupBy } from '../../types-analytics'
+import { ChannelMonitorAnalyticsTable } from '../channel-monitor-analytics-table'
 import {
   ChannelMonitorProfitOverview,
   ChannelMonitorProfitCell,
@@ -448,6 +450,84 @@ test('history gaps hide only affected days while later confirmed and estimated d
   expect(within(trend).getByText('¥7.0000')).toBeInTheDocument()
   expect(within(trend).getByText('暂估')).toBeInTheDocument()
   expect(within(trend).getByText('利润（含暂估）')).toBeInTheDocument()
+})
+
+test.each<ChannelMonitorAnalyticsGroupBy>([
+  'channel',
+  'user',
+  'api_key',
+  'model',
+  'channel_model',
+  'api_key_channel_model',
+])(
+  '%s totals that span missing history do not use their latest fact date as complete daily coverage',
+  (groupBy) => {
+    const day = new Date('2026-09-27T00:00:00+08:00').getTime() / 1000
+    const view = render(
+      <ChannelMonitorAnalyticsTable
+        metric='profit'
+        groupBy={groupBy}
+        channels={new Map([[7, { name: '渠道 A' }]])}
+        items={[
+          analyticsItem('mixed-history', {
+            channel_id: 7,
+            user_id: 31,
+            api_key_id: 201,
+            model_name: 'model-a',
+            day_start: day + 86400,
+            profit_nano_cny: -90e9,
+            profit_rate: -9,
+            profit_confirmed: false,
+          }),
+        ]}
+        coverage={{
+          status: 'partial',
+          covered_from: day + 3600,
+          covered_through: day + 2 * 86400,
+          reasons: ['income_history_unavailable'],
+        }}
+      />
+    )
+    expect(view.container).not.toHaveTextContent('-¥90.0000')
+    expect(view.container).not.toHaveTextContent('-900.0%')
+    expect(screen.getByText('历史收入缺失')).toBeInTheDocument()
+  }
+)
+
+test('expired dates hide only affected daily profit while retained estimates and their rates remain visible', () => {
+  const day = new Date('2026-09-27T00:00:00+08:00').getTime() / 1000
+  const summary = {
+    ...analyticsMetrics,
+    profit_nano_cny: 7e9,
+    profit_rate: 0.7,
+    profit_confirmed: false,
+  }
+  const coverage = {
+    status: 'partial' as const,
+    covered_from: day + 86400,
+    covered_through: day + 3 * 86400,
+    reasons: ['profit_history_expired', 'income_settlement_pending'],
+  }
+  const view = render(
+    <ChannelMonitorProfitValue
+      summary={summary}
+      coverage={coverage}
+      dayStart={day}
+    />
+  )
+  expect(view.container.textContent).toBe('—')
+  expect(formatProfitRate(summary, coverage, day)).toBe('—')
+  view.rerender(
+    <ChannelMonitorProfitValue
+      summary={summary}
+      coverage={coverage}
+      dayStart={day + 2 * 86400}
+    />
+  )
+  expect(screen.getByText('¥7.0000')).toBeInTheDocument()
+  expect(screen.getByText('暂估')).toBeInTheDocument()
+  expect(formatProfitRate(summary, coverage, day + 2 * 86400)).toBe('70.0%')
+  expect(formatProfitRate(summary, coverage)).toBe('—')
 })
 
 test('profit refresh reloads both income summary and trend for a new charged request', async () => {

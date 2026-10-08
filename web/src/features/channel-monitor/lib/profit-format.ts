@@ -27,8 +27,13 @@ export function getProfitDisplayStatus(
   ) {
     return 'unavailable'
   }
+  if (
+    coverage?.reasons.includes('profit_history_expired') &&
+    (dayStart == null || dayStart < coverage.covered_from)
+  ) {
+    return 'unavailable'
+  }
   if (summary.profit_confirmed === true) return 'confirmed'
-  if (coverage?.reasons.includes('profit_history_expired')) return 'unavailable'
   return 'estimated'
 }
 

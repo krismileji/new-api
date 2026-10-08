@@ -288,6 +288,7 @@ function AnalyticsTableRow(props: {
       ) : null}
       <AnalyticsTableMetricCells
         metric={props.metric}
+        groupBy={props.groupBy}
         item={item}
         coverage={props.coverage}
       />
@@ -297,6 +298,7 @@ function AnalyticsTableRow(props: {
 
 function AnalyticsTableMetricCells(props: {
   metric: ChannelMonitorAnalyticsMetric
+  groupBy: ChannelMonitorAnalyticsGroupBy
   item: ChannelMonitorAnalyticsItem
   coverage?: ChannelMonitorAnalyticsResponse['coverage']
   successMode?: ChannelMonitorSuccessMode
@@ -306,7 +308,7 @@ function AnalyticsTableMetricCells(props: {
       <ChannelMonitorProfitCells
         summary={props.item}
         coverage={props.coverage}
-        dayStart={props.item.day_start}
+        dayStart={props.groupBy === 'day' ? props.item.day_start : undefined}
       />
     )
   }
@@ -686,6 +688,7 @@ function AnalyticsExpandableTableRow(props: {
         </TableCell>
         <AnalyticsTableMetricCells
           metric={props.metric}
+          groupBy={props.groupBy}
           item={props.item}
           coverage={props.coverage}
           successMode={props.context.successMode}

@@ -146,7 +146,7 @@ func readChannelMonitorProfitAnalytics(ctx context.Context, db *gorm.DB, query c
 	if summaryRow.PendingCostCount > 0 {
 		reasons = append(reasons, "cost_projection_pending")
 	}
-	coverage := service.DeriveChannelMonitorCoverage(true, query.From, query.To, max(query.From, state.StartedAt), query.To, reasons)
+	coverage := service.DeriveChannelMonitorCoverage(true, query.From, query.To, max(query.From, state.StartedAt, state.RetainedFrom), query.To, reasons)
 	complete := coverage.Status == "complete"
 	grouped := channelMonitorProfitFacts(ctx, db, query).Select(strings.Join(selects, ", ")).Group(strings.Join(columns, ", "))
 	if query.OnlyLoss {
