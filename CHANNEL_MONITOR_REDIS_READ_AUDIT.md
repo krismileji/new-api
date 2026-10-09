@@ -7,14 +7,15 @@
 请求线程不做全量统计和 Redis 重建。需要绝对不丢失的成本、收入和结算事实走可靠 outbox/Stream；普通观测事件如果允许丢样本，必须明确标记为近似统计，不能拿它冒充可恢复的账务数据。
 
 - 检查日期：2026-10-09，按北京时间解释当日和历史边界。
-- 检查基线：`502859299fd270ab31d78405bd402b682ce94df6` 及检查时的工作区内容，包含尚未提交的成本覆盖修复和智能调度修改。
+- 初始检查基线：`502859299fd270ab31d78405bd402b682ce94df6` 及当时工作区；成本覆盖修复、昨日摘要删除和本报告已提交为 `4d251e671`。下文已按当前工作区的日统计恢复改动更新。
 - 用户要求：**“渠道监控都用redis的数据吧，数据库作为兜底和历史数据，全量检查下，然后写到根目录的md文档中”。**
 - 后续澄清：**“不是说必须要全部走缓存，我核心的需求是减少数据库查询，因为我会频繁点刷新”。** 历史、权威记账、配置操作和恢复允许使用数据库，正常监控刷新应尽量直接读已更新的 Redis 数据。
 - 方案约束：**“缓存的方案要一致吧，防止多套不同的设计”。** 统一事件、增量更新、持久化及恢复规则，复用已有 Stream 与后台消费者。
 - 最新原则：**“缓存按理来说是根据请求然后入redis stream然后用独立的key来增量处理数据，如果没有缓存就从数据库进行初始化，要保证redis缓存的数据和数据库中的数据是对应的，尽量别影响用户的请求速度，大的原则是这样”。** 本文据此纠正此前的短期查询结果缓存建议。
+- 已确认的初始化展示：有同口径数据库事实时，Redis 缺失或正在初始化期间临时展示数据库统计；同一范围共用回源与重建，避免连续刷新重复查询。初始化完成后切回 Redis 增量统计。临时结果保留真实来源、截止时间及覆盖状态，不能把初始化中的空值显示为完整的零。
 - 本次已实施：“不用展示昨日的”。默认总览已删除昨日成本对比及两日成本摘要查询，手动刷新不再请求这份摘要；历史分析仍按用户选定的日期取数。
 - 检查范围：渠道监控注册的全部 **37 个 GET 接口**、页面实际取数、相关 Redis 读取实现、数据库调用、后台恢复和历史边界；补充检查公共分组监控及页面使用的分组配置接口。
-- 交付状态：全量审计，以及删除默认总览昨日对比和对应两日摘要请求；本次仅纠正后续方案，新增收入投影和恢复改造尚未实施。
+- 交付状态：全量审计、成本覆盖修复、删除默认总览昨日对比，以及成本和成功率/缓存日统计的共享初始化及后台恢复已实施。收入/利润投影、共享资料和范围覆盖索引仍待接入，不能认为普通刷新已消除全部 SQL。
 
 ## 1. 检查结论
 
@@ -25,11 +26,12 @@
 | 今日利润和顶部成本，证据 R01 | 成本已有 Redis 增量统计，但顶部利润接口仍反复汇总数据库收入和成本 | 补齐已确认收入、退款和补扣的可靠变更事件及 Redis 投影；与成本按相同事实范围核对后读取，数据库用于初始化和恢复 | 优先 |
 | 共享配置和展示资料，证据 R03 | 总览、并发、性能、成功率和调度接口重复读渠道、设置或监控行 | 复用已有配置副本与共享快照，保存及运行变化后发布新版本；初始化或恢复时查库 | 优先 |
 | 昨日对比额外查询 | 原主页面每次刷新请求 `/cost?days=2`，用于昨日对比 | 已删除对比文案、摘要查询和刷新目标 | 已完成 |
+| 成本和成功率/缓存日统计初始化 | 原日键缺失后页面直接失败 | 同日、同指标共享数据库临时基线，复用原重建及增量续接；正常统计继续读 Redis | 已完成 |
 | 成本完整性检查，证据 R04 | 今日成本明细每次扫描当前范围 outbox | 后台维护按日期、渠道、模型等维度的待处理及覆盖状态，和已投影金额对应；页面读取这些状态，不能只删除检查 | 明细读取 |
 | 探测与模型检测总览，证据 R02 | 当前状态及近期结果直接查库，活动任务约每秒查询 | 在配置和任务状态变化后发布增量或同版本快照；页面读 Redis，历史审计仍读数据库 | 对应页面 |
 | 缺失恢复和持久化，证据 R05/R06/R07 | 各入口恢复规则不一致；部分历史只存 Redis；普通监控入队可丢样本 | 统一缺失检测、单次重建及增量续接，补齐需要恢复的数据与缺口记录；无法重建时明确不完整 | 跨模块一致性要求 |
 
-默认总览昨日对比查询已取消。先复用已有成功率和成本增量处理、检查点与重建机制，补齐今日收入及共享资料；各项接入时同时验证恢复和事件可靠性，不能到最后才考虑。SQL 次数和请求延迟仍需测量，不提供推测的减少比例。
+默认总览昨日对比查询已取消。成本、成功率和缓存日统计已接通共享恢复；后续优先补齐今日收入及共享资料，各项接入时同时验证恢复和事件可靠性。整页 SQL 次数和请求延迟仍需测量，不提供推测的减少比例。
 
 **继续保留：** 已有 Redis 实时统计、分组及调度共享快照、独立历史查询，以及数据库扣费、退款、可靠记账和后台持久化。已有链路符合原则的部分直接复用，缺口按同一规则补齐。
 
@@ -45,6 +47,8 @@
 2. 后台消费 Redis Stream，按指标、日期、渠道、模型、用户、API Key 等维度增量更新独立键，并保存对应数据库事实或累计检查点。
 3. 页面刷新读取这些键及同版本的资料和覆盖状态，不因点击刷新反复查询数据库汇总。
 4. Redis 键缺失时，通过已有恢复机制从数据库装入基线，再接上基线之后的未处理事件；完成后恢复正常增量读取。多个页面或节点只触发同一范围的一次重建。
+
+用户已确认：上述初始化期间临时返回同口径数据库统计，不要求页面一直等待初始化完成。同一范围的请求共用初始化基线及重建任务，不按每次点击分别回源；数据库基线只是恢复期间的临时读模型，不新增按页面请求和短期 TTL 缓存整份响应的方案。重建期间的新事件继续可靠交接，发布前完成基线之后的增量续接。恢复失败时保留真实数据截止点及降级状态，重试有界；没有等价数据库事实的实时指标仍显示不可用。
 
 **两边“对应”指同一统计范围、同一事件版本或处理位置下数值能核对，后台追平后最终一致。** 异步期间 Redis 和数据库可能先后更新；必须报告真实处理位置、延迟和缺口，不能承诺任意瞬间数值完全相等，也不能把初始化中的空值当作完整的零。
 
@@ -70,7 +74,7 @@
 | 独立统计键 | 按指标、日期和稳定业务维度组织统计，不按页面排序和分页复制数据库响应；复用已有键前缀、维度规范化及金额整数单位 |
 | 原子增量 | 通过已有 Lua 或 WATCH/事务将去重标记、增量数据和处理位置一起提交；各消费者只更新自己负责的指标，部分完成后重试安全 |
 | 数据库对应 | 以同一事件事实或可重放检查点持久化；Redis 和数据库按相同日期、维度、单位和已确认版本核对，包含退款、迟到事件和异步任务修正 |
-| 缺失初始化 | 同范围重建只有一个持有者；读取一致的数据库基线及对应处理位置，补齐之后的 Stream/outbox 增量，再原子发布有效版本 |
+| 缺失初始化 | 同范围回源及重建只有一个持有者；读取一致的数据库基线及对应处理位置，初始化期间临时返回该基线，补齐之后的 Stream/outbox 增量，再原子发布有效版本 |
 | 重建并发 | 新事件继续可靠接收；临时重建代次与正在运行的消费者正确衔接，发布校验租约及版本，不让旧重建覆盖新数据；不能仅凭最大事件 ID 认定前面的事件全部处理 |
 | 覆盖状态 | 金额、已处理位置、待处理归属和缺口状态对应；后台发布范围索引后 GET 不再每次扫描 SQL。初始化、队列积压、无法重放及投影失败按真实状态展示 |
 | 配置及状态 | 复用 `OptionMap`、渠道缓存、分组和调度快照；配置保存、任务进度、完成和余额变化后发布对应版本，缺失时初始化，不让各接口独立查同一份资料 |
@@ -81,7 +85,7 @@
 
 纯内存入队不能提供崩溃后的不丢事件保证。需要保证可恢复的资金及统计事实必须有持久交接，优先复用现有结算事务、可靠 outbox 和 Stream；保留必要的最小提交开销，不新增请求内全量统计，也不宣称“零 I/O 且绝不丢失”。现有普通监控丢样本边界见 R07。
 
-此处规定后续改造方向，**本轮只纠正文档，没有上线新投影或重建代码**。现有成功率、成本、分组和调度机制保留并补齐；撤回此前 `HybridCache` 查询结果包装与 1/5/30 秒响应缓存策略。
+上述规则统一约束后续投影。当前已复用原成本、成功率/缓存的日统计键与重建，增加共享初始化入口；没有新增收入投影。撤回此前 `HybridCache` 查询结果包装与 1/5/30 秒响应缓存策略。
 
 ## 3. 读取热点及边界证据
 
@@ -157,9 +161,9 @@
 
 1. Redis 成本流、待处理队列和死信。
 2. 数据库 `ChannelDailyCostOutbox` 中 `redis_projected_at=0` 的记录。
-3. Redis 今日成本日快照。
+3. Redis 今日成本日快照；缺失或无法读取时使用共享的数据库恢复基线。
 
-**显示的成本金额仍来自 Redis，数据库参与的是“是否还有当前筛选范围内的未投影成本”的判断。** 数据库不可读时保留已读 Redis 金额，并标记 `cost_projection_unavailable`，不会自动换成数据库金额。
+**正常显示的成本金额来自 Redis，数据库仍参与“是否还有当前筛选范围内的未投影成本”的判断。** 该检查不可读时保留已读 Redis 金额，并标记 `cost_projection_unavailable`；只有日统计自身不可读时才使用数据库恢复基线。
 
 [channel_monitor_cost_coverage.go:44](D:/GoProjects/new-api/controller/channel_monitor_cost_coverage.go:44) 限制数据库检查为 3 秒、最多 4096 条加一条上限检测记录；日期、渠道、用户、Key 先在 SQL 筛选，模型等条件再匹配。超过上限仍保守提示覆盖不完整。
 
@@ -167,19 +171,23 @@
 
 按最新原则的改法：在事件可靠接收、投影成功及失败恢复时，后台维护同日期、渠道、模型、用户和 Key 的待处理索引与覆盖状态，和成本投影的处理位置对应。待该状态覆盖 Redis 队列与数据库 outbox 的完整交接后，GET 改为读取 Redis 状态，取消每刷新扫描 SQL；不能先删掉数据库检查。其他模型 pending 不影响当前模型，未知归属或缺口继续保守标记。已有全局 `Pending` 心跳不能直接代替范围检查。
 
-### R05. Redis 关闭、缺失和故障没有统一兜底规则
+### R05. 日统计已接通共享恢复，其他指标仍有不同边界
 
-本项记录当前可用性缺口。“没有缓存就从数据库初始化”是最新原则中的必要部分，后续接入每种投影时必须同时验证；故障回源使用原口径，合并初始化并限制数据库压力。
+成本和成功率/缓存日统计已统一使用 [channel_monitor_daily_read_recovery.go](D:/GoProjects/new-api/service/channel_monitor_daily_read_recovery.go)。正常 Redis Hash 读取不查询统计 SQL；缺失、成本版本无效或读取失败后，同日同指标通过进程内请求合并与 Redis 租约装入数据库基线。
 
-[channel_monitor_realtime_cost.go:23](D:/GoProjects/new-api/controller/channel_monitor_realtime_cost.go:23) 只有 Redis 被关闭时才读数据库日成本；Redis 已开启但读取失败时直接返回错误。[channel_monitor_cost_read_source.go:19](D:/GoProjects/new-api/controller/channel_monitor_cost_read_source.go:19) 同样传播 Redis 错误。
+临时基线使用独立 `:recovery:baseline` 键，按指标和日期共享，与页面筛选、排序和分页无关；初始化期间的重复读取及其他节点直接复用。Redis 故障无法共享时，各进程保留该恢复基线，不能承诺跨节点只查询一次。Redis 关闭时直接读取数据库，不保留不再更新的长期本机快照。
 
-成本日 Hash 缺少有效版本也会返回投影不可用，见 [channel_monitor_redis_daily_cost.go:49](D:/GoProjects/new-api/service/channel_monitor_redis_daily_cost.go:49)。它没有在 GET 中同步恢复或查库替代。
+后台复用原 [成本重建](D:/GoProjects/new-api/service/channel_monitor_reliable_cost_projection.go:296) 和 [成功率重建](D:/GoProjects/new-api/service/channel_monitor_daily_persistence.go:111)，读取一致的数据库快照并接上 outbox/Stream 增量后原子发布、删除临时基线。临时结果为 `source=database_daily`，保留自身处理时间及数据库检查点，标记覆盖不完整；成本同时返回 `projection.failed/pending=true`。数据库回源失败、超过读预算或取消请求不返回伪造零值，失败重试受限。
+
+临时基线不会作为新的 Redis 修订写回统计账本。旧版没有日检查点时，恢复使用的覆盖边界也从同一数据库事务读取，兼容单连接数据库配置，避免把已保存事件再次计入。
+
+前台基线读取与后台重建各自需要数据库快照，并非整个恢复过程只执行一条 SQL。保留期使用现有日统计 TTL；成功重建后即清理基线，不按几秒 TTL 让刷新重新查询。成本覆盖、配置、用户名称及利润路径的 SQL 仍保留。
 
 | 数据类型或入口 | Redis 正常 | Redis 已开启但缺失或故障 | Redis 关闭 |
 | --- | --- | --- | --- |
-| 总览和 `/cost` 的今日成本 | Redis 日成本 | 返回错误，不切数据库金额 | 读取数据库日成本 |
-| 日分析的当日成本、成功率及缓存指标 | Redis 日投影 | 读取错误直接失败；健康问题可返回不完整状态 | 走数据库日统计分支 |
-| `/success/today` | 今日 Redis；历史部分数据库 | 今日 Redis 读取失败则整个请求失败 | 仍调用 Redis 查询，没有对应关闭分支 |
+| 总览和 `/cost` 的今日成本 | Redis 日成本 | 日键无法读取时临时数据库基线并启动恢复；基线也不可读才失败 | 读取数据库日成本 |
+| 日分析的当日成本、成功率及缓存指标 | Redis 日投影 | 共用数据库恢复基线，来源及覆盖状态保守标记；成本心跳检查保持原语义 | 走数据库日统计分支 |
+| `/success/today` | 今日 Redis；历史部分数据库 | 今日日键读取失败使用数据库日统计基线，后台恢复 | 今日指标读取数据库日统计并标记覆盖状态 |
 | 分钟分析、`/performance`、`/success/detail` | Redis 分钟投影 | 错误或覆盖不可用，不使用数据库统计替换 | Redis 查询不可用 |
 | 分组监控设置、总览和公共展示 | Redis 共享快照 | 快照不可读或不存在时返回 503 | 返回快照未就绪 |
 | `/schedule` | 条件满足时使用 Redis 发布的本机镜像及 Redis 实时指标 | 镜像缺失或过期会报错；性能可显示不可用，未统一切换 SQL | 路由资料可走数据库分支；实时指标仍受其 Redis 来源限制 |
@@ -190,7 +198,7 @@
 | 诊断计数 | Redis 写角色的 Lua 读取 | 返回错误 | 不可用 |
 | 今日利润 | 数据库事实及其他缺口来源 | 金额仍依赖数据库，队列问题影响确认状态 | 仍以数据库为主 |
 
-后续可用性方向：对有同口径持久数据的统计复用已有重建方法，统一页面缺失检测与后台恢复的衔接，避免每次 GET 各自查库重建。初始化明确来源、处理位置和完整性。并发租约等瞬时数据没有等价数据库事实，保留不可用状态；只有 Redis 保存的历史必须先补齐持久化或可靠重放依据才能承诺恢复。
+后续指标同样复用已有持久事实与恢复规则。分钟、分组、调度等入口尚未统一接入本次日统计恢复。并发租约等瞬时数据没有等价数据库事实，保留不可用状态；只有 Redis 保存的历史必须先补齐持久化或可靠重放依据才能承诺恢复。
 
 ### R06. 部分历史仍只在 Redis
 
@@ -210,9 +218,9 @@
 
 - [service/channel_monitor_event_emit.go:114](D:/GoProjects/new-api/service/channel_monitor_event_emit.go:114) 将请求成功/失败观察事件交给 [EnqueueChannelMonitorEvent](D:/GoProjects/new-api/service/channel_monitor_event_writer.go:271)，后台 writer 写入 `channel_monitor:v1:events`。
 - [channel_monitor_redis_aggregator.go:180](D:/GoProjects/new-api/service/channel_monitor_redis_aggregator.go:180) 消费后更新路由、共享统计、分组与被动监控；独立键在 [channel_monitor_redis_keys.go](D:/GoProjects/new-api/service/channel_monitor_redis_keys.go) 中定义，日成功率和日成本已有各自 Hash。
-- [channel_monitor_daily_persistence.go:337](D:/GoProjects/new-api/service/channel_monitor_daily_persistence.go:337) 后台保存日统计及事件检查点；[model/channel_monitor_daily_checkpoint.go:69](D:/GoProjects/new-api/model/channel_monitor_daily_checkpoint.go:69) 在事务中提交累计值和处理位置，旧修订不会覆盖新修订。
+- [channel_monitor_daily_persistence.go:349](D:/GoProjects/new-api/service/channel_monitor_daily_persistence.go:349) 后台保存日统计及事件检查点；[model/channel_monitor_daily_checkpoint.go:69](D:/GoProjects/new-api/model/channel_monitor_daily_checkpoint.go:69) 在事务中提交累计值和处理位置，旧修订不会覆盖新修订。
 - [channel_monitor_daily_persistence.go:38](D:/GoProjects/new-api/service/channel_monitor_daily_persistence.go:38) 检测日键版本并从数据库恢复，通过 Stream 续接检查点之后的事件；成本 [channel_monitor_reliable_cost_projection.go:296](D:/GoProjects/new-api/service/channel_monitor_reliable_cost_projection.go:296) 从一致的账本快照及 outbox 版本恢复，避免重复累计。
-- [channel_monitor_redis_runtime.go:39](D:/GoProjects/new-api/service/channel_monitor_redis_runtime.go:39) 启动时尝试重建；成本运行器还在后台检查当天键并恢复。已有恢复不等于每个页面缺失后的触发与兜底都已经接通，见 R05。
+- [channel_monitor_redis_runtime.go:39](D:/GoProjects/new-api/service/channel_monitor_redis_runtime.go:39) 启动时尝试重建；成本运行器还在后台检查当天键并恢复。本次日统计读取已接通共享恢复，其余指标仍按 R05 的边界处理。
 
 普通监控事件入队为非阻塞内存队列；[channel_monitor_event_writer.go:303](D:/GoProjects/new-api/service/channel_monitor_event_writer.go:303) 队列满或 writer 未就绪会丢样本并告警，进程崩溃也可能丢失尚未写入 Stream 的内存事件。只有数据库检查点及 retained Stream 存在的部分可以重放，不能声称恢复后绝无缺口。
 
@@ -228,11 +236,11 @@
 
 | # | GET 路径 | 正常数据来源 | 数据库的实际角色及检查结果 |
 | --- | --- | --- | --- |
-| 1 | `/api/channel_monitor/` | SQL 渠道、监控设置、倍率和余额状态；Redis 今日成本、并发、余额估算；本机及 Redis 健康信息 | 正常依赖 SQL，R03；Redis 错误无统一金额兜底，R05 |
+| 1 | `/api/channel_monitor/` | SQL 渠道、监控设置、倍率和余额状态；Redis 今日成本、并发、余额估算；本机及 Redis 健康信息 | 正常依赖 SQL，R03；今日成本日键缺失可共用恢复基线，R05 |
 | 2 | `/api/channel_monitor/health` | 本机健康快照，健康工作线程结合 Redis 状态更新 | GET 不同步汇总数据库；本机健康不是所有节点的统一快照 |
 | 3 | `/api/channel_monitor/diagnostics` | Redis 写角色 Lua；读取同时推进日界和观测时间 | 没有 SQL 统计替代，R05；并非普通只读副本查询 |
 | 4 | `/api/channel_monitor/concurrency` | SQL 渠道 ID、并发配置；Redis 实时计数 | 配置正常查库；关闭 Redis 用本机计数，R03/R05 |
-| 5 | `/api/channel_monitor/cost` | 今日 Redis，历史 SQL；事务、资料和 Key 归属另查 SQL | 今日金额方向正确，整条请求仍依赖 SQL；已开启 Redis 失败不切金额来源，R03/R05 |
+| 5 | `/api/channel_monitor/cost` | 今日 Redis，历史 SQL；事务、资料和 Key 归属另查 SQL | 今日正常金额无统计 SQL，缺失可共用恢复基线；整条请求仍依赖 SQL，R03/R05 |
 | 6 | `/api/channel_monitor/analytics/summary` | 今日 cost/success/cache 等日指标走 Redis；历史 SQL；跨日合并；profit 始终 SQL；分钟走 Redis | profit 见 R01，今日成本覆盖见 R04；搜索和名称补充见 R03 |
 | 7 | `/api/channel_monitor/analytics/trend` | 按日趋势：今日与历史按上述指标分流，profit 始终 SQL | 同上；不支持分钟趋势 |
 | 8 | `/api/channel_monitor/analytics/rows` | 与 summary 共用处理，支持分钟或日统计 | 同上；不能仅根据响应 source 判断是否完全无 SQL |
@@ -246,7 +254,7 @@
 | 16 | `/api/channel_monitor/group_monitor/settings` | Redis 发布的完整共享快照中的设置 | GET 无 SQL 回源；后台构建读取 SQL，缺失直接 503，R05 |
 | 17 | `/api/channel_monitor/group_monitor/overview` | Redis 共享快照中的统计和近期状态窗口 | 实时读取符合方向；窗口和故障边界见 R05/R06 |
 | 18 | `/api/channel_monitor/group_monitor/executions` | SQL 分组探测执行记录 | 历史查询符合方向 |
-| 19 | `/api/channel_monitor/success/today` | 今日 Redis；历史日明细及趋势 SQL；渠道与 Key 所有人 SQL | 今日指标方向正确，资料正常查库；关闭 Redis 也没有今日 SQL 分支，R03/R05 |
+| 19 | `/api/channel_monitor/success/today` | 今日 Redis；历史日明细及趋势 SQL；渠道与 Key 所有人 SQL | 今日日键缺失共用恢复基线，关闭 Redis 读数据库；资料仍查库，R03/R05 |
 | 20 | `/api/channel_monitor/success/detail` | Redis 分钟成功率明细；Key 所有人及用户资料 SQL | 指标方向正确，资料正常查库，R03/R05 |
 | 21 | `/api/channel_monitor/tasks` | SQL 系统任务列表及已保存状态 | 历史列表正常；包含当前任务时其状态仍为 SQL 来源 |
 | 22 | `/api/channel_monitor/tasks/:task_id/details` | SQL 任务类型与智能调度执行快照明细 | 历史明细符合方向 |
@@ -367,7 +375,7 @@
 
 ### 每项同时完成恢复和可靠性
 
-6. **复用并补齐重建。** 接通页面缺失检测、跨节点单次初始化、基线和增量衔接、原子发布及恢复状态，验证不会漏算、重算或覆盖新事件。
+6. **复用并补齐重建，日成本和成功率/缓存已完成。** 日统计已接通缺失检测、共享初始化、基线及增量衔接、原子发布及恢复状态；后续收入和共享资料沿用同一规则。Redis 故障期间仅保证进程内基线复用，不能进行跨节点协调。
 7. **明确可恢复范围。** 检查普通监控内存队列丢样本、Stream 保留、被动历史及配置版本的持久化缺口；需要完整恢复的数据提供可靠事实和处理位置，无法补齐时保持缺口提示。
 
 ### 暂不纳入本次
@@ -381,7 +389,7 @@
 
 ## 9. 后续实施验收项
 
-以下是按最新原则的验收标准。默认总览昨日摘要已删除并完成前端刷新回归验证；新增投影和恢复改造尚未实施，以下对应测试尚未执行。
+以下是按最新原则的验收标准。默认总览昨日摘要已删除；日成本和成功率/缓存的基线复用、另一节点共享、租约释放、其他节点完成重建、故障回源及增量续接均已有回归和三库验证。收入等新增投影及整页性能测量仍未完成。
 
 | 场景 | 需要验证的结果 |
 | --- | --- |
@@ -390,6 +398,7 @@
 | 事件重复、乱序及修正 | 同事件重放不重复计数；退款、补扣、任务成本修正按版本替换，日期和原始归属正确 |
 | 数据库与 Redis 对应 | 同一事实范围及已处理位置下金额、计数和维度相等；处理滞后和缺口明确，不比较不同进度然后误报完整 |
 | 并发和多节点恢复 | 缺失统计只初始化一次；重建期间接收的新事件能续接；旧 worker 或过期租约不能覆盖新代次 |
+| 初始化期间频繁刷新 | 临时显示同口径数据库基线并标明来源、截止时间和覆盖状态；同范围共用回源及重建，不重复查询；完成后读取 Redis 增量键 |
 | 今日收入和利润投影 | 收入、成本、扣费分类及确认状态同口径；跨日、退款、缺失恢复后与数据库对账一致 |
 | 默认总览昨日查询，已取消 | 卡片仅展示今日，挂载和刷新不请求两日成本摘要；回归测试验证摘要不在刷新范围内 |
 | 成本覆盖及队列交接 | Redis 待处理索引与金额进度一致；当前模型 pending 正确，其他模型不误报；未入队 outbox、未知归属及错误都被覆盖 |
@@ -403,7 +412,10 @@
 - 根据路由逐项追踪 `controller -> service/model -> Redis/数据库/本机状态/外部服务`，并反查前端的实际使用及刷新配置。
 - 已核对两份路由文件的 GET 数量为 37；公共分组展示及分组选项单独列出。
 - 未将仅剩定义或测试调用的旧数据库性能/成功率辅助函数认定为现行接口的数据来源。
-- 本轮为静态源码检查，没有接入线上 Redis/数据库，没有采集线上 SQL、请求耗时或生产故障样本；因此不提供推测的性能数字。
-- 最新事件增量和数据库恢复方案仅根据现有源码及用户原则纠正文档，未改生产代码，未为新增投影执行运行验证。此前的短期数据库响应缓存建议已撤回。
-- 删除昨日对比仅修改前端查询、展示和刷新目标，数据库接口及历史记录未改。验证已通过：`bun run test src/features/channel-monitor/lib/__tests__/query-options.test.ts src/features/channel-monitor/components/__tests__/profit.test.tsx src/features/channel-monitor/components/__tests__/monitor-stat-card.test.tsx src/features/channel-monitor/components/__tests__/realtime-status.test.tsx`（4 个文件、64 项测试）、`bun run typecheck`、`bun run build`、修改文件的定向 oxlint 和 oxfmt 检查，以及 `git diff --check`。全量 lint 仍因其他文件的现有错误失败；未重跑数据库矩阵。其他缓存优化仍未实施，此前成本覆盖修复的验证不能替代后续缓存优化的验收。
-- 工作区中存在其他并行修改，尤其智能调度代码。本文记录检查时的行为，后续代码变更应重新核对相关条目。
+- 全量接口审计为源码检查；恢复改动使用隔离测试数据库与 Redis 验证，没有采集线上 SQL、请求耗时或生产故障样本，不提供推测的整页性能数字。
+- 已实现成本和成功率/缓存日统计的共享初始化与现有后台重建接入。回归检查数据库查询次数，证实重复日统计读取和另一节点复用不重新查统计库，正常 Redis 日统计读取不新增统计 SQL；不代表成本覆盖、配置和利润等整个接口无 SQL。此前的短期数据库响应缓存建议已撤回。
+- 前一提交删除昨日对比时，验证已通过：`bun run test src/features/channel-monitor/lib/__tests__/query-options.test.ts src/features/channel-monitor/components/__tests__/profit.test.tsx src/features/channel-monitor/components/__tests__/monitor-stat-card.test.tsx src/features/channel-monitor/components/__tests__/realtime-status.test.tsx`（4 个文件、64 项测试）、`bun run typecheck`、`bun run build`、修改文件的定向 oxlint 和 oxfmt 检查，以及 `git diff --check`。当时全量 lint 因其他文件的现有错误失败，未为纯前端删除改动重复数据库矩阵；本次恢复改动的验证另列如下。
+- 本次后端验证通过：`go build ./...`；`go test ./service ./controller ./model -run 'Test(DailyPersistence|ReliableDailyCost|QueryChannelMonitorRedisDaily|ModelDetectionTodayCostReadsRedis|ApplyChannelMonitorRealtimeCost|GetChannelMonitor(Cost|Overview|Aggregation)|AdvanceChannelMonitorAggregation|ChannelStatusProbeOverview|ChannelMonitor(DailyReadRecovery|RedisDaily|Current|ScopedPendingCostCoverage|Analytics(Current|Historical|Filter)|Profit|SystemProbe)|ChannelDailyCost(StreamProjection|ProjectionPolling))' -count=1`；`git diff --check`。
+- 三库验证通过：配置隔离的 `TEST_COST_PROJECTION_REDIS_ADDR`、`TEST_COST_PROJECTION_MYSQL_DSN`、`TEST_COST_PROJECTION_POSTGRES_DSN` 后执行 `go test ./service -run '^TestChannelDailyCostStreamProjectionDatabaseMatrix$' -count=1 -v`。真实版本为 SQLite **3.50.4**、MySQL **5.7.44**、PostgreSQL **9.6.24**，Redis **8.8.0**。覆盖基线共享、等待租约或有效快照、错误回源、Redis 关闭时取新数据库值、增量续接及旧版单连接恢复；本次没有 schema 或迁移变更。
+- 完整矩阵日志保留于 `C:/Users/krismile/AppData/Local/Temp/new-api-channel-monitor-read-recovery-matrix-1009.log`。隔离测试容器已删除。本机未配置 GCC，未执行 Go race 检测；并发交接使用同步钩子确定性验证。
+- 本次修改的现有文件均为下游拥有，未改上游拥有的文件。初始检查时存在并行智能调度修改；本次恢复工作以此前提交为基线，没有改动该功能。后续代码变更应重新核对相关条目。

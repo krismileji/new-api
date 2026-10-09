@@ -368,6 +368,7 @@ type ChannelMonitorRedisSharedFailureCategory struct {
 }
 
 type ChannelMonitorRedisSharedDailyCostView struct {
+	Source             string                                        `json:"source,omitempty"`
 	AttributionPartial bool                                          `json:"attribution_partial"`
 	Projection         ChannelMonitorReliableCostStatus              `json:"projection"`
 	DayStart           int64                                         `json:"day_start"`

@@ -388,6 +388,15 @@ func TestApplyChannelMonitorRealtimeCostPreservesPersistedLedger(t *testing.T) {
 	assert.Equal(t, 2.0, overview.APIKeys[0].CostCNY)
 	require.Len(t, overview.APIKeys[0].Channels, 1)
 	assert.Equal(t, 61, overview.APIKeys[0].Channels[0].ChannelId)
+
+	overview.CostSource = "database_daily"
+	overview.ProcessedAt, overview.DataCutoffAt = now-60, now-120
+	overview.CostProjection = service.ChannelMonitorReliableCostStatus{CheckedAt: now - 60, Pending: true, Failed: true}
+	require.NoError(t, applyChannelMonitorRealtimeCost(context.Background(), &overview, 1, now, 61, todayStart, false))
+	assert.Equal(t, now-60, overview.ProcessedAt, "the temporary database snapshot must retain its own time")
+	assert.Equal(t, now-120, overview.DataCutoffAt)
+	assert.True(t, overview.RealtimeDegraded)
+	assert.Contains(t, overview.DegradedReasons, "cost_projection_unavailable")
 }
 
 func TestGetChannelMonitorCostOverviewChannelFilterUsesPersistedAPIKeyCosts(t *testing.T) {

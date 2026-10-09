@@ -42,6 +42,7 @@ type channelMonitorDailySuccessChartItem struct {
 }
 
 type channelMonitorTodaySuccessOverview struct {
+	Source                     string                                                 `json:"source"`
 	SnapshotRevision           int64                                                  `json:"snapshot_revision"`
 	CoveragePartial            bool                                                   `json:"coverage_partial"`
 	Days                       int                                                    `json:"days"`
@@ -142,6 +143,7 @@ func GetChannelMonitorTodaySuccess(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	overview.Source = todayView.Source
 	overview.SnapshotRevision = todayView.SnapshotRevision
 	overview.CoveragePartial = todayView.CoveragePartial
 	metadata := channelMonitorRealtimePageMetadataWithContext(c.Request.Context(), todayView)

@@ -334,7 +334,7 @@ func queryChannelMonitorCurrentCostAnalytics(ctx context.Context, query channelM
 		reasons = append(reasons, "cost_attribution_incomplete")
 	}
 	coverage := service.DeriveChannelMonitorCoverage(true, query.From, through, query.From, through, reasons)
-	response, err := channelMonitorAnalyticsPage(ctx, query, rows, summary, "redis_daily", coverage)
+	response, err := channelMonitorAnalyticsPage(ctx, query, rows, summary, view.Source, coverage)
 	response.SnapshotRevision, response.ProcessedAt = view.Revision, view.ProcessedAt
 	return response, err
 }
@@ -379,7 +379,7 @@ func queryChannelMonitorCurrentSuccessFacts(ctx context.Context, query channelMo
 	for _, row := range groups {
 		rows = append(rows, row)
 	}
-	response, err := channelMonitorAnalyticsPage(ctx, query, rows, summary, "redis_daily", channelMonitorCurrentDayCoverage(ctx, query.From, view.DataCutoffAt, view.CoveragePartial))
+	response, err := channelMonitorAnalyticsPage(ctx, query, rows, summary, view.Source, channelMonitorCurrentDayCoverage(ctx, query.From, view.DataCutoffAt, view.CoveragePartial))
 	response.SnapshotRevision, response.ProcessedAt = view.Revision, view.ProcessedAt
 	return response, err
 }
@@ -447,7 +447,11 @@ func queryChannelMonitorMixedAnalytics(ctx context.Context, query channelMonitor
 	if history.Coverage.Status != service.ChannelMonitorCoverageComplete || len(coverage.Reasons) > 0 {
 		coverage.Status = service.ChannelMonitorCoveragePartial
 	}
-	response, err := channelMonitorAnalyticsPage(ctx, query, rows, summary, "redis_and_database_daily", coverage)
+	source := "redis_and_database_daily"
+	if current.Source == "database_daily" {
+		source = "database_daily"
+	}
+	response, err := channelMonitorAnalyticsPage(ctx, query, rows, summary, source, coverage)
 	response.SnapshotRevision, response.ProcessedAt = current.SnapshotRevision, current.ProcessedAt
 	return response, err
 }

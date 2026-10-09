@@ -401,7 +401,7 @@ func rebuildChannelMonitorReliableDailyCosts(ctx context.Context, client *redis.
 				return errors.New("渠道成本日汇总重建租约已失效")
 			}
 			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-				pipe.Del(ctx, key, stateKey)
+				pipe.Del(ctx, key, stateKey, key+":recovery:baseline")
 				pipe.HSet(ctx, key, fields)
 				pipe.HSet(ctx, stateKey, encodedStates)
 				pipe.Expire(ctx, key, channelMonitorRedisSharedSuccessDayTTL)

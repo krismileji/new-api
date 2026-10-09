@@ -216,7 +216,7 @@ func (source channelMonitorCostReadSource) attach(overview *channelMonitorCostOv
 		overview.CostSource = "database_daily"
 		return
 	}
-	overview.CostSource = "redis_daily"
+	overview.CostSource = source.current.Source
 	overview.CostRevision = source.current.Revision
 	overview.CostProjection = source.current.Projection
 	overview.DataCutoffAt = source.current.DataCutoffAt

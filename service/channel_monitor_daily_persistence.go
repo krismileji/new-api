@@ -52,6 +52,62 @@ func ensureChannelMonitorDailyMetrics(ctx context.Context, client *redis.Client,
 	return rebuildChannelMonitorDailyMetrics(ctx, client, day)
 }
 
+func loadChannelMonitorDailyMetricsDatabaseFields(ctx context.Context, db *gorm.DB, day int64) (map[string]string, model.ChannelMonitorDailyCheckpoint, error) {
+	var checkpoint model.ChannelMonitorDailyCheckpoint
+	if err := db.Where("day_start = ?", day).First(&checkpoint).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, checkpoint, err
+	}
+	var rows []model.ChannelMonitorDailySuccessLedger
+	if err := db.Where("day_start = ?", day).Find(&rows).Error; err != nil {
+		return nil, checkpoint, err
+	}
+	aggregates := make(map[string]ChannelMonitorRedisSharedAggregate)
+	for _, row := range rows {
+		if err := validateChannelMonitorDailySuccessLedgerRow(row); err != nil {
+			return nil, checkpoint, err
+		}
+		aggregate := ChannelMonitorRedisSharedAggregate{
+			APIKeyName: row.APIKeyName, ActualSuccessCount: row.ActualSuccessCount,
+			ActualFailureCount: row.ActualFailureCount, FinalSuccessCount: row.FinalSuccessCount,
+			FinalFailureCount: row.FinalFailureCount, CacheHitCount: row.CacheHitCount,
+			CacheSampleCount: row.CacheSampleCount, CacheReadTokens: row.CacheReadTokens,
+			InputTokens: row.InputTokens, CacheWriteRequestCount: row.CacheWriteCount,
+		}
+		if row.AggregateJSON != "" {
+			if err := common.UnmarshalJsonStr(row.AggregateJSON, &aggregate); err != nil {
+				return nil, checkpoint, err
+			}
+		}
+		event := model.ChannelMonitorEvent{ChannelId: row.ChannelId, UserId: row.UserId,
+			APIKeyId: row.APIKeyId, APIKeyName: row.APIKeyName, ModelName: row.ModelName, GroupName: row.GroupName}
+		for _, scope := range channelMonitorRedisSuccessDayScopes(event) {
+			if strings.HasPrefix(scope, "fact:") {
+				continue
+			}
+			value := aggregates[scope]
+			if err := mergeChannelMonitorRedisSharedAggregate(&value, aggregate); err != nil {
+				return nil, checkpoint, err
+			}
+			aggregates[scope] = value
+		}
+		aggregates[channelMonitorDailyMetricScope(model.ChannelMonitorDailyMetricIdentityFromRow(row))] = aggregate
+	}
+	fields := encodeChannelMonitorRedisDailySuccessAggregates(aggregates)
+	if checkpoint.CoveragePartial {
+		fields["meta:coverage_partial"] = "1"
+	}
+	fields["meta:revision"] = strconv.FormatInt(checkpoint.Revision, 10)
+	fields["meta:event_watermark"] = strconv.FormatInt(checkpoint.EventWatermark, 10)
+	fields["meta:data_cutoff_at"] = strconv.FormatInt(checkpoint.DataCutoffAt, 10)
+	if checkpoint.Revision == 0 && len(rows) > 0 {
+		fields["meta:coverage_partial"] = "1"
+		if coverage, err := model.GetChannelMonitorAggregationCoverage(ctx, db); err == nil {
+			fields["meta:legacy_through"] = strconv.FormatInt(coverage.CompletedThrough, 10)
+		}
+	}
+	return fields, checkpoint, nil
+}
+
 func rebuildChannelMonitorDailyMetrics(ctx context.Context, client *redis.Client, day int64) error {
 	key := ChannelMonitorRedisSuccessDayKey(day)
 	leaseKey := key + ":rebuild:lease"
@@ -67,67 +123,23 @@ func rebuildChannelMonitorDailyMetrics(ctx context.Context, client *redis.Client
 	for attempt := 0; attempt < channelMonitorRedisSharedWriteRetries; attempt++ {
 		err = client.Watch(ctx, func(tx *redis.Tx) error {
 			var checkpoint model.ChannelMonitorDailyCheckpoint
-			var rows []model.ChannelMonitorDailySuccessLedger
+			var fields map[string]string
 			options := &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true}
 			if model.DB.Dialector.Name() == "sqlite" {
 				options = &sql.TxOptions{}
 			}
 			err := model.DB.WithContext(ctx).Transaction(func(db *gorm.DB) error {
-				err := db.Where("day_start = ?", day).First(&checkpoint).Error
-				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-					return err
-				}
-				return db.Where("day_start = ?", day).Find(&rows).Error
+				var err error
+				fields, checkpoint, err = loadChannelMonitorDailyMetricsDatabaseFields(ctx, db, day)
+				return err
 			}, options)
 			if err != nil {
 				return err
 			}
-			aggregates := make(map[string]ChannelMonitorRedisSharedAggregate)
-			for _, row := range rows {
-				if err := validateChannelMonitorDailySuccessLedgerRow(row); err != nil {
-					return err
-				}
-				aggregate := ChannelMonitorRedisSharedAggregate{
-					APIKeyName: row.APIKeyName, ActualSuccessCount: row.ActualSuccessCount,
-					ActualFailureCount: row.ActualFailureCount, FinalSuccessCount: row.FinalSuccessCount,
-					FinalFailureCount: row.FinalFailureCount, CacheHitCount: row.CacheHitCount,
-					CacheSampleCount: row.CacheSampleCount, CacheReadTokens: row.CacheReadTokens,
-					InputTokens: row.InputTokens, CacheWriteRequestCount: row.CacheWriteCount,
-				}
-				if row.AggregateJSON != "" {
-					if err := common.UnmarshalJsonStr(row.AggregateJSON, &aggregate); err != nil {
-						return err
-					}
-				}
-				event := model.ChannelMonitorEvent{ChannelId: row.ChannelId, UserId: row.UserId,
-					APIKeyId: row.APIKeyId, APIKeyName: row.APIKeyName, ModelName: row.ModelName, GroupName: row.GroupName}
-				for _, scope := range channelMonitorRedisSuccessDayScopes(event) {
-					if strings.HasPrefix(scope, "fact:") {
-						continue
-					}
-					value := aggregates[scope]
-					if err := mergeChannelMonitorRedisSharedAggregate(&value, aggregate); err != nil {
-						return err
-					}
-					aggregates[scope] = value
-				}
-				aggregates[channelMonitorDailyMetricScope(model.ChannelMonitorDailyMetricIdentityFromRow(row))] = aggregate
-			}
-			fields := encodeChannelMonitorRedisDailySuccessAggregates(aggregates)
-			if checkpoint.CoveragePartial {
-				fields["meta:coverage_partial"] = "1"
-			}
-			fields["meta:event_watermark"] = strconv.FormatInt(checkpoint.EventWatermark, 10)
-			fields["meta:data_cutoff_at"] = strconv.FormatInt(checkpoint.DataCutoffAt, 10)
 			// Legacy rows have no Stream checkpoint. Their old closed-minute
 			// boundary is used only for migration, never for new late events.
-			legacyThrough := int64(0)
-			if checkpoint.Revision == 0 && len(rows) > 0 {
-				if coverage, err := model.GetChannelMonitorAggregationCoverage(ctx); err == nil {
-					legacyThrough = coverage.CompletedThrough
-				}
-				fields["meta:coverage_partial"] = "1"
-			}
+			legacyThrough := parseDailySuccessInt64(fields["meta:legacy_through"])
+			delete(fields, "meta:legacy_through")
 			watermark, err := replayChannelMonitorDailyTail(ctx, client, day, checkpoint.EventWatermark, legacyThrough, fields)
 			if err != nil {
 				return err
@@ -150,7 +162,7 @@ func rebuildChannelMonitorDailyMetrics(ctx context.Context, client *redis.Client
 				return errors.New("渠道监控日汇总重建租约已失效")
 			}
 			_, err = tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-				pipe.Del(ctx, key)
+				pipe.Del(ctx, key, key+":recovery:baseline")
 				pipe.HSet(ctx, key, fields)
 				pipe.Expire(ctx, key, channelMonitorRedisSharedSuccessDayTTL)
 				pipe.SAdd(ctx, channelMonitorDailyDirtyDaysKey, strconv.FormatInt(day, 10))
@@ -343,6 +355,9 @@ func persistChannelMonitorDailyMetrics(ctx context.Context, client *redis.Client
 	daily, err := queryChannelMonitorRedisDailySuccessWithClient(ctx, client, day, []string{"fact:*", "meta:*"})
 	if err != nil {
 		return err
+	}
+	if daily.Source == "database_daily" {
+		return ErrChannelMonitorRedisSharedProjectionUnavailable
 	}
 	if err := channelMonitorDailyCheckpointReady(ctx, client, daily.EventWatermark); err != nil {
 		return err

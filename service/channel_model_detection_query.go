@@ -230,6 +230,7 @@ type ChannelModelDetectionOverviewResponse struct {
 	CostSource      string                                 `json:"cost_source"`
 	CostRevision    int64                                  `json:"cost_revision"`
 	CostProcessedAt int64                                  `json:"cost_processed_at"`
+	CostProjection  ChannelMonitorReliableCostStatus       `json:"cost_projection"`
 	ServerNow       int64                                  `json:"server_now"`
 	Settings        ChannelModelDetectionSettingsSummary   `json:"settings"`
 	Detector        ChannelModelDetectionDetectorResponse  `json:"detector"`
@@ -480,8 +481,9 @@ func GetChannelModelDetectionOverview(ctx context.Context, tx *gorm.DB, now int6
 	}
 	response.CostSource = "database_daily"
 	if useRedisToday {
-		response.CostSource = "redis_daily"
+		response.CostSource = currentCosts.Source
 		response.CostRevision, response.CostProcessedAt = currentCosts.Revision, currentCosts.ProcessedAt
+		response.CostProjection = currentCosts.Projection
 		if err := applyChannelModelDetectionDailyCosts(&response, currentCosts); err != nil {
 			return ChannelModelDetectionOverviewResponse{}, err
 		}

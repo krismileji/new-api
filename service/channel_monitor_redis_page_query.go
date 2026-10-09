@@ -38,6 +38,7 @@ type ChannelMonitorRealtimePageAggregate struct {
 }
 
 type ChannelMonitorRealtimePageView struct {
+	Source           string                                `json:"source,omitempty"`
 	SnapshotRevision int64                                 `json:"snapshot_revision,omitempty"`
 	CoveragePartial  bool                                  `json:"coverage_partial"`
 	Summary          ChannelMonitorRealtimePageAggregate   `json:"summary"`
@@ -103,6 +104,7 @@ func QueryChannelMonitorRealtimeTodaySuccessFromRedis(
 		return ChannelMonitorRealtimePageView{}, err
 	}
 	view := ChannelMonitorRealtimePageView{
+		Source:           daily.Source,
 		Routes:           make([]ChannelMonitorRealtimePageAggregate, 0),
 		Channels:         make([]ChannelMonitorRealtimePageAggregate, 0),
 		Groups:           make([]ChannelMonitorRealtimePageAggregate, 0),

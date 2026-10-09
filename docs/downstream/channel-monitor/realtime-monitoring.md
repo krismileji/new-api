@@ -33,10 +33,13 @@
 | `processed_at`、`event_watermark` | 已处理进度 |
 | `snapshot_revision`、`cost_revision` | 对应数据的版本 |
 | `coverage` | 当前范围的数据完整程度 |
+| `source`、`cost_source` | 当前日统计来自 Redis，或来自初始化期间的数据库基线 |
 | `realtime_degraded`、`degraded_reasons` | 实时数据是否降级及原因 |
 
 样本达到保留上限时，`sample_limit_truncated/sample_limit_cutoff_at` 提示窗口被截断。无数据、时间字段为零或实时不可用，都不能解释为零流量、零成本或全部请求失败。
 
-今天与近期指标依赖 Redis，历史查询使用已保存的日统计。实时数据故障时会提示降级；历史数据仍可用不代表实时数据已恢复。
+今日成本、成功率和缓存日统计正常读取 Redis 增量统计。日键缺失或无法读取时，临时使用同口径数据库日统计并提示不完整；同一日期和指标的查询共用恢复基线，后台补齐增量后切回 Redis。临时基线保留自身时间，刷新不会把它标为刚更新；数据库也不可读时返回错误。
+
+Redis 故障期间，各节点只能复用各自已取得的基线，无法协调跨节点回源。近期分钟指标、并发和其他实时状态仍遵循各自的可用性边界，不能用日统计替代。历史数据仍可用不代表实时数据已恢复。
 
 指标口径见[统计口径与数据完整性](data-consistency.md)，费用状态见[成本统计](cost-statistics.md)，异常处理见[运行状态与诊断](recovery-troubleshooting.md)。

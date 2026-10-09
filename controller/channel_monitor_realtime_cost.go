@@ -17,9 +17,8 @@ type channelMonitorRealtimeChannelCost struct {
 	UnresolvedCount           int64
 }
 
-// channelMonitorRealtimeTodayCosts keeps its existing caller-facing name. The
-// current Beijing day is served from the reliable Redis cost projection.
-// A Redis outage must not silently switch the page to a different ledger view.
+// Current-day costs use the reliable Redis projection or its explicitly
+// marked database recovery baseline.
 func channelMonitorRealtimeTodayCosts(ctx context.Context, channelId int, dayStart int64) (map[int]channelMonitorRealtimeChannelCost, service.ChannelMonitorRedisSharedDailyCostView, error) {
 	view, redisErr := service.QueryChannelMonitorRedisDailyCostTotals(ctx, dayStart)
 	redisCosts := view.Channels
@@ -79,7 +78,7 @@ func applyChannelMonitorRealtimeCost(
 	_ = summaryOnly
 	todayStart := channelMonitorCostDayStart(now)
 	metadata := channelMonitorRealtimeMetadataWithContext(ctx, todayStart)
-	if overview.CostSource != "redis_daily" {
+	if overview.ProcessedAt == 0 && overview.DataCutoffAt == 0 {
 		overview.DataCutoffAt = metadata.DataCutoffAt
 		overview.ProcessedAt = metadata.ProcessedAt
 	}
@@ -123,7 +122,7 @@ func applyChannelMonitorRealtimeCost(
 	overview.RedisPoolStats = metadata.RedisPoolStats
 	overview.RealtimeDegraded = metadata.RealtimeDegraded
 	overview.DegradedReasons = metadata.DegradedReasons
-	if overview.CostSource == "redis_daily" && (overview.CostProjection.Failed || overview.CostProjection.CheckedAt == 0 || now-overview.CostProjection.CheckedAt > 10) {
+	if overview.CostProjection.Failed || overview.CostSource == "redis_daily" && (overview.CostProjection.CheckedAt == 0 || now-overview.CostProjection.CheckedAt > 10) {
 		overview.RealtimeDegraded = true
 		overview.DegradedReasons = append(overview.DegradedReasons, "cost_projection_unavailable")
 	} else if overview.CostProjection.Pending {

@@ -60,7 +60,7 @@ func TestChannelDailyCostStreamProjectionDatabaseMatrix(t *testing.T) {
 			sqlDB, err := db.DB()
 			require.NoError(t, err)
 			t.Cleanup(func() { assert.NoError(t, sqlDB.Close()) })
-			tables := []any{&model.ChannelDailyCost{}, &model.ChannelDailyAPIKeyCost{}, &model.ChannelDailyCostOutbox{}, &model.ChannelTaskCostEvent{}, &model.ChannelMonitorDailyCostDetail{}}
+			tables := []any{&model.ChannelDailyCost{}, &model.ChannelDailyAPIKeyCost{}, &model.ChannelDailyCostOutbox{}, &model.ChannelTaskCostEvent{}, &model.ChannelMonitorDailyCostDetail{}, &model.ChannelMonitorDailySuccessLedger{}, &model.ChannelMonitorDailyCheckpoint{}, &model.ChannelMonitorAggregationState{}}
 			for _, table := range tables {
 				require.False(t, db.Migrator().HasTable(table), "验证数据库必须为空")
 			}
@@ -101,6 +101,7 @@ func TestChannelDailyCostStreamProjectionDatabaseMatrix(t *testing.T) {
 			// batch and partial-overflow contract on each real database engine.
 			require.NoError(t, FlushChannelDailyCostOutbox(context.Background()))
 			verifyChannelDailyCostRecoveryBatch(t, db)
+			verifyChannelMonitorDailyReadRecovery(t, db, client)
 		})
 	}
 }

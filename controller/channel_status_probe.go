@@ -11,6 +11,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
@@ -107,16 +108,17 @@ type channelStatusProbeChannelResponse struct {
 }
 
 type channelStatusProbeOverviewResponse struct {
-	CostSource         string                              `json:"cost_source"`
-	CostRevision       int64                               `json:"cost_revision"`
-	CostProcessedAt    int64                               `json:"cost_processed_at"`
-	ServerNow          int64                               `json:"server_now"`
-	ScanIntervalSecond int                                 `json:"scan_interval_seconds"`
-	Summary            map[string]int                      `json:"summary"`
-	Groups             []string                            `json:"groups"`
-	Models             []string                            `json:"models"`
-	ModelsByGroup      map[string][]string                 `json:"models_by_group"`
-	Channels           []channelStatusProbeChannelResponse `json:"channels"`
+	CostSource         string                                   `json:"cost_source"`
+	CostRevision       int64                                    `json:"cost_revision"`
+	CostProcessedAt    int64                                    `json:"cost_processed_at"`
+	CostProjection     service.ChannelMonitorReliableCostStatus `json:"cost_projection"`
+	ServerNow          int64                                    `json:"server_now"`
+	ScanIntervalSecond int                                      `json:"scan_interval_seconds"`
+	Summary            map[string]int                           `json:"summary"`
+	Groups             []string                                 `json:"groups"`
+	Models             []string                                 `json:"models"`
+	ModelsByGroup      map[string][]string                      `json:"models_by_group"`
+	Channels           []channelStatusProbeChannelResponse      `json:"channels"`
 }
 
 type channelStatusProbeConfigRequest struct {
@@ -873,8 +875,9 @@ func buildChannelStatusProbeOverview(
 		ModelsByGroup: modelsByGroup, Channels: items,
 	}
 	if costSource.current != nil {
-		response.CostSource = "redis_daily"
+		response.CostSource = costSource.current.Source
 		response.CostRevision, response.CostProcessedAt = costSource.current.Revision, costSource.current.ProcessedAt
+		response.CostProjection = costSource.current.Projection
 	}
 	return response, nil
 }

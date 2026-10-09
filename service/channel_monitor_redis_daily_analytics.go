@@ -25,6 +25,7 @@ type ChannelMonitorRedisDailySuccessAnalyticsRow struct {
 }
 
 type ChannelMonitorRedisDailySuccessAnalyticsView struct {
+	Source          string
 	Revision        int64
 	CoveragePartial bool
 	Facts           []ChannelMonitorRedisDailySuccessAnalyticsRow
@@ -65,6 +66,7 @@ func channelMonitorRedisDailySuccessAnalyticsFromView(
 	daily ChannelMonitorRedisDailySuccessView,
 ) (ChannelMonitorRedisDailySuccessAnalyticsView, error) {
 	view := ChannelMonitorRedisDailySuccessAnalyticsView{
+		Source:          daily.Source,
 		DayStart:        daily.DayStart,
 		Revision:        daily.Revision,
 		CoveragePartial: daily.CoveragePartial,

@@ -25,24 +25,19 @@ func QueryChannelMonitorRedisDailyCostTotals(ctx context.Context, dayStart int64
 }
 
 func queryChannelMonitorRedisDailyCosts(ctx context.Context, dayStart int64, summaryOnly bool) (ChannelMonitorRedisSharedDailyCostView, error) {
-	projection, err := NewChannelMonitorRedisSharedProjection()
-	if err != nil {
-		return ChannelMonitorRedisSharedDailyCostView{}, err
-	}
-	if projection == nil || projection.client == nil {
-		return ChannelMonitorRedisSharedDailyCostView{}, ErrChannelMonitorRedisSharedProjectionUnavailable
+	client := common.RedisMonitorReadClient()
+	if !common.RedisEnabled {
+		client = nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	limits := normalizeChannelMonitorRedisSharedProjectionLimits(projection.limits)
-	opCtx, cancel := context.WithTimeout(ctx, channelMonitorRedisSharedOperationTimeout)
-	defer cancel()
+	limits := channelMonitorRedisSharedProjectionLimitsFromEnv()
 	patterns := []string{"*"}
 	if summaryOnly {
 		patterns = []string{"meta:*", "global:*", "channel:*"}
 	}
-	values, err := readChannelMonitorRedisDailyHash(opCtx, projection.client, ChannelMonitorRedisCostDayKey(dayStart), patterns, limits.MaxHashFields)
+	values, err := readChannelMonitorDailyHashWithRecovery(ctx, client, "cost", dayStart, patterns, limits.MaxHashFields)
 	if err != nil {
 		return ChannelMonitorRedisSharedDailyCostView{}, err
 	}
@@ -50,6 +45,7 @@ func queryChannelMonitorRedisDailyCosts(ctx context.Context, dayStart int64, sum
 		return ChannelMonitorRedisSharedDailyCostView{}, ErrChannelMonitorRedisSharedProjectionUnavailable
 	}
 	view := ChannelMonitorRedisSharedDailyCostView{
+		Source:       channelMonitorDailyReadSource(values),
 		DayStart:     dayStart,
 		Revision:     parseDailySuccessInt64(values["meta:revision"]),
 		ProcessedAt:  parseDailySuccessInt64(values["meta:processed_at"]),
@@ -59,13 +55,22 @@ func queryChannelMonitorRedisDailyCosts(ctx context.Context, dayStart int64, sum
 		Groups:       make(map[string]ChannelMonitorRedisSharedAggregate),
 		APIKeys:      make(map[int]ChannelMonitorRedisSharedAggregate),
 	}
-	status, err := projection.client.Get(opCtx, channelMonitorReliableCostStatusKey).Bytes()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return ChannelMonitorRedisSharedDailyCostView{}, err
-	}
-	if len(status) > 0 {
-		if err := common.Unmarshal(status, &view.Projection); err != nil {
+	if view.Source == "database_daily" {
+		view.Projection = ChannelMonitorReliableCostStatus{CheckedAt: view.ProcessedAt, Pending: true, Failed: true}
+	} else {
+		if client == nil {
+			client = common.RedisMonitorConsumerClient()
+		}
+		opCtx, cancel := context.WithTimeout(ctx, channelMonitorRedisSharedOperationTimeout)
+		defer cancel()
+		status, err := client.Get(opCtx, channelMonitorReliableCostStatusKey).Bytes()
+		if err != nil && !errors.Is(err, redis.Nil) {
 			return ChannelMonitorRedisSharedDailyCostView{}, err
+		}
+		if len(status) > 0 {
+			if err := common.Unmarshal(status, &view.Projection); err != nil {
+				return ChannelMonitorRedisSharedDailyCostView{}, err
+			}
 		}
 	}
 	entries := make(map[string]map[string]string)

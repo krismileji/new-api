@@ -686,12 +686,18 @@ func GetChannelMonitorOverview(c *gin.Context) {
 	}
 
 	realtimeMetadata := channelMonitorRealtimeMetadataWithContext(c.Request.Context(), 0)
+	if todayCostSnapshot.Projection.Failed {
+		realtimeMetadata.RealtimeDegraded = true
+		realtimeMetadata.DegradedReasons = append(realtimeMetadata.DegradedReasons, "cost_projection_unavailable")
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data": gin.H{
 			"channels": items,
 			"today_cost_summary": gin.H{
+				"source":                         todayCostSnapshot.Source,
+				"data_cutoff_at":                 todayCostSnapshot.DataCutoffAt,
 				"today_cost_cny":                 channelMonitorCostCNY(todayCostTotal.CostNanoCNY),
 				"today_probe_cost_cny":           channelMonitorCostCNY(todayCostTotal.ProbeCostNanoCNY),
 				"today_group_probe_cost_cny":     channelMonitorCostCNY(todayCostTotal.GroupProbeCostNanoCNY),

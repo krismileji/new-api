@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/go-redis/redis/v8"
 )
 
@@ -16,6 +17,7 @@ type ChannelMonitorRedisDailySuccessEntry struct {
 }
 
 type ChannelMonitorRedisDailySuccessView struct {
+	Source          string
 	DayStart        int64
 	Revision        int64
 	CoveragePartial bool
@@ -32,11 +34,11 @@ func QueryChannelMonitorRedisDailySuccess(
 	dayStart int64,
 	patterns []string,
 ) (ChannelMonitorRedisDailySuccessView, error) {
-	projection, err := NewChannelMonitorRedisSharedProjection()
-	if err != nil {
-		return ChannelMonitorRedisDailySuccessView{}, err
+	client := common.RedisMonitorReadClient()
+	if !common.RedisEnabled {
+		client = nil
 	}
-	return queryChannelMonitorRedisDailySuccessWithClient(ctx, projection.client, dayStart, patterns)
+	return queryChannelMonitorRedisDailySuccessWithClient(ctx, client, dayStart, patterns)
 }
 
 func queryChannelMonitorRedisDailySuccessWithClient(
@@ -45,22 +47,17 @@ func queryChannelMonitorRedisDailySuccessWithClient(
 	dayStart int64,
 	patterns []string,
 ) (ChannelMonitorRedisDailySuccessView, error) {
-	if client == nil {
-		return ChannelMonitorRedisDailySuccessView{}, ErrChannelMonitorRedisSharedProjectionUnavailable
-	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	limits := defaultChannelMonitorRedisSharedProjectionLimits()
-	opCtx, cancel := context.WithTimeout(ctx, channelMonitorRedisSharedOperationTimeout)
-	defer cancel()
-	values, err := readChannelMonitorRedisDailyHash(opCtx, client, ChannelMonitorRedisSuccessDayKey(dayStart), patterns, limits.MaxHashFields)
+	values, err := readChannelMonitorDailyHashWithRecovery(ctx, client, "success", dayStart, patterns, limits.MaxHashFields)
 	if err != nil {
 		return ChannelMonitorRedisDailySuccessView{}, err
 	}
 
 	entries := make(map[string]*ChannelMonitorRedisDailySuccessEntry)
-	view := ChannelMonitorRedisDailySuccessView{DayStart: dayStart}
+	view := ChannelMonitorRedisDailySuccessView{DayStart: dayStart, Source: channelMonitorDailyReadSource(values)}
 	for field, raw := range values {
 		parts := strings.SplitN(field, ":", 3)
 		if len(parts) < 2 {

@@ -111,9 +111,13 @@ func updateChannelMonitorAggregationStateWithTx(
 		Updates(updates).Error
 }
 
-func GetChannelMonitorAggregationCoverage(ctx context.Context) (ChannelMonitorAggregationCoverage, error) {
+func GetChannelMonitorAggregationCoverage(ctx context.Context, databases ...*gorm.DB) (ChannelMonitorAggregationCoverage, error) {
+	db := DB
+	if len(databases) > 0 {
+		db = databases[0]
+	}
 	var state ChannelMonitorAggregationState
-	err := DB.WithContext(ctx).
+	err := db.WithContext(ctx).
 		Select(
 			"covered_from", "completed_through", "revision",
 			"last_published_start", "last_published_end", "last_published_revision",
