@@ -14,6 +14,8 @@ type ChannelMonitorProfitBlock struct {
 	From, To  int64
 	ChannelID int
 	Reason    string
+	// Nil when the queue cannot identify a cost's user, key, or model scope.
+	CostEvent *model.ChannelDailyCostDelta
 }
 
 // Read the producer queue before opening the ledger snapshot. A worker may
@@ -44,12 +46,13 @@ func ReadChannelMonitorProfitCostQueue(ctx context.Context) []ChannelMonitorProf
 		for _, message := range messages {
 			payload, ok := message.Values[channelDailyCostRedisFieldPayload].(string)
 			var event channelDailyCostOutboxPayload
-			if !ok || len(payload) > channelDailyCostOutboxPayloadMaxLength || common.UnmarshalJsonStr(payload, &event) != nil || event.ChannelId <= 0 || event.OccurredAt <= 0 {
+			if !ok || len(payload) > channelDailyCostOutboxPayloadMaxLength || common.UnmarshalJsonStr(payload, &event) != nil || event.ChannelId <= 0 || event.OccurredAt <= 0 || event.UserId < 0 || event.APIKeyId < 0 {
 				blocks = append(blocks, ChannelMonitorProfitBlock{Reason: reason})
 				continue
 			}
 			day := model.ChannelDailyCostDayStart(event.OccurredAt)
-			blocks = append(blocks, ChannelMonitorProfitBlock{From: day, To: day + 86400, ChannelID: event.ChannelId, Reason: reason})
+			delta := event.delta("")
+			blocks = append(blocks, ChannelMonitorProfitBlock{From: day, To: day + 86400, ChannelID: event.ChannelId, Reason: reason, CostEvent: &delta})
 		}
 		if stream == ChannelDailyCostRedisStream {
 			pending, err := client.XPendingExt(ctx, &redis.XPendingExtArgs{Stream: stream, Group: ChannelDailyCostRedisConsumerGroup, Start: "-", End: "+", Count: 4097}).Result()

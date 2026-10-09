@@ -238,6 +238,10 @@ func channelMonitorAnalyticsPage(ctx context.Context, query channelMonitorAnalyt
 }
 
 func queryChannelMonitorCurrentCostAnalytics(ctx context.Context, query channelMonitorAnalyticsQuery) (channelMonitorAnalyticsResponse, error) {
+	// Inspect each handoff before reading the live snapshot, so delivery cannot
+	// move a pending cost past both queue checks without entering that snapshot.
+	queue := service.ReadChannelMonitorProfitCostQueue(ctx)
+	pending, pendingErr := channelMonitorAnalyticsPendingCosts(ctx, model.DB, query)
 	view, err := service.QueryChannelMonitorRedisDailyCosts(ctx, query.From)
 	if err != nil {
 		return channelMonitorAnalyticsResponse{}, err
@@ -307,10 +311,24 @@ func queryChannelMonitorCurrentCostAnalytics(ctx context.Context, query channelM
 	}
 	through := max(query.From, view.DataCutoffAt)
 	var reasons []string
-	if view.Projection.Failed || view.Projection.CheckedAt == 0 || common.GetTimestamp()-view.Projection.CheckedAt > 10 {
+	if pendingErr != nil || view.Projection.Failed || view.Projection.CheckedAt == 0 || common.GetTimestamp()-view.Projection.CheckedAt > 10 {
 		reasons = append(reasons, "cost_projection_unavailable")
-	} else if view.Projection.Pending {
-		reasons = append(reasons, "cost_projection_pending")
+	} else {
+		for _, block := range append(queue, pending...) {
+			if !channelMonitorAnalyticsCostBlockMatch(query, block) {
+				continue
+			}
+			reason := "cost_projection_unavailable"
+			switch block.Reason {
+			case "cost_projection_pending":
+				reason = "cost_projection_pending"
+			case "profit_cost_unresolved":
+				reason = "cost_detail_unavailable"
+			}
+			if !slices.Contains(reasons, reason) {
+				reasons = append(reasons, reason)
+			}
+		}
 	}
 	if !channelTotals && view.AttributionPartial {
 		reasons = append(reasons, "cost_attribution_incomplete")

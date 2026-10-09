@@ -76,12 +76,12 @@ import { cn } from '@/lib/utils'
 import {
   fetchChannelMonitorUpstreamBalance,
   fetchChannelMonitorUpstreamRatio,
-  getChannelMonitorCostOverview,
   getChannelModelDetectionOverview,
   getChannelMonitorTodaySuccess,
   updateChannelMonitorSmartScheduleChannelConfig,
   updateMonitoredChannelStatus,
 } from './api'
+import { useChannelLimitGroups } from './api-limit-groups'
 import { ChannelGroupMonitorSettingsSheet } from './components/channel-group-monitor-settings-sheet'
 import { ChannelMonitorAnalyticsDialog } from './components/channel-monitor-analytics-dialog'
 import { ChannelMonitorChannelView } from './components/channel-monitor-channel-view'
@@ -110,7 +110,6 @@ import { ChannelMonitorSmartScheduleBoard } from './components/channel-monitor-s
 import { ChannelMonitorTodaySuccessCard } from './components/channel-monitor-today-success-card'
 import { ChannelMonitorToolbar } from './components/channel-monitor-toolbar'
 import { ChannelMonitorVariableGroupsDialog } from './components/channel-monitor-variable-groups-dialog'
-import { useChannelLimitGroups } from './api-limit-groups'
 import { ChannelMonitorViewTabs } from './components/channel-monitor-view-tabs'
 import { ChannelPassiveMonitorPanel } from './components/channel-passive-monitor-panel'
 import { ChannelProbePolicyAction } from './components/channel-probe-policy-dialog'
@@ -126,7 +125,6 @@ import { useChannelMonitorTodayProfit } from './hooks/use-channel-monitor-profit
 import { DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES } from './lib/email-notification'
 import { handleChannelMonitorMutationError } from './lib/error'
 import {
-  formatChannelMonitorCost,
   formatChannelMonitorResolutionRate,
   formatMonitorRatio,
 } from './lib/format'
@@ -591,13 +589,6 @@ function ChannelMonitorContent() {
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
   })
-  const costQuery = useQuery({
-    queryKey: ['channel-monitor', 'cost', 'summary', 2],
-    queryFn: () => getChannelMonitorCostOverview(2, undefined, 1, true),
-    staleTime: 0,
-    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
-    refetchOnMount: 'always',
-  })
   const todaySuccessQuery = useQuery({
     queryKey: ['channel-monitor', 'success', 'today'],
     queryFn: () => getChannelMonitorTodaySuccess(),
@@ -1046,13 +1037,11 @@ function ChannelMonitorContent() {
     ? performanceModelFilter
     : (performanceModelOptions[0]?.value ?? '')
 
-  const costOverview = costQuery.data?.data
   const profitSummary = profitOverview?.scope_summary
   const todaySettledCount = profitSummary?.settled_count ?? 0
   const todayUnresolvedCount = profitSummary?.unresolved_count ?? 0
   const pageRealtimeMetadata = mergeChannelMonitorRealtimeMetadata([
     overview,
-    costOverview,
     todaySuccessQuery.data?.data,
     performanceQueryActive ? performanceQuery.data?.data : undefined,
     smartScheduleSummaryResult,
@@ -1072,7 +1061,7 @@ function ChannelMonitorContent() {
   let costSecondaryDescription = '成本、扣费与利润使用同一份核对结果'
   if (profitSummary) {
     costDescription = `业务 ${formatProfitMoney(todayBusinessCost)} · 探测 ${formatProfitMoney(todayProbeCost)}（分组 ${formatProfitMoney(todayGroupProbeCost)}） · 模型检测 ${formatProfitMoney(todayModelDetectionCost)}`
-    costSecondaryDescription = `昨日 ${formatChannelMonitorCost(costOverview?.yesterday_cost_cny)} · 今日解析率 ${formatChannelMonitorResolutionRate(todaySettledCount, todayUnresolvedCount)} · 未解析 ${todayUnresolvedCount}`
+    costSecondaryDescription = `今日解析率 ${formatChannelMonitorResolutionRate(todaySettledCount, todayUnresolvedCount)} · 未解析 ${todayUnresolvedCount}`
   }
   const enabledChannelCount = channels.filter(
     (channel) => channel.status === CHANNEL_STATUS.ENABLED
@@ -1703,7 +1692,6 @@ function ChannelMonitorContent() {
             refreshDisabled={
               query.isFetching ||
               performanceQuery.isFetching ||
-              costQuery.isFetching ||
               todaySuccessQuery.isFetching ||
               smartScheduleSummaryQuery.isFetching ||
               (view === 'smart-schedule' && smartScheduleDetailQuery.isFetching)

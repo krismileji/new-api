@@ -255,7 +255,7 @@ describe('channel monitor query policy', () => {
     )
   })
 
-  test('manual refresh only refetches the active view queries', async () => {
+  test('manual refresh skips historical cost summaries while refreshing active view queries', async () => {
     const queryKeys = [
       ['channel-monitor'],
       ['channel-monitor-performance', 'manual', 15],
@@ -285,7 +285,7 @@ describe('channel monitor query policy', () => {
 
     await refetchChannelMonitorQueries(queryClient, { view: 'groups' })
 
-    assert.equal(requestCount, queryKeys.length + 4)
+    assert.equal(requestCount, queryKeys.length + 3)
     unsubscribers.forEach((unsubscribe) => unsubscribe())
   })
 
@@ -352,7 +352,7 @@ describe('channel monitor query policy', () => {
       { name: 'health', queryKey: ['channel-monitor', 'health'] },
       { name: 'concurrency', queryKey: ['channel-monitor', 'concurrency'] },
       {
-        name: 'today-cost',
+        name: 'historical-cost-summary',
         queryKey: ['channel-monitor', 'cost', 'summary', 2],
       },
       {
@@ -399,7 +399,7 @@ describe('channel monitor query policy', () => {
         overview: 1,
         health: 1,
         concurrency: 1,
-        'today-cost': 1,
+        'historical-cost-summary': 0,
         'open-analytics': 1,
       })
 
@@ -418,7 +418,7 @@ describe('channel monitor query policy', () => {
         overview: 1,
         health: 1,
         concurrency: 1,
-        'today-cost': 1,
+        'historical-cost-summary': 0,
         'open-analytics': 1,
       })
     } finally {

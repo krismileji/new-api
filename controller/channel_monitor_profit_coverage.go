@@ -33,24 +33,11 @@ func channelMonitorProfitCoverage(ctx context.Context, db *gorm.DB, query channe
 	for _, gap := range gaps {
 		blocks = append(blocks, service.ChannelMonitorProfitBlock{From: gap.From, To: gap.To, ChannelID: gap.ChannelID, Reason: "income_recording_gap"})
 	}
-	// Modulo is supported by all three SQL dialects and keeps the exact
-	// Beijing day, unlike a MIN/MAX interval spanning several pending days.
-	const daySQL = "occurred_at - ((occurred_at + 28800) % 86400)"
-	var pending []struct {
-		ChannelID int
-		DayStart  int64
-	}
-	backlog := db.WithContext(ctx).Model(&model.ChannelDailyCostOutbox{}).
-		Where("processed_at = 0 AND occurred_at >= ? AND occurred_at < ?", query.From, query.To)
-	if query.Channel > 0 {
-		backlog = backlog.Where("channel_id = ?", query.Channel)
-	}
-	if err := backlog.Select("channel_id, " + daySQL + " AS day_start").Group("channel_id, " + daySQL).Scan(&pending).Error; err != nil {
+	pending, err := channelMonitorAnalyticsPendingCosts(ctx, db, query)
+	if err != nil {
 		return nil, "", err
 	}
-	for _, row := range pending {
-		blocks = append(blocks, service.ChannelMonitorProfitBlock{From: row.DayStart, To: row.DayStart + 86400, ChannelID: row.ChannelID, Reason: "cost_projection_pending"})
-	}
+	blocks = append(blocks, pending...)
 	if (query.GroupBy != "channel" && query.GroupBy != "day") || query.hasCostDetailFilter() {
 		gaps, err := channelMonitorHistoricalCostDetailGaps(ctx, db, query)
 		if err != nil {
@@ -68,7 +55,7 @@ func channelMonitorProfitCoverage(ctx context.Context, db *gorm.DB, query channe
 		if block.Reason == "profit_history_expired" && block.To == 0 || block.Reason == "income_history_unavailable" && block.To == 0 {
 			continue
 		}
-		if block.To > 0 && block.To <= query.From || block.From >= query.To || query.Channel > 0 && block.ChannelID > 0 && query.Channel != block.ChannelID {
+		if !channelMonitorAnalyticsCostBlockMatch(query, block) {
 			continue
 		}
 		if !slices.Contains(reasons, block.Reason) {
