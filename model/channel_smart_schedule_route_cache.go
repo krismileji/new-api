@@ -32,6 +32,7 @@ type channelSmartScheduleCachedRoute struct {
 	temporaryTrafficSince           int64
 	stabilityState                  string
 	stabilitySince                  int64
+	degradedRank                    *channelSmartScheduleDegradedRank
 	explorationMaxPromptTokens      int
 	stabilityReleaseMaxPromptTokens int
 }
@@ -227,6 +228,8 @@ func buildChannelSmartScheduleRouteCache(abilities []*Ability, channels map[int]
 				"temporary_traffic_kind", "temporary_traffic_since", "stability_state", "stability_since",
 				"exploration_max_prompt_tokens",
 				"stability_release_max_prompt_tokens",
+				"last_schedule_score", "last_schedule_score_at", "rolling_stability_score", "rolling_stability_updated_at", "stability_saved_priority",
+				"stability_saved_weight", "base_priority", "base_weight",
 			).
 			Where("participation_set = ? AND excluded = ?", true, false).
 			Find(&states).Error; err != nil {
@@ -305,6 +308,7 @@ func buildChannelSmartScheduleRouteCacheWithStates(
 			participates:          state.Participates(),
 			temporaryTrafficSince: state.TemporaryTrafficSince,
 			stabilitySince:        state.StabilitySince,
+			degradedRank:          channelSmartScheduleDegradedRankFromState(state),
 			trafficPausedUntil: groupPauseUntilByKey[channelSmartScheduleRouteKey(
 				ability.ChannelId, ability.Group, ability.Model,
 			)],
@@ -374,6 +378,10 @@ func getRandomSatisfiedChannelByAbilityWithTrafficPolicy(
 		)
 	}
 	if len(routes) == 0 {
+		if !options.smartScheduleDegradedFallback && trafficPolicy.managesAnyPool(group, channelSmartScheduleRouteModelNames(modelName)) {
+			options.smartScheduleDegradedFallback = true
+			return getRandomSatisfiedChannelByAbilityWithTrafficPolicy(group, modelName, retry, requestPath, options, trafficPolicy)
+		}
 		return nil, true, nil
 	}
 
@@ -469,6 +477,7 @@ func prepareChannelSmartScheduleCachedRoutes(
 	allowDegradedFallback bool,
 	managedPool bool,
 ) []channelSmartScheduleCachedRoute {
+	allowDegradedFallback = allowDegradedFallback || options.smartScheduleDegradedFallback
 	routes = filterChannelSmartScheduleParticipatingCachedRoutes(
 		routes, group, selectionModelName, trafficPolicy,
 	)
@@ -488,7 +497,11 @@ func prepareChannelSmartScheduleCachedRoutes(
 	routes = filterChannelSmartScheduleStableCachedRoutes(
 		routes, group, selectionModelName, trafficPolicy, allowDegradedFallback,
 	)
-	return filterChannelSmartScheduleRequestLimits(routes, options)
+	routes = filterChannelSmartScheduleRequestLimits(routes, options)
+	if managedPool {
+		routes = bestChannelSmartScheduleDegradedRoute(routes, common.GetTimestamp())
+	}
+	return routes
 }
 
 func filterChannelSmartScheduleCachedRoutes(routes []channelSmartScheduleCachedRoute, requestPath string, requestModel string, options ChannelSelectionOptions) []channelSmartScheduleCachedRoute {

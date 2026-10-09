@@ -35,12 +35,19 @@ func getRandomSatisfiedChannelWithoutCacheWithTrafficPolicy(
 	}
 
 	matchingModelName := ratio_setting.FormatMatchingModelName(modelName)
-	if matchingModelName == "" || matchingModelName == modelName {
-		return nil, nil
+	if matchingModelName != "" && matchingModelName != modelName {
+		channel, err = getChannelFromDatabasePoolWithTrafficPolicy(
+			group, matchingModelName, modelName, retry, requestPath, options, trafficPolicy,
+		)
+		if err != nil || channel != nil {
+			return channel, err
+		}
 	}
-	return getChannelFromDatabasePoolWithTrafficPolicy(
-		group, matchingModelName, modelName, retry, requestPath, options, trafficPolicy,
-	)
+	if !options.smartScheduleDegradedFallback && trafficPolicy.managesAnyPool(group, channelSmartScheduleRouteModelNames(modelName)) {
+		options.smartScheduleDegradedFallback = true
+		return getRandomSatisfiedChannelWithoutCacheWithTrafficPolicy(group, modelName, retry, requestPath, options, trafficPolicy)
+	}
+	return nil, nil
 }
 
 func getChannelFromDatabasePool(
@@ -126,8 +133,9 @@ func getChannelFromDatabasePoolWithTrafficPolicy(
 	if len(available) == 0 {
 		return nil, nil
 	}
+	allowDegradedFallback := retry > 0 || options.smartScheduleDegradedFallback
 	routes, logicalRuntime, err := channelSmartScheduleDatabaseRoutes(
-		available, channelById, group, poolModelName, trafficPolicy, retry > 0,
+		available, channelById, group, poolModelName, trafficPolicy, allowDegradedFallback,
 	)
 	if err != nil {
 		return nil, err
@@ -136,9 +144,12 @@ func getChannelFromDatabasePoolWithTrafficPolicy(
 		routes, group, poolModelName, trafficPolicy,
 	)
 	routes = filterChannelSmartScheduleStableCachedRoutes(
-		routes, group, poolModelName, trafficPolicy, retry > 0,
+		routes, group, poolModelName, trafficPolicy, allowDegradedFallback,
 	)
 	routes = filterChannelSmartScheduleRequestLimits(routes, options)
+	if trafficPolicy.managesPool(group, poolModelName) {
+		routes = bestChannelSmartScheduleDegradedRoute(routes, common.GetTimestamp())
+	}
 	if len(routes) == 0 {
 		return nil, nil
 	}

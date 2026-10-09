@@ -23,9 +23,12 @@ type ChannelSmartScheduleRouteState struct {
 	Excluded         bool   `json:"excluded"`
 	Revision         int64  `json:"-" gorm:"bigint"`
 
-	LastScheduleStatus       string                               `json:"last_schedule_status" gorm:"type:varchar(16);index"`
-	LastScheduleError        string                               `json:"last_schedule_error" gorm:"type:varchar(255)"`
-	LastScheduleScore        *float64                             `json:"last_schedule_score"`
+	LastScheduleStatus string   `json:"last_schedule_status" gorm:"type:varchar(16);index"`
+	LastScheduleError  string   `json:"last_schedule_error" gorm:"type:varchar(255)"`
+	LastScheduleScore  *float64 `json:"last_schedule_score"`
+	// LastScheduleScoreAt changes only when a score is produced, independently
+	// of protection renewals and other updates to LastScheduleTime.
+	LastScheduleScoreAt      int64                                `json:"last_schedule_score_at" gorm:"bigint"`
 	LastSchedulePriority     int64                                `json:"last_schedule_priority" gorm:"bigint"`
 	LastScheduleWeight       uint                                 `json:"last_schedule_weight"`
 	LastScheduleTime         int64                                `json:"last_schedule_time" gorm:"bigint;index"`
@@ -1124,6 +1127,7 @@ func SaveChannelSmartScheduleRoutePrimary(
 		targetState.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
 		targetState.LastScheduleError = "管理员已固定该路由为主渠道"
 		targetState.LastScheduleScore = nil
+		targetState.LastScheduleScoreAt = 0
 		targetState.LastScheduleScoreDetails = ""
 		targetState.LastSchedulePriority = manualPriority
 		targetState.LastScheduleWeight = manualWeight
@@ -1777,7 +1781,7 @@ func protectChannelSmartScheduleRouteOnRuntimeFailure(
 		}
 		state.LastScheduleStatus = ChannelSmartScheduleStatusFailed
 		state.LastScheduleError = reason
-		state.LastScheduleScore = nil
+		// Keep the last valid score for selection when the entire pool degrades.
 		state.LastScheduleScoreDetails = ""
 		state.LastSchedulePriority = degradedPriority
 		state.LastScheduleWeight = degradedWeight
@@ -2061,7 +2065,17 @@ func ApplyChannelSmartScheduleRouteResults(results []ChannelSmartScheduleRouteRe
 				}
 				state.LastScheduleStatus = result.Status
 				state.LastScheduleError = message
-				state.LastScheduleScore = result.Score
+				scoreState := state.StabilityState
+				if result.Stability != nil {
+					scoreState = result.Stability.State
+				}
+				if result.Score != nil || (scoreState != ChannelSmartScheduleStabilityDegraded && scoreState != ChannelSmartScheduleStabilityProbing) {
+					state.LastScheduleScore = result.Score
+					state.LastScheduleScoreAt = 0
+					if result.Score != nil {
+						state.LastScheduleScoreAt = updatedTime
+					}
+				}
 				state.LastScheduleScoreDetails = scoreDetails
 				state.LastSchedulePriority = result.Priority
 				state.LastScheduleWeight = result.Weight
@@ -2401,6 +2415,7 @@ func ClearChannelSmartScheduleRouteExploration(channelId int, group string, mode
 		state.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
 		state.LastScheduleError = "管理员已手动解除探索流量"
 		state.LastScheduleScore = nil
+		state.LastScheduleScoreAt = 0
 		state.LastScheduleScoreDetails = ""
 		state.LastSchedulePriority = result.Priority
 		state.LastScheduleWeight = result.Weight
@@ -2462,6 +2477,7 @@ func clearChannelSmartScheduleRouteStabilityTx(
 	state.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
 	state.LastScheduleError = reason
 	state.LastScheduleScore = nil
+	state.LastScheduleScoreAt = 0
 	state.LastScheduleScoreDetails = ""
 	state.LastSchedulePriority = result.Priority
 	state.LastScheduleWeight = result.Weight

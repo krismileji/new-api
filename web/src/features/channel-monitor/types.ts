@@ -1011,6 +1011,7 @@ export type ChannelMonitorSmartScheduleRouteState = {
   last_schedule_status: '' | 'succeeded' | 'skipped' | 'failed'
   last_schedule_error: string
   last_schedule_score: number | null
+  last_schedule_score_at?: number
   last_schedule_score_details?: ChannelMonitorSmartScheduleScoreDetails | null
   last_schedule_priority: number
   last_schedule_weight: number
@@ -1102,6 +1103,8 @@ export type ChannelMonitorSmartScheduleRoute = {
   effective_priority?: number
   effective_weight?: number
   effective_state?: ChannelMonitorSmartScheduleRouteState | null
+  /** Selected by the server for an initial request when eligible routes are all degraded. */
+  degraded_fallback?: boolean
   routing_candidate_channel_id?: number
   logical_channel_id?: number
   logical_revision?: number

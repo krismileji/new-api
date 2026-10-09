@@ -88,15 +88,20 @@ export function ChannelMonitorSmartScheduleRouteState(
   }
   if (runtimeState.stability_state === 'degraded') {
     return (
-      <Badge
-        render={<button type='button' />}
-        variant='destructive'
-        className='cursor-pointer'
-        onClick={props.onProtectedStatusClick}
-        aria-label={`解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`}
-      >
-        稳定性降级
-      </Badge>
+      <span className='flex flex-wrap gap-1'>
+        <Badge
+          render={<button type='button' />}
+          variant='destructive'
+          className='cursor-pointer'
+          onClick={props.onProtectedStatusClick}
+          aria-label={`解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`}
+        >
+          稳定性降级
+        </Badge>
+        {route.degraded_fallback === true ? (
+          <Badge variant='warning'>托底中</Badge>
+        ) : null}
+      </span>
     )
   }
   if (runtimeState.stability_state === 'probing') {

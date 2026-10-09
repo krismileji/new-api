@@ -25,6 +25,7 @@ type ChannelSmartScheduleRouteRuntimeView struct {
 	Enabled              *bool
 	ChannelStatus        *int
 	RateLimitCoolingDown *bool
+	DegradedFallback     bool
 }
 
 func GetChannelSmartScheduleRouteRuntimeViewsWithContext(
@@ -85,6 +86,7 @@ func GetChannelSmartScheduleRouteRuntimeViewsWithContext(
 			channelId: route.ChannelId, priority: route.Priority, weight: route.Weight,
 			participates: route.State.Participates(), trafficPausedUntil: route.TrafficPausedUntil,
 			stabilityState: route.State.StabilityState, stabilitySince: route.State.StabilitySince,
+			degradedRank:         channelSmartScheduleDegradedRankFromState(route.State),
 			temporaryTrafficKind: route.State.TemporaryTrafficKind, temporaryTrafficSince: route.State.TemporaryTrafficSince,
 			explorationMaxPromptTokens:      route.State.ExplorationMaxPromptTokens,
 			stabilityReleaseMaxPromptTokens: route.State.StabilityReleaseMaxPromptTokens,
@@ -142,27 +144,14 @@ func applyChannelSmartScheduleCachedRuntimeViews(
 			}
 			available = append(available, cached)
 		}
-		if len(coolingIDs) > 0 {
-			outsideCooldown := make([]channelSmartScheduleCachedRoute, 0, len(available))
-			for _, route := range available {
-				if !coolingIDs[route.channelId] {
-					outsideCooldown = append(outsideCooldown, route)
-				}
-			}
-			if managed {
-				outsideCooldown = coalesceChannelSmartScheduleLogicalRoutesWithRouting(outsideCooldown, runtime, pool.group, pool.model, routings)
-			}
-			outsideCooldown = filterChannelSmartScheduleParticipatingCachedRoutes(outsideCooldown, pool.group, pool.model, policy)
-			outsideCooldown = filterChannelSmartScheduleStableCachedRoutes(outsideCooldown, pool.group, pool.model, policy, false)
-			if len(outsideCooldown) > 0 {
-				available = outsideCooldown
-			} else if managed {
-				available = coalesceChannelSmartScheduleLogicalRoutesWithRouting(available, runtime, pool.group, pool.model, routings)
-			}
-		} else if managed {
-			available = coalesceChannelSmartScheduleLogicalRoutesWithRouting(available, runtime, pool.group, pool.model, routings)
+		// Keep every candidate's shared state visible, including protected and
+		// cooling members. Selection below uses the same cooldown-first fallback
+		// order as a new request, without changing the published P/W values.
+		poolCandidates := available
+		if managed {
+			poolCandidates = coalesceChannelSmartScheduleLogicalRoutesWithRouting(available, runtime, pool.group, pool.model, routings, true)
 		}
-		for _, candidate := range available {
+		for _, candidate := range poolCandidates {
 			if len(candidate.logicalMembers) == 0 {
 				candidates[channelSmartScheduleRouteKey(candidate.channelId, pool.group, pool.model)] = candidate
 				continue
@@ -170,6 +159,49 @@ func applyChannelSmartScheduleCachedRuntimeViews(
 			for _, member := range candidate.logicalMembers {
 				candidates[channelSmartScheduleRouteKey(member.channelID, pool.group, pool.model)] = candidate
 			}
+		}
+		eligible := channelSmartScheduleMonitorEligibleCandidates(available, runtime, pool, routings, policy)
+		if len(coolingIDs) > 0 {
+			outsideCooldown := make([]channelSmartScheduleCachedRoute, 0, len(available))
+			for _, route := range available {
+				if !coolingIDs[route.channelId] {
+					outsideCooldown = append(outsideCooldown, route)
+				}
+			}
+			outsideCooldown = channelSmartScheduleMonitorEligibleCandidates(outsideCooldown, runtime, pool, routings, policy)
+			if len(outsideCooldown) > 0 {
+				eligible = outsideCooldown
+			}
+		}
+		for _, candidate := range eligible {
+			if len(candidate.logicalMembers) == 0 {
+				candidates[channelSmartScheduleRouteKey(candidate.channelId, pool.group, pool.model)] = candidate
+				continue
+			}
+			for _, member := range candidate.logicalMembers {
+				candidates[channelSmartScheduleRouteKey(member.channelID, pool.group, pool.model)] = candidate
+			}
+		}
+		if !managed || len(eligible) == 0 || eligible[0].stabilityState != ChannelSmartScheduleStabilityDegraded {
+			continue
+		}
+		selected := bestChannelSmartScheduleDegradedRoute(eligible, now)[0]
+		memberWeights := selected.logicalMembers
+		if len(memberWeights) == 0 {
+			memberWeights = []channelSmartScheduleLogicalMember{{channelID: selected.channelId, weight: 1}}
+		}
+		hasPositiveWeight := false
+		for _, member := range memberWeights {
+			hasPositiveWeight = hasPositiveWeight || member.weight > 0
+		}
+		for _, member := range memberWeights {
+			if hasPositiveWeight && member.weight == 0 {
+				continue
+			}
+			key := channelSmartScheduleRouteKey(member.channelID, pool.group, pool.model)
+			view := views[key]
+			view.DegradedFallback = true
+			views[key] = view
 		}
 	}
 	for _, row := range routes {
@@ -199,7 +231,13 @@ func applyChannelSmartScheduleCachedRuntimeViews(
 				view.LogicalMemberIds = append(view.LogicalMemberIds, member.channelID)
 				view.LogicalMemberWeights = append(view.LogicalMemberWeights, member.weight)
 			}
-			cached = candidate
+			_, sharedState := routings[channelLogicalSmartScheduleRouteKey{
+				logicalID: candidate.logicalChannelID, revision: candidate.logicalRevision,
+				group: row.Group, model: channelSmartScheduleModelName(row.Model),
+			}]
+			if sharedState || candidate.logicalChannelID == 0 {
+				cached = candidate
+			}
 		}
 		// Historical scores and administrator configuration retain their database
 		// values. Selection-affecting state always comes from the published cache,
@@ -213,6 +251,29 @@ func applyChannelSmartScheduleCachedRuntimeViews(
 		view.State = &state
 		views[key] = view
 	}
+}
+
+// Monitoring projects an initial request without request-specific exclusions
+// or token limits. Keep normal logical members ahead of degraded fallback.
+func channelSmartScheduleMonitorEligibleCandidates(
+	physical []channelSmartScheduleCachedRoute,
+	runtime *LogicalChannelRuntimeSnapshot,
+	pool channelSmartScheduleRoutePool,
+	routings map[channelLogicalSmartScheduleRouteKey]channelLogicalSmartScheduleRouteOverlay,
+	policy *channelSmartScheduleTrafficPolicy,
+) []channelSmartScheduleCachedRoute {
+	if policy == nil || !policy.managesPool(pool.group, pool.model) {
+		return physical
+	}
+	for _, fallback := range []bool{false, true} {
+		candidates := coalesceChannelSmartScheduleLogicalRoutesWithRouting(physical, runtime, pool.group, pool.model, routings, fallback)
+		candidates = filterChannelSmartScheduleParticipatingCachedRoutes(candidates, pool.group, pool.model, policy)
+		candidates = filterChannelSmartScheduleStableCachedRoutes(candidates, pool.group, pool.model, policy, fallback)
+		if len(candidates) > 0 {
+			return candidates
+		}
+	}
+	return nil
 }
 
 // The row inventory, effective fields and version are projected under one lock.
@@ -280,6 +341,12 @@ func GetChannelSmartScheduleMonitorRuntimeSnapshot(ctx context.Context, routes [
 	}
 	applyChannelSmartScheduleCachedRuntimeViews(views, rows, channelSmartScheduleRouteCache,
 		channelsIDM, logicalChannelRuntimeCache, channelLogicalSmartScheduleRoutingCache, policy, cooldownOptions...)
+	if status.ProtectionMode {
+		for key, view := range views {
+			view.DegradedFallback = false
+			views[key] = view
+		}
+	}
 	return rows, views, status, nil
 }
 

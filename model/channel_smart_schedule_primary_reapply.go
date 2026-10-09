@@ -238,6 +238,7 @@ func reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(
 		primaryState.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
 		primaryState.LastScheduleError = "池内渠道能力已变化，固定主渠道已重新置顶"
 		primaryState.LastScheduleScore = nil
+		primaryState.LastScheduleScoreAt = 0
 		primaryState.LastScheduleScoreDetails = ""
 		primaryState.LastSchedulePriority = priority
 		primaryState.LastScheduleWeight = weight

@@ -14,6 +14,9 @@ type ChannelSelectionOptions struct {
 	Filters               []dto.ChannelFilter
 	ObserveRouting        func(ChannelRoutingDecision)
 	RateLimitFallback     bool
+	// Internal second pass after exact and matching model pools have no
+	// non-degraded route. All other request constraints remain in force.
+	smartScheduleDegradedFallback bool
 	// IgnoreSmartScheduleRequestLimits is used only for the fallback pass
 	// after all non-limited candidates have been tried. It never changes the
 	// configured route state or the effective priority and weight.

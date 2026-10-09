@@ -57,8 +57,138 @@ test('逻辑组内一个成员冷却时，仅可用成员分配预计流量', ()
   }
   first.rate_limit_cooldown_until = Date.now() / 1000 + 3600
   const placements = placeChannelMonitorSmartScheduleRoutes([first, second])
-  expect(placements.get(channelMonitorSmartScheduleRouteKey(first))?.estimatedShare).toBe(0)
-  expect(placements.get(channelMonitorSmartScheduleRouteKey(second))?.estimatedShare).toBe(1)
+  expect(
+    placements.get(channelMonitorSmartScheduleRouteKey(first))?.estimatedShare
+  ).toBe(0)
+  expect(
+    placements.get(channelMonitorSmartScheduleRouteKey(second))?.estimatedShare
+  ).toBe(1)
+})
+
+test('全降级时按服务端托底结果展示流量和可调度数量，恢复后回到正常候选', () => {
+  const first = createRoute(1, 'vip', 'model-a', 0, 0)
+  const second = createRoute(2, 'vip', 'model-a', 0, 0)
+  first.state.stability_state = 'degraded'
+  second.state.stability_state = 'degraded'
+  // A visibly higher historical score may have expired. The server chooses
+  // using the published scores and retention, so the UI must not rerank it.
+  first.state.last_schedule_score = 0.95
+  second.state.last_schedule_score = 0.3
+  second.degraded_fallback = true
+  const routes = [first, second]
+  const placements = placeChannelMonitorSmartScheduleRoutes(routes)
+  expect(
+    placements.get(channelMonitorSmartScheduleRouteKey(first))
+      ?.estimatedShare ?? 0
+  ).toBe(0)
+  expect(
+    placements.get(channelMonitorSmartScheduleRouteKey(second))
+  ).toMatchObject({
+    estimatedShare: 1,
+    isDegradedFallback: true,
+    isActualPrimary: true,
+  })
+  const pool = summarizeChannelMonitorSmartSchedulePools(routes)[0]
+  expect(pool).toMatchObject({
+    activeCount: 1,
+    degradedCount: 2,
+    actualPrimaryChannelId: 2,
+  })
+  expect(getChannelMonitorSmartSchedulePoolStatus(pool)).toBe(
+    '稳定性降级 · 托底中'
+  )
+  expect(summarizeChannelMonitorSmartScheduleOverview(routes).activeCount).toBe(
+    1
+  )
+  expect(
+    summarizeChannelMonitorSmartScheduleChannel([second])?.activeCount
+  ).toBe(1)
+
+  first.state.stability_state = ''
+  second.degraded_fallback = false
+  const recovered = placeChannelMonitorSmartScheduleRoutes(routes)
+  expect(
+    recovered.get(channelMonitorSmartScheduleRouteKey(first))?.estimatedShare
+  ).toBe(1)
+  expect(
+    recovered.get(channelMonitorSmartScheduleRouteKey(second))
+      ?.isDegradedFallback
+  ).not.toBe(true)
+})
+
+test('逻辑托底按可用成员权重分配，冷却成员不分流，全冷却时遵守后端托底', () => {
+  const routes = [1, 2, 3].map((id) => createRoute(id, 'vip', 'model-a', 0, 0))
+  for (const route of routes) {
+    route.state.stability_state = 'degraded'
+    route.routing_candidate_channel_id = 1
+    route.logical_member_ids = [1, 2, 3]
+    route.logical_member_weights = [1, 3, 2]
+  }
+  routes[0].degraded_fallback = true
+  routes[1].degraded_fallback = true
+  routes[2].rate_limit_cooldown_until = Date.now() / 1000 + 3600
+  const placements = placeChannelMonitorSmartScheduleRoutes(routes)
+  expect(
+    placements.get(channelMonitorSmartScheduleRouteKey(routes[0]))
+      ?.estimatedShare
+  ).toBe(0.25)
+  expect(
+    placements.get(channelMonitorSmartScheduleRouteKey(routes[1]))
+      ?.estimatedShare
+  ).toBe(0.75)
+  expect(
+    placements.get(channelMonitorSmartScheduleRouteKey(routes[2]))
+  ).toMatchObject({
+    estimatedShare: 0,
+    isActualPrimary: false,
+    isActualTopLayer: false,
+  })
+
+  for (const route of routes) {
+    route.rate_limit_cooldown_until = Date.now() / 1000 + 3600
+    route.degraded_fallback = true
+  }
+  const cooling = placeChannelMonitorSmartScheduleRoutes(routes)
+  expect(
+    cooling.get(channelMonitorSmartScheduleRouteKey(routes[0]))?.estimatedShare
+  ).toBeCloseTo(1 / 6)
+  expect(
+    cooling.get(channelMonitorSmartScheduleRouteKey(routes[1]))?.estimatedShare
+  ).toBe(0.5)
+  expect(
+    cooling.get(channelMonitorSmartScheduleRouteKey(routes[2]))?.estimatedShare
+  ).toBeCloseTo(1 / 3)
+
+  for (const route of routes) route.logical_member_weights = [0, 3, 2]
+  routes[0].degraded_fallback = false
+  const zeroWeight = placeChannelMonitorSmartScheduleRoutes(routes)
+  expect(
+    zeroWeight.get(channelMonitorSmartScheduleRouteKey(routes[0]))
+  ).toMatchObject({
+    estimatedShare: 0,
+    isActualPrimary: false,
+    isActualTopLayer: false,
+  })
+})
+
+test('正常渠道处于冷却时，优先展示未冷却的降级托底渠道承接流量', () => {
+  const cooling = createRoute(1, 'vip', 'model-a', 100, 100)
+  cooling.rate_limit_cooldown_until = Date.now() / 1000 + 3600
+  const fallback = createRoute(2, 'vip', 'model-a', 0, 0)
+  fallback.state.stability_state = 'degraded'
+  fallback.degraded_fallback = true
+  const routes = [cooling, fallback]
+  const placements = placeChannelMonitorSmartScheduleRoutes(routes)
+  expect(
+    placements.get(channelMonitorSmartScheduleRouteKey(cooling))?.estimatedShare
+  ).toBe(0)
+  expect(
+    placements.get(channelMonitorSmartScheduleRouteKey(fallback))
+      ?.estimatedShare
+  ).toBe(1)
+  expect(
+    summarizeChannelMonitorSmartSchedulePools(routes)[0].degradedFallback
+  ).toBe(true)
 })
 
 test('marks a manual smart schedule snapshot stale after a fixed ten minutes', () => {

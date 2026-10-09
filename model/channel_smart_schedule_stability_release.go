@@ -262,7 +262,6 @@ func AdvanceExpiredChannelSmartScheduleDegradedRoutes(
 			state.SamplingCandidate = false
 			state.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
 			state.LastScheduleError = "稳定性冷却已到期，已立即进入小流量试放"
-			state.LastScheduleScore = nil
 			state.LastScheduleScoreDetails = ""
 			state.LastSchedulePriority = 0
 			state.LastScheduleWeight = channelSmartScheduleStabilityReleaseWeight

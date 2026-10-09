@@ -42,6 +42,7 @@ import {
 import { getChannelMonitorSmartScheduleSamplingOrderLabel } from '../lib/smart-schedule-options'
 import {
   channelMonitorSmartScheduleRouteIsBreakEvenFallback,
+  channelMonitorSmartScheduleRouteIsRateLimitCoolingDown,
   channelMonitorSmartScheduleRouteParticipates,
   channelMonitorSmartScheduleRouteRuntimePriority,
   channelMonitorSmartScheduleRouteRuntimeState,
@@ -103,6 +104,19 @@ export function ChannelMonitorSmartScheduleRouteStatus(props: {
         route={props.route}
         onProtectedStatusClick={props.onClearProtection}
       />
+    )
+  }
+  if (props.route.degraded_fallback === true) {
+    return (
+      <div className='flex flex-wrap gap-1'>
+        <ChannelMonitorSmartScheduleRouteState
+          route={props.route}
+          onProtectedStatusClick={props.onClearProtection}
+        />
+        {channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(props.route) ? (
+          <Badge variant='warning'>429 冷却 · 兜底中</Badge>
+        ) : null}
+      </div>
     )
   }
   if ((props.route.rate_limit_bypass_until ?? 0) > Date.now() / 1000) {

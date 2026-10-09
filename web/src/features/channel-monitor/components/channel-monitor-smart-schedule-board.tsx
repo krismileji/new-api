@@ -174,17 +174,25 @@ export function ChannelMonitorSmartScheduleBoard(
   const [rateLimitTarget, setRateLimitTarget] =
     useState<ChannelMonitorSmartScheduleRoute | null>(null)
   const [rateLimitDuration, setRateLimitDuration] = useState('1')
-  const routes = useMemo(
-    () =>
-      filterChannelMonitorSmartScheduleRoutes(
-        props.result?.routes ?? EMPTY_ROUTES,
-        props.result?.enabled === true,
-        props.groupPolicies
-      ),
-    [props.groupPolicies, props.result?.enabled, props.result?.routes]
-  )
-  const routingAvailable = props.result?.route_snapshot?.available === true &&
+  const routingAvailable =
+    props.result?.route_snapshot?.available === true &&
     props.result.route_snapshot.protection_mode !== true
+  const routes = useMemo(() => {
+    const filtered = filterChannelMonitorSmartScheduleRoutes(
+      props.result?.routes ?? EMPTY_ROUTES,
+      props.result?.enabled === true,
+      props.groupPolicies
+    )
+    if (routingAvailable) return filtered
+    return filtered.map((route) =>
+      route.degraded_fallback ? { ...route, degraded_fallback: false } : route
+    )
+  }, [
+    props.groupPolicies,
+    props.result?.enabled,
+    props.result?.routes,
+    routingAvailable,
+  ])
   const placements = useMemo(() => {
     const placed = placeChannelMonitorSmartScheduleRoutes(routes)
     if (!routingAvailable) {

@@ -127,6 +127,7 @@ func coalesceChannelSmartScheduleLogicalRoutesWithRouting(
 			result[index].temporaryTrafficSince = overlay.state.TemporaryTrafficSince
 			result[index].stabilityState = overlay.state.StabilityState
 			result[index].stabilitySince = overlay.state.StabilitySince
+			result[index].degradedRank = channelSmartScheduleDegradedRankFromState(overlay.state)
 			result[index].explorationMaxPromptTokens = overlay.state.ExplorationMaxPromptTokens
 			result[index].stabilityReleaseMaxPromptTokens = overlay.state.StabilityReleaseMaxPromptTokens
 		}
@@ -184,6 +185,7 @@ func channelSmartScheduleDatabaseRoutes(
 			temporaryTrafficSince:           state.TemporaryTrafficSince,
 			stabilityState:                  state.StabilityState,
 			stabilitySince:                  state.StabilitySince,
+			degradedRank:                    channelSmartScheduleDegradedRankFromState(state),
 			explorationMaxPromptTokens:      state.ExplorationMaxPromptTokens,
 			stabilityReleaseMaxPromptTokens: state.StabilityReleaseMaxPromptTokens,
 		})

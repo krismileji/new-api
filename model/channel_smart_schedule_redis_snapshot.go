@@ -252,6 +252,12 @@ func buildChannelSmartScheduleRouteSnapshot(ctx context.Context) (*channelSmartS
 	}
 	snapshot := newChannelSmartScheduleRouteSnapshot(routes, logicalRuntime, logicalRouting)
 	snapshot.Monitor = databaseSnapshot.monitorReadModel
+	for key, overlay := range logicalRouting {
+		snapshot.Monitor.LogicalDegradedRanks = append(snapshot.Monitor.LogicalDegradedRanks, channelLogicalSmartScheduleDegradedRank{
+			LogicalID: key.logicalID, LogicalRevision: key.revision, Group: key.group, Model: key.model,
+			Rank: channelSmartScheduleDegradedRankFromState(overlay.state),
+		})
+	}
 	snapshot.localDirtyGeneration = dirtyGeneration
 	snapshot.localDirtyGenerationCaptured = true
 	return snapshot, nil
@@ -786,6 +792,7 @@ func applyChannelSmartScheduleRouteSnapshot(snapshot *channelSmartScheduleRouteS
 	}
 	routes := decodeChannelSmartScheduleRouteCache(snapshot.Routes)
 	logicalRouting := decodeChannelLogicalSmartScheduleRouting(snapshot.LogicalRouting)
+	restoreChannelSmartScheduleDegradedRanks(routes, logicalRouting, snapshot.Monitor)
 	logicalRuntime := cloneLogicalChannelRuntimeSnapshot(snapshot.LogicalRuntime)
 	index := buildChannelSmartScheduleRuntimeRouteIndex(routes)
 	channelSyncLock.Lock()
@@ -798,6 +805,7 @@ func applyChannelSmartScheduleRouteSnapshot(snapshot *channelSmartScheduleRouteS
 		if snapshot.Revision == current.Revision {
 			if snapshot.Monitor != nil && snapshot.GeneratedAt == current.GeneratedAt && snapshot.SourceWatermark == current.SourceWatermark {
 				channelSmartScheduleMonitorReadCache = snapshot.Monitor
+				restoreChannelSmartScheduleDegradedRanks(channelSmartScheduleRouteCache, channelLogicalSmartScheduleRoutingCache, snapshot.Monitor)
 			}
 			channelSyncLock.Unlock()
 			return true

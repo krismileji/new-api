@@ -73,6 +73,7 @@ export type ChannelMonitorSmartSchedulePoolSummary = {
   breakEvenFallbackCount: number
   breakEvenFallbackFixedCount: number
   breakEvenFallbackTakingOver: boolean
+  degradedFallback: boolean
   topPriority: number | null
   candidateCount: number
   scoringWinnerChannelId: number
@@ -92,6 +93,7 @@ export type ChannelMonitorSmartScheduleDisplayOption = {
 
 export type ChannelMonitorSmartSchedulePoolStatus =
   | '稳定性降级'
+  | '稳定性降级 · 托底中'
   | '稳定性试放'
   | '统一采样'
   | '保本兜底接管'
@@ -149,6 +151,7 @@ export type ChannelMonitorSmartScheduleRoutePlacement = {
   isActualPrimary: boolean
   isScoringWinner: boolean
   isActualTopLayer: boolean
+  isDegradedFallback?: boolean
 }
 
 const SMART_SCHEDULE_ROUTE_STATUS_ORDER: Record<
@@ -285,8 +288,9 @@ export function channelMonitorSmartScheduleRouteIsActive(
   return (
     channelMonitorSmartScheduleRouteRuntimeParticipates(route) &&
     channelMonitorSmartScheduleRouteIsAvailable(route) &&
-    channelMonitorSmartScheduleRouteRuntimeState(route).stability_state !==
-      'degraded'
+    (channelMonitorSmartScheduleRouteRuntimeState(route).stability_state !==
+      'degraded' ||
+      route.degraded_fallback === true)
   )
 }
 
@@ -543,16 +547,20 @@ function getChannelMonitorSmartSchedulePoolRoutingSnapshot(
   const activeCandidates = [...candidatesById.values()].filter(
     (candidate) => candidate.activeRoutes.length > 0
   )
+  const fallbackCandidates = activeCandidates.filter((candidate) =>
+    candidate.activeRoutes.some((route) => route.degraded_fallback === true)
+  )
   const candidatesOutsideRateLimitCooldown = activeCandidates.filter(
     (candidate) =>
       candidate.activeRoutes.some(
         (route) => !channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(route)
       )
   )
-  const routableCandidates =
+  let routableCandidates =
     candidatesOutsideRateLimitCooldown.length > 0
       ? candidatesOutsideRateLimitCooldown
       : activeCandidates
+  if (fallbackCandidates.length > 0) routableCandidates = fallbackCandidates
   const actualHighestPriority = routableCandidates.reduce<number | null>(
     (current, candidate) =>
       current == null ? candidate.priority : Math.max(current, candidate.priority),
@@ -649,10 +657,10 @@ export function placeChannelMonitorSmartScheduleRoutes(
       getChannelMonitorSmartSchedulePoolRoutingSnapshot(poolRoutes)
     const actualTopLayerChannelIds = snapshot.actualTopLayerChannelIds
     const actualTopLayerChannelIdSet = new Set(actualTopLayerChannelIds)
-    const candidatesById = new Map<
-      number,
-      ChannelMonitorSmartScheduleRoute[]
-    >()
+    const degradedFallback = poolRoutes.some(
+      (route) => route.degraded_fallback === true
+    )
+    const candidatesById = new Map<number, ChannelMonitorSmartScheduleRoute[]>()
     for (const route of poolRoutes) {
       const candidateId =
         channelMonitorSmartScheduleRouteCandidateChannelId(route)
@@ -760,8 +768,10 @@ export function placeChannelMonitorSmartScheduleRoutes(
         channelMonitorSmartScheduleRouteIsRateLimitCoolingDown(route)
       const candidateChannelId =
         channelMonitorSmartScheduleRouteCandidateChannelId(route)
-      const isActualTopLayer = actualTopLayerChannelIdSet.has(candidateChannelId)
       const routeShare = shares.get(channelMonitorSmartScheduleRouteKey(route))
+      const isActualTopLayer =
+        actualTopLayerChannelIdSet.has(candidateChannelId) &&
+        (!degradedFallback || (routeShare ?? 0) > 0)
       if (!channelMonitorSmartScheduleRouteRuntimeParticipates(route)) {
         role = 'excluded'
         estimatedShare = 0
@@ -783,13 +793,17 @@ export function placeChannelMonitorSmartScheduleRoutes(
       placements.set(channelMonitorSmartScheduleRouteKey(route), {
         role,
         estimatedShare,
+        ...(route.degraded_fallback === true && (estimatedShare ?? 0) > 0
+          ? { isDegradedFallback: true }
+          : {}),
         topPriority: snapshot.actualHighestPriority,
         candidateCount: actualTopLayerChannelIds.length,
         actualPrimaryChannelId,
         scoringWinnerChannelId,
         actualHighestPriority: snapshot.actualHighestPriority,
         actualTopLayerChannelIds,
-        isActualPrimary: candidateChannelId === actualPrimaryChannelId,
+        isActualPrimary:
+          candidateChannelId === actualPrimaryChannelId && isActualTopLayer,
         isScoringWinner: candidateChannelId === scoringWinnerChannelId,
         isActualTopLayer,
       })
@@ -955,6 +969,7 @@ export function summarizeChannelMonitorSmartSchedulePools(
             ? 1
             : 0,
         breakEvenFallbackTakingOver: false,
+        degradedFallback: false,
         topPriority: active ? runtimePriority : null,
         candidateCount: active ? 1 : 0,
         scoringWinnerChannelId: 0,
@@ -1042,6 +1057,9 @@ export function summarizeChannelMonitorSmartSchedulePools(
       actualPrimaryChannelId: snapshot.actualPrimaryChannelId,
       actualHighestPriority: snapshot.actualHighestPriority,
       actualTopLayerChannelIds: snapshot.actualTopLayerChannelIds,
+      degradedFallback: topLayerRoutes.some(
+        (route) => route.degraded_fallback === true
+      ),
       breakEvenFallbackTakingOver:
         topLayerRoutes.length > 0 &&
         topLayerRoutes.every(
@@ -1099,8 +1117,10 @@ export function getChannelMonitorSmartSchedulePoolStatus(pool: {
   insufficientSampleCount: number
   failedCount?: number
   breakEvenFallbackTakingOver?: boolean
+  degradedFallback?: boolean
 }): ChannelMonitorSmartSchedulePoolStatus {
   if (pool.participatingCount === 0) return '未参与调度'
+  if (pool.degradedFallback) return '稳定性降级 · 托底中'
   if ((pool.pausedCount ?? 0) > 0) {
     if (
       pool.activeCount === 0 &&

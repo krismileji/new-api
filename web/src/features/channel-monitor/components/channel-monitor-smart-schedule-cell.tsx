@@ -127,7 +127,7 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
   const available =
     participates &&
     channelMonitorSmartScheduleRouteIsAvailable(route) &&
-    !rateLimitCoolingDown
+    (!rateLimitCoolingDown || route.degraded_fallback === true)
   let unavailableClearProtectionLabel: string | undefined
   if (participates && runtimeState.stability_state === 'degraded') {
     unavailableClearProtectionLabel = `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`
@@ -156,6 +156,13 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
       variant: 'destructive',
       clearProtectionLabel: `解除 ${route.channel_name} ${route.group} ${route.model} 的稳定性降级保护`,
     })
+    if (route.degraded_fallback === true) {
+      statuses.push({
+        key: 'degraded-fallback',
+        label: '托底中',
+        variant: 'warning',
+      })
+    }
   } else if (available && runtimeState.stability_state === 'probing') {
     statuses.push({
       key: 'probing',
@@ -250,7 +257,8 @@ function ChannelMonitorSmartScheduleCellStatus(props: {
   } else if (rateLimitCoolingDown) {
     statuses.push({
       key: 'rate-limit-cooldown',
-      label: '429 冷却',
+      label:
+        route.degraded_fallback === true ? '429 冷却 · 兜底中' : '429 冷却',
       variant: 'warning',
     })
   } else if (runtimeState.last_schedule_status === 'failed') {

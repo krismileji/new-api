@@ -302,7 +302,6 @@ func applyChannelSmartScheduleProbeRecoveryTx(
 		state.StabilityReleaseMaxPromptTokens = 0
 		state.LastScheduleStatus = ChannelSmartScheduleStatusFailed
 		state.LastScheduleError = reason
-		state.LastScheduleScore = nil
 		state.LastScheduleScoreDetails = ""
 		state.LastSchedulePriority = 0
 		state.LastScheduleWeight = 0

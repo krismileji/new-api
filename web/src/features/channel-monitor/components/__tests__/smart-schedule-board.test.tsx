@@ -389,6 +389,65 @@ test('路由快照不可用时隐藏全部预计占比', () => {
   assert.equal(markup.includes('100.0%'), false)
 })
 
+test('全降级托底展示真实状态、可调度数与首次请求占比，恢复后清除托底标识', () => {
+  const result = createResult()
+  result.routes = [
+    createRoute(1, { channel_name: '托底渠道', priority: 0, weight: 0 }),
+    createRoute(2, { channel_name: '其他降级渠道', priority: 0, weight: 0 }),
+  ]
+  for (const route of result.routes) {
+    route.state.stability_state = 'degraded'
+    route.state.temporary_traffic_kind = ''
+  }
+  result.routes[0].degraded_fallback = true
+  const markup = renderBoard({ result })
+  expect(markup).toContain('稳定性降级 · 托底中')
+  expect(markup).toContain('当前托底渠道')
+  expect(markup).toContain('池内首次请求 · 降级托底')
+  expect(markup).toContain('可调度 1/2')
+  expect(markup).toContain('100.0%')
+  expect(markup).not.toContain('当前没有流入渠道')
+  expect(markup).toContain('失败重试、模型匹配和请求限制可能改变实际流量')
+
+  result.routes[0].degraded_fallback = false
+  result.routes[1].state.stability_state = ''
+  const recovered = renderBoard({ result })
+  expect(recovered).not.toContain('托底中')
+  expect(recovered).toContain('100.0%')
+
+  result.routes[0].degraded_fallback = true
+  result.routes[1].state.stability_state = 'degraded'
+  result.route_snapshot = undefined
+  const unavailable = renderBoard({ result })
+  expect(unavailable).toContain('预计占比未知')
+  expect(unavailable).not.toContain('托底中')
+  expect(unavailable).not.toContain('100.0%')
+})
+
+test('逻辑组托底显示组身份，不把零权重代表成员显示为当前托底渠道', () => {
+  const result = createResult()
+  result.routes = [
+    createRoute(1, { channel_name: '零权重成员', priority: 0, weight: 0 }),
+    createRoute(2, { channel_name: '承接成员', priority: 0, weight: 0 }),
+  ]
+  for (const route of result.routes) {
+    route.state.stability_state = 'degraded'
+    route.state.temporary_traffic_kind = ''
+    route.logical_channel_id = 99
+    route.routing_candidate_channel_id = 1
+    route.logical_member_ids = [1, 2]
+    route.logical_member_weights = [0, 3]
+  }
+  result.routes[1].degraded_fallback = true
+  const container = document.createElement('div')
+  container.innerHTML = renderBoard({ result })
+  const decision = within(container).getByLabelText('调度池决策结果')
+  expect(decision.textContent).toContain('当前托底渠道逻辑组 #99')
+  expect(decision.textContent).not.toContain('零权重成员')
+  expect(container.textContent).toContain('承接成员')
+  expect(container.textContent).toContain('100.0%')
+})
+
 test('页面刚刷新但近期没有请求时，不把路由标记为过期', () => {
   const result = createResult()
   result.generated_at = Date.now() / 1000

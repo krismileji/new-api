@@ -167,7 +167,13 @@ const ATTENTION_STATUSES =
   ])
 
 function getPoolStatusVariant(status: ChannelMonitorSmartSchedulePoolStatus) {
-  if (status === '稳定性降级' || status === '最近失败') return 'destructive'
+  if (
+    status === '稳定性降级' ||
+    status === '稳定性降级 · 托底中' ||
+    status === '最近失败'
+  ) {
+    return 'destructive'
+  }
   if (
     status === '稳定性试放' ||
     status === '统一采样' ||
@@ -384,6 +390,9 @@ function formatPoolChannelReference(
 ) {
   if (channelId <= 0) return '-'
   const route = routes.find((item) => item.channel_id === channelId)
+  if ((route?.logical_channel_id ?? 0) > 0) {
+    return `逻辑组 #${route?.logical_channel_id}`
+  }
   return route
     ? `${route.channel_name}（ID ${channelId}）`
     : `渠道 ID ${channelId}`
@@ -434,6 +443,9 @@ function PoolDecisionSummary(props: {
     '暂无可用评分决策'
   if (props.realtimeDegraded) {
     nonSwitchReason = '实时链路已降级，当前评分与实际流量可能不同步'
+  } else if (summary.degradedFallback) {
+    nonSwitchReason =
+      '当前可用候选均已降级，按有效评分或降级前顺序托底；失败后按重试策略换路'
   } else if (
     summary.scoringWinnerChannelId > 0 &&
     summary.actualPrimaryChannelId > 0 &&
@@ -475,7 +487,9 @@ function PoolDecisionSummary(props: {
         ) : null}
       </div>
       <div className='min-w-0'>
-        <div className='text-muted-foreground text-[11px]'>实际主渠道</div>
+        <div className='text-muted-foreground text-[11px]'>
+          {summary.degradedFallback ? '当前托底渠道' : '实际主渠道'}
+        </div>
         <div className='mt-0.5 truncate text-xs font-medium'>
           {formatPoolChannelReference(
             props.pool.routes,
@@ -492,7 +506,9 @@ function PoolDecisionSummary(props: {
         </div>
       </div>
       <div className='min-w-0'>
-        <div className='text-muted-foreground text-[11px]'>未切换原因</div>
+        <div className='text-muted-foreground text-[11px]'>
+          {summary.degradedFallback ? '托底原因' : '未切换原因'}
+        </div>
         <div className='mt-0.5 text-xs font-medium break-words'>
           {nonSwitchReason}
         </div>
@@ -510,7 +526,11 @@ function RouteDecisionBadges(props: {
       {props.placement.isScoringWinner ? (
         <Badge variant='outline'>评分第一</Badge>
       ) : null}
-      {props.placement.isActualPrimary ? <Badge>实际主渠道</Badge> : null}
+      {props.placement.isActualPrimary ? (
+        <Badge>
+          {props.placement.isDegradedFallback ? '当前托底渠道' : '实际主渠道'}
+        </Badge>
+      ) : null}
       {props.placement.isActualTopLayer ? (
         <Badge variant='secondary'>实际最高层</Badge>
       ) : null}
@@ -905,7 +925,9 @@ export function ChannelMonitorSmartSchedulePool(
         <div>
           <div className='text-sm font-medium'>预计流量分布</div>
           <div className='text-muted-foreground mt-0.5 text-xs'>
-            当前候选层 · 优先级与权重
+            {props.pool.summary.degradedFallback
+              ? '池内首次请求 · 降级托底'
+              : '当前候选层 · 优先级与权重'}
           </div>
         </div>
         {props.routingAvailable === false ? (
@@ -913,10 +935,17 @@ export function ChannelMonitorSmartSchedulePool(
             当前路由不可用，预计占比未知
           </p>
         ) : (
-          <TrafficDistribution
-            routes={props.pool.routes}
-            placements={props.placements}
-          />
+          <div className='grid gap-2'>
+            <TrafficDistribution
+              routes={props.pool.routes}
+              placements={props.placements}
+            />
+            {props.pool.summary.degradedFallback ? (
+              <p className='text-muted-foreground text-xs'>
+                预计占比按当前分组和模型池的首次请求计算，逻辑组按可用成员权重分配；失败重试、模型匹配和请求限制可能改变实际流量。
+              </p>
+            ) : null}
+          </div>
         )}
       </div>
 

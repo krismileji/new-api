@@ -174,6 +174,7 @@ func restoreChannelSmartScheduleDisabledStability(state *ChannelSmartScheduleRou
 	state.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
 	state.LastScheduleError = "分组策略已关闭稳定性保护，已解除降级并恢复调度"
 	state.LastScheduleScore = nil
+	state.LastScheduleScoreAt = 0
 	state.LastScheduleScoreDetails = ""
 	state.LastSchedulePriority = priority
 	state.LastScheduleWeight = weight

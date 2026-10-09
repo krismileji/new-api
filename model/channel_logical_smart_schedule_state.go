@@ -612,7 +612,7 @@ func protectLogicalChannelSmartScheduleRouteOnRuntimeFailure(
 		state.RuntimeProtectionUntil = max(state.RuntimeProtectionUntil, protectionUntil)
 		state.LastScheduleStatus = ChannelSmartScheduleStatusFailed
 		state.LastScheduleError = reason
-		state.LastScheduleScore = nil
+		// Keep the logical candidate's score for all-degraded fallback selection.
 		state.LastScheduleScoreDetails = ""
 		state.LastSchedulePriority = 0
 		state.LastScheduleWeight = 0
@@ -763,6 +763,7 @@ func ApplyLogicalChannelSmartScheduleProbeRecovery(
 		state.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
 		state.LastScheduleError = "恢复探测连续成功达到阈值，已立即解除稳定性保护"
 		state.LastScheduleScore = nil
+		state.LastScheduleScoreAt = 0
 		state.LastScheduleScoreDetails = ""
 		state.LastSchedulePriority = priority
 		state.LastScheduleWeight = weight

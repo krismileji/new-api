@@ -16,11 +16,12 @@ import (
 // This companion payload is committed with the routing snapshot pointer. The
 // established routing JSON/checksum remains compatible with older nodes.
 type channelSmartScheduleMonitorReadModel struct {
-	Revision        int64
-	SourceWatermark int64
-	GeneratedAt     int64
-	Routes          channelSmartScheduleMonitorRoutes
-	Economics       ChannelSmartScheduleEconomicSnapshot
+	Revision             int64
+	SourceWatermark      int64
+	GeneratedAt          int64
+	Routes               channelSmartScheduleMonitorRoutes
+	Economics            ChannelSmartScheduleEconomicSnapshot
+	LogicalDegradedRanks []channelLogicalSmartScheduleDegradedRank `json:",omitempty"`
 }
 
 // Internal snapshots must retain fields hidden from the public route JSON.

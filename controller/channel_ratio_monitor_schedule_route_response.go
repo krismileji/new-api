@@ -32,6 +32,7 @@ type channelSmartScheduleRouteResponse struct {
 	EffectivePriority         int64                                   `json:"effective_priority"`
 	EffectiveWeight           uint                                    `json:"effective_weight"`
 	EffectiveState            *model.ChannelSmartScheduleRouteState   `json:"effective_state,omitempty"`
+	DegradedFallback          bool                                    `json:"degraded_fallback"`
 	RoutingCandidateChannelId int                                     `json:"routing_candidate_channel_id"`
 	LogicalChannelId          int64                                   `json:"logical_channel_id,omitempty"`
 	LogicalRevision           int64                                   `json:"logical_revision,omitempty"`
@@ -100,6 +101,7 @@ func channelSmartScheduleRouteResponses(
 			GrossMargin: route.GrossMargin, EconomicRole: route.EconomicRole,
 			State: route.State, EffectivePriority: runtimeView.Priority,
 			EffectiveWeight: runtimeView.Weight, EffectiveState: effectiveState,
+			DegradedFallback:          runtimeView.DegradedFallback,
 			RoutingCandidateChannelId: runtimeView.CandidateChannelId,
 			LogicalChannelId:          runtimeView.LogicalChannelId,
 			LogicalRevision:           runtimeView.LogicalRevision,

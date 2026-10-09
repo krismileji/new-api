@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, test } from 'vitest'
+import { describe, expect, test } from 'vitest'
 
 import { runBunFixture } from '@/test-utils/run-bun-fixture'
 
@@ -168,6 +168,25 @@ describe('channel monitor smart schedule cell status', () => {
       )
     }
   })
+
+  test.each([false, true])(
+    '托底渠道同时显示降级状态和托底标识，冷却=%s',
+    (cooling) => {
+      const markup = renderCell([
+        createRoute({
+          priority: 0,
+          weight: 0,
+          degraded_fallback: true,
+          rate_limit_cooldown_until: cooling ? 4_102_444_800 : 0,
+          state: { stability_state: 'degraded' },
+        }),
+      ])
+      expect(markup).toContain('>稳定性降级</')
+      expect(markup).toContain('>托底中</')
+      expect(markup).toContain('稳定性降级保护')
+      if (cooling) expect(markup).toContain('429 冷却 · 兜底中')
+    }
+  )
 
   test('shows a route traffic pause instead of stale scheduling protection', () => {
     const markup = renderCell([
