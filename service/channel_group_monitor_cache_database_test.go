@@ -90,7 +90,7 @@ func TestChannelGroupMonitorCacheRatesDatabaseMatrix(t *testing.T) {
 				common.SetDatabaseTypes(previousMainType, previousLogType)
 			})
 			t.Run("logical probe and outbox commit atomically", func(t *testing.T) {
-				for _, table := range []any{&model.ChannelGroupMonitorExecution{}, &model.ChannelGroupMonitorState{}, &model.ChannelMonitorEventOutbox{}} {
+				for _, table := range []any{&model.ChannelGroupMonitorConfig{}, &model.ChannelGroupMonitorExecution{}, &model.ChannelGroupMonitorState{}, &model.ChannelMonitorEventOutbox{}} {
 					require.False(t, db.Migrator().HasTable(table))
 					require.NoError(t, db.AutoMigrate(table))
 					t.Cleanup(func() { assert.NoError(t, db.Migrator().DropTable(table)) })
@@ -102,7 +102,12 @@ func TestChannelGroupMonitorCacheRatesDatabaseMatrix(t *testing.T) {
 					common.RDBMonitorWrite, common.RedisEnabled = oldWrite, oldEnabled
 					channelGroupMonitorCachePolicyState.Store(oldPolicy)
 				})
-				config := model.ChannelGroupMonitorConfig{Revision: 1, Enabled: true, DisplayValue: 60, DisplayUnit: "minute", GroupsJSON: `{"groups":[{"group_name":"vip","probe_model":"gpt-test"}]}`}
+				input := model.ChannelGroupMonitorConfigInput{
+					Enabled: true, IntervalSeconds: 60, DisplayValue: 60, DisplayUnit: "minute",
+					Groups: []model.ChannelGroupMonitorGroup{{GroupName: "vip", ProbeModel: "gpt-test"}},
+				}
+				config, err := model.SaveChannelGroupMonitorConfig(input, 1_000)
+				require.NoError(t, err)
 				require.NoError(t, UpdateChannelGroupMonitorCachePolicy(config))
 				generation, err := SyncChannelGroupMonitorGeneration(t.Context(), config)
 				require.NoError(t, err)
@@ -120,8 +125,24 @@ func TestChannelGroupMonitorCacheRatesDatabaseMatrix(t *testing.T) {
 				event, err := model.UnmarshalChannelMonitorEvent([]byte(rows[0].Payload))
 				require.NoError(t, err)
 				assert.NotContains(t, rows[0].Payload, "admin-only")
+				for _, category := range []string{"", "展示分类"} {
+					input.Revision = config.Revision
+					if category != "" {
+						input.Categories = []string{category}
+						input.Groups[0].Category = category
+					}
+					config, err = model.SaveChannelGroupMonitorConfig(input, 1_001)
+					require.NoError(t, err)
+					require.NoError(t, UpdateChannelGroupMonitorCachePolicy(config))
+				}
+				next, err := SyncChannelGroupMonitorGeneration(t.Context(), config)
+				require.NoError(t, err)
+				assert.Equal(t, generation.ID, next.ID)
+				assert.EqualValues(t, 3, config.Revision, "configuration saves still advance optimistic concurrency")
+				_, err = model.SaveChannelGroupMonitorConfig(input, 1_002)
+				assert.ErrorIs(t, err, model.ErrChannelGroupMonitorConfigChanged)
 				require.NoError(t, ProjectChannelGroupMonitorEvents(t.Context(), client, []model.ChannelMonitorEvent{event, event}, now))
-				groups, err := ReadChannelGroupMonitorProjection(t.Context(), generation, now)
+				groups, err := ReadChannelGroupMonitorProjection(t.Context(), next, now)
 				require.NoError(t, err)
 				require.NotNil(t, groups["vip"].State)
 				assert.Equal(t, model.ChannelGroupMonitorResultSuccess, groups["vip"].State.Result)

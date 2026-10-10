@@ -2,8 +2,10 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -24,51 +26,55 @@ var ErrChannelGroupMonitorSnapshotPending = errors.New("分组监控汇总暂不
 // The generation fences stream replay, configuration races and Redis recovery.
 // Only background workers/configuration saves install it; page reads never rebuild it.
 type ChannelGroupMonitorGeneration struct {
-	Schema             int             `json:"schema"`
-	ID                 string          `json:"id"`
-	Revision           int64           `json:"revision"`
-	StartedAt          int64           `json:"started_at"`
-	DisplayValue       int             `json:"display_value"`
-	DisplayUnit        string          `json:"display_unit"`
-	Groups             map[string]bool `json:"groups"`
-	RoutingFingerprint string          `json:"routing_fingerprint,omitempty"`
+	Schema                int             `json:"schema"`
+	ID                    string          `json:"id"`
+	Revision              int64           `json:"revision"`
+	FirstRevision         int64           `json:"first_revision,omitempty"`
+	StatisticsFingerprint string          `json:"statistics_fingerprint,omitempty"`
+	StartedAt             int64           `json:"started_at"`
+	DisplayValue          int             `json:"display_value"`
+	DisplayUnit           string          `json:"display_unit"`
+	Groups                map[string]bool `json:"groups"`
+	RoutingFingerprint    string          `json:"routing_fingerprint,omitempty"`
 }
 
 func (generation ChannelGroupMonitorGeneration) Key(suffix string) string {
 	return ChannelGroupMonitorRedisPrefix + generation.ID + ":" + suffix
 }
 
-// A revision change atomically hides the old snapshot and unlinks its bounded
-// registry of bucket keys. UNLINK avoids freeing a large token hash on Redis's IO thread.
+// Configuration revisions fence snapshot builders independently of statistics.
+// Only a new statistics generation unlinks the old bounded registry of keys.
 var installChannelGroupMonitorGeneration = redis.NewScript(`
 local previous = redis.call('GET', KEYS[1])
+if (previous or '') ~= ARGV[3] then return 0 end
+if previous == ARGV[1] then
+ redis.call('SET', KEYS[3], cjson.decode(previous).id)
+ return 1
+end
+local next = cjson.decode(ARGV[1])
 local retired_id = redis.call('GET', KEYS[3])
 if previous then
  local old = cjson.decode(previous)
  retired_id = old.id
- if old.schema == 2 then redis.call('SET', KEYS[3], old.id) end
- if old.revision > tonumber(ARGV[1]) then return previous end
- if old.revision < tonumber(ARGV[1]) then redis.call('DEL', ARGV[3] .. 'snapshot_lease') end
- if old.revision == tonumber(ARGV[1]) and old.schema == 2 then
-  if ARGV[4] == '' or old.routing_fingerprint == ARGV[4] then return previous end
-  if not old.routing_fingerprint then
-   -- Preserve empty JSON objects; Lua cjson cannot round-trip {} consistently.
-   local updated = string.sub(previous, 1, -2) .. ',"routing_fingerprint":' .. cjson.encode(ARGV[4]) .. '}'
-   redis.call('SET', KEYS[1], updated)
-   return updated
-  end
+ if old.revision < next.revision then
+  redis.call('DEL', ARGV[2] .. 'snapshot_lease', KEYS[2])
+ end
+ if old.id == next.id then
+  redis.call('SET', KEYS[1], ARGV[1])
+  redis.call('SET', KEYS[3], next.id)
+  return 1
  end
 end
 if retired_id then
- local registry = ARGV[3] .. retired_id .. ':keys'
+ local registry = ARGV[2] .. retired_id .. ':keys'
  local keys = redis.call('ZRANGE', registry, 0, -1)
  for _, key in ipairs(keys) do redis.call('UNLINK', key) end
  redis.call('UNLINK', registry)
 end
-redis.call('SET', KEYS[1], ARGV[2])
-redis.call('SET', KEYS[3], cjson.decode(ARGV[2]).id)
+redis.call('SET', KEYS[1], ARGV[1])
+redis.call('SET', KEYS[3], next.id)
 redis.call('DEL', KEYS[2])
-return ARGV[2]
+return 1
 `)
 
 func SyncChannelGroupMonitorGeneration(ctx context.Context, config model.ChannelGroupMonitorConfig, fingerprint ...string) (ChannelGroupMonitorGeneration, error) {
@@ -81,26 +87,76 @@ func SyncChannelGroupMonitorGeneration(ctx context.Context, config model.Channel
 		return ChannelGroupMonitorGeneration{}, err
 	}
 	value, unit := model.NormalizeChannelStatusProbeDisplay(config.DisplayValue, config.DisplayUnit)
-	generation := ChannelGroupMonitorGeneration{Schema: 2, ID: uuid.NewString(), Revision: config.Revision, StartedAt: time.Now().Unix(), DisplayValue: value, DisplayUnit: unit, Groups: make(map[string]bool)}
+	minimum, err := config.CacheMinContextK()
+	if err != nil {
+		return ChannelGroupMonitorGeneration{}, err
+	}
+	type statisticsGroup struct {
+		ProbeModel string
+		Enabled    bool
+	}
+	statisticsGroups := make(map[string]statisticsGroup, len(groups))
+	generation := ChannelGroupMonitorGeneration{Schema: 2, ID: uuid.NewString(), Revision: config.Revision, FirstRevision: config.Revision, StartedAt: time.Now().Unix(), DisplayValue: value, DisplayUnit: unit, Groups: make(map[string]bool)}
 	if len(fingerprint) > 0 {
 		generation.RoutingFingerprint = fingerprint[0]
 	}
 	for _, group := range groups {
 		generation.Groups[group.GroupName] = config.Enabled && group.IsEnabled()
+		statisticsGroups[group.GroupName] = statisticsGroup{ProbeModel: group.ProbeModel, Enabled: group.IsEnabled()}
 	}
-	payload, err := common.Marshal(generation)
+	statistics, err := common.Marshal(struct {
+		Enabled          bool
+		DisplayValue     int
+		DisplayUnit      string
+		CacheMinContextK int
+		Groups           map[string]statisticsGroup
+	}{Enabled: config.Enabled, DisplayValue: value, DisplayUnit: unit, CacheMinContextK: minimum, Groups: statisticsGroups})
 	if err != nil {
 		return generation, err
 	}
-	raw, err := installChannelGroupMonitorGeneration.Run(ctx, client, []string{channelGroupMonitorConfigurationKey, ChannelGroupMonitorSnapshotKey, channelGroupMonitorGenerationIDKey}, config.Revision, string(payload), ChannelGroupMonitorRedisPrefix, generation.RoutingFingerprint).Text()
-	if err != nil {
-		return generation, err
+	generation.StatisticsFingerprint = fmt.Sprintf("%x", sha256.Sum256(statistics))
+	for range 3 {
+		previous, err := client.Get(ctx, channelGroupMonitorConfigurationKey).Result()
+		if err != nil && !errors.Is(err, redis.Nil) {
+			return generation, err
+		}
+		next := generation
+		if previous != "" {
+			var old ChannelGroupMonitorGeneration
+			if err := common.UnmarshalJsonStr(previous, &old); err != nil {
+				return generation, err
+			}
+			if old.Revision > config.Revision {
+				return generation, ErrChannelGroupMonitorSnapshotPending
+			}
+			// Attach the fingerprint to the existing layout before the first save
+			// after an upgrade; revision equality proves the inputs are unchanged.
+			statisticsUnchanged := old.StatisticsFingerprint == generation.StatisticsFingerprint ||
+				(old.StatisticsFingerprint == "" && old.Revision == config.Revision)
+			routingUnchanged := generation.RoutingFingerprint == "" || old.RoutingFingerprint == "" || old.RoutingFingerprint == generation.RoutingFingerprint
+			if old.Schema == generation.Schema && statisticsUnchanged && routingUnchanged {
+				next.ID, next.StartedAt, next.FirstRevision = old.ID, old.StartedAt, old.FirstRevision
+				if next.FirstRevision == 0 {
+					next.FirstRevision = old.Revision
+				}
+				if next.RoutingFingerprint == "" {
+					next.RoutingFingerprint = old.RoutingFingerprint
+				}
+			}
+		}
+		payload, err := common.Marshal(next)
+		if err != nil {
+			return next, err
+		}
+		installed, err := installChannelGroupMonitorGeneration.Run(ctx, client, []string{channelGroupMonitorConfigurationKey, ChannelGroupMonitorSnapshotKey, channelGroupMonitorGenerationIDKey}, string(payload), ChannelGroupMonitorRedisPrefix, previous).Int()
+		if err != nil {
+			return next, err
+		}
+		if installed == 1 {
+			return next, nil
+		}
 	}
-	err = common.UnmarshalJsonStr(raw, &generation)
-	if err == nil && generation.Revision != config.Revision {
-		err = ErrChannelGroupMonitorSnapshotPending
-	}
-	return generation, err
+	return generation, ErrChannelGroupMonitorSnapshotPending
 }
 
 func readChannelGroupMonitorGeneration(ctx context.Context, client *redis.Client) (ChannelGroupMonitorGeneration, error) {
@@ -223,7 +279,11 @@ func ProjectChannelGroupMonitorEvents(ctx context.Context, client *redis.Client,
 		deltas := make([]any, 0, 24)
 		if event.Source == model.ChannelMonitorEventSourceGroupSummary {
 			probe := event.GroupMonitorProbe
-			if probe == nil || probe.ConfigRevision != generation.Revision || probe.StartedAt < generation.StartedAt {
+			firstRevision := generation.FirstRevision
+			if firstRevision == 0 {
+				firstRevision = generation.Revision
+			}
+			if probe == nil || probe.ConfigRevision < firstRevision || probe.ConfigRevision > generation.Revision || probe.StartedAt < generation.StartedAt {
 				continue
 			}
 			if probe.Result == model.ChannelGroupMonitorResultTimeout {
@@ -420,8 +480,10 @@ func ChannelGroupMonitorGroupVersions(ctx context.Context, generation ChannelGro
 // background worker stops. A page must never render an indefinitely healthy result.
 var publishChannelGroupMonitorSnapshot = redis.NewScript(`
 local current = redis.call('GET', KEYS[1])
-if not current or cjson.decode(current).id ~= ARGV[1] then return 0 end
-if #KEYS > 2 and redis.call('GET', KEYS[3]) ~= ARGV[3] then return 0 end
+if not current then return 0 end
+local config = cjson.decode(current)
+if config.id ~= ARGV[1] or config.revision ~= tonumber(ARGV[3]) then return 0 end
+if #KEYS > 2 and redis.call('GET', KEYS[3]) ~= ARGV[4] then return 0 end
 local value = cjson.decode(ARGV[2])
 local ttl = 30
 if value.next_refresh_at then
@@ -441,7 +503,7 @@ func PublishChannelGroupMonitorSnapshot(ctx context.Context, generation ChannelG
 	if client == nil {
 		return ErrChannelGroupMonitorSnapshotPending
 	}
-	keys, args := []string{channelGroupMonitorConfigurationKey, ChannelGroupMonitorSnapshotKey}, []any{generation.ID, string(payload)}
+	keys, args := []string{channelGroupMonitorConfigurationKey, ChannelGroupMonitorSnapshotKey}, []any{generation.ID, string(payload), generation.Revision}
 	if len(lease) == 2 {
 		keys = append(keys, lease[0])
 		args = append(args, lease[1])
@@ -487,7 +549,9 @@ func ChannelGroupMonitorProjectionVersion(ctx context.Context, generation Channe
 
 var renewChannelGroupMonitorSnapshot = redis.NewScript(`
 local current = redis.call('GET', KEYS[1])
-if not current or cjson.decode(current).id ~= ARGV[1] then return 0 end
+if not current then return 0 end
+local config = cjson.decode(current)
+if config.id ~= ARGV[1] or config.revision ~= tonumber(ARGV[5]) then return 0 end
 if redis.call('GET', KEYS[3]) ~= ARGV[2] then return 0 end
 if (redis.call('GET', KEYS[4]) or '0') ~= ARGV[3] then return 0 end
 local snapshot = redis.call('GET', KEYS[2])
@@ -510,6 +574,6 @@ func RenewChannelGroupMonitorSnapshot(ctx context.Context, generation ChannelGro
 	}
 	result, err := renewChannelGroupMonitorSnapshot.Run(ctx, client,
 		[]string{channelGroupMonitorConfigurationKey, ChannelGroupMonitorSnapshotKey, lease, generation.Key("version")},
-		generation.ID, owner, version, nextRefreshAt).Int()
+		generation.ID, owner, version, nextRefreshAt, generation.Revision).Int()
 	return result == 1, err
 }

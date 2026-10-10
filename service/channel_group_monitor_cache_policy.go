@@ -12,16 +12,17 @@ import (
 )
 
 type channelGroupMonitorCachePolicy struct {
-	Revision    int64
-	MinContextK int
-	Generation  string
-	StartedAt   int64
+	Revision      int64
+	FirstRevision int64
+	MinContextK   int
+	Generation    string
+	StartedAt     int64
 }
 
 func init() {
 	model.ChannelGroupMonitorExecutionEvent = func(row model.ChannelGroupMonitorExecution) *model.ChannelMonitorEvent {
 		policy := channelGroupMonitorCachePolicyState.Load()
-		if policy == nil || policy.Generation == "" || row.ConfigRevision != policy.Revision || row.StartedAt < policy.StartedAt {
+		if policy == nil || policy.Generation == "" || row.ConfigRevision < policy.FirstRevision || row.ConfigRevision > policy.Revision || row.StartedAt < policy.StartedAt {
 			return nil
 		}
 		probe := model.ChannelGroupMonitorExecution{Id: row.Id, RunId: row.RunId, GroupName: row.GroupName, ConfigRevision: row.ConfigRevision,
@@ -55,6 +56,7 @@ func UpdateChannelGroupMonitorCachePolicy(config model.ChannelGroupMonitorConfig
 	generation, syncErr := SyncChannelGroupMonitorGeneration(ctx, config)
 	if syncErr == nil && generation.Revision == config.Revision {
 		next.Generation, next.StartedAt = generation.ID, generation.StartedAt
+		next.FirstRevision = generation.FirstRevision
 	}
 	for {
 		previous := channelGroupMonitorCachePolicyState.Load()

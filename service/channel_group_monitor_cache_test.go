@@ -248,6 +248,8 @@ func TestChannelGroupMonitorRedisProjectionLifecycle(t *testing.T) {
 	renewed, err = RenewChannelGroupMonitorSnapshot(ctx, generation, version, deadline, lease, "other-owner")
 	require.NoError(t, err)
 	assert.False(t, renewed)
+	// A lost fencing marker must not leave intact statistics unable to advance.
+	require.NoError(t, client.Del(ctx, channelGroupMonitorGenerationIDKey).Err())
 	same, err := SyncChannelGroupMonitorGeneration(ctx, config)
 	require.NoError(t, err)
 	assert.Equal(t, generation.ID, same.ID)
@@ -261,6 +263,7 @@ func TestChannelGroupMonitorRedisProjectionLifecycle(t *testing.T) {
 	}
 
 	config.Revision = 2
+	config.DisplayValue = 3
 	require.NoError(t, UpdateChannelGroupMonitorCachePolicy(config))
 	next, err := SyncChannelGroupMonitorGeneration(ctx, config)
 	require.NoError(t, err)
@@ -306,6 +309,138 @@ func TestChannelGroupMonitorRedisProjectionLifecycle(t *testing.T) {
 	recovered, err := SyncChannelGroupMonitorGeneration(ctx, config)
 	require.NoError(t, err)
 	assert.NotEqual(t, upgraded.ID, recovered.ID)
+}
+
+func TestChannelGroupMonitorConfigurationSavesPreserveCompatibleStatistics(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		modify func(*model.ChannelGroupMonitorConfig)
+		reset  bool
+	}{
+		{name: "unchanged save"},
+		{name: "category and initial", modify: func(config *model.ChannelGroupMonitorConfig) {
+			config.GroupsJSON = `{"categories":["展示分类","空分类"],"groups":[{"group_name":"vip","probe_model":"gpt-test","category":"展示分类","display_initial":"V"},{"group_name":"default","probe_model":"gpt-test","category":"展示分类"}]}`
+		}},
+		{name: "group order and explicit enabled", modify: func(config *model.ChannelGroupMonitorConfig) {
+			config.GroupsJSON = `[{"group_name":"default","probe_model":"gpt-test","enabled":true},{"group_name":"vip","probe_model":"gpt-test","enabled":true}]`
+		}},
+		{name: "cache visibility", modify: func(config *model.ChannelGroupMonitorConfig) {
+			config.GroupsJSON = `{"show_cache_rate":true,"groups":[{"group_name":"vip","probe_model":"gpt-test"},{"group_name":"default","probe_model":"gpt-test"}]}`
+		}},
+		{name: "probe interval", modify: func(config *model.ChannelGroupMonitorConfig) { config.IntervalSeconds = 120 }},
+		{name: "cache eligibility", reset: true, modify: func(config *model.ChannelGroupMonitorConfig) {
+			config.GroupsJSON = `{"cache_min_context_k":1,"groups":[{"group_name":"vip","probe_model":"gpt-test"},{"group_name":"default","probe_model":"gpt-test"}]}`
+		}},
+		{name: "probe target", reset: true, modify: func(config *model.ChannelGroupMonitorConfig) {
+			config.GroupsJSON = `[{"group_name":"vip","probe_model":"other-model"},{"group_name":"default","probe_model":"gpt-test"}]`
+		}},
+		{name: "group disabled", reset: true, modify: func(config *model.ChannelGroupMonitorConfig) {
+			config.GroupsJSON = `[{"group_name":"vip","probe_model":"gpt-test","enabled":false},{"group_name":"default","probe_model":"gpt-test"}]`
+		}},
+		{name: "group removed", reset: true, modify: func(config *model.ChannelGroupMonitorConfig) {
+			config.GroupsJSON = `[{"group_name":"default","probe_model":"gpt-test"}]`
+		}},
+		{name: "global disabled", reset: true, modify: func(config *model.ChannelGroupMonitorConfig) { config.Enabled = false }},
+		{name: "display size", reset: true, modify: func(config *model.ChannelGroupMonitorConfig) { config.DisplayValue = 30 }},
+		{name: "display buckets", reset: true, modify: func(config *model.ChannelGroupMonitorConfig) { config.DisplayValue, config.DisplayUnit = 24, "hour" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, client := newChannelMonitorRedisSharedProjectionTestClient(t)
+			if address := os.Getenv("GROUP_MONITOR_TEST_REDIS_ADDR"); address != "" {
+				client = redis.NewClient(&redis.Options{Addr: address})
+				t.Cleanup(func() { require.NoError(t, client.Close()) })
+				// A dedicated test Redis retains the registry so synchronization
+				// retires the preceding case's statistics before seeding this one.
+				require.NoError(t, client.Del(t.Context(), channelGroupMonitorConfigurationKey).Err())
+			}
+			oldWrite, oldRead, oldEnabled, oldPolicy := common.RDBMonitorWrite, common.RDBMonitorRead, common.RedisEnabled, channelGroupMonitorCachePolicyState.Load()
+			common.RDBMonitorWrite, common.RDBMonitorRead, common.RedisEnabled = client, client, true
+			channelGroupMonitorCachePolicyState.Store(nil)
+			t.Cleanup(func() {
+				common.RDBMonitorWrite, common.RDBMonitorRead, common.RedisEnabled = oldWrite, oldRead, oldEnabled
+				channelGroupMonitorCachePolicyState.Store(oldPolicy)
+			})
+			config := model.ChannelGroupMonitorConfig{
+				Revision: 1, Enabled: true, IntervalSeconds: 60, DisplayValue: 60, DisplayUnit: "minute",
+				GroupsJSON: `[{"group_name":"vip","probe_model":"gpt-test"},{"group_name":"default","probe_model":"gpt-test"}]`,
+			}
+			require.NoError(t, UpdateChannelGroupMonitorCachePolicy(config))
+			generation, err := SyncChannelGroupMonitorGeneration(t.Context(), config, "same-routes")
+			require.NoError(t, err)
+			now := generation.StartedAt
+			business := newChannelMonitorRedisSharedProjectionTestEvent("before-save", now)
+			business.IsStream = true
+			business.InputTokens, business.CacheReadTokens = common.GetPointer(int64(100)), common.GetPointer(int64(25))
+			captureChannelGroupMonitorCachePolicy(&business)
+			probe := model.ChannelGroupMonitorExecution{
+				Id: 1, RunId: "before-save", GroupName: "vip", ProbeModel: "gpt-test", ConfigRevision: config.Revision,
+				Result: model.ChannelGroupMonitorResultSuccess, StartedAt: now, FinishedAt: now, FirstTokenMs: common.GetPointer(123.0),
+			}
+			probeEvent := model.ChannelGroupMonitorExecutionEvent(probe)
+			require.NotNil(t, probeEvent)
+			events := []model.ChannelMonitorEvent{business, *probeEvent}
+			require.NoError(t, ProjectChannelGroupMonitorEvents(t.Context(), client, events, now))
+			before, err := ReadChannelGroupMonitorProjection(t.Context(), generation, now)
+			require.NoError(t, err)
+			require.NotNil(t, before["vip"].State)
+			require.NoError(t, PublishChannelGroupMonitorSnapshot(t.Context(), generation, map[string]any{"ready": true}))
+			lease := ChannelGroupMonitorRedisPrefix + "snapshot_lease"
+			require.NoError(t, client.Set(t.Context(), lease, "old-builder", time.Minute).Err())
+
+			previousConfig := config
+			config.Revision++
+			if tc.modify != nil {
+				tc.modify(&config)
+			}
+			require.NoError(t, UpdateChannelGroupMonitorCachePolicy(config))
+			next, err := SyncChannelGroupMonitorGeneration(t.Context(), config, "same-routes")
+			require.NoError(t, err)
+			var snapshot map[string]any
+			assert.ErrorIs(t, ReadChannelGroupMonitorSnapshot(t.Context(), &snapshot), ErrChannelGroupMonitorSnapshotPending)
+			assert.ErrorIs(t, PublishChannelGroupMonitorSnapshot(t.Context(), generation, map[string]any{"stale": true}), ErrChannelGroupMonitorSnapshotPending)
+			assert.Zero(t, client.Exists(t.Context(), lease).Val())
+			_, err = SyncChannelGroupMonitorGeneration(t.Context(), previousConfig)
+			assert.ErrorIs(t, err, ErrChannelGroupMonitorSnapshotPending, "a late refresh cannot undo a save")
+			require.NoError(t, ProjectChannelGroupMonitorEvents(t.Context(), client, events, now))
+			after, err := ReadChannelGroupMonitorProjection(t.Context(), next, now)
+			require.NoError(t, err)
+			if tc.reset {
+				assert.NotEqual(t, generation.ID, next.ID)
+				for _, group := range after {
+					assert.Nil(t, group.State)
+					assert.Nil(t, group.Cache.Weighted)
+				}
+				assert.Nil(t, model.ChannelGroupMonitorExecutionEvent(probe), "obsolete executions stay out of the new generation")
+				return
+			}
+			assert.Equal(t, generation.ID, next.ID)
+			assert.Equal(t, generation.StartedAt, next.StartedAt)
+			assert.Equal(t, before, after, "health, probe metrics, cache rates and deduplication survive the save")
+			// An in-flight compatible probe may complete after the save. Its old
+			// revision remains valid, and replay must still count it only once.
+			probe.Id, probe.RunId, probe.FinishedAt = 2, "queued-before-save", now+1
+			probeEvent = model.ChannelGroupMonitorExecutionEvent(probe)
+			require.NotNil(t, probeEvent)
+			require.NoError(t, ProjectChannelGroupMonitorEvents(t.Context(), client, []model.ChannelMonitorEvent{*probeEvent, *probeEvent}, now+1))
+			probe.Id, probe.RunId, probe.FinishedAt, probe.ConfigRevision = 3, "after-save", now+2, config.Revision
+			probeEvent = model.ChannelGroupMonitorExecutionEvent(probe)
+			require.NotNil(t, probeEvent)
+			require.NoError(t, ProjectChannelGroupMonitorEvents(t.Context(), client, []model.ChannelMonitorEvent{*probeEvent}, now+2))
+			after, err = ReadChannelGroupMonitorProjection(t.Context(), next, now+2)
+			require.NoError(t, err)
+			require.NotNil(t, after["vip"].State)
+			assert.Equal(t, 3, after["vip"].State.ConsecutiveSuccess)
+			assert.Equal(t, now+2, after["vip"].State.FinishedAt)
+			assert.Equal(t, before["vip"].Cache, after["vip"].Cache)
+			version, err := ChannelGroupMonitorProjectionVersion(t.Context(), next)
+			require.NoError(t, err)
+			require.NoError(t, PublishChannelGroupMonitorSnapshot(t.Context(), next, map[string]any{"ready": true, "event_version": version, "next_refresh_at": now + 600}))
+			require.NoError(t, client.Set(t.Context(), lease, "old-builder", time.Minute).Err())
+			renewed, err := RenewChannelGroupMonitorSnapshot(t.Context(), generation, version, now+600, lease, "old-builder")
+			require.NoError(t, err)
+			assert.False(t, renewed, "a previous revision cannot renew the saved snapshot")
+		})
+	}
 }
 
 func TestChannelGroupMonitorRedisProjectionDisplayWindows(t *testing.T) {

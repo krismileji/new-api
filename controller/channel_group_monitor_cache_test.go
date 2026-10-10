@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -67,6 +68,10 @@ func TestChannelGroupMonitorSnapshotOnlyReadsChangedGroups(t *testing.T) {
 func TestChannelGroupMonitorSnapshotSkipsUnchangedBucketsAndRefreshesDirtyData(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.ChannelGroupMonitorConfig{}, &model.ChannelGroupMonitorExecution{}))
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 940, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled, Group: "vip", Models: "gpt-test",
+	}).Error)
+	require.NoError(t, db.Create(&model.Ability{Group: "vip", Model: "gpt-test", ChannelId: 940, Enabled: true}).Error)
 	config, err := model.SaveChannelGroupMonitorConfig(model.ChannelGroupMonitorConfigInput{
 		Enabled: true, ShowCacheRate: true, Groups: []model.ChannelGroupMonitorGroup{{GroupName: "vip", ProbeModel: "gpt-test"}},
 		IntervalSeconds: 300, DisplayValue: 24, DisplayUnit: "hour",
@@ -95,7 +100,12 @@ func TestChannelGroupMonitorSnapshotSkipsUnchangedBucketsAndRefreshesDirtyData(t
 	event.APIKeyId, event.IsStream, event.RequestDispatched = 1, true, true
 	event.GroupCacheExcluded = common.GetPointer(false)
 	event.InputTokens, event.CacheReadTokens = common.GetPointer(int64(100)), common.GetPointer(int64(25))
-	require.NoError(t, service.ProjectChannelGroupMonitorEvents(t.Context(), client, []model.ChannelMonitorEvent{event}, common.GetTimestamp()))
+	probeEvent := model.ChannelGroupMonitorExecutionEvent(model.ChannelGroupMonitorExecution{
+		Id: 1, RunId: "saved-state", GroupName: "vip", ProbeModel: "gpt-test", ConfigRevision: config.Revision,
+		Result: model.ChannelGroupMonitorResultSuccess, StartedAt: common.GetTimestamp(), FinishedAt: common.GetTimestamp(), FirstTokenMs: common.GetPointer(123.0),
+	})
+	require.NotNil(t, probeEvent)
+	require.NoError(t, service.ProjectChannelGroupMonitorEvents(t.Context(), client, []model.ChannelMonitorEvent{event, *probeEvent}, common.GetTimestamp()))
 	require.NoError(t, client.Del(t.Context(), service.ChannelGroupMonitorRedisPrefix+"snapshot_lease").Err())
 	require.NoError(t, refreshChannelGroupMonitorSnapshot(t.Context()))
 	var changed channelGroupMonitorSnapshot
@@ -104,6 +114,7 @@ func TestChannelGroupMonitorSnapshotSkipsUnchangedBucketsAndRefreshesDirtyData(t
 	require.Len(t, changed.Public.Items, 1)
 	require.NotNil(t, changed.Public.Items[0].CacheRateAverage)
 	assert.Equal(t, 25.0, *changed.Public.Items[0].CacheRateAverage)
+	assert.Equal(t, channelGroupMonitorHealthHealthy, changed.Public.Items[0].Status)
 	// A due snapshot is rebuilt even though no further event arrived.
 	changed.NextRefreshAt = common.GetTimestamp()
 	require.NoError(t, service.PublishChannelGroupMonitorSnapshot(t.Context(), generation, changed))
@@ -126,6 +137,49 @@ func TestChannelGroupMonitorSnapshotSkipsUnchangedBucketsAndRefreshesDirtyData(t
 	assert.Equal(t, rolled.Generation, metadataChanged.Generation)
 	assert.Equal(t, rolled.EventVersion, metadataChanged.EventVersion)
 	assert.Equal(t, rolled.Public.Items[0].CacheRateAverage, metadataChanged.Public.Items[0].CacheRateAverage)
+
+	// A deployment may still have the old Redis layout when its first save
+	// arrives. Preserve that layout and update the public view immediately.
+	generation.StatisticsFingerprint, generation.FirstRevision = "", 0
+	payload, err := common.Marshal(generation)
+	require.NoError(t, err)
+	require.NoError(t, client.Set(t.Context(), service.ChannelGroupMonitorRedisPrefix+"config", payload, 0).Err())
+	for index, tc := range []struct {
+		name       string
+		categories []string
+		group      model.ChannelGroupMonitorGroup
+	}{
+		{name: "unchanged save", categories: []string{"未分类"}, group: model.ChannelGroupMonitorGroup{GroupName: "vip", ProbeModel: "gpt-test"}},
+		{name: "presentation save", categories: []string{"展示分类", "空分类"}, group: model.ChannelGroupMonitorGroup{GroupName: "vip", ProbeModel: "gpt-test", Category: "展示分类", DisplayInitial: "V"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := common.Marshal(map[string]any{
+				"enabled": true, "groups": []model.ChannelGroupMonitorGroup{tc.group}, "categories": tc.categories,
+				"show_cache_rate": true, "interval_seconds": config.IntervalSeconds,
+				"display_value": config.DisplayValue, "display_unit": config.DisplayUnit, "revision": config.Revision + int64(index),
+			})
+			require.NoError(t, err)
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPut, "/api/channel_monitor/group_monitor/settings", bytes.NewReader(body))
+			UpdateChannelGroupMonitorSettings(c)
+			require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+			var saved channelGroupMonitorSnapshot
+			require.NoError(t, service.ReadChannelGroupMonitorSnapshot(t.Context(), &saved))
+			assert.Equal(t, metadataChanged.Generation, saved.Generation)
+			assert.Equal(t, metadataChanged.EventVersion, saved.EventVersion)
+			assert.LessOrEqual(t, saved.Public.DataCutoffAt, probeEvent.OccurredAt, "saving must not move the statistics cutoff past collected samples")
+			require.Len(t, saved.Public.Items, 1)
+			assert.Equal(t, metadataChanged.Public.Items[0].CacheRateAverage, saved.Public.Items[0].CacheRateAverage)
+			assert.Equal(t, metadataChanged.Public.Items[0].Status, saved.Public.Items[0].Status)
+			assert.Equal(t, metadataChanged.Public.Items[0].LastFinishedAt, saved.Public.Items[0].LastFinishedAt)
+			assert.Equal(t, metadataChanged.Public.Items[0].SuccessRate, saved.Public.Items[0].SuccessRate)
+			assert.Equal(t, metadataChanged.Public.Items[0].RecentWindow, saved.Public.Items[0].RecentWindow)
+			assert.Equal(t, tc.categories, saved.Public.Categories)
+			assert.Equal(t, tc.group.Category, saved.Public.Items[0].Category)
+			assert.Equal(t, config.Revision+int64(index)+1, saved.Overview.Settings.Revision)
+		})
+	}
 }
 
 func TestChannelGroupMonitorNextRefreshUsesWindowAndProbeDeadlines(t *testing.T) {

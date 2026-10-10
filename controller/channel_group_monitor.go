@@ -712,6 +712,12 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 	if request.CacheMinContextK != nil {
 		cacheMinContextK = *request.CacheMinContextK
 	}
+	// Bind legacy Redis statistics to the saved inputs before advancing revision.
+	if currentConfig.Revision > 0 {
+		if _, err := service.SyncChannelGroupMonitorGeneration(c.Request.Context(), currentConfig); err != nil {
+			common.SysError("同步分组监控已有统计配置失败: " + err.Error())
+		}
+	}
 	saved, err := model.SaveChannelGroupMonitorConfig(model.ChannelGroupMonitorConfigInput{
 		CacheMinContextK: cacheMinContextK,
 		ShowCacheRate:    showCacheRate,
@@ -729,7 +735,7 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 	}
 	if err := service.UpdateChannelGroupMonitorCachePolicy(saved); err != nil {
 		common.SysError("更新分组缓存率配置失败: " + err.Error())
-		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "配置已保存，Redis 统计重置暂未完成，请稍后刷新配置", "revision": saved.Revision})
+		c.JSON(http.StatusServiceUnavailable, gin.H{"success": false, "message": "配置已保存，Redis 统计配置同步暂未完成，请稍后刷新配置", "revision": saved.Revision})
 		return
 	}
 	response, err := channelGroupMonitorConfigToResponse(saved)
@@ -745,8 +751,8 @@ func UpdateChannelGroupMonitorSettings(c *gin.Context) {
 		"interval_seconds": *request.IntervalSeconds, "display_value": *request.DisplayValue,
 		"display_unit": *request.DisplayUnit,
 	})
-	// Saving invalidates the previous lease with the statistics generation.
-	// Publish the new initial view now instead of waiting for the periodic check.
+	// Saving invalidates the previous snapshot lease, but presentation changes
+	// preserve statistics. Publish the updated view before the periodic check.
 	if err := refreshChannelGroupMonitorSnapshot(c.Request.Context(), true); err != nil {
 		common.SysError("生成分组监控初始快照失败: " + err.Error())
 	}
