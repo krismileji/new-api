@@ -79,7 +79,11 @@ export function renderAnalyticsQuery(
   initialChannelId?: number,
   scope: Pick<
     ComponentProps<typeof ChannelMonitorAnalyticsDialog>,
-    'rangeMinutes' | 'initialModel' | 'initialGroup' | 'successMode'
+    | 'rangeMinutes'
+    | 'initialModel'
+    | 'initialGroup'
+    | 'successMode'
+    | 'showRequestOverview'
   > = {}
 ) {
   const client = new QueryClient({

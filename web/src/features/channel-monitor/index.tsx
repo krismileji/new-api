@@ -1136,7 +1136,7 @@ function ChannelMonitorContent() {
   } else {
     pageContent = (
       <div className='flex flex-col gap-4'>
-        <div className='grid gap-3 sm:grid-cols-3'>
+        <div className='grid gap-3 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_minmax(0,3fr)]'>
           <MonitorStatCard
             label='全部渠道'
             value={channels.length}
@@ -1167,7 +1167,7 @@ function ChannelMonitorContent() {
               description={costDescription}
               secondaryDescription={costSecondaryDescription}
               icon={MoneyBag02Icon}
-              ariaLabel='查看今日成本与利润'
+              ariaLabel='查看今日成本、利润与请求概览'
               onClick={() => openProfitHistory()}
             />
           </ChannelMonitorPrivate>
@@ -1175,7 +1175,7 @@ function ChannelMonitorContent() {
             result={todaySuccessQuery.data?.data}
             isLoading={todaySuccessQuery.isLoading}
             isError={todaySuccessQuery.isError}
-            onOpen={() => openSuccessAnalytics()}
+            onOpen={() => openProfitHistory()}
           />
         </div>
         <ChannelMonitorProfitNotice
@@ -1934,6 +1934,11 @@ function ChannelMonitorContent() {
           <ChannelMonitorAnalyticsDialog
             open
             metric={analyticsMetric}
+            showRequestOverview={
+              analyticsMetric === 'profit' &&
+              analyticsChannelId == null &&
+              analyticsDetailTarget == null
+            }
             channels={channels}
             initialChannelId={analyticsChannelId}
             initialModel={

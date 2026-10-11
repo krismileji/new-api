@@ -14,15 +14,9 @@ import {
   type ReactNode,
 } from 'react'
 
+import { Dialog } from '@/components/dialog'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import {
   Popover,
@@ -55,7 +49,6 @@ import {
   ChannelMonitorAnalyticsPerformanceOutput,
 } from './channel-monitor-analytics-performance'
 import { ChannelMonitorAnalyticsExpandableTable } from './channel-monitor-analytics-table'
-import { channelMonitorDialogContentClassName } from './channel-monitor-dialog-layout'
 import { ChannelMonitorProfitValue } from './channel-monitor-profit'
 import { ChannelMonitorProfitStatus } from './channel-monitor-profit-status'
 
@@ -74,9 +67,17 @@ type ChannelMonitorAnalyticsDialogProps = {
   initialGroup?: string
   rangeMinutes?: number
   successMode?: ChannelMonitorSuccessMode
+  showRequestOverview?: boolean
 }
 
 type AnalyticsTab = 'channels' | 'api_keys'
+
+const analyticsTitles: Record<ChannelMonitorAnalyticsMetric, string> = {
+  cost: '渠道成本分析',
+  profit: '渠道利润分析',
+  success: '成功率与缓存分析',
+  performance: '性能分析',
+}
 
 const ChannelMonitorProfitTrend = lazy(() =>
   import('./channel-monitor-profit-trend').then((module) => ({
@@ -342,17 +343,18 @@ function formatRate(value: number, denominator: number) {
   return `${(value * 100).toFixed(1)}%`
 }
 
-export function ChannelMonitorAnalyticsDialog(
-  props: ChannelMonitorAnalyticsDialogProps
+function ChannelMonitorAnalyticsPanel(
+  props: ChannelMonitorAnalyticsDialogProps & {
+    tab: AnalyticsTab
+    dateFrom: string
+    dateThrough: string
+    search: string
+    showHeading: boolean
+    onSelectCompleteDates: (from: string) => void
+  }
 ) {
   const queryClient = useQueryClient()
   const [refreshingProfit, setRefreshingProfit] = useState(false)
-  const [tab, setTab] = useState<AnalyticsTab>('channels')
-  const initialDate = formatChannelMonitorBeijingDate(new Date())
-  const [dateFrom, setDateFrom] = useState(initialDate)
-  const [dateThrough, setDateThrough] = useState(initialDate)
-  const [searchInput, setSearchInput] = useState('')
-  const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [onlyLoss, setOnlyLoss] = useState(false)
   const [sort, setSort] = useState<ChannelMonitorAnalyticsSort>(() =>
@@ -372,9 +374,9 @@ export function ChannelMonitorAnalyticsDialog(
       ),
     [props.channels]
   )
-  const dateRange = getDateRange(dateFrom, dateThrough)
+  const dateRange = getDateRange(props.dateFrom, props.dateThrough)
   let rootGroupBy: ChannelMonitorAnalyticsGroupBy = 'channel'
-  if (tab === 'api_keys') {
+  if (props.tab === 'api_keys') {
     rootGroupBy = 'user'
   }
   const rootRequest: ChannelMonitorAnalyticsQuery = {
@@ -387,7 +389,7 @@ export function ChannelMonitorAnalyticsDialog(
     successMode: props.successMode,
     channelId: props.initialChannelId,
     model: props.initialModel,
-    search: search || undefined,
+    search: props.search || undefined,
     sort,
     direction,
     page,
@@ -405,7 +407,7 @@ export function ChannelMonitorAnalyticsDialog(
     ? Math.max(1, Math.ceil(response.total / response.page_size))
     : 1
   const expansionContext: ChannelMonitorAnalyticsExpansionContext = {
-    tab,
+    tab: props.tab,
     metric: props.metric,
     from: rootRequest.from,
     to: rootRequest.to,
@@ -414,48 +416,29 @@ export function ChannelMonitorAnalyticsDialog(
     successMode: props.successMode,
     channelId: props.initialChannelId,
     model: props.initialModel,
-    search: search || undefined,
+    search: props.search || undefined,
     sort,
     direction,
     onlyLoss: rootRequest.onlyLoss,
   }
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setSearch(searchInput.trim()), 300)
-    return () => window.clearTimeout(timer)
-  }, [searchInput])
-
-  useEffect(() => {
     setPage(1)
-  }, [rootGroupBy, dateFrom, dateThrough, search, sort, direction, onlyLoss])
+  }, [
+    rootGroupBy,
+    props.dateFrom,
+    props.dateThrough,
+    props.search,
+    sort,
+    direction,
+    onlyLoss,
+  ])
 
   useEffect(() => {
     setSort(getDefaultAnalyticsSort(props.metric))
     setOnlyLoss(false)
     setDirection('desc')
-    const today = formatChannelMonitorBeijingDate(new Date())
-    setDateFrom(today)
-    setDateThrough(today)
   }, [props.metric, props.open])
-
-  useEffect(() => {
-    if (!props.open) {
-      setTab('channels')
-      const today = formatChannelMonitorBeijingDate(new Date())
-      setDateFrom(today)
-      setDateThrough(today)
-      setSearchInput('')
-      setSearch('')
-      setPage(1)
-    }
-  }, [props.open])
-
-  const handleTabChange = (nextTab: AnalyticsTab) => {
-    setTab(nextTab)
-    setPage(1)
-    setSearchInput('')
-    setSearch('')
-  }
 
   const handleSort = (nextSort: ChannelMonitorAnalyticsSort) => {
     if (sort === nextSort) {
@@ -466,39 +449,19 @@ export function ChannelMonitorAnalyticsDialog(
     setDirection('desc')
   }
 
-  const scopeLabels: string[] = []
-  if (props.rangeMinutes != null) {
-    scopeLabels.push(`近${props.rangeMinutes}分钟`)
-  }
-  if (props.initialGroup) scopeLabels.push(`分组 ${props.initialGroup}`)
-  if (props.initialChannelId != null) {
-    scopeLabels.push(
-      channels.get(props.initialChannelId)?.name ??
-        `渠道 #${props.initialChannelId}`
-    )
-  }
-  if (props.initialModel) scopeLabels.push(`模型 ${props.initialModel}`)
-  if (props.rangeMinutes != null && props.metric === 'success') {
-    scopeLabels.push(
-      props.successMode === 'final' ? '最终结果口径' : '上游尝试口径'
-    )
-  }
   let sourceLabel = '历史日汇总'
   if (response?.source === 'redis_daily') sourceLabel = '今日实时汇总'
   if (response?.source === 'redis_minutes') sourceLabel = '分钟实时汇总'
-  let title = '渠道成本分析'
+  const title = analyticsTitles[props.metric]
   let description =
     '成本为已结算的渠道成本，包含业务、探测和模型检测。未解析记录的金额尚不能确定；未归属用户可能包含系统探测和历史记录。'
   if (props.metric === 'performance') {
-    title = '性能分析'
     description =
       '首字延迟越低越快，TPS 越高越快。首字按有效样本平均；TPS = 总输出 Token ÷ 总生成时间。仅统计业务上游调用，重试分别计数；缺失指标的请求不计入对应平均值。'
   } else if (props.metric === 'profit') {
-    title = '渠道利润分析'
     description =
       '利润 = 已确认用户扣费 − 已结算渠道成本。数据未完整时显示暂估值，补账后自动更新。'
   } else if (props.metric === 'success') {
-    title = '成功率与缓存分析'
     description = `${props.successMode === 'final' ? '成功率按请求最终结果统计。' : '成功率按实际派发的上游尝试统计，包含重试。'}缓存利用率按流式请求的输入 Token 加权；缓存写入次数包含流式和非流式请求。`
   }
 
@@ -540,262 +503,358 @@ export function ChannelMonitorAnalyticsDialog(
     )
   }
 
+  const profitTrend =
+    props.metric === 'profit' && props.open ? (
+      <Suspense fallback={<Skeleton className='h-48 w-full' />}>
+        <ChannelMonitorProfitTrend request={rootRequest} />
+      </Suspense>
+    ) : null
+
   return (
-    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent
-        className={channelMonitorDialogContentClassName(
-          'flex flex-col sm:max-w-6xl'
-        )}
-      >
-        <DialogHeader className='shrink-0 pr-10'>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription className='[overflow-wrap:anywhere] break-words'>
-            {scopeLabels.length > 0
-              ? scopeLabels.join(' · ')
-              : '按北京时间查看全部用户及 API Key 的汇总'}
-          </DialogDescription>
-        </DialogHeader>
-        <div className='flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pr-1'>
-          <div className='flex flex-col gap-2 border-b pb-3 sm:flex-row sm:items-center sm:justify-between'>
-            <div className='flex flex-wrap items-center gap-2'>
-              <Button
-                type='button'
-                variant={tab === 'channels' ? 'secondary' : 'outline'}
-                size='sm'
-                onClick={() => handleTabChange('channels')}
-              >
-                渠道汇总
-              </Button>
-              <Button
-                type='button'
-                variant={tab === 'api_keys' ? 'secondary' : 'outline'}
-                size='sm'
-                onClick={() => handleTabChange('api_keys')}
-              >
-                API Key 明细
-              </Button>
-              {props.initialChannelId != null ? (
-                <span className='text-muted-foreground text-xs'>
-                  当前渠道内
-                </span>
-              ) : null}
-            </div>
-            {props.rangeMinutes != null ? (
-              <span
-                aria-label='统计时间范围'
-                className='text-muted-foreground shrink-0 text-sm tabular-nums'
-              >
-                近{props.rangeMinutes}分钟
-              </span>
-            ) : (
-              <ChannelMonitorAnalyticsDateRangeControl
-                from={dateFrom}
-                through={dateThrough}
-                today={dateRange.today}
-                onChange={(range) => {
-                  setDateFrom(range.from)
-                  setDateThrough(range.through)
-                  setPage(1)
-                }}
-              />
-            )}
-          </div>
-          <AnalyticsSummary
-            metric={props.metric}
-            successMode={props.successMode}
-            coverage={coverage}
-            summary={
-              coverage?.status === 'unavailable'
-                ? undefined
-                : (response?.scope_summary ?? response?.summary)
-            }
+    <section aria-label={title} className='flex min-w-0 flex-col gap-3'>
+      {props.showHeading ? (
+        <h3 className='text-sm font-semibold'>{title}</h3>
+      ) : null}
+      <AnalyticsSummary
+        metric={props.metric}
+        successMode={props.successMode}
+        coverage={coverage}
+        summary={
+          coverage?.status === 'unavailable'
+            ? undefined
+            : (response?.scope_summary ?? response?.summary)
+        }
+      />
+      <p className='text-muted-foreground text-xs'>{description}</p>
+      {props.metric === 'profit' && response ? (
+        <>
+          <ChannelMonitorProfitStatus
+            response={response}
+            today={dateRange.today}
+            refreshing={refreshingProfit || rootQuery.isFetching}
+            onRefresh={async () => {
+              setRefreshingProfit(true)
+              try {
+                await queryClient.refetchQueries(
+                  {
+                    queryKey: ['channel-monitor', 'analytics'],
+                    type: 'active',
+                    predicate: (query) =>
+                      (query.queryKey[2] as ChannelMonitorAnalyticsQuery)
+                        ?.metric === 'profit',
+                  },
+                  { cancelRefetch: false }
+                )
+              } finally {
+                setRefreshingProfit(false)
+              }
+            }}
+            onSelectCompleteDates={(from) => {
+              props.onSelectCompleteDates(from)
+              setPage(1)
+            }}
           />
-          <p className='text-muted-foreground text-xs'>{description}</p>
-          {props.metric === 'profit' && response ? (
-            <>
-              <ChannelMonitorProfitStatus
-                response={response}
-                today={dateRange.today}
-                refreshing={refreshingProfit || rootQuery.isFetching}
-                onRefresh={async () => {
-                  setRefreshingProfit(true)
-                  try {
-                    await queryClient.refetchQueries(
-                      {
-                        queryKey: ['channel-monitor', 'analytics'],
-                        type: 'active',
-                        predicate: (query) =>
-                          (query.queryKey[2] as ChannelMonitorAnalyticsQuery)
-                            ?.metric === 'profit',
-                      },
-                      { cancelRefetch: false }
-                    )
-                  } finally {
-                    setRefreshingProfit(false)
-                  }
-                }}
-                onSelectCompleteDates={(from) => {
-                  setDateFrom(from)
-                  setDateThrough(dateRange.today)
-                  setPage(1)
-                }}
-              />
-              <p className='text-muted-foreground text-xs'>
-                钱包扣费{' '}
-                {formatProfitMoney(
-                  response.scope_summary.wallet_income_nano_cny
-                )}{' '}
-                · 订阅消耗{' '}
-                {formatProfitMoney(
-                  response.scope_summary.subscription_income_nano_cny
-                )}{' '}
-                · 探测成本{' '}
-                {formatProfitMoney(response.scope_summary.probe_cost_nano_cny)}{' '}
-                · 模型检测{' '}
-                {formatProfitMoney(
-                  response.scope_summary.model_detection_cost_nano_cny
-                )}
-              </p>
-              {response.scope_summary.income_started_at ? (
-                <p className='text-muted-foreground text-xs'>
-                  收入统计开始于{' '}
-                  {new Date(
-                    response.scope_summary.income_started_at * 1000
-                  ).toLocaleString('zh-CN', {
-                    timeZone: 'Asia/Shanghai',
-                    hour12: false,
-                  })}
-                  （北京时间）
-                </p>
-              ) : null}
-            </>
-          ) : null}
-          {props.metric === 'profit' && props.open ? (
-            <Suspense fallback={<Skeleton className='h-48 w-full' />}>
-              <ChannelMonitorProfitTrend request={rootRequest} />
-            </Suspense>
-          ) : null}
-          {rootQuery.isError && response ? (
-            <Alert variant='destructive'>
-              <AlertTitle>统计更新失败，保留上次结果</AlertTitle>
-              <AlertDescription>
-                <Button
-                  type='button'
-                  variant='outline'
-                  size='sm'
-                  onClick={() => void rootQuery.refetch()}
-                >
-                  重试
-                </Button>
-              </AlertDescription>
-            </Alert>
-          ) : null}
-          <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-            <Input
-              value={searchInput}
-              onChange={(event) => setSearchInput(event.target.value)}
-              placeholder='搜索用户、API Key、模型、渠道名称或 ID'
-              aria-label='搜索分析明细'
-              className='sm:max-w-xs'
-            />
-            {props.metric === 'profit' ? (
-              <Button
-                variant={onlyLoss ? 'secondary' : 'outline'}
-                size='sm'
-                aria-pressed={onlyLoss}
-                title='仅显示已确认的亏损行；待确认或未解析的行不计入筛选。顶部汇总和趋势仍展示完整范围。'
-                onClick={() => setOnlyLoss((value) => !value)}
-              >
-                仅看已确认亏损
-              </Button>
-            ) : null}
-            <div className='text-muted-foreground flex items-center gap-2 text-xs'>
-              <span>
-                {sourceLabel}
-                {response?.source === 'redis_and_database_daily'
-                  ? ' · 含今日实时数据'
-                  : null}
-              </span>
-              {coverageIncomplete ? (
-                <span className='text-warning'>覆盖不完整</span>
-              ) : null}
-              {coverage?.status !== 'unavailable' ? (
-                <span>共 {response?.total ?? 0} 条</span>
-              ) : null}
-            </div>
-          </div>
-          {response?.processed_at ? (
-            <span className='text-muted-foreground text-xs'>
-              数据更新于{' '}
-              {new Date(response.processed_at * 1000).toLocaleString('zh-CN', {
+          <p className='text-muted-foreground text-xs'>
+            钱包扣费{' '}
+            {formatProfitMoney(response.scope_summary.wallet_income_nano_cny)} ·
+            订阅消耗{' '}
+            {formatProfitMoney(
+              response.scope_summary.subscription_income_nano_cny
+            )}{' '}
+            · 探测成本{' '}
+            {formatProfitMoney(response.scope_summary.probe_cost_nano_cny)} ·
+            模型检测{' '}
+            {formatProfitMoney(
+              response.scope_summary.model_detection_cost_nano_cny
+            )}
+          </p>
+          {response.scope_summary.income_started_at ? (
+            <p className='text-muted-foreground text-xs'>
+              收入统计开始于{' '}
+              {new Date(
+                response.scope_summary.income_started_at * 1000
+              ).toLocaleString('zh-CN', {
                 timeZone: 'Asia/Shanghai',
                 hour12: false,
               })}
               （北京时间）
-            </span>
+            </p>
           ) : null}
-          {props.metric !== 'profit' ? (
-            <ChannelMonitorAnalyticsCoverage coverage={coverage} />
-          ) : null}
-          <div
-            className={cn(
-              'min-h-0 shrink-0',
-              rootQuery.isFetching && 'opacity-70 transition-opacity'
-            )}
-            aria-busy={rootQuery.isFetching}
+        </>
+      ) : null}
+      {props.showHeading ? null : profitTrend}
+      {rootQuery.isError && response ? (
+        <Alert variant='destructive'>
+          <AlertTitle>统计更新失败，保留上次结果</AlertTitle>
+          <AlertDescription>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              onClick={() => void rootQuery.refetch()}
+            >
+              重试
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
+        {props.metric === 'profit' ? (
+          <Button
+            variant={onlyLoss ? 'secondary' : 'outline'}
+            size='sm'
+            aria-pressed={onlyLoss}
+            title='仅显示已确认的亏损行；待确认或未解析的行不计入筛选。顶部汇总和趋势仍展示完整范围。'
+            onClick={() => setOnlyLoss((value) => !value)}
           >
-            {table}
-          </div>
-          <div className='flex items-center justify-between gap-3 border-t pt-3'>
-            <span className='text-muted-foreground text-xs'>
-              第 {response?.page ?? page} / {pageCount} 页
-            </span>
-            <div className='flex items-center gap-2'>
-              <Button
-                type='button'
-                variant='outline'
-                size='sm'
-                disabled={page <= 1 || rootQuery.isFetching}
-                onClick={() => setPage((value) => Math.max(1, value - 1))}
-                aria-label='上一页'
-                title='上一页'
-              >
-                <HugeiconsIcon icon={ArrowLeft01Icon} />
-              </Button>
-              <Button
-                type='button'
-                variant='outline'
-                size='sm'
-                disabled={page >= pageCount || rootQuery.isFetching}
-                onClick={() =>
-                  setPage((value) => Math.min(pageCount, value + 1))
-                }
-                aria-label='下一页'
-                title='下一页'
-              >
-                <HugeiconsIcon icon={ArrowRight01Icon} />
-              </Button>
-            </div>
-          </div>
-          {props.metric === 'success' &&
-          props.rangeMinutes != null &&
-          props.initialChannelId != null &&
-          !search &&
-          response &&
-          coverage?.status !== 'unavailable' ? (
-            <ChannelMonitorAnalyticsFailures
-              categories={response.failure_categories ?? []}
-              mode={props.successMode ?? 'actual'}
-              failureCount={
-                props.successMode === 'final'
-                  ? response.scope_summary.final_failure_count
-                  : response.scope_summary.actual_failure_count
-              }
-              truncated={response.failure_categories_truncated}
-            />
+            仅看已确认亏损
+          </Button>
+        ) : null}
+        <div className='text-muted-foreground flex items-center gap-2 text-xs'>
+          <span>
+            {sourceLabel}
+            {response?.source === 'redis_and_database_daily'
+              ? ' · 含今日实时数据'
+              : null}
+          </span>
+          {coverageIncomplete ? (
+            <span className='text-warning'>覆盖不完整</span>
+          ) : null}
+          {coverage?.status !== 'unavailable' ? (
+            <span>共 {response?.total ?? 0} 条</span>
           ) : null}
         </div>
-      </DialogContent>
+      </div>
+      {response?.processed_at ? (
+        <span className='text-muted-foreground text-xs'>
+          数据更新于{' '}
+          {new Date(response.processed_at * 1000).toLocaleString('zh-CN', {
+            timeZone: 'Asia/Shanghai',
+            hour12: false,
+          })}
+          （北京时间）
+        </span>
+      ) : null}
+      {props.metric !== 'profit' ? (
+        <ChannelMonitorAnalyticsCoverage coverage={coverage} />
+      ) : null}
+      <div
+        className={cn(
+          'min-h-0 shrink-0',
+          rootQuery.isFetching && 'opacity-70 transition-opacity'
+        )}
+        aria-busy={rootQuery.isFetching}
+      >
+        {table}
+      </div>
+      <div className='flex items-center justify-between gap-3 border-t pt-3'>
+        <span className='text-muted-foreground text-xs'>
+          第 {response?.page ?? page} / {pageCount} 页
+        </span>
+        <div className='flex items-center gap-2'>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            disabled={page <= 1 || rootQuery.isFetching}
+            onClick={() => setPage((value) => Math.max(1, value - 1))}
+            aria-label='上一页'
+            title='上一页'
+          >
+            <HugeiconsIcon icon={ArrowLeft01Icon} />
+          </Button>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            disabled={page >= pageCount || rootQuery.isFetching}
+            onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
+            aria-label='下一页'
+            title='下一页'
+          >
+            <HugeiconsIcon icon={ArrowRight01Icon} />
+          </Button>
+        </div>
+      </div>
+      {props.metric === 'success' &&
+      props.rangeMinutes != null &&
+      props.initialChannelId != null &&
+      !props.search &&
+      response &&
+      coverage?.status !== 'unavailable' ? (
+        <ChannelMonitorAnalyticsFailures
+          categories={response.failure_categories ?? []}
+          mode={props.successMode ?? 'actual'}
+          failureCount={
+            props.successMode === 'final'
+              ? response.scope_summary.final_failure_count
+              : response.scope_summary.actual_failure_count
+          }
+          truncated={response.failure_categories_truncated}
+        />
+      ) : null}
+      {props.showHeading ? profitTrend : null}
+    </section>
+  )
+}
+
+export function ChannelMonitorAnalyticsDialog(
+  props: ChannelMonitorAnalyticsDialogProps
+) {
+  const [tab, setTab] = useState<AnalyticsTab>('channels')
+  const initialDate = formatChannelMonitorBeijingDate(new Date())
+  const [dateFrom, setDateFrom] = useState(initialDate)
+  const [dateThrough, setDateThrough] = useState(initialDate)
+  const [searchInput, setSearchInput] = useState('')
+  const [search, setSearch] = useState('')
+  const showRequestOverview =
+    props.showRequestOverview === true &&
+    props.metric === 'profit' &&
+    props.rangeMinutes == null
+  const scopeLabels: string[] = []
+  if (props.rangeMinutes != null) {
+    scopeLabels.push(`近${props.rangeMinutes}分钟`)
+  }
+  if (props.initialGroup) scopeLabels.push(`分组 ${props.initialGroup}`)
+  if (props.initialChannelId != null) {
+    scopeLabels.push(
+      props.channels.find((channel) => channel.id === props.initialChannelId)
+        ?.name ?? `渠道 #${props.initialChannelId}`
+    )
+  }
+  if (props.initialModel) scopeLabels.push(`模型 ${props.initialModel}`)
+  if (props.rangeMinutes != null && props.metric === 'success') {
+    scopeLabels.push(
+      props.successMode === 'final' ? '最终结果口径' : '上游尝试口径'
+    )
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearch(searchInput.trim()), 300)
+    return () => window.clearTimeout(timer)
+  }, [searchInput])
+
+  useEffect(() => {
+    const today = formatChannelMonitorBeijingDate(new Date())
+    setDateFrom(today)
+    setDateThrough(today)
+    if (!props.open) {
+      setTab('channels')
+      setSearchInput('')
+      setSearch('')
+    }
+  }, [props.metric, props.open])
+
+  const handleTabChange = (nextTab: AnalyticsTab) => {
+    setTab(nextTab)
+    setSearchInput('')
+    setSearch('')
+  }
+
+  const selectCompleteDates = (from: string) => {
+    setDateFrom(from)
+    setDateThrough(initialDate)
+  }
+
+  return (
+    <Dialog
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      title={
+        showRequestOverview
+          ? '成本、利润与请求概览'
+          : analyticsTitles[props.metric]
+      }
+      description={
+        scopeLabels.length > 0
+          ? scopeLabels.join(' · ')
+          : '按北京时间查看全部用户及 API Key 的汇总'
+      }
+      contentClassName={
+        showRequestOverview ? 'sm:max-w-[96rem]' : 'sm:max-w-6xl'
+      }
+      headerClassName='pr-10'
+      descriptionClassName='[overflow-wrap:anywhere] break-words'
+      bodyClassName='flex flex-col gap-4'
+    >
+      <div className='flex flex-col gap-2 border-b pb-3 sm:flex-row sm:flex-wrap sm:items-center'>
+        <div className='flex flex-wrap items-center gap-2'>
+          <Button
+            type='button'
+            variant={tab === 'channels' ? 'secondary' : 'outline'}
+            size='sm'
+            aria-pressed={tab === 'channels'}
+            onClick={() => handleTabChange('channels')}
+          >
+            渠道汇总
+          </Button>
+          <Button
+            type='button'
+            variant={tab === 'api_keys' ? 'secondary' : 'outline'}
+            size='sm'
+            aria-pressed={tab === 'api_keys'}
+            onClick={() => handleTabChange('api_keys')}
+          >
+            API Key 明细
+          </Button>
+          {props.initialChannelId != null ? (
+            <span className='text-muted-foreground text-xs'>当前渠道内</span>
+          ) : null}
+        </div>
+        <Input
+          value={searchInput}
+          onChange={(event) => setSearchInput(event.target.value)}
+          placeholder='搜索用户、API Key、模型、渠道名称或 ID'
+          aria-label='搜索分析明细'
+          className='min-w-0 sm:ml-auto sm:max-w-xs'
+        />
+        {props.rangeMinutes != null ? (
+          <span
+            aria-label='统计时间范围'
+            className='text-muted-foreground shrink-0 text-sm tabular-nums'
+          >
+            近{props.rangeMinutes}分钟
+          </span>
+        ) : (
+          <ChannelMonitorAnalyticsDateRangeControl
+            from={dateFrom}
+            through={dateThrough}
+            today={initialDate}
+            onChange={(range) => {
+              setDateFrom(range.from)
+              setDateThrough(range.through)
+            }}
+          />
+        )}
+      </div>
+      <div
+        className={cn(
+          'grid min-w-0 grid-cols-1 items-start gap-6',
+          showRequestOverview && 'xl:grid-cols-2'
+        )}
+      >
+        <ChannelMonitorAnalyticsPanel
+          {...props}
+          tab={tab}
+          dateFrom={dateFrom}
+          dateThrough={dateThrough}
+          search={search}
+          showHeading={showRequestOverview}
+          onSelectCompleteDates={selectCompleteDates}
+        />
+        {showRequestOverview ? (
+          <ChannelMonitorAnalyticsPanel
+            {...props}
+            metric='success'
+            tab={tab}
+            dateFrom={dateFrom}
+            dateThrough={dateThrough}
+            search={search}
+            showHeading
+            onSelectCompleteDates={selectCompleteDates}
+          />
+        ) : null}
+      </div>
     </Dialog>
   )
 }

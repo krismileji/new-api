@@ -176,7 +176,7 @@ export function ChannelMonitorTodaySuccessCard(
             props.onOpen()
           }
         }}
-        aria-label={`查看今日成功率、缓存利用率和缓存写明细，成功率 ${successRate}，缓存利用率 ${cacheUtilization}，缓存利用率口径 ${cacheScopeLabel}，缓存写渠道 ${cacheWriteChannelLabel}，缓存写请求 ${cacheWriteRequestLabel}`}
+        aria-label={`查看今日成本、利润、成功率、缓存利用率和缓存写明细，成功率 ${successRate}，缓存利用率 ${cacheUtilization}，缓存利用率口径 ${cacheScopeLabel}，缓存写渠道 ${cacheWriteChannelLabel}，缓存写请求 ${cacheWriteRequestLabel}`}
       >
         <div className='flex min-w-0 items-center justify-between gap-2'>
           <CardDescription

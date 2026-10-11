@@ -280,7 +280,7 @@ describe('channel monitor today success overview', () => {
     assert.ok(markup.includes('全部 API Key'))
     assert.ok(
       markup.includes(
-        'aria-label="查看今日成功率、缓存利用率和缓存写明细，成功率 90%，缓存利用率 50%，缓存利用率口径 全部 API Key，缓存写渠道 2 个，缓存写请求 7 次"'
+        'aria-label="查看今日成本、利润、成功率、缓存利用率和缓存写明细，成功率 90%，缓存利用率 50%，缓存利用率口径 全部 API Key，缓存写渠道 2 个，缓存写请求 7 次"'
       )
     )
   })
