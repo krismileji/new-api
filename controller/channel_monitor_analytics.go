@@ -52,6 +52,7 @@ type channelMonitorAnalyticsResponse struct {
 	Source                     string                                `json:"source"`
 	GroupBy                    string                                `json:"group_by"`
 	Coverage                   service.ChannelMonitorCoverage        `json:"coverage"`
+	RequestCoverage            *service.ChannelMonitorCoverage       `json:"request_coverage,omitempty"`
 	Summary                    map[string]any                        `json:"summary"`
 	ScopeSummary               map[string]any                        `json:"scope_summary"`
 	Items                      []map[string]any                      `json:"items"`
@@ -166,20 +167,20 @@ func parseChannelMonitorAnalyticsQuery(c *gin.Context) (channelMonitorAnalyticsQ
 		Page:      1,
 		PageSize:  50,
 	}
-	if query.Metric != "success" && query.Metric != "cost" && query.Metric != "performance" && query.Metric != "profit" {
-		return query, &channelMonitorAnalyticsQueryError{"metric 必须为 success、cost、profit 或 performance"}
+	if query.Metric != "success" && query.Metric != "cost" && query.Metric != "performance" && query.Metric != "profit" && query.Metric != "overview" {
+		return query, &channelMonitorAnalyticsQueryError{"metric 必须为 success、cost、profit、overview 或 performance"}
 	}
 	defaultSort := "samples"
 	if query.Metric == "cost" {
 		defaultSort = "cost"
 	}
-	if query.Metric == "profit" {
+	if query.Metric == "profit" || query.Metric == "overview" {
 		defaultSort = "profit"
 	}
 	if raw := c.Query("only_loss"); raw != "" {
 		var parseErr error
 		query.OnlyLoss, parseErr = strconv.ParseBool(raw)
-		if parseErr != nil || query.Metric != "profit" {
+		if parseErr != nil || (query.Metric != "profit" && query.Metric != "overview") {
 			return query, &channelMonitorAnalyticsQueryError{"only_loss 仅支持利润指标的布尔值"}
 		}
 	}
@@ -225,7 +226,7 @@ func parseChannelMonitorAnalyticsQuery(c *gin.Context) (channelMonitorAnalyticsQ
 		if err != nil || query.Minutes < minChannelMonitorPerformanceMinutes || query.Minutes > maxChannelMonitorPerformanceMinutes {
 			return query, &channelMonitorAnalyticsQueryError{"性能与成功率统计范围必须在 1 到 1440 分钟之间"}
 		}
-		if query.Metric == "cost" || query.Metric == "profit" || query.GroupBy == "day" || query.From != 0 || query.To != 0 {
+		if query.Metric == "cost" || query.Metric == "profit" || query.Metric == "overview" || query.GroupBy == "day" || query.From != 0 || query.To != 0 {
 			return query, &channelMonitorAnalyticsQueryError{"分钟统计仅支持成功率和性能明细，不能同时指定日期范围或按日分组"}
 		}
 	}
@@ -275,6 +276,9 @@ func channelMonitorAnalyticsGroupByAllowed(groupBy string) bool {
 }
 
 func channelMonitorAnalyticsSortAllowed(metric, sortKey string) bool {
+	if metric == "overview" {
+		return channelMonitorAnalyticsSortAllowed("profit", sortKey) || channelMonitorAnalyticsSortAllowed("success", sortKey)
+	}
 	if metric == "profit" {
 		switch sortKey {
 		case "profit", "income", "cost", "profit_rate":
@@ -344,6 +348,9 @@ func queryChannelMonitorHistoricalAnalytics(ctx context.Context, query channelMo
 	query, err = prepareChannelMonitorAnalyticsSearch(ctx, query)
 	if err != nil {
 		return channelMonitorAnalyticsResponse{}, err
+	}
+	if query.Metric == "overview" {
+		return queryChannelMonitorOverviewAnalytics(ctx, query)
 	}
 	if query.Metric == "profit" {
 		return queryChannelMonitorProfitAnalytics(ctx, query)

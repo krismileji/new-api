@@ -77,6 +77,7 @@ const analyticsTitles: Record<ChannelMonitorAnalyticsMetric, string> = {
   profit: '渠道利润分析',
   success: '成功率与缓存分析',
   performance: '性能分析',
+  overview: '成本、利润与请求概览',
 }
 
 const ChannelMonitorProfitTrend = lazy(() =>
@@ -88,7 +89,7 @@ const ChannelMonitorProfitTrend = lazy(() =>
 function getDefaultAnalyticsSort(
   metric: ChannelMonitorAnalyticsMetric
 ): ChannelMonitorAnalyticsSort {
-  if (metric === 'profit') return 'profit'
+  if (metric === 'profit' || metric === 'overview') return 'profit'
   return metric === 'cost' ? 'cost' : 'samples'
 }
 
@@ -268,7 +269,7 @@ function AnalyticsSummary(props: {
         />,
       ]
     )
-  } else if (props.metric === 'profit') {
+  } else if (props.metric === 'profit' || props.metric === 'overview') {
     values.push(
       ['用户扣费', formatProfitMoney(summary.income_nano_cny)],
       ['总成本', formatProfitMoney(summary.cost_nano_cny)],
@@ -282,27 +283,40 @@ function AnalyticsSummary(props: {
       ],
       ['利润率', formatProfitRate(summary, props.coverage)]
     )
-  } else if (props.metric === 'success') {
+  }
+  if (props.metric === 'success' || props.metric === 'overview') {
     const final = props.successMode === 'final'
     const sampleCount = final
       ? summary.final_sample_count
       : summary.actual_sample_count
     values.push(
-      [final ? '最终请求数' : '上游尝试数', sampleCount],
+      [
+        final ? '最终请求数' : '上游尝试数',
+        summary.request_metrics_available === false ? '—' : sampleCount,
+      ],
       [
         final ? '最终成功率' : '上游成功率',
-        formatRate(
-          final ? summary.final_success_rate : summary.actual_success_rate,
-          sampleCount
-        ),
+        summary.request_metrics_available === false
+          ? '—'
+          : formatRate(
+              final ? summary.final_success_rate : summary.actual_success_rate,
+              sampleCount
+            ),
       ],
       [
         '流式缓存利用率',
-        formatRate(summary.cache_utilization_rate, summary.input_tokens),
+        summary.request_metrics_available === false
+          ? '—'
+          : formatRate(summary.cache_utilization_rate, summary.input_tokens),
       ],
-      ['缓存写入次数', summary.cache_write_request_count]
+      [
+        '缓存写入次数',
+        summary.request_metrics_available === false
+          ? '—'
+          : summary.cache_write_request_count,
+      ]
     )
-  } else {
+  } else if (props.metric === 'cost') {
     const settled = summary.settled_count ?? 0
     const unresolved = summary.unresolved_count ?? 0
     values.push(
@@ -322,7 +336,12 @@ function AnalyticsSummary(props: {
     )
   }
   return (
-    <div className='bg-border grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-lg border sm:grid-cols-4'>
+    <div
+      className={cn(
+        'bg-border grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-lg border sm:grid-cols-4',
+        props.metric === 'overview' && 'xl:grid-cols-8'
+      )}
+    >
       {values.map(([label, value]) => (
         <div
           key={String(label)}
@@ -349,11 +368,11 @@ function ChannelMonitorAnalyticsPanel(
     dateFrom: string
     dateThrough: string
     search: string
-    showHeading: boolean
     onSelectCompleteDates: (from: string) => void
   }
 ) {
   const queryClient = useQueryClient()
+  const isProfit = props.metric === 'profit' || props.metric === 'overview'
   const [refreshingProfit, setRefreshingProfit] = useState(false)
   const [page, setPage] = useState(1)
   const [onlyLoss, setOnlyLoss] = useState(false)
@@ -394,7 +413,7 @@ function ChannelMonitorAnalyticsPanel(
     direction,
     page,
     pageSize: 20,
-    onlyLoss: props.metric === 'profit' && onlyLoss ? true : undefined,
+    onlyLoss: isProfit && onlyLoss ? true : undefined,
   }
   const rootQuery = useChannelMonitorAnalytics(rootRequest, props.open)
   const rootQueryResponse = rootQuery.data?.data
@@ -402,7 +421,8 @@ function ChannelMonitorAnalyticsPanel(
     rootQueryResponse?.group_by === rootGroupBy ? rootQueryResponse : undefined
   const coverage = response?.coverage
   const coverageIncomplete =
-    isChannelMonitorAnalyticsCoverageIncomplete(coverage)
+    isChannelMonitorAnalyticsCoverageIncomplete(coverage) ||
+    isChannelMonitorAnalyticsCoverageIncomplete(response?.request_coverage)
   const pageCount = response
     ? Math.max(1, Math.ceil(response.total / response.page_size))
     : 1
@@ -458,9 +478,13 @@ function ChannelMonitorAnalyticsPanel(
   if (props.metric === 'performance') {
     description =
       '首字延迟越低越快，TPS 越高越快。首字按有效样本平均；TPS = 总输出 Token ÷ 总生成时间。仅统计业务上游调用，重试分别计数；缺失指标的请求不计入对应平均值。'
-  } else if (props.metric === 'profit') {
+  } else if (isProfit) {
     description =
       '利润 = 已确认用户扣费 − 已结算渠道成本。数据未完整时显示暂估值，补账后自动更新。'
+    if (props.metric === 'overview') {
+      description +=
+        '成功率按上游尝试统计，包含重试；流式缓存利用率按输入 Token 加权，缓存写入次数包含流式和非流式请求。'
+    }
   } else if (props.metric === 'success') {
     description = `${props.successMode === 'final' ? '成功率按请求最终结果统计。' : '成功率按实际派发的上游尝试统计，包含重试。'}缓存利用率按流式请求的输入 Token 加权；缓存写入次数包含流式和非流式请求。`
   }
@@ -486,7 +510,10 @@ function ChannelMonitorAnalyticsPanel(
         </AlertDescription>
       </Alert>
     )
-  } else if (coverage?.status === 'unavailable') {
+  } else if (
+    coverage?.status === 'unavailable' &&
+    props.metric !== 'overview'
+  ) {
     table = null
   } else {
     table = (
@@ -504,29 +531,28 @@ function ChannelMonitorAnalyticsPanel(
   }
 
   const profitTrend =
-    props.metric === 'profit' && props.open ? (
+    isProfit && props.open ? (
       <Suspense fallback={<Skeleton className='h-48 w-full' />}>
-        <ChannelMonitorProfitTrend request={rootRequest} />
+        <ChannelMonitorProfitTrend
+          request={{ ...rootRequest, metric: 'profit', sort: 'profit' }}
+        />
       </Suspense>
     ) : null
 
   return (
     <section aria-label={title} className='flex min-w-0 flex-col gap-3'>
-      {props.showHeading ? (
-        <h3 className='text-sm font-semibold'>{title}</h3>
-      ) : null}
       <AnalyticsSummary
         metric={props.metric}
         successMode={props.successMode}
         coverage={coverage}
         summary={
-          coverage?.status === 'unavailable'
+          coverage?.status === 'unavailable' && props.metric !== 'overview'
             ? undefined
             : (response?.scope_summary ?? response?.summary)
         }
       />
       <p className='text-muted-foreground text-xs'>{description}</p>
-      {props.metric === 'profit' && response ? (
+      {isProfit && response ? (
         <>
           <ChannelMonitorProfitStatus
             response={response}
@@ -539,9 +565,12 @@ function ChannelMonitorAnalyticsPanel(
                   {
                     queryKey: ['channel-monitor', 'analytics'],
                     type: 'active',
-                    predicate: (query) =>
-                      (query.queryKey[2] as ChannelMonitorAnalyticsQuery)
-                        ?.metric === 'profit',
+                    predicate: (query) => {
+                      const metric = (
+                        query.queryKey[2] as ChannelMonitorAnalyticsQuery
+                      )?.metric
+                      return metric === 'profit' || metric === 'overview'
+                    },
                   },
                   { cancelRefetch: false }
                 )
@@ -582,7 +611,7 @@ function ChannelMonitorAnalyticsPanel(
           ) : null}
         </>
       ) : null}
-      {props.showHeading ? null : profitTrend}
+      {props.metric !== 'overview' ? profitTrend : null}
       {rootQuery.isError && response ? (
         <Alert variant='destructive'>
           <AlertTitle>统计更新失败，保留上次结果</AlertTitle>
@@ -599,7 +628,7 @@ function ChannelMonitorAnalyticsPanel(
         </Alert>
       ) : null}
       <div className='flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between'>
-        {props.metric === 'profit' ? (
+        {isProfit ? (
           <Button
             variant={onlyLoss ? 'secondary' : 'outline'}
             size='sm'
@@ -635,9 +664,13 @@ function ChannelMonitorAnalyticsPanel(
           （北京时间）
         </span>
       ) : null}
-      {props.metric !== 'profit' ? (
+      {!isProfit ? (
         <ChannelMonitorAnalyticsCoverage coverage={coverage} />
       ) : null}
+      <ChannelMonitorAnalyticsCoverage
+        coverage={response?.request_coverage}
+        scope='请求统计'
+      />
       <div
         className={cn(
           'min-h-0 shrink-0',
@@ -693,7 +726,7 @@ function ChannelMonitorAnalyticsPanel(
           truncated={response.failure_categories_truncated}
         />
       ) : null}
-      {props.showHeading ? profitTrend : null}
+      {props.metric === 'overview' ? profitTrend : null}
     </section>
   )
 }
@@ -827,34 +860,15 @@ export function ChannelMonitorAnalyticsDialog(
           />
         )}
       </div>
-      <div
-        className={cn(
-          'grid min-w-0 grid-cols-1 items-start gap-6',
-          showRequestOverview && 'xl:grid-cols-2'
-        )}
-      >
-        <ChannelMonitorAnalyticsPanel
-          {...props}
-          tab={tab}
-          dateFrom={dateFrom}
-          dateThrough={dateThrough}
-          search={search}
-          showHeading={showRequestOverview}
-          onSelectCompleteDates={selectCompleteDates}
-        />
-        {showRequestOverview ? (
-          <ChannelMonitorAnalyticsPanel
-            {...props}
-            metric='success'
-            tab={tab}
-            dateFrom={dateFrom}
-            dateThrough={dateThrough}
-            search={search}
-            showHeading
-            onSelectCompleteDates={selectCompleteDates}
-          />
-        ) : null}
-      </div>
+      <ChannelMonitorAnalyticsPanel
+        {...props}
+        metric={showRequestOverview ? 'overview' : props.metric}
+        tab={tab}
+        dateFrom={dateFrom}
+        dateThrough={dateThrough}
+        search={search}
+        onSelectCompleteDates={selectCompleteDates}
+      />
     </Dialog>
   )
 }

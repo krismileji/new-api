@@ -3,7 +3,12 @@ import type {
   ChannelMonitorSuccessMode,
 } from './types'
 
-export type ChannelMonitorAnalyticsMetric = 'success' | 'cost' | 'performance' | 'profit'
+export type ChannelMonitorAnalyticsMetric =
+  | 'success'
+  | 'cost'
+  | 'performance'
+  | 'profit'
+  | 'overview'
 export type ChannelMonitorAnalyticsSort =
   | 'samples'
   | 'success'
@@ -59,6 +64,7 @@ export type ChannelMonitorAnalyticsQuery = {
 }
 
 export type ChannelMonitorAnalyticsSummary = {
+  request_metrics_available?: boolean
   actual_success_count: number
   actual_failure_count: number
   actual_sample_count: number
@@ -133,6 +139,7 @@ export type ChannelMonitorAnalyticsResponse = {
     covered_through: number
     reasons: string[]
   }
+  request_coverage?: ChannelMonitorAnalyticsResponse['coverage']
   summary: ChannelMonitorAnalyticsSummary
   scope_summary: ChannelMonitorAnalyticsSummary
   items: ChannelMonitorAnalyticsItem[]

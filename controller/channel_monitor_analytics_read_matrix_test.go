@@ -91,4 +91,5 @@ func TestChannelMonitorAnalyticsReadDatabaseMatrix(t *testing.T) {
 	runChannelMonitorSystemProbeAnalyticsCases(t, db, day-16*86400, "manual_test", "模型测试")
 	runChannelMonitorProfitCoverageCases(t, db, day-20*86400)
 	runChannelMonitorScopedPendingCostCoverageCases(t, db)
+	runChannelMonitorOverviewAnalyticsCases(t, db, day-30*86400)
 }

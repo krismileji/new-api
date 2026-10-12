@@ -188,7 +188,15 @@ function AnalyticsTableHeaderRow(props: AnalyticsTableHeaderProps) {
           {metricHead('测速输出', 'output_tokens')}
         </>
       ) : null}
-      {props.metric === 'success' ? (
+      {props.metric === 'profit' || props.metric === 'overview' ? (
+        <>
+          {metricHead('用户扣费', 'income')}
+          {metricHead('总成本', 'cost')}
+          {metricHead('利润', 'profit')}
+          {metricHead('利润率', 'profit_rate')}
+        </>
+      ) : null}
+      {props.metric === 'success' || props.metric === 'overview' ? (
         <>
           {metricHead(
             props.successMode === 'final' ? '最终请求数' : '上游尝试数',
@@ -208,14 +216,6 @@ function AnalyticsTableHeaderRow(props: AnalyticsTableHeaderProps) {
           {metricHead('已结算', 'settled')}
           {metricHead('未解析', 'unresolved')}
           {metricHead('解析率', 'resolution_rate')}
-        </>
-      ) : null}
-      {props.metric === 'profit' ? (
-        <>
-          {metricHead('用户扣费', 'income')}
-          {metricHead('总成本', 'cost')}
-          {metricHead('利润', 'profit')}
-          {metricHead('利润率', 'profit_rate')}
         </>
       ) : null}
     </TableRow>
@@ -303,6 +303,18 @@ function AnalyticsTableMetricCells(props: {
   coverage?: ChannelMonitorAnalyticsResponse['coverage']
   successMode?: ChannelMonitorSuccessMode
 }) {
+  if (props.metric === 'overview') {
+    return (
+      <>
+        <ChannelMonitorProfitCells
+          summary={props.item}
+          coverage={props.coverage}
+          dayStart={props.groupBy === 'day' ? props.item.day_start : undefined}
+        />
+        <AnalyticsTableMetricCells {...props} metric='success' />
+      </>
+    )
+  }
   if (props.metric === 'profit') {
     return (
       <ChannelMonitorProfitCells
@@ -337,6 +349,21 @@ function AnalyticsTableMetricCells(props: {
     )
   }
   if (props.metric === 'success') {
+    if (props.item.request_metrics_available === false) {
+      return (
+        <>
+          {Array.from({ length: 4 }, (_, index) => (
+            <TableCell
+              key={index}
+              className='text-right'
+              title='请求统计尚未完整，不能确认此行数据'
+            >
+              —
+            </TableCell>
+          ))}
+        </>
+      )
+    }
     const final = props.successMode === 'final'
     const sampleCount = final
       ? props.item.final_sample_count
@@ -638,7 +665,10 @@ function AnalyticsExpandableTableRow(props: {
           </TableCell>
         </TableRow>
       )
-    } else if (childResponse?.coverage.status === 'unavailable') {
+    } else if (
+      childResponse?.coverage.status === 'unavailable' &&
+      props.metric !== 'overview'
+    ) {
       expandedRows = null
     } else if (childResponse && childResponse.items.length > 0) {
       expandedRows = childResponse.items.map((item) => (
@@ -732,6 +762,19 @@ function AnalyticsExpandableTableRow(props: {
           </TableCell>
         </TableRow>
       ) : null}
+      {expanded &&
+      isChannelMonitorAnalyticsCoverageIncomplete(
+        childResponse?.request_coverage
+      ) ? (
+        <TableRow>
+          <TableCell colSpan={props.columnCount}>
+            <ChannelMonitorAnalyticsCoverage
+              coverage={childResponse?.request_coverage}
+              scope={`${primaryLabel}请求统计`}
+            />
+          </TableCell>
+        </TableRow>
+      ) : null}
       {expandedRows}
       {expanded && childResponse && (childPageCount > 1 || childPage > 1) ? (
         <TableRow className='bg-muted/5'>
@@ -805,13 +848,18 @@ export function ChannelMonitorAnalyticsExpandableTable(
     )
   }
   const columnCount =
-    props.groupBy === 'channel_model' ||
+    (props.metric === 'overview' ? 4 : 0) +
+    (props.groupBy === 'channel_model' ||
     props.groupBy === 'api_key_channel_model'
       ? 6
-      : 5
+      : 5)
   return (
     <div className='shrink-0 overflow-x-auto rounded-lg border'>
-      <Table className='min-w-[42rem]'>
+      <Table
+        className={
+          props.metric === 'overview' ? 'min-w-[76rem]' : 'min-w-[42rem]'
+        }
+      >
         <AnalyticsTableHeader
           metric={props.metric}
           groupBy={props.groupBy}
