@@ -136,7 +136,7 @@ func runChannelMonitorOverviewAnalyticsCases(t *testing.T, db *gorm.DB, day int6
 	assert.EqualValues(t, 5, keyModels.Items[0]["actual_sample_count"])
 	assert.EqualValues(t, 150, keyModels.Items[0]["cost_nano_cny"])
 
-	params := url.Values{"metric": {"overview"}, "group_by": {"channel"}, "from": {time.Unix(day, 0).In(time.FixedZone("UTC+8", 8*3600)).Format("2006-01-02")}, "to": {time.Unix(day+86400, 0).In(time.FixedZone("UTC+8", 8*3600)).Format("2006-01-02")}, "sort": {"cache_utilization"}, "only_loss": {"true"}, "page_size": {"1"}}
+	params := url.Values{"metric": {"overview"}, "group_by": {"channel"}, "from": {time.Unix(day, 0).In(time.FixedZone("UTC+8", 8*3600)).Format("2006-01-02")}, "to": {time.Unix(day+86400, 0).In(time.FixedZone("UTC+8", 8*3600)).Format("2006-01-02")}, "only_loss": {"true"}, "page_size": {"1"}}
 	httpResponse := requestChannelMonitorAnalytics(t, params)
 	require.Len(t, httpResponse.Items, 1)
 	assert.EqualValues(t, channel, httpResponse.Items[0]["channel_id"])

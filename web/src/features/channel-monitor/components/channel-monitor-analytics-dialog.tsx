@@ -89,7 +89,8 @@ const ChannelMonitorProfitTrend = lazy(() =>
 function getDefaultAnalyticsSort(
   metric: ChannelMonitorAnalyticsMetric
 ): ChannelMonitorAnalyticsSort {
-  if (metric === 'profit' || metric === 'overview') return 'profit'
+  if (metric === 'overview') return 'cache_utilization'
+  if (metric === 'profit') return 'profit'
   return metric === 'cost' ? 'cost' : 'samples'
 }
 

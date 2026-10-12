@@ -174,8 +174,11 @@ func parseChannelMonitorAnalyticsQuery(c *gin.Context) (channelMonitorAnalyticsQ
 	if query.Metric == "cost" {
 		defaultSort = "cost"
 	}
-	if query.Metric == "profit" || query.Metric == "overview" {
+	if query.Metric == "profit" {
 		defaultSort = "profit"
+	}
+	if query.Metric == "overview" {
+		defaultSort = "cache_utilization"
 	}
 	if raw := c.Query("only_loss"); raw != "" {
 		var parseErr error

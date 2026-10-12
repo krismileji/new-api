@@ -89,6 +89,8 @@ test('the unified table preserves date and search when expanding a user to API k
         from: '2026-09-01',
         to: '2026-09-04',
         search: 'alice',
+        sort: 'cache_utilization',
+        direction: 'desc',
       })
     )
   )
@@ -107,6 +109,8 @@ test('the unified table preserves date and search when expanding a user to API k
       from: '2026-09-01',
       to: '2026-09-04',
       search: 'alice',
+      sort: 'cache_utilization',
+      direction: 'desc',
     })
   )
 })
@@ -118,6 +122,9 @@ test('sorting request metrics and changing pages applies to the whole overview',
     undefined,
     { showRequestOverview: true }
   )
+  expect(
+    await screen.findByRole('columnheader', { name: /流式缓存利用率/ })
+  ).toHaveAttribute('aria-sort', 'descending')
   fireEvent.click(
     await screen.findByRole('button', { name: /按上游成功率排序/ })
   )
