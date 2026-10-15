@@ -14,6 +14,19 @@ import { ChannelMonitorAnalyticsDialog } from '../channel-monitor-analytics-dial
 
 export type AnalyticsParams = Record<string, string | number | undefined>
 
+type AnalyticsWireCoverage = Omit<
+  ChannelMonitorAnalyticsResponse['coverage'],
+  'reasons'
+> & { reasons?: string[] | null }
+
+type AnalyticsWireResponse = Omit<
+  ChannelMonitorAnalyticsResponse,
+  'coverage' | 'request_coverage'
+> & {
+  coverage: AnalyticsWireCoverage
+  request_coverage?: AnalyticsWireCoverage
+}
+
 const originalAdapter = api.defaults.adapter
 const clients: QueryClient[] = []
 
@@ -73,9 +86,7 @@ export function renderAnalyticsQuery(
   metric: ChannelMonitorAnalyticsMetric,
   respond: (
     params: AnalyticsParams
-  ) =>
-    | ChannelMonitorAnalyticsResponse
-    | Promise<ChannelMonitorAnalyticsResponse>,
+  ) => AnalyticsWireResponse | Promise<AnalyticsWireResponse>,
   initialChannelId?: number,
   scope: Pick<
     ComponentProps<typeof ChannelMonitorAnalyticsDialog>,

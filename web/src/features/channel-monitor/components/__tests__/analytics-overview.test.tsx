@@ -61,6 +61,109 @@ test('the overview shows cost, profit, success and cache metrics in the same row
   expect(screen.getAllByLabelText('搜索分析明细')).toHaveLength(1)
 })
 
+test.each([null, undefined])(
+  'expanding a model with %s coverage reasons keeps user and API key metrics visible',
+  async (reasons) => {
+    const { requests } = renderAnalyticsQuery(
+      'profit',
+      (params) => {
+        const response = overviewResponse(params)
+        if (params.group_by === 'model') {
+          return {
+            ...response,
+            items: [
+              analyticsItem('model-a', {
+                ...response.summary,
+                model_key: 'model-a',
+                model_name: 'model-a',
+              }),
+            ],
+          }
+        }
+        if (params.group_by === 'user' || params.group_by === 'api_key') {
+          return {
+            ...response,
+            coverage: { ...response.coverage, reasons },
+          }
+        }
+        return response
+      },
+      undefined,
+      { showRequestOverview: true }
+    )
+
+    const channel = await screen.findByRole('button', {
+      name: '查看渠道 A明细',
+    })
+    fireEvent.click(channel)
+    const model = await screen.findByRole('button', {
+      name: '查看model-a明细',
+    })
+    fireEvent.click(model)
+    const user = await screen.findByRole('button', { name: '查看alice明细' })
+    expect(model).toHaveAttribute('aria-expanded', 'true')
+    const userRow = within(screen.getByRole('row', { name: /alice/ }))
+    expect(userRow.getByText('¥9.0000')).toBeVisible()
+    expect(userRow.getByText('75.0%')).toBeVisible()
+    expect(userRow.getByText('40.0%')).toBeVisible()
+
+    fireEvent.click(user)
+    expect(await screen.findByText('生产 Key')).toBeVisible()
+    const keyRow = within(screen.getByRole('row', { name: /生产 Key/ }))
+    expect(keyRow.getByText('¥9.0000')).toBeVisible()
+    expect(keyRow.getByText('90.0%')).toBeVisible()
+    expect(channel).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getAllByRole('table')).toHaveLength(1)
+    expect(requests).toContainEqual(
+      expect.objectContaining({
+        metric: 'overview',
+        group_by: 'api_key',
+        channel_id: 7,
+        model: 'model-a',
+        user_id: 31,
+      })
+    )
+  }
+)
+
+test.each([null, undefined])(
+  'overview coverage with %s reasons preserves partial warnings and estimated profit',
+  async (reasons) => {
+    renderAnalyticsQuery(
+      'profit',
+      (params) => {
+        const response = overviewResponse(params)
+        const coverage = {
+          ...response.coverage,
+          status: 'partial' as const,
+          reasons,
+        }
+        return {
+          ...response,
+          coverage,
+          request_coverage: { ...coverage },
+          summary: { ...response.summary, profit_confirmed: false },
+          scope_summary: { ...response.scope_summary, profit_confirmed: false },
+          items: response.items.map((item) => ({
+            ...item,
+            profit_confirmed: false,
+          })),
+        }
+      },
+      undefined,
+      { showRequestOverview: true }
+    )
+
+    await screen.findByRole('button', { name: '查看渠道 A明细' })
+    const row = within(screen.getByRole('row', { name: /渠道 A/ }))
+    expect(row.getByText('¥9.0000')).toBeVisible()
+    expect(row.getByText('暂估')).toBeVisible()
+    expect(screen.getByText('请求统计覆盖不完整')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: '统计说明' }))
+    expect(screen.getByText('利润覆盖不完整')).toBeVisible()
+  }
+)
+
 test('the unified table preserves date and search when expanding a user to API keys', async () => {
   const { requests } = renderAnalyticsQuery(
     'profit',

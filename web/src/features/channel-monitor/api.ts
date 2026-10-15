@@ -144,7 +144,13 @@ export async function getChannelMonitorAnalytics(
       params: channelMonitorAnalyticsParams(request),
     })
   )
-  return ensureChannelMonitorSuccess(response.data)
+  const result = ensureChannelMonitorSuccess(response.data)
+  // Go serializes nil slices as null; analytics consumers expect arrays.
+  result.data.coverage.reasons ??= []
+  if (result.data.request_coverage) {
+    result.data.request_coverage.reasons ??= []
+  }
+  return result
 }
 
 export async function getChannelMonitorAnalyticsOptions() {
