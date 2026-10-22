@@ -151,6 +151,24 @@ test('search filters both rule and route entries and updates the selected channe
   expect(onActionComplete).toHaveBeenCalledOnce()
 })
 
+test('renders permanent fixed items without converting the sentinel to a date', async () => {
+  const permanentManagement = management()
+  permanentManagement.channel_rules[0].manual_primary_until = 2 ** 52
+  permanentManagement.route_primaries[0].manual_primary_until = 2 ** 52
+  api.defaults.adapter = async (config) => ({
+    data: { success: true, data: permanentManagement },
+    status: 200,
+    statusText: 'OK',
+    headers: {},
+    config,
+  })
+
+  mount()
+
+  expect(await screen.findAllByText('永久')).toHaveLength(2)
+  expect(document.querySelectorAll('time')).toHaveLength(0)
+})
+
 test('search finds a single-model pin and removes only that route', async () => {
   const requests: Array<{ url?: string; method?: string; data?: unknown }> = []
   api.defaults.adapter = async (config) => {

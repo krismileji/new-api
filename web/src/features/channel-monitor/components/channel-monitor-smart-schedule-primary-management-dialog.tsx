@@ -92,8 +92,17 @@ function routeStatusLabel(route: ChannelMonitorSmartSchedulePrimaryRuleRoute) {
 }
 
 function FixedUntil(props: { until: number }) {
+  if (channelMonitorSmartScheduleUntilIsPermanent(props.until)) {
+    return <span>永久</span>
+  }
+
+  const date = new Date(props.until * 1000)
+  if (!Number.isFinite(props.until) || Number.isNaN(date.getTime())) {
+    return <span>未知</span>
+  }
+
   return (
-    <time dateTime={new Date(props.until * 1000).toISOString()}>
+    <time dateTime={date.toISOString()}>
       {formatChannelMonitorSmartScheduleUntil(props.until)}
     </time>
   )
