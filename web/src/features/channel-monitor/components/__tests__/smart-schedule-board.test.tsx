@@ -19,13 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 
 import { CHANNEL_STATUS } from '@/features/channels/constants'
+import { api } from '@/lib/api'
 import { formatTimestampToDate } from '@/lib/format'
 
 import { sortChannelMonitorItems } from '../../lib/sort'
@@ -603,29 +604,109 @@ function createBoardElement(options: {
   )
 }
 
-test('switching to channel scope explains future models and previews rule conflicts', async () => {
+test('channel fixed scope selects the current group or all groups', async () => {
   const user = userEvent.setup()
   const result = createResult()
-  result.routes[1].state.manual_primary_until =
-    Math.floor(Date.now() / 1000) + 3600
-  result.routes[1].state.manual_primary_channel_rule = true
   render(createBoardElement({ result }))
 
   await user.click(
     screen.getAllByRole('button', { name: '固定 高速渠道 为主渠道' })[0]
   )
-  const scope = screen.getByRole('checkbox', { name: /固定该渠道的所有模型/ })
-  await user.click(scope)
-
+  const groupScope = screen.getByRole('radio', {
+    name: '固定当前分组的所有模型',
+  })
+  await user.click(groupScope)
   expect(
-    screen.getByRole('heading', { name: '固定该渠道的全部模型' })
+    screen.getByRole('heading', { name: '固定 vip 分组全部模型' })
   ).toBeVisible()
-  expect(screen.getByText('自动包含以后新增的模型路由')).toBeVisible()
-  expect(screen.getByText(/后续新增路由会自动纳入/)).toBeVisible()
-  expect(screen.getByText(/1 个路由已有渠道规则/)).toBeVisible()
+  expect(screen.getByText(/后续新增模型/)).toBeVisible()
+  expect(groupScope).toHaveAttribute('aria-checked', 'true')
+  expect(screen.getByText('允许稳定性降级')).toBeVisible()
 
-  await user.click(scope)
-  expect(screen.getByRole('heading', { name: '固定主渠道' })).toBeVisible()
+  await user.click(
+    screen.getByRole('radio', { name: '固定全部分组的所有模型' })
+  )
+  expect(
+    screen.getByRole('heading', { name: '固定全部分组模型' })
+  ).toBeVisible()
+  expect(screen.getByText('已有单模型固定可以覆盖渠道固定。')).toBeVisible()
+})
+
+test('channel fixed scope confirms before clearing stability protection', async () => {
+  const originalAdapter = api.defaults.adapter
+  const requests: Array<{ data: unknown }> = []
+  api.defaults.adapter = async (config) => {
+    const request = JSON.parse(String(config.data)) as {
+      confirm_stability_override?: boolean
+    }
+    requests.push({ data: request })
+    return {
+      data: request.confirm_stability_override
+        ? {
+            success: true,
+            message: '',
+            data: {
+              channel_id: 1,
+              group: 'vip',
+              duration_minutes: 60,
+              allow_stability_degrade: true,
+              manual_primary_until: 1_900_000_000,
+              total_routes: 1,
+              fixed_routes: 1,
+              skipped_routes: 0,
+              routing_changed: true,
+              task: null,
+            },
+          }
+        : {
+            success: false,
+            code: 'smart_schedule_channel_primary_stability_confirmation_required',
+            message: '有模型路由处于稳定性保护中',
+            data: null,
+          },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+
+  const result = createResult()
+  result.routes[0].state.stability_state = 'degraded'
+  const user = userEvent.setup()
+  try {
+    render(createBoardElement({ result }))
+    await user.click(
+      screen.getAllByRole('button', { name: '固定 高速渠道 为主渠道' })[0]
+    )
+    await user.click(
+      screen.getByRole('radio', { name: '固定当前分组的所有模型' })
+    )
+    await user.click(screen.getByRole('button', { name: '固定当前分组' }))
+
+    expect(
+      await screen.findByRole('heading', {
+        name: '部分模型路由处于稳定性保护中',
+      })
+    ).toBeVisible()
+    expect(screen.getByText(/vip 分组中/)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: '解除保护并固定渠道' }))
+    await waitFor(() => expect(requests).toHaveLength(2))
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  expect(requests[0]?.data).toEqual({
+    group: 'vip',
+    duration_minutes: 60,
+    allow_stability_degrade: true,
+  })
+  expect(requests[1]?.data).toEqual({
+    group: 'vip',
+    duration_minutes: 60,
+    allow_stability_degrade: true,
+    confirm_stability_override: true,
+  })
 })
 
 describe('channel monitor smart schedule board', () => {

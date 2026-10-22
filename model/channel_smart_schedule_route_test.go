@@ -2092,7 +2092,7 @@ func TestChannelPrimaryRuleCoversNewModelsAndRespectsSingleRouteOverrides(t *tes
 	channelWeight := uint(100)
 	channels := []Channel{
 		{Id: 8101, Name: "规则渠道一", Status: common.ChannelStatusEnabled, Group: "vip,default", Models: "model-a", Priority: &channelPriority, Weight: &channelWeight},
-		{Id: 8102, Name: "规则渠道二", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a,model-b", Priority: &channelPriority, Weight: &channelWeight},
+		{Id: 8102, Name: "规则渠道二", Status: common.ChannelStatusEnabled, Group: "vip,default", Models: "model-a,model-b", Priority: &channelPriority, Weight: &channelWeight},
 	}
 	require.NoError(t, db.Create(&channels).Error)
 	firstPriority := int64(30)
@@ -2102,19 +2102,22 @@ func TestChannelPrimaryRuleCoversNewModelsAndRespectsSingleRouteOverrides(t *tes
 		{ChannelId: 8101, Group: "default", Model: "model-a", Enabled: true, Priority: &firstPriority, Weight: 100},
 		{ChannelId: 8102, Group: "vip", Model: "model-a", Enabled: true, Priority: &secondPriority, Weight: 100},
 		{ChannelId: 8102, Group: "vip", Model: "model-b", Enabled: true, Priority: &secondPriority, Weight: 100},
+		{ChannelId: 8102, Group: "default", Model: "model-a", Enabled: true, Priority: &secondPriority, Weight: 100},
 	}).Error)
 	require.NoError(t, db.Create(&[]ChannelSmartScheduleRouteState{
 		{ChannelId: 8101, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 		{ChannelId: 8101, GroupName: "default", ModelName: "model-a", ParticipationSet: true},
 		{ChannelId: 8102, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
 		{ChannelId: 8102, GroupName: "vip", ModelName: "model-b", ParticipationSet: true},
+		{ChannelId: 8102, GroupName: "default", ModelName: "model-a", ParticipationSet: true},
 	}).Error)
 
 	firstRule, err := SaveChannelSmartScheduleChannelPrimaryRule(8101, ChannelSmartScheduleChannelPrimaryRuleOptions{
 		DurationMinutes: ChannelSmartSchedulePermanentDurationMinutes,
+		Group:           "vip",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 2, firstRule.FixedRoutes)
+	assert.Equal(t, 1, firstRule.FixedRoutes)
 
 	channels[0].Models = "model-a,model-b"
 	require.NoError(t, db.Model(&Channel{}).Where("id = ?", channels[0].Id).Update("models", channels[0].Models).Error)
@@ -2131,18 +2134,32 @@ func TestChannelPrimaryRuleCoversNewModelsAndRespectsSingleRouteOverrides(t *tes
 	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
 		ChannelId: 8101, GroupName: "default", ModelName: "model-a",
 	}).First(&otherGroupState).Error)
-	assert.True(t, otherGroupState.ManualPrimaryChannelRule)
+	assert.False(t, otherGroupState.ManualPrimaryChannelRule)
 	var otherGroupNewModelState ChannelSmartScheduleRouteState
 	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
 		ChannelId: 8101, GroupName: "default", ModelName: "model-b",
 	}).First(&otherGroupNewModelState).Error)
-	assert.True(t, otherGroupNewModelState.ManualPrimaryChannelRule)
+	assert.False(t, otherGroupNewModelState.ManualPrimaryChannelRule)
 
 	secondRule, err := SaveChannelSmartScheduleChannelPrimaryRule(8102, ChannelSmartScheduleChannelPrimaryRuleOptions{
 		DurationMinutes: ChannelSmartSchedulePermanentDurationMinutes,
+		Group:           "",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, 2, secondRule.FixedRoutes)
+	assert.Equal(t, 3, secondRule.FixedRoutes)
+
+	channels[1].Models = "model-a,model-b,model-c"
+	require.NoError(t, db.Model(&Channel{}).Where("id = ?", channels[1].Id).Update("models", channels[1].Models).Error)
+	var updatedRuleChannel Channel
+	require.NoError(t, db.First(&updatedRuleChannel, "id = ?", channels[1].Id).Error)
+	require.NoError(t, updatedRuleChannel.UpdateAbilities(nil))
+	for _, group := range []string{"vip", "default"} {
+		var addedModelState ChannelSmartScheduleRouteState
+		require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
+			ChannelId: 8102, GroupName: group, ModelName: "model-c",
+		}).First(&addedModelState).Error)
+		assert.True(t, addedModelState.ManualPrimaryChannelRule)
+	}
 
 	_, err = SaveChannelSmartScheduleRoutePrimary(8101, "vip", "model-a", ChannelSmartScheduleRoutePrimaryOptions{
 		DurationMinutes: 60,
@@ -2153,6 +2170,13 @@ func TestChannelPrimaryRuleCoversNewModelsAndRespectsSingleRouteOverrides(t *tes
 		ChannelId: 8101, GroupName: "vip", ModelName: "model-a",
 	}).First(&explicitState).Error)
 	assert.False(t, explicitState.ManualPrimaryChannelRule)
+	assert.Greater(t, explicitState.ManualPrimaryUntil, common.GetTimestamp())
+	var overriddenRuleState ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
+		ChannelId: 8102, GroupName: "vip", ModelName: "model-a",
+	}).First(&overriddenRuleState).Error)
+	assert.Zero(t, overriddenRuleState.ManualPrimaryUntil)
+	assert.False(t, overriddenRuleState.ManualPrimaryChannelRule)
 
 	_, err = SaveChannelSmartScheduleRoutePrimary(8101, "vip", "model-a", ChannelSmartScheduleRoutePrimaryOptions{})
 	require.NoError(t, err)
@@ -2175,13 +2199,34 @@ func TestChannelPrimaryRuleCoversNewModelsAndRespectsSingleRouteOverrides(t *tes
 	require.NoError(t, err)
 	require.Len(t, management.ChannelRules, 1)
 	assert.Equal(t, 8101, management.ChannelRules[0].ChannelId)
-	assert.Len(t, management.ChannelRules[0].Routes, 4)
+	assert.Equal(t, "vip", management.ChannelRules[0].Group)
+	assert.Len(t, management.ChannelRules[0].Routes, 2)
 
 	_, err = SaveChannelSmartScheduleChannelPrimaryRule(8101, ChannelSmartScheduleChannelPrimaryRuleOptions{})
 	require.NoError(t, err)
 	var remainingRuleCount int64
 	require.NoError(t, db.Model(&ChannelSmartScheduleChannelPrimaryRule{}).Count(&remainingRuleCount).Error)
 	assert.Zero(t, remainingRuleCount)
+}
+
+func TestChannelPrimaryRuleAcceptsGroupWithoutCurrentModels(t *testing.T) {
+	db := setupChannelSmartScheduleRouteTestDB(t)
+	require.NoError(t, db.Create(&Channel{
+		Id: 8111, Name: "暂无模型的分组渠道", Status: common.ChannelStatusEnabled,
+		Group: "vip,default",
+	}).Error)
+
+	result, err := SaveChannelSmartScheduleChannelPrimaryRule(8111, ChannelSmartScheduleChannelPrimaryRuleOptions{
+		Group:           "vip",
+		DurationMinutes: 60,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "vip", result.Group)
+	assert.Zero(t, result.Total)
+	assert.Zero(t, result.FixedRoutes)
+	var rule ChannelSmartScheduleChannelPrimaryRule
+	require.NoError(t, db.First(&rule, "channel_id = ?", 8111).Error)
+	assert.Equal(t, "vip", rule.Group)
 }
 
 func TestChannelPrimaryRuleUpdatesDurationForAppliedRoutes(t *testing.T) {
@@ -2342,11 +2387,19 @@ func TestChannelPrimaryRuleRequiresStabilityConfirmationAndExpires(t *testing.T)
 	assert.Zero(t, ruleCount)
 
 	result, err := SaveChannelSmartScheduleChannelPrimaryRule(channel.Id, ChannelSmartScheduleChannelPrimaryRuleOptions{
-		DurationMinutes: 1, ConfirmStabilityOverride: true,
-		StabilityFallbackPriority: 80, StabilityFallbackWeight: 10,
+		DurationMinutes:           1,
+		ConfirmStabilityOverride:  true,
+		StabilityFallbackPriority: 80,
+		StabilityFallbackWeight:   10,
 	})
 	require.NoError(t, err)
 	assert.Equal(t, 2, result.FixedRoutes)
+	var protectedState ChannelSmartScheduleRouteState
+	require.NoError(t, db.Where(&ChannelSmartScheduleRouteState{
+		ChannelId: channel.Id, GroupName: "vip", ModelName: "model-b",
+	}).First(&protectedState).Error)
+	assert.Empty(t, protectedState.StabilityState)
+	assert.True(t, protectedState.ManualPrimaryChannelRule)
 	routingChanged, err := ClearExpiredChannelSmartScheduleRoutePrimaries(result.ManualPrimaryUntil)
 	require.NoError(t, err)
 	assert.True(t, routingChanged)
@@ -2408,6 +2461,7 @@ func TestChannelPrimaryRuleMigrationPreservesExistingSmartScheduleData(t *testin
 				&ChannelSmartScheduleRouteState{}, &ChannelSmartScheduleChannelPrimaryRule{},
 			))
 			assert.True(t, freshDB.Migrator().HasColumn(&ChannelSmartScheduleRouteState{}, "manual_primary_channel_rule"))
+			assert.True(t, freshDB.Migrator().HasColumn(&ChannelSmartScheduleChannelPrimaryRule{}, "group_name"))
 			channelID := int(time.Now().UnixNano()%1_000_000_000) + 1_000_000_000
 			freshRule := ChannelSmartScheduleChannelPrimaryRule{
 				ChannelId: channelID, ManualPrimaryUntil: 1_900_000_000,
@@ -2426,10 +2480,18 @@ func TestChannelPrimaryRuleMigrationPreservesExistingSmartScheduleData(t *testin
 			upgradeChannelID := channelID + 1
 			require.NoError(t, upgradeDB.AutoMigrate(
 				&Channel{}, &Ability{}, &ChannelSmartScheduleRouteState{},
+				&ChannelSmartScheduleChannelPrimaryRule{},
 			))
 			require.NoError(t, upgradeDB.Migrator().DropColumn(
 				&ChannelSmartScheduleRouteState{}, "manual_primary_channel_rule",
 			))
+			require.NoError(t, upgradeDB.Migrator().DropColumn(
+				&ChannelSmartScheduleChannelPrimaryRule{}, "group_name",
+			))
+			require.NoError(t, upgradeDB.Table("channel_smart_schedule_channel_primary_rules").Create(map[string]any{
+				"channel_id": upgradeChannelID, "manual_primary_until": 1_900_000_000,
+				"updated_at": 1_800_000_000, "updated_order": 1_800_000_000_000_000_001, "revision": 1,
+			}).Error)
 			priority := int64(80)
 			weight := uint(100)
 			require.NoError(t, upgradeDB.Create(&Channel{
@@ -2451,8 +2513,12 @@ func TestChannelPrimaryRuleMigrationPreservesExistingSmartScheduleData(t *testin
 				&ChannelSmartScheduleRouteState{}, &ChannelSmartScheduleChannelPrimaryRule{},
 			))
 			assert.True(t, upgradeDB.Migrator().HasColumn(&ChannelSmartScheduleRouteState{}, "manual_primary_channel_rule"))
+			assert.True(t, upgradeDB.Migrator().HasColumn(&ChannelSmartScheduleChannelPrimaryRule{}, "group_name"))
+			var migratedRule ChannelSmartScheduleChannelPrimaryRule
+			require.NoError(t, upgradeDB.First(&migratedRule, "channel_id = ?", upgradeChannelID).Error)
+			assert.Empty(t, migratedRule.Group)
 			rule := ChannelSmartScheduleChannelPrimaryRule{
-				ChannelId: upgradeChannelID, ManualPrimaryUntil: 1_900_000_000,
+				ChannelId: upgradeChannelID + 1, Group: "vip", ManualPrimaryUntil: 1_900_000_000,
 				UpdatedAt: 1_800_000_000, UpdatedOrder: 1_800_000_000_000_000_001, Revision: 1,
 			}
 			require.NoError(t, upgradeDB.Create(&rule).Error)
@@ -2465,6 +2531,67 @@ func TestChannelPrimaryRuleMigrationPreservesExistingSmartScheduleData(t *testin
 			var state ChannelSmartScheduleRouteState
 			require.NoError(t, upgradeDB.First(&state, "channel_id = ? AND model_name = ?", upgradeChannelID, "model-a").Error)
 			assert.Equal(t, int64(7), state.Revision)
+
+			originalDB := DB
+			originalMainDatabaseType := common.MainDatabaseType()
+			originalLogDatabaseType := common.LogDatabaseType()
+			DB = upgradeDB
+			databaseType := common.DatabaseTypeSQLite
+			if database.name == "mysql" {
+				databaseType = common.DatabaseTypeMySQL
+			} else if database.name == "postgres" {
+				databaseType = common.DatabaseTypePostgreSQL
+			}
+			common.SetDatabaseTypes(databaseType, originalLogDatabaseType)
+			initCol()
+			t.Cleanup(func() {
+				DB = originalDB
+				common.SetDatabaseTypes(originalMainDatabaseType, originalLogDatabaseType)
+				initCol()
+			})
+
+			runtimeChannelID := upgradeChannelID + 2
+			runtimePriority := int64(50)
+			runtimeWeight := uint(100)
+			require.NoError(t, upgradeDB.Create(&Channel{
+				Id: runtimeChannelID, Name: "group-scoped rule channel", Status: common.ChannelStatusEnabled,
+				Group: "vip,default", Models: "model-runtime", Priority: &runtimePriority, Weight: &runtimeWeight,
+			}).Error)
+			require.NoError(t, upgradeDB.Create(&[]Ability{
+				{ChannelId: runtimeChannelID, Group: "vip", Model: "model-runtime", Enabled: true, Priority: &runtimePriority, Weight: runtimeWeight},
+				{ChannelId: runtimeChannelID, Group: "default", Model: "model-runtime", Enabled: true, Priority: &runtimePriority, Weight: runtimeWeight},
+			}).Error)
+			require.NoError(t, upgradeDB.Create(&[]ChannelSmartScheduleRouteState{
+				{ChannelId: runtimeChannelID, GroupName: "vip", ModelName: "model-runtime", ParticipationSet: true},
+				{ChannelId: runtimeChannelID, GroupName: "default", ModelName: "model-runtime", ParticipationSet: true},
+			}).Error)
+
+			databaseRule, err := SaveChannelSmartScheduleChannelPrimaryRule(runtimeChannelID, ChannelSmartScheduleChannelPrimaryRuleOptions{
+				Group: "vip", DurationMinutes: 60,
+			})
+			require.NoError(t, err)
+			assert.Equal(t, "vip", databaseRule.Group)
+			assert.Equal(t, 1, databaseRule.Total)
+			assert.Equal(t, 1, databaseRule.FixedRoutes)
+
+			databaseRule, err = SaveChannelSmartScheduleChannelPrimaryRule(runtimeChannelID, ChannelSmartScheduleChannelPrimaryRuleOptions{
+				DurationMinutes: 60,
+			})
+			require.NoError(t, err)
+			assert.Empty(t, databaseRule.Group)
+			assert.Equal(t, 2, databaseRule.Total)
+			assert.Equal(t, 2, databaseRule.FixedRoutes)
+
+			_, err = SaveChannelSmartScheduleChannelPrimaryRule(runtimeChannelID, ChannelSmartScheduleChannelPrimaryRuleOptions{})
+			require.NoError(t, err)
+			for _, group := range []string{"vip", "default"} {
+				var routeState ChannelSmartScheduleRouteState
+				require.NoError(t, upgradeDB.Where(&ChannelSmartScheduleRouteState{
+					ChannelId: runtimeChannelID, GroupName: group, ModelName: "model-runtime",
+				}).First(&routeState).Error)
+				assert.Zero(t, routeState.ManualPrimaryUntil)
+				assert.False(t, routeState.ManualPrimaryChannelRule)
+			}
 		})
 	}
 }

@@ -53,6 +53,7 @@ function management(): ChannelMonitorSmartSchedulePrimaryManagement {
       {
         channel_id: 11,
         channel_name: '固定渠道甲',
+        group: 'vip',
         manual_primary_until: manualPrimaryUntil,
         allow_stability_degrade: true,
         updated_at: 1_800_000_000,
@@ -119,8 +120,7 @@ test('search filters both rule and route entries and updates the selected channe
   const user = userEvent.setup()
   mount(onActionComplete)
 
-  expect(await screen.findByText(/单模型固定/)).toBeVisible()
-  expect(screen.getByText('优先应用 固定渠道乙 的更新规则')).toBeVisible()
+  expect(await screen.findByText('被渠道固定覆盖：固定渠道乙')).toBeVisible()
   await user.type(
     screen.getByRole('searchbox', { name: '搜索固定项' }),
     'model-b'
@@ -134,6 +134,7 @@ test('search filters both rule and route entries and updates the selected channe
       target: { value: '120' },
     }
   )
+  await user.click(screen.getByText('允许稳定性降级'))
   await user.click(screen.getByRole('button', { name: '更新规则' }))
 
   await waitFor(() =>
@@ -142,8 +143,9 @@ test('search filters both rule and route entries and updates the selected channe
         url: '/api/channel_monitor/channel/11/schedule/primary-rule',
         method: 'put',
         data: expect.objectContaining({
+          group: 'vip',
           duration_minutes: 120,
-          allow_stability_degrade: true,
+          allow_stability_degrade: false,
         }),
       })
     )

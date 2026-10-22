@@ -38,9 +38,10 @@ type channelSmartScheduleRoutePrimaryRequest struct {
 }
 
 type channelSmartScheduleChannelPrimaryRuleRequest struct {
-	DurationMinutes          *int  `json:"duration_minutes"`
-	AllowStabilityDegrade    *bool `json:"allow_stability_degrade"`
-	ConfirmStabilityOverride bool  `json:"confirm_stability_override"`
+	Group                    string `json:"group"`
+	DurationMinutes          *int   `json:"duration_minutes"`
+	AllowStabilityDegrade    *bool  `json:"allow_stability_degrade"`
+	ConfirmStabilityOverride bool   `json:"confirm_stability_override"`
 }
 
 func channelSmartScheduleDurationAuditValue(durationMinutes *int) string {
@@ -457,6 +458,7 @@ func UpdateChannelMonitorSmartScheduleChannelPrimaryRule(c *gin.Context) {
 	}
 	result, err := model.SaveChannelSmartScheduleChannelPrimaryRule(
 		channelId, model.ChannelSmartScheduleChannelPrimaryRuleOptions{
+			Group:                     request.Group,
 			DurationMinutes:           durationMinutes,
 			AllowStabilityDegrade:     allowStabilityDegrade,
 			ConfirmStabilityOverride:  request.ConfirmStabilityOverride,
@@ -498,6 +500,7 @@ func UpdateChannelMonitorSmartScheduleChannelPrimaryRule(c *gin.Context) {
 	}
 	common.ApiSuccess(c, gin.H{
 		"channel_id":              channelId,
+		"group":                   result.Group,
 		"duration_minutes":        request.DurationMinutes,
 		"allow_stability_degrade": result.AllowStabilityDegrade,
 		"manual_primary_until":    result.ManualPrimaryUntil,

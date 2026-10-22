@@ -1258,6 +1258,7 @@ export type ChannelMonitorSmartSchedulePrimaryRuleRoute = {
 export type ChannelMonitorSmartScheduleChannelPrimaryRule = {
   channel_id: number
   channel_name: string
+  group: string
   manual_primary_until: number
   allow_stability_degrade: boolean
   updated_at: number
@@ -1280,6 +1281,7 @@ export type ChannelMonitorSmartSchedulePrimaryManagement = {
 
 export type ChannelMonitorSmartScheduleChannelPrimaryRuleUpdateResult = {
   channel_id: number
+  group: string
   duration_minutes: number | null
   allow_stability_degrade: boolean
   manual_primary_until: number

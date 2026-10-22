@@ -32,6 +32,7 @@ import type { ChannelMonitorSmartScheduleRoute } from '../types'
 type ChannelMonitorSmartSchedulePrimaryConfirmDialogProps = {
   route: ChannelMonitorSmartScheduleRoute | null
   channelRule: boolean
+  channelRuleGroup: string
   pending: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
@@ -64,8 +65,10 @@ export function ChannelMonitorSmartSchedulePrimaryConfirmDialog(
             {props.channelRule ? (
               <>
                 {props.route?.channel_name}{' '}
-                的一个或多个参与调度的模型路由当前处于稳定性保护状态。继续后会解除这些路由的保护，并固定当前及以后新增的符合条件的模型路由。
-                如果保留“允许稳定性降级”，后续再次达到保护失败阈值时仍会重新进入保护。
+                {props.channelRuleGroup
+                  ? `的 ${props.channelRuleGroup} 分组中`
+                  : '的'}
+                一个或多个参与调度的模型路由当前处于稳定性保护状态。继续后会解除这些路由的保护，并固定当前及以后新增的符合条件的模型路由。如果保留“允许稳定性降级”，后续再次达到保护失败阈值时仍会重新进入保护。
               </>
             ) : (
               <>

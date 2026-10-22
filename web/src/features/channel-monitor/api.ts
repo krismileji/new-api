@@ -604,8 +604,9 @@ export async function getChannelMonitorSmartSchedulePrimaryManagement() {
 
 export type ChannelMonitorSmartScheduleChannelPrimaryRuleUpdateRequest = {
   channelId: number
+  group: string
   durationMinutes: number | null
-  allowStabilityDegrade: boolean
+  allowStabilityDegrade?: boolean
   confirmStabilityOverride?: boolean
 }
 
@@ -625,6 +626,7 @@ export async function updateChannelMonitorSmartScheduleChannelPrimaryRule(
   >(
     `/api/channel_monitor/channel/${request.channelId}/schedule/primary-rule`,
     {
+      group: request.group,
       duration_minutes: request.durationMinutes,
       allow_stability_degrade: request.allowStabilityDegrade,
       confirm_stability_override:

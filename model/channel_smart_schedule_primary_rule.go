@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"time"
 
@@ -12,16 +13,18 @@ import (
 )
 
 type ChannelSmartScheduleChannelPrimaryRule struct {
-	Id                                 int64 `json:"id" gorm:"primaryKey"`
-	ChannelId                          int   `json:"channel_id" gorm:"not null;uniqueIndex:uk_channel_smart_schedule_primary_rule"`
-	ManualPrimaryUntil                 int64 `json:"manual_primary_until" gorm:"bigint;not null;index"`
-	ManualPrimaryAllowStabilityDegrade bool  `json:"manual_primary_allow_stability_degrade"`
-	UpdatedAt                          int64 `json:"updated_at" gorm:"bigint;not null;index"`
-	UpdatedOrder                       int64 `json:"-" gorm:"bigint;not null;index"`
-	Revision                           int64 `json:"revision" gorm:"bigint;not null"`
+	Id                                 int64  `json:"id" gorm:"primaryKey"`
+	ChannelId                          int    `json:"channel_id" gorm:"not null;uniqueIndex:uk_channel_smart_schedule_primary_rule"`
+	Group                              string `json:"group" gorm:"column:group_name;type:varchar(64)"`
+	ManualPrimaryUntil                 int64  `json:"manual_primary_until" gorm:"bigint;not null;index"`
+	ManualPrimaryAllowStabilityDegrade bool   `json:"manual_primary_allow_stability_degrade"`
+	UpdatedAt                          int64  `json:"updated_at" gorm:"bigint;not null;index"`
+	UpdatedOrder                       int64  `json:"-" gorm:"bigint;not null;index"`
+	Revision                           int64  `json:"revision" gorm:"bigint;not null"`
 }
 
 type ChannelSmartScheduleChannelPrimaryRuleOptions struct {
+	Group                     string
 	DurationMinutes           int
 	AllowStabilityDegrade     bool
 	ConfirmStabilityOverride  bool
@@ -30,14 +33,15 @@ type ChannelSmartScheduleChannelPrimaryRuleOptions struct {
 }
 
 type ChannelSmartScheduleChannelPrimaryRuleResult struct {
-	ChannelId             int   `json:"channel_id"`
-	DurationMinutes       *int  `json:"duration_minutes"`
-	ManualPrimaryUntil    int64 `json:"manual_primary_until"`
-	AllowStabilityDegrade bool  `json:"allow_stability_degrade"`
-	Total                 int   `json:"total"`
-	FixedRoutes           int   `json:"fixed_routes"`
-	SkippedRoutes         int   `json:"skipped_routes"`
-	RoutingChanged        bool  `json:"routing_changed"`
+	ChannelId             int    `json:"channel_id"`
+	Group                 string `json:"group"`
+	DurationMinutes       *int   `json:"duration_minutes"`
+	ManualPrimaryUntil    int64  `json:"manual_primary_until"`
+	AllowStabilityDegrade bool   `json:"allow_stability_degrade"`
+	Total                 int    `json:"total"`
+	FixedRoutes           int    `json:"fixed_routes"`
+	SkippedRoutes         int    `json:"skipped_routes"`
+	RoutingChanged        bool   `json:"routing_changed"`
 }
 
 type ChannelSmartSchedulePrimaryRuleRoute struct {
@@ -51,6 +55,7 @@ type ChannelSmartSchedulePrimaryRuleRoute struct {
 type ChannelSmartScheduleChannelPrimaryRuleInfo struct {
 	ChannelId             int                                    `json:"channel_id"`
 	ChannelName           string                                 `json:"channel_name"`
+	Group                 string                                 `json:"group"`
 	ManualPrimaryUntil    int64                                  `json:"manual_primary_until"`
 	AllowStabilityDegrade bool                                   `json:"allow_stability_degrade"`
 	UpdatedAt             int64                                  `json:"updated_at"`
@@ -129,6 +134,7 @@ func SaveChannelSmartScheduleChannelPrimaryRule(
 	}
 
 	result.ChannelId = channelId
+	result.Group = options.Group
 	if durationMinutes > 0 {
 		result.DurationMinutes = &durationMinutes
 	}
@@ -140,7 +146,7 @@ func SaveChannelSmartScheduleChannelPrimaryRule(
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		var channel Channel
-		if err := lockForUpdate(tx).Select("id").Where("id = ?", channelId).First(&channel).Error; err != nil {
+		if err := lockForUpdate(tx).Select("id", commonGroupCol).Where("id = ?", channelId).First(&channel).Error; err != nil {
 			return err
 		}
 		var currentAbilities []Ability
@@ -150,6 +156,11 @@ func SaveChannelSmartScheduleChannelPrimaryRule(
 			Order("model ASC").
 			Find(&currentAbilities).Error; err != nil {
 			return err
+		}
+		if options.Group != "" && durationMinutes != 0 {
+			if !slices.Contains(channel.GetGroups(), options.Group) {
+				return errors.New("所选分组不属于该渠道")
+			}
 		}
 		pools := channelSmartScheduleRoutePoolsFromAbilities(currentAbilities)
 		for _, pool := range pools {
@@ -165,7 +176,8 @@ func SaveChannelSmartScheduleChannelPrimaryRule(
 			return err
 		}
 		for _, ability := range abilities {
-			if ability.ChannelId == channelId {
+			if ability.ChannelId == channelId &&
+				(options.Group == "" || ability.Group == options.Group) {
 				result.Total++
 			}
 		}
@@ -187,6 +199,7 @@ func SaveChannelSmartScheduleChannelPrimaryRule(
 			}
 			now := common.GetTimestamp()
 			rule.ChannelId = channelId
+			rule.Group = options.Group
 			rule.ManualPrimaryUntil = channelSmartSchedulePrimaryRuleUntil(now, durationMinutes)
 			rule.ManualPrimaryAllowStabilityDegrade = options.AllowStabilityDegrade
 			rule.UpdatedAt = now
@@ -218,7 +231,8 @@ func SaveChannelSmartScheduleChannelPrimaryRule(
 			return err
 		}
 		for _, state := range updatedStates {
-			if state.ChannelId == channelId && state.ManualPrimaryChannelRule && state.ManualPrimaryUntil > common.GetTimestamp() {
+			if state.ChannelId == channelId && (options.Group == "" || state.GroupName == options.Group) &&
+				state.ManualPrimaryChannelRule && state.ManualPrimaryUntil > common.GetTimestamp() {
 				result.FixedRoutes++
 			}
 		}
@@ -280,6 +294,9 @@ func reconcileChannelSmartSchedulePrimaryRulePoolTx(
 	if explicitPrimary == nil {
 		for index := range rules {
 			rule := &rules[index]
+			if rule.Group != "" && rule.Group != pool.group {
+				continue
+			}
 			state := stateByChannel[rule.ChannelId]
 			ability := abilityByChannel[rule.ChannelId]
 			if state == nil || ability == nil || !state.Participates() || !ability.Enabled ||
@@ -460,7 +477,8 @@ func GetChannelSmartSchedulePrimaryManagement() (ChannelSmartSchedulePrimaryMana
 			state := stateByKey[channelSmartScheduleRouteKey(ability.ChannelId, ability.Group, ability.Model)]
 			rule, hasRule := ruleByChannel[ability.ChannelId]
 			channel := channelById[ability.ChannelId]
-			if !hasRule || !state.Participates() || !ability.Enabled ||
+			if !hasRule || (rule.Group != "" && rule.Group != pool.group) ||
+				!state.Participates() || !ability.Enabled ||
 				channel.Status != common.ChannelStatusEnabled {
 				continue
 			}
@@ -475,13 +493,15 @@ func GetChannelSmartSchedulePrimaryManagement() (ChannelSmartSchedulePrimaryMana
 		channel := channelById[rule.ChannelId]
 		info := ChannelSmartScheduleChannelPrimaryRuleInfo{
 			ChannelId: rule.ChannelId, ChannelName: channel.Name,
+			Group:                 rule.Group,
 			ManualPrimaryUntil:    rule.ManualPrimaryUntil,
 			AllowStabilityDegrade: rule.ManualPrimaryAllowStabilityDegrade,
 			UpdatedAt:             rule.UpdatedAt,
 			Routes:                []ChannelSmartSchedulePrimaryRuleRoute{},
 		}
 		for _, ability := range abilities {
-			if ability.ChannelId != rule.ChannelId {
+			if ability.ChannelId != rule.ChannelId ||
+				(rule.Group != "" && ability.Group != rule.Group) {
 				continue
 			}
 			state := stateByKey[channelSmartScheduleRouteKey(ability.ChannelId, ability.Group, ability.Model)]

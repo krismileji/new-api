@@ -81,11 +81,11 @@ function routeStatusLabel(route: ChannelMonitorSmartSchedulePrimaryRuleRoute) {
     case 'not_eligible':
       return '未参与或已禁用'
     case 'single_model_override':
-      return `单模型固定至 ${route.current_primary_channel_name}`
+      return `被单模型固定覆盖：${route.current_primary_channel_name}`
     case 'channel_rule_conflict':
-      return `优先应用 ${route.current_primary_channel_name} 的更新规则`
+      return `被渠道固定覆盖：${route.current_primary_channel_name}`
     case 'stability_protected':
-      return '稳定性保护中，等待确认'
+      return '稳定性保护中，暂未固定'
     default:
       return '等待路由参与调度'
   }
@@ -135,6 +135,7 @@ export function ChannelMonitorSmartSchedulePrimaryManagementDialog(
       if (removal.kind === 'channel') {
         await updateChannelMonitorSmartScheduleChannelPrimaryRule({
           channelId: removal.rule.channel_id,
+          group: removal.rule.group,
           durationMinutes: 0,
           allowStabilityDegrade: false,
         })
@@ -143,6 +144,7 @@ export function ChannelMonitorSmartSchedulePrimaryManagementDialog(
       if (removal.kind === 'channel-update') {
         await updateChannelMonitorSmartScheduleChannelPrimaryRule({
           channelId: removal.rule.channel_id,
+          group: removal.rule.group,
           durationMinutes: removal.durationMinutes,
           allowStabilityDegrade: removal.allowStabilityDegrade,
         })
@@ -158,7 +160,7 @@ export function ChannelMonitorSmartSchedulePrimaryManagementDialog(
     },
     onError: handleChannelMonitorMutationError,
     onSuccess: async (_, removal) => {
-      let successMessage = '已解除渠道全部模型固定'
+      let successMessage = `已解除${removal.kind === 'channel' ? removal.rule.group || '全部分组' : ''}渠道固定`
       if (removal.kind === 'route') {
         successMessage = '已解除单模型固定'
       } else if (removal.kind === 'channel-update') {
@@ -179,6 +181,7 @@ export function ChannelMonitorSmartSchedulePrimaryManagementDialog(
   const filteredChannelRules = channelRules.filter((rule) =>
     [
       rule.channel_name,
+      rule.group,
       ...rule.routes.flatMap((route) => [
         route.group,
         route.model,
@@ -205,9 +208,7 @@ export function ChannelMonitorSmartSchedulePrimaryManagementDialog(
       <DialogContent className='flex max-h-[88vh] flex-col overflow-hidden sm:max-w-3xl'>
         <DialogHeader>
           <DialogTitle>固定项管理</DialogTitle>
-          <DialogDescription>
-            查看渠道规则覆盖的模型路由，以及单独固定的模型路由。
-          </DialogDescription>
+          <DialogDescription>查看渠道固定范围和单模型固定。</DialogDescription>
         </DialogHeader>
         {query.isLoading ? (
           <div className='text-muted-foreground flex min-h-40 items-center justify-center gap-2 text-sm'>
@@ -301,6 +302,8 @@ export function ChannelMonitorSmartSchedulePrimaryManagementDialog(
                                   </span>
                                 </div>
                                 <div className='text-muted-foreground mt-1 text-xs'>
+                                  {rule.group || '全部分组'}
+                                  <span className='mx-1'>·</span>
                                   固定至{' '}
                                   <FixedUntil
                                     until={rule.manual_primary_until}
@@ -330,7 +333,7 @@ export function ChannelMonitorSmartSchedulePrimaryManagementDialog(
                                     data-icon='inline-start'
                                   />
                                 )}
-                                解除规则
+                                解除固定
                               </Button>
                             </div>
                             <div className='mt-3 flex flex-wrap items-end gap-3'>
@@ -360,7 +363,7 @@ export function ChannelMonitorSmartSchedulePrimaryManagementDialog(
                                   onCheckedChange={(checked) =>
                                     setDegradeByChannel((current) => ({
                                       ...current,
-                                      [rule.channel_id]: checked,
+                                      [rule.channel_id]: checked === true,
                                     }))
                                   }
                                 />
@@ -411,7 +414,7 @@ export function ChannelMonitorSmartSchedulePrimaryManagementDialog(
                               </ul>
                             ) : (
                               <p className='text-muted-foreground mt-2 pl-6 text-xs'>
-                                当前没有模型路由；以后新增并参与调度的模型会自动纳入规则。
+                                当前没有模型路由；以后新增并参与调度的模型会自动纳入固定。
                               </p>
                             )}
                           </article>

@@ -1536,21 +1536,37 @@ func TestChannelSmartScheduleChannelPrimaryRuleEndpointAndManagement(t *testing.
 	}).Error)
 	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
 		{ChannelId: 1221, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
-		{ChannelId: 1221, GroupName: "vip", ModelName: "model-b", ParticipationSet: true},
+		{ChannelId: 1221, GroupName: "vip", ModelName: "model-b", ParticipationSet: true, StabilityState: model.ChannelSmartScheduleStabilityDegraded},
 	}).Error)
 
 	type ruleResponse struct {
 		Success bool `json:"success"`
 		Data    struct {
-			DurationMinutes *int  `json:"duration_minutes"`
-			TotalRoutes     int   `json:"total_routes"`
-			FixedRoutes     int   `json:"fixed_routes"`
-			ManualUntil     int64 `json:"manual_primary_until"`
+			Group           string `json:"group"`
+			DurationMinutes *int   `json:"duration_minutes"`
+			TotalRoutes     int    `json:"total_routes"`
+			FixedRoutes     int    `json:"fixed_routes"`
+			ManualUntil     int64  `json:"manual_primary_until"`
 		} `json:"data"`
 	}
 	ctx, recorder := newChannelMonitorControllerContext(
 		t, http.MethodPut, "/api/channel_monitor/channel/1221/schedule/primary-rule",
-		map[string]any{"duration_minutes": 60, "allow_stability_degrade": true},
+		map[string]any{"group": "vip", "duration_minutes": 60},
+	)
+	ctx.AddParam("id", "1221")
+	UpdateChannelMonitorSmartScheduleChannelPrimaryRule(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var confirmation struct {
+		Success bool   `json:"success"`
+		Code    string `json:"code"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &confirmation))
+	assert.False(t, confirmation.Success)
+	assert.Equal(t, "smart_schedule_channel_primary_stability_confirmation_required", confirmation.Code)
+
+	ctx, recorder = newChannelMonitorControllerContext(
+		t, http.MethodPut, "/api/channel_monitor/channel/1221/schedule/primary-rule",
+		map[string]any{"group": "vip", "duration_minutes": 60, "confirm_stability_override": true},
 	)
 	ctx.AddParam("id", "1221")
 	UpdateChannelMonitorSmartScheduleChannelPrimaryRule(ctx)
@@ -1558,6 +1574,7 @@ func TestChannelSmartScheduleChannelPrimaryRuleEndpointAndManagement(t *testing.
 	var saved ruleResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &saved))
 	assert.True(t, saved.Success)
+	assert.Equal(t, "vip", saved.Data.Group)
 	assert.Equal(t, 2, saved.Data.TotalRoutes)
 	assert.Equal(t, 2, saved.Data.FixedRoutes)
 	assert.Equal(t, 60, *saved.Data.DurationMinutes)
@@ -1577,6 +1594,7 @@ func TestChannelSmartScheduleChannelPrimaryRuleEndpointAndManagement(t *testing.
 	assert.True(t, managementResponse.Success)
 	require.Len(t, managementResponse.Data.ChannelRules, 1)
 	assert.Equal(t, "全模型固定渠道", managementResponse.Data.ChannelRules[0].ChannelName)
+	assert.Equal(t, "vip", managementResponse.Data.ChannelRules[0].Group)
 	assert.Len(t, managementResponse.Data.ChannelRules[0].Routes, 2)
 
 	ctx, recorder = newChannelMonitorControllerContext(

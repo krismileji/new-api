@@ -453,7 +453,7 @@ test('requires and sends explicit confirmation before overriding stability prote
   )
 })
 
-test('loads fixed-item management and saves or clears a channel-wide primary rule', async () => {
+test('loads fixed-item management and saves or clears a group-scoped channel rule', async () => {
   const originalAdapter = api.defaults.adapter
   const requests: AxiosRequestConfig[] = []
   const adapter: AxiosAdapter = async (config) => {
@@ -499,11 +499,13 @@ test('loads fixed-item management and saves or clears a channel-wide primary rul
     })
     await updateChannelMonitorSmartScheduleChannelPrimaryRule({
       channelId: 7,
+      group: 'vip',
       durationMinutes: 120,
       allowStabilityDegrade: true,
     })
     await updateChannelMonitorSmartScheduleChannelPrimaryRule({
       channelId: 7,
+      group: 'vip',
       durationMinutes: 0,
       allowStabilityDegrade: false,
     })
@@ -520,30 +522,35 @@ test('loads fixed-item management and saves or clears a channel-wide primary rul
     '/api/channel_monitor/channel/7/schedule/primary-rule'
   )
   assert.deepEqual(JSON.parse(String(requests[1]?.data)), {
+    group: 'vip',
     duration_minutes: 120,
     allow_stability_degrade: true,
   })
   assert.deepEqual(JSON.parse(String(requests[2]?.data)), {
+    group: 'vip',
     duration_minutes: 0,
     allow_stability_degrade: false,
   })
 })
 
-test('requires explicit confirmation before applying a channel rule to protected routes', async () => {
+test('requires confirmation before a channel fixed rule clears stability protection', async () => {
   const originalAdapter = api.defaults.adapter
   const requests: AxiosRequestConfig[] = []
   const adapter: AxiosAdapter = async (config) => {
     requests.push(config)
-    const request = JSON.parse(String(config.data)) as {
-      confirm_stability_override?: boolean
-    }
+    const confirmStabilityOverride = (
+      JSON.parse(String(config.data)) as {
+        confirm_stability_override?: boolean
+      }
+    ).confirm_stability_override
     return {
-      data: request.confirm_stability_override
+      data: confirmStabilityOverride
         ? {
             success: true,
             message: '',
             data: {
               channel_id: 7,
+              group: 'vip',
               duration_minutes: 60,
               allow_stability_degrade: true,
               manual_primary_until: 1_900_000_000,
@@ -570,6 +577,7 @@ test('requires explicit confirmation before applying a channel rule to protected
 
   const request = {
     channelId: 7,
+    group: 'vip',
     durationMinutes: 60,
     allowStabilityDegrade: true,
   }
@@ -588,14 +596,17 @@ test('requires explicit confirmation before applying a channel rule to protected
   }
 
   assert.equal(requests.length, 2)
-  assert.equal(
-    JSON.parse(String(requests[0]?.data)).confirm_stability_override,
-    undefined
-  )
-  assert.equal(
-    JSON.parse(String(requests[1]?.data)).confirm_stability_override,
-    true
-  )
+  assert.deepEqual(JSON.parse(String(requests[0]?.data)), {
+    group: 'vip',
+    duration_minutes: 60,
+    allow_stability_degrade: true,
+  })
+  assert.deepEqual(JSON.parse(String(requests[1]?.data)), {
+    group: 'vip',
+    duration_minutes: 60,
+    allow_stability_degrade: true,
+    confirm_stability_override: true,
+  })
 })
 
 test('posts manual stability clear for one group-model route', async () => {
