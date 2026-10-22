@@ -70,6 +70,7 @@ type channelSmartScheduleCachedRouteSnapshot struct {
 	OfficialPriority                int64                                       `json:"official_priority"`
 	OfficialWeight                  uint                                        `json:"official_weight"`
 	OfficialInherited               bool                                        `json:"official_inherited"`
+	ManualPrimaryUntil              int64                                       `json:"manual_primary_until,omitempty"`
 	Participates                    bool                                        `json:"participates"`
 	TrafficPausedUntil              int64                                       `json:"traffic_paused_until,omitempty"`
 	TemporaryTrafficKind            string                                      `json:"temporary_traffic_kind,omitempty"`
@@ -941,7 +942,8 @@ func encodeChannelSmartScheduleRouteCache(
 					LogicalOfficialPriority: route.logicalOfficialPriority, LogicalOfficialWeight: route.logicalOfficialWeight,
 					Priority: route.priority, Weight: route.weight, OfficialPriority: route.officialPriority,
 					OfficialWeight: route.officialWeight, OfficialInherited: route.officialInherited,
-					Participates: route.participates, TrafficPausedUntil: route.trafficPausedUntil,
+					ManualPrimaryUntil: route.manualPrimaryUntil,
+					Participates:       route.participates, TrafficPausedUntil: route.trafficPausedUntil,
 					TemporaryTrafficKind: route.temporaryTrafficKind, TemporaryTrafficSince: route.temporaryTrafficSince,
 					StabilityState: route.stabilityState, StabilitySince: route.stabilitySince,
 					ExplorationMaxPromptTokens:      route.explorationMaxPromptTokens,
@@ -975,7 +977,8 @@ func decodeChannelSmartScheduleRouteCache(
 					logicalOfficialPriority: route.LogicalOfficialPriority, logicalOfficialWeight: route.LogicalOfficialWeight,
 					priority: route.Priority, weight: route.Weight, officialPriority: route.OfficialPriority,
 					officialWeight: route.OfficialWeight, officialInherited: route.OfficialInherited,
-					participates: route.Participates, trafficPausedUntil: route.TrafficPausedUntil,
+					manualPrimaryUntil: route.ManualPrimaryUntil,
+					participates:       route.Participates, trafficPausedUntil: route.TrafficPausedUntil,
 					temporaryTrafficKind: route.TemporaryTrafficKind, temporaryTrafficSince: route.TemporaryTrafficSince,
 					stabilityState: route.StabilityState, stabilitySince: route.StabilitySince,
 					explorationMaxPromptTokens:      route.ExplorationMaxPromptTokens,

@@ -37,6 +37,12 @@ type channelSmartScheduleRoutePrimaryRequest struct {
 	ConfirmStabilityOverride bool   `json:"confirm_stability_override"`
 }
 
+type channelSmartScheduleChannelPrimaryRuleRequest struct {
+	DurationMinutes          *int  `json:"duration_minutes"`
+	AllowStabilityDegrade    *bool `json:"allow_stability_degrade"`
+	ConfirmStabilityOverride bool  `json:"confirm_stability_override"`
+}
+
 func channelSmartScheduleDurationAuditValue(durationMinutes *int) string {
 	if durationMinutes == nil {
 		return "永久"
@@ -407,6 +413,99 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 		"stability_protection_cleared": result.StabilityProtectionCleared,
 		"routing_changed":              result.RoutingChanged,
 		"task":                         taskResponse,
+	})
+}
+
+func GetChannelMonitorSmartSchedulePrimaryManagement(c *gin.Context) {
+	management, err := model.GetChannelSmartSchedulePrimaryManagement()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, management)
+}
+
+func UpdateChannelMonitorSmartScheduleChannelPrimaryRule(c *gin.Context) {
+	channelId, ok := channelSmartScheduleRouteChannelId(c)
+	if !ok {
+		return
+	}
+	var request channelSmartScheduleChannelPrimaryRuleRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的参数"})
+		return
+	}
+	durationMinutes := model.ChannelSmartSchedulePermanentDurationMinutes
+	if request.DurationMinutes != nil {
+		durationMinutes = *request.DurationMinutes
+	}
+	if request.DurationMinutes != nil &&
+		(durationMinutes < 0 || durationMinutes > model.ChannelSmartScheduleManualPrimaryMaxMinutes) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "主渠道固定时间必须在 0 到 525600 分钟之间",
+		})
+		return
+	}
+	if err := model.InitializeChannelSmartScheduleRouteStates(); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	allowStabilityDegrade := true
+	if request.AllowStabilityDegrade != nil {
+		allowStabilityDegrade = *request.AllowStabilityDegrade
+	}
+	result, err := model.SaveChannelSmartScheduleChannelPrimaryRule(
+		channelId, model.ChannelSmartScheduleChannelPrimaryRuleOptions{
+			DurationMinutes:           durationMinutes,
+			AllowStabilityDegrade:     allowStabilityDegrade,
+			ConfirmStabilityOverride:  request.ConfirmStabilityOverride,
+			StabilityFallbackPriority: channelMonitorSmartScheduleBaselinePriority,
+			StabilityFallbackWeight:   channelMonitorSmartScheduleMinWeight,
+		},
+	)
+	if err != nil {
+		if errors.Is(err, model.ErrChannelSmartScheduleChannelPrimaryRuleStabilityProtected) {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"code":    "smart_schedule_channel_primary_stability_confirmation_required",
+				"message": "渠道固定规则涉及处于稳定性保护中的模型路由，确认解除保护后可继续固定",
+				"data":    nil,
+			})
+			return
+		}
+		common.ApiError(c, err)
+		return
+	}
+	model.InitChannelCache()
+	var taskResponse any
+	settings := getChannelMonitorSettings()
+	if settings.SmartScheduleEnabled && len(settings.SmartScheduleGroupPolicies) > 0 {
+		payload := newChannelSmartScheduleTaskPayload("schedule_route_config", "channel_primary_rule_changed")
+		if task, _, enqueueErr := service.EnqueueRequiredSystemTask(channelMonitorSmartScheduleTaskType, payload); enqueueErr == nil {
+			taskResponse = task.ToResponse()
+		}
+	}
+	if durationMinutes != 0 || result.RoutingChanged {
+		recordManageAudit(c, "channel.monitor_smart_schedule_config_update", map[string]any{
+			"id": channelId, "scope": "channel_primary_rule",
+			"duration_minutes":           request.DurationMinutes,
+			"duration_label":             channelSmartScheduleDurationAuditValue(request.DurationMinutes),
+			"allow_stability_degrade":    allowStabilityDegrade,
+			"channel_primary_rule_until": result.ManualPrimaryUntil,
+			"fixed_routes":               result.FixedRoutes,
+		})
+	}
+	common.ApiSuccess(c, gin.H{
+		"channel_id":              channelId,
+		"duration_minutes":        request.DurationMinutes,
+		"allow_stability_degrade": result.AllowStabilityDegrade,
+		"manual_primary_until":    result.ManualPrimaryUntil,
+		"total_routes":            result.Total,
+		"fixed_routes":            result.FixedRoutes,
+		"skipped_routes":          result.SkippedRoutes,
+		"routing_changed":         result.RoutingChanged,
+		"task":                    taskResponse,
 	})
 }
 

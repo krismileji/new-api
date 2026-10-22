@@ -37,6 +37,8 @@ import type {
   ChannelMonitorSmartScheduleExplorationClearResult,
   ChannelMonitorSmartScheduleStabilityClearResult,
   ChannelMonitorSmartSchedulePrimaryUpdateResult,
+  ChannelMonitorSmartSchedulePrimaryManagement,
+  ChannelMonitorSmartScheduleChannelPrimaryRuleUpdateResult,
   ChannelMonitorSmartScheduleRouteResult,
   ChannelMonitorSmartScheduleGroupPauseResult,
   ChannelMonitorSmartScheduleRateLimitCooldownResult,
@@ -584,6 +586,58 @@ export async function updateChannelMonitorSmartScheduleRoutePrimary(
       'smart_schedule_route_stability_confirmation_required'
   ) {
     throw new ChannelMonitorSmartScheduleStabilityConfirmationRequiredError(
+      response.data.message
+    )
+  }
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export async function getChannelMonitorSmartSchedulePrimaryManagement() {
+  const response = await api.get<
+    ChannelMonitorApiResponse<ChannelMonitorSmartSchedulePrimaryManagement>
+  >(
+    '/api/channel_monitor/schedule/primary-management',
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data)
+}
+
+export type ChannelMonitorSmartScheduleChannelPrimaryRuleUpdateRequest = {
+  channelId: number
+  durationMinutes: number | null
+  allowStabilityDegrade: boolean
+  confirmStabilityOverride?: boolean
+}
+
+export class ChannelMonitorSmartScheduleChannelPrimaryRuleStabilityConfirmationRequiredError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name =
+      'ChannelMonitorSmartScheduleChannelPrimaryRuleStabilityConfirmationRequiredError'
+  }
+}
+
+export async function updateChannelMonitorSmartScheduleChannelPrimaryRule(
+  request: ChannelMonitorSmartScheduleChannelPrimaryRuleUpdateRequest
+) {
+  const response = await api.put<
+    ChannelMonitorApiResponse<ChannelMonitorSmartScheduleChannelPrimaryRuleUpdateResult>
+  >(
+    `/api/channel_monitor/channel/${request.channelId}/schedule/primary-rule`,
+    {
+      duration_minutes: request.durationMinutes,
+      allow_stability_degrade: request.allowStabilityDegrade,
+      confirm_stability_override:
+        request.confirmStabilityOverride === true ? true : undefined,
+    },
+    channelMonitorRequestConfig()
+  )
+  if (
+    !response.data.success &&
+    response.data.code ===
+      'smart_schedule_channel_primary_stability_confirmation_required'
+  ) {
+    throw new ChannelMonitorSmartScheduleChannelPrimaryRuleStabilityConfirmationRequiredError(
       response.data.message
     )
   }

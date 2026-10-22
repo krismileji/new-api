@@ -84,7 +84,8 @@ func GetChannelSmartScheduleRouteRuntimeViewsWithContext(
 		}
 		cache[route.Group][route.Model] = append(cache[route.Group][route.Model], channelSmartScheduleCachedRoute{
 			channelId: route.ChannelId, priority: route.Priority, weight: route.Weight,
-			participates: route.State.Participates(), trafficPausedUntil: route.TrafficPausedUntil,
+			manualPrimaryUntil: route.State.ManualPrimaryUntil,
+			participates:       route.State.Participates(), trafficPausedUntil: route.TrafficPausedUntil,
 			stabilityState: route.State.StabilityState, stabilitySince: route.State.StabilitySince,
 			degradedRank:         channelSmartScheduleDegradedRankFromState(route.State),
 			temporaryTrafficKind: route.State.TemporaryTrafficKind, temporaryTrafficSince: route.State.TemporaryTrafficSince,

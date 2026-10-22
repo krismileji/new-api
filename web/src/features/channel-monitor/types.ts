@@ -1034,6 +1034,7 @@ export type ChannelMonitorSmartScheduleRouteState = {
   stability_release_max_prompt_tokens?: number
   manual_primary_until: number
   manual_primary_allow_stability_degrade: boolean
+  manual_primary_channel_rule?: boolean
   adaptive_health_state?:
     | ''
     | 'unknown'
@@ -1236,6 +1237,55 @@ export type ChannelMonitorSmartSchedulePrimaryUpdateResult = {
   allow_stability_degrade: boolean
   manual_primary_until: number
   stability_protection_cleared: boolean
+  routing_changed: boolean
+  task: ChannelMonitorTask | null
+}
+
+export type ChannelMonitorSmartSchedulePrimaryRuleRoute = {
+  group: string
+  model: string
+  status:
+    | 'active'
+    | 'pending'
+    | 'not_eligible'
+    | 'single_model_override'
+    | 'channel_rule_conflict'
+    | 'stability_protected'
+  current_primary_channel_id: number
+  current_primary_channel_name: string
+}
+
+export type ChannelMonitorSmartScheduleChannelPrimaryRule = {
+  channel_id: number
+  channel_name: string
+  manual_primary_until: number
+  allow_stability_degrade: boolean
+  updated_at: number
+  routes: ChannelMonitorSmartSchedulePrimaryRuleRoute[]
+}
+
+export type ChannelMonitorSmartScheduleManualPrimary = {
+  channel_id: number
+  channel_name: string
+  group: string
+  model: string
+  manual_primary_until: number
+  allow_stability_degrade: boolean
+}
+
+export type ChannelMonitorSmartSchedulePrimaryManagement = {
+  channel_rules: ChannelMonitorSmartScheduleChannelPrimaryRule[]
+  route_primaries: ChannelMonitorSmartScheduleManualPrimary[]
+}
+
+export type ChannelMonitorSmartScheduleChannelPrimaryRuleUpdateResult = {
+  channel_id: number
+  duration_minutes: number | null
+  allow_stability_degrade: boolean
+  manual_primary_until: number
+  total_routes: number
+  fixed_routes: number
+  skipped_routes: number
   routing_changed: boolean
   task: ChannelMonitorTask | null
 }

@@ -30,6 +30,7 @@ import { toast } from 'sonner'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Dialog,
   DialogContent,
@@ -58,9 +59,11 @@ import { orderGroupNames } from '@/lib/group-order'
 import { cn } from '@/lib/utils'
 
 import {
+  ChannelMonitorSmartScheduleChannelPrimaryRuleStabilityConfirmationRequiredError,
   type ChannelMonitorSmartSchedulePrimaryUpdateRequest,
   ChannelMonitorSmartScheduleStabilityConfirmationRequiredError,
   runChannelMonitorSmartSchedule,
+  updateChannelMonitorSmartScheduleChannelPrimaryRule,
   updateChannelMonitorSmartScheduleGroupPause,
   updateChannelMonitorSmartScheduleRateLimitCooldown,
   updateChannelMonitorSmartScheduleRoutePrimary,
@@ -78,6 +81,7 @@ import {
   createChannelMonitorSmartSchedulePrimaryFormState,
 } from '../lib/smart-schedule-primary'
 import {
+  channelMonitorSmartScheduleRouteParticipates,
   channelMonitorSmartScheduleRouteKey,
   compareChannelMonitorSmartScheduleGroupsByRatio,
   filterChannelMonitorSmartScheduleRoutes,
@@ -103,6 +107,7 @@ import {
 } from './channel-monitor-smart-schedule-pool'
 import { ChannelMonitorSmartSchedulePrimaryConfirmDialog } from './channel-monitor-smart-schedule-primary-confirm-dialog'
 import { ChannelMonitorSmartSchedulePrimaryStabilityField } from './channel-monitor-smart-schedule-primary-controls'
+import { ChannelMonitorSmartSchedulePrimaryManagementDialog } from './channel-monitor-smart-schedule-primary-management-dialog'
 
 type ChannelMonitorSmartScheduleBoardProps = {
   active: boolean
@@ -126,6 +131,7 @@ type ChannelMonitorSmartScheduleBoardProps = {
 type PrimaryMutationVariables = {
   request: ChannelMonitorSmartSchedulePrimaryUpdateRequest
   route: ChannelMonitorSmartScheduleRoute
+  channelRule?: boolean
 }
 
 const EMPTY_ROUTES: readonly ChannelMonitorSmartScheduleRoute[] = []
@@ -168,6 +174,8 @@ export function ChannelMonitorSmartScheduleBoard(
     useState<ChannelMonitorSmartScheduleRoute | null>(null)
   const [primaryConfirmation, setPrimaryConfirmation] =
     useState<PrimaryMutationVariables | null>(null)
+  const [primaryManagementOpen, setPrimaryManagementOpen] = useState(false)
+  const [primaryScopeChannel, setPrimaryScopeChannel] = useState(false)
   const [primaryDuration, setPrimaryDuration] = useState('60')
   const [allowPrimaryStabilityDegrade, setAllowPrimaryStabilityDegrade] =
     useState(true)
@@ -315,6 +323,39 @@ export function ChannelMonitorSmartScheduleBoard(
     }
     return counts
   }, [pools])
+  const channelPrimaryRulePreview = useMemo(() => {
+    if (!primaryScopeChannel || !primaryTarget) return null
+    const channelRoutes = (props.result?.routes ?? []).filter(
+      (route) => route.channel_id === primaryTarget.channel_id
+    )
+    let singleModelOverrides = 0
+    let channelRuleConflicts = 0
+    let stabilityProtected = 0
+    for (const route of channelRoutes) {
+      if (!channelMonitorSmartScheduleRouteParticipates(route)) continue
+      if (route.state.stability_state !== '') stabilityProtected++
+      const existingPrimary = (props.result?.routes ?? []).find(
+        (candidate) =>
+          candidate.group === route.group &&
+          candidate.model === route.model &&
+          candidate.channel_id !== route.channel_id &&
+          candidate.state.manual_primary_until > Date.now() / 1000
+      )
+      if (existingPrimary?.state.manual_primary_channel_rule) {
+        channelRuleConflicts++
+      } else if (existingPrimary) {
+        singleModelOverrides++
+      }
+    }
+    return {
+      routeCount: channelRoutes.filter(
+        channelMonitorSmartScheduleRouteParticipates
+      ).length,
+      singleModelOverrides,
+      channelRuleConflicts,
+      stabilityProtected,
+    }
+  }, [primaryScopeChannel, primaryTarget, props.result?.routes])
   const warningCountByGroup = useMemo(() => {
     const counts = new Map<string, number>()
     for (const pool of pools) {
@@ -332,6 +373,15 @@ export function ChannelMonitorSmartScheduleBoard(
     return counts
   }, [pools])
   const firstDegradedPool = pools.find((pool) => pool.summary.degradedCount > 0)
+  let primaryDialogTitle = '固定主渠道'
+  let primarySubmitLabel = '固定主渠道'
+  if (primaryScopeChannel) {
+    primaryDialogTitle = '固定该渠道的全部模型'
+    primarySubmitLabel = '保存渠道固定规则'
+  } else if (primaryTarget?.state.manual_primary_until) {
+    primaryDialogTitle = '重新设置固定时长'
+    primarySubmitLabel = '更新固定时长'
+  }
   const firstFailedPool = pools.find((pool) => pool.summary.failedCount > 0)
   const firstProbingPool = pools.find((pool) => pool.summary.probingCount > 0)
   const firstInsufficientSamplePool = pools.find(
@@ -372,6 +422,7 @@ export function ChannelMonitorSmartScheduleBoard(
   const closePrimaryDialog = () => {
     setPrimaryConfirmation(null)
     setPrimaryTarget(null)
+    setPrimaryScopeChannel(false)
   }
 
   const updateMutation = useMutation({
@@ -408,6 +459,43 @@ export function ChannelMonitorSmartScheduleBoard(
         successMessage = `已解除稳定性保护，主渠道固定 ${formatChannelMonitorSmartScheduleDuration(response.data.duration_minutes)}`
       }
       toast.success(successMessage)
+      closePrimaryDialog()
+      await props.onActionComplete()
+    },
+  })
+  const channelPrimaryRuleMutation = useMutation({
+    mutationFn: (variables: PrimaryMutationVariables) =>
+      updateChannelMonitorSmartScheduleChannelPrimaryRule({
+        channelId: variables.request.channelId,
+        durationMinutes: variables.request.durationMinutes,
+        allowStabilityDegrade: variables.request.allowStabilityDegrade,
+        confirmStabilityOverride: variables.request.confirmStabilityOverride,
+      }),
+    onError: (error, variables) => {
+      if (
+        error instanceof
+          ChannelMonitorSmartScheduleChannelPrimaryRuleStabilityConfirmationRequiredError &&
+        variables.request.confirmStabilityOverride !== true
+      ) {
+        setPrimaryConfirmation({ ...variables, channelRule: true })
+        return
+      }
+      handleChannelMonitorMutationError(error)
+    },
+    onSuccess: async (response) => {
+      const { total_routes: total, fixed_routes: fixed } = response.data
+      let message = '渠道固定规则已保存'
+      if (response.data.duration_minutes === null) {
+        message = `已永久固定该渠道，当前 ${fixed}/${total} 个路由已固定`
+      } else if (response.data.duration_minutes === 0) {
+        message = '已解除渠道全部模型固定'
+      } else {
+        message = `该渠道已固定 ${formatChannelMonitorSmartScheduleDuration(response.data.duration_minutes)}，当前 ${fixed}/${total} 个路由已固定`
+      }
+      if (fixed < total && response.data.duration_minutes !== 0) {
+        message += `，${response.data.skipped_routes} 个路由未参与固定`
+      }
+      toast.success(message)
       closePrimaryDialog()
       await props.onActionComplete()
     },
@@ -457,8 +545,10 @@ export function ChannelMonitorSmartScheduleBoard(
   })
   const submitPrimary = () => {
     if (!primaryTarget) return
-    const durationMinutes =
-      parseOptionalChannelMonitorSmartScheduleDuration(primaryDuration, 525600)
+    const durationMinutes = parseOptionalChannelMonitorSmartScheduleDuration(
+      primaryDuration,
+      525600
+    )
     if (durationMinutes === undefined) return
     const request: ChannelMonitorSmartSchedulePrimaryUpdateRequest = {
       channelId: primaryTarget.channel_id,
@@ -466,6 +556,14 @@ export function ChannelMonitorSmartScheduleBoard(
       model: primaryTarget.model,
       durationMinutes,
       allowStabilityDegrade: allowPrimaryStabilityDegrade,
+    }
+    if (primaryScopeChannel) {
+      channelPrimaryRuleMutation.mutate({
+        request,
+        route: primaryTarget,
+        channelRule: true,
+      })
+      return
     }
     if (
       channelMonitorSmartSchedulePrimaryRequiresConfirmation(
@@ -554,6 +652,7 @@ export function ChannelMonitorSmartScheduleBoard(
         runDisabled={!props.active || props.isError}
         running={runMutation.isPending}
         onOpenHistory={props.onOpenHistory}
+        onOpenPrimaryManagement={() => setPrimaryManagementOpen(true)}
         onOpenSettings={props.onOpenSettings}
         onRun={() => runMutation.mutate()}
       />
@@ -842,6 +941,7 @@ export function ChannelMonitorSmartScheduleBoard(
                 updateDisabled={
                   updateMutation.isPending ||
                   primaryMutation.isPending ||
+                  channelPrimaryRuleMutation.isPending ||
                   groupPauseMutation.isPending ||
                   rateLimitCooldownMutation.isPending
                 }
@@ -864,9 +964,14 @@ export function ChannelMonitorSmartScheduleBoard(
                   setAllowPrimaryStabilityDegrade(
                     formState.allowStabilityDegrade
                   )
+                  setPrimaryScopeChannel(false)
                   setPrimaryTarget(route)
                 }}
-                onClearPrimary={(route) =>
+                onClearPrimary={(route) => {
+                  if (route.state.manual_primary_channel_rule) {
+                    setPrimaryManagementOpen(true)
+                    return
+                  }
                   primaryMutation.mutate({
                     route,
                     request: {
@@ -877,7 +982,7 @@ export function ChannelMonitorSmartScheduleBoard(
                       allowStabilityDegrade: false,
                     },
                   })
-                }
+                }}
                 onGroupPauseChange={(route, durationMinutes) =>
                   groupPauseMutation.mutate({
                     channelId: route.channel_id,
@@ -1048,25 +1153,81 @@ export function ChannelMonitorSmartScheduleBoard(
         <Dialog
           open
           onOpenChange={(open) => {
-            if (!open && !primaryMutation.isPending) closePrimaryDialog()
+            if (
+              !open &&
+              !primaryMutation.isPending &&
+              !channelPrimaryRuleMutation.isPending
+            ) {
+              closePrimaryDialog()
+            }
           }}
         >
           <DialogContent className='sm:max-w-md'>
             <DialogHeader>
-              <DialogTitle>
-                {primaryTarget.state.manual_primary_until > 0
-                  ? '重新设置固定时长'
-                  : '固定主渠道'}
-              </DialogTitle>
+              <DialogTitle>{primaryDialogTitle}</DialogTitle>
               <DialogDescription>
-                {primaryTarget.channel_name}{' '}
-                将在当前分组和模型中优先承接请求。固定期间仍会继续采集和计算评分；渠道禁用或退出参与仍会立即停止该路由接收请求。
-                {primaryTarget.state.manual_primary_until > 0
+                {primaryScopeChannel ? (
+                  <>
+                    {primaryTarget.channel_name}{' '}
+                    将在所有符合智能调度条件的模型路由中优先承接请求，新加入该渠道的模型也会自动纳入规则。
+                    渠道禁用或路由退出参与时，该路由不会承接请求。
+                  </>
+                ) : (
+                  <>
+                    {primaryTarget.channel_name}{' '}
+                    将在当前分组和模型中优先承接请求。固定期间仍会继续采集和计算评分；渠道禁用或退出参与仍会立即停止该路由接收请求。
+                  </>
+                )}
+                {!primaryScopeChannel &&
+                primaryTarget.state.manual_primary_until > 0
                   ? ` 当前固定至 ${formatChannelMonitorSmartScheduleUntil(primaryTarget.state.manual_primary_until)}。`
                   : null}
               </DialogDescription>
             </DialogHeader>
             <FieldGroup className='gap-3'>
+              <label className='flex items-start gap-2 text-sm'>
+                <Checkbox
+                  checked={primaryScopeChannel}
+                  onCheckedChange={(checked) => setPrimaryScopeChannel(checked)}
+                  aria-label='固定该渠道的所有模型'
+                  disabled={
+                    primaryMutation.isPending ||
+                    channelPrimaryRuleMutation.isPending
+                  }
+                />
+                <span className='grid gap-0.5'>
+                  <span>固定该渠道的所有模型</span>
+                  <span className='text-muted-foreground text-xs'>
+                    自动包含以后新增的模型路由
+                  </span>
+                </span>
+              </label>
+              {channelPrimaryRulePreview ? (
+                <div className='bg-muted/30 grid gap-1 rounded-md px-3 py-2 text-xs'>
+                  <span>
+                    当前覆盖 {channelPrimaryRulePreview.routeCount}{' '}
+                    个参与调度的分组和模型路由；后续新增路由会自动纳入。
+                  </span>
+                  {channelPrimaryRulePreview.channelRuleConflicts > 0 ? (
+                    <span>
+                      {channelPrimaryRulePreview.channelRuleConflicts}{' '}
+                      个路由已有渠道规则，本次更新后将按最近更新时间优先。
+                    </span>
+                  ) : null}
+                  {channelPrimaryRulePreview.singleModelOverrides > 0 ? (
+                    <span>
+                      {channelPrimaryRulePreview.singleModelOverrides}{' '}
+                      个路由有单模型固定例外，将继续由单模型固定优先。
+                    </span>
+                  ) : null}
+                  {channelPrimaryRulePreview.stabilityProtected > 0 ? (
+                    <span className='text-warning'>
+                      {channelPrimaryRulePreview.stabilityProtected}{' '}
+                      个路由处于稳定性保护中，提交后需要确认解除保护。
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
               <Field>
                 <FieldLabel htmlFor='channel-monitor-manual-primary-duration'>
                   固定时长（可选）
@@ -1097,7 +1258,10 @@ export function ChannelMonitorSmartScheduleBoard(
             <DialogFooter>
               <Button
                 variant='outline'
-                disabled={primaryMutation.isPending}
+                disabled={
+                  primaryMutation.isPending ||
+                  channelPrimaryRuleMutation.isPending
+                }
                 onClick={closePrimaryDialog}
               >
                 <HugeiconsIcon icon={Cancel01Icon} data-icon='inline-start' />
@@ -1106,6 +1270,7 @@ export function ChannelMonitorSmartScheduleBoard(
               <Button
                 disabled={
                   primaryMutation.isPending ||
+                  channelPrimaryRuleMutation.isPending ||
                   parseOptionalChannelMonitorSmartScheduleDuration(
                     primaryDuration,
                     525600
@@ -1113,14 +1278,13 @@ export function ChannelMonitorSmartScheduleBoard(
                 }
                 onClick={submitPrimary}
               >
-                {primaryMutation.isPending ? (
+                {primaryMutation.isPending ||
+                channelPrimaryRuleMutation.isPending ? (
                   <Spinner data-icon='inline-start' />
                 ) : (
                   <HugeiconsIcon icon={PinIcon} data-icon='inline-start' />
                 )}
-                {primaryTarget.state.manual_primary_until > 0
-                  ? '更新固定时长'
-                  : '固定主渠道'}
+                {primarySubmitLabel}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -1128,22 +1292,39 @@ export function ChannelMonitorSmartScheduleBoard(
       ) : null}
       <ChannelMonitorSmartSchedulePrimaryConfirmDialog
         route={primaryConfirmation?.route ?? null}
-        pending={primaryMutation.isPending}
+        channelRule={primaryConfirmation?.channelRule === true}
+        pending={
+          primaryMutation.isPending || channelPrimaryRuleMutation.isPending
+        }
         onOpenChange={(open) => {
-          if (!open && !primaryMutation.isPending) {
+          if (
+            !open &&
+            !primaryMutation.isPending &&
+            !channelPrimaryRuleMutation.isPending
+          ) {
             setPrimaryConfirmation(null)
           }
         }}
         onConfirm={() => {
           if (!primaryConfirmation) return
-          primaryMutation.mutate({
-            route: primaryConfirmation.route,
+          const variables = {
+            ...primaryConfirmation,
             request: {
               ...primaryConfirmation.request,
               confirmStabilityOverride: true,
             },
-          })
+          }
+          if (primaryConfirmation.channelRule) {
+            channelPrimaryRuleMutation.mutate(variables)
+          } else {
+            primaryMutation.mutate(variables)
+          }
         }}
+      />
+      <ChannelMonitorSmartSchedulePrimaryManagementDialog
+        open={primaryManagementOpen}
+        onOpenChange={setPrimaryManagementOpen}
+        onActionComplete={props.onActionComplete}
       />
     </div>
   )

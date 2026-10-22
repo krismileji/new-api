@@ -19,7 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 import assert from 'node:assert/strict'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { within } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import type { ReactElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, test } from 'vitest'
 
@@ -183,10 +185,18 @@ function createResult(): ChannelMonitorSmartScheduleRouteResult {
   return {
     generated_at: 1_752_777_845,
     route_snapshot: {
-      available: true, revision: 7, generated_at: 1_752_777_845,
-      source_watermark: 7, snapshot_age_seconds: 0, max_age_seconds: 300,
-      redis_backed: true, dirty: false, stale: false, degraded: false,
-      protection_mode: false, last_redis_success_at: 1_752_777_845,
+      available: true,
+      revision: 7,
+      generated_at: 1_752_777_845,
+      source_watermark: 7,
+      snapshot_age_seconds: 0,
+      max_age_seconds: 300,
+      redis_backed: true,
+      dirty: false,
+      stale: false,
+      degraded: false,
+      protection_mode: false,
+      last_redis_success_at: 1_752_777_845,
       last_redis_failure_at: 0,
     },
     data_cutoff_at: 1_752_777_840,
@@ -468,8 +478,22 @@ function renderBoard(
     isError?: boolean
   } = {}
 ) {
-  const queryClient = new QueryClient()
-  return renderToStaticMarkup(
+  return renderToStaticMarkup(createBoardElement(options))
+}
+
+function createBoardElement(options: {
+  result?: ChannelMonitorSmartScheduleRouteResult
+  groupRatios?: Readonly<Record<string, number>>
+  groupOrder?: readonly string[]
+  channels?: ChannelMonitorItem[]
+  groupPolicies?: ChannelMonitorSmartScheduleGroupPolicy[]
+  selection?: { group: string; model: string }
+  isError?: boolean
+}): ReactElement {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  })
+  return (
     <QueryClientProvider client={queryClient}>
       <ChannelMonitorSmartScheduleBoard
         active
@@ -578,6 +602,31 @@ function renderBoard(
     </QueryClientProvider>
   )
 }
+
+test('switching to channel scope explains future models and previews rule conflicts', async () => {
+  const user = userEvent.setup()
+  const result = createResult()
+  result.routes[1].state.manual_primary_until =
+    Math.floor(Date.now() / 1000) + 3600
+  result.routes[1].state.manual_primary_channel_rule = true
+  render(createBoardElement({ result }))
+
+  await user.click(
+    screen.getAllByRole('button', { name: '固定 高速渠道 为主渠道' })[0]
+  )
+  const scope = screen.getByRole('checkbox', { name: /固定该渠道的所有模型/ })
+  await user.click(scope)
+
+  expect(
+    screen.getByRole('heading', { name: '固定该渠道的全部模型' })
+  ).toBeVisible()
+  expect(screen.getByText('自动包含以后新增的模型路由')).toBeVisible()
+  expect(screen.getByText(/后续新增路由会自动纳入/)).toBeVisible()
+  expect(screen.getByText(/1 个路由已有渠道规则/)).toBeVisible()
+
+  await user.click(scope)
+  expect(screen.getByRole('heading', { name: '固定主渠道' })).toBeVisible()
+})
 
 describe('channel monitor smart schedule board', () => {
   test('shows schedule metrics and actions without repeating global monitoring', () => {
@@ -947,5 +996,22 @@ describe('channel monitor smart schedule board', () => {
     assert.ok(markup.includes('允许稳定性降级'))
     assert.ok(markup.includes('取消固定 高速渠道'))
     assert.ok(markup.includes('查看 高速渠道 的调度详情'))
+  })
+
+  test('routes channel-rule pins to unified fixed-item management', () => {
+    const result = createResult()
+    result.routes[0] = createRoute(1, {
+      channel_name: '规则渠道',
+      state: {
+        manual_primary_until: 1_752_800_000,
+        manual_primary_allow_stability_degrade: true,
+        manual_primary_channel_rule: true,
+      } as ChannelMonitorSmartScheduleRoute['state'],
+    })
+
+    const markup = renderBoard({ result })
+
+    assert.ok(markup.includes('管理 规则渠道 的渠道固定规则'))
+    assert.ok(markup.includes('固定项管理'))
   })
 })

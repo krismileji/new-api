@@ -1520,3 +1520,74 @@ func TestUpdateChannelMonitorSmartScheduleRoutePrimaryRequiresStabilityConfirmat
 	assert.True(t, successResponse.Success)
 	assert.True(t, successResponse.Data.StabilityProtectionCleared)
 }
+
+func TestChannelSmartScheduleChannelPrimaryRuleEndpointAndManagement(t *testing.T) {
+	db := setupChannelMonitorControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.ChannelSmartScheduleChannelPrimaryRule{}))
+	priority := int64(80)
+	weight := uint(100)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1221, Name: "全模型固定渠道", Status: common.ChannelStatusEnabled,
+		Group: "vip", Models: "model-a,model-b", Priority: &priority, Weight: &weight,
+	}).Error)
+	require.NoError(t, db.Create(&[]model.Ability{
+		{ChannelId: 1221, Group: "vip", Model: "model-a", Enabled: true, Priority: &priority, Weight: weight},
+		{ChannelId: 1221, Group: "vip", Model: "model-b", Enabled: true, Priority: &priority, Weight: weight},
+	}).Error)
+	require.NoError(t, db.Create(&[]model.ChannelSmartScheduleRouteState{
+		{ChannelId: 1221, GroupName: "vip", ModelName: "model-a", ParticipationSet: true},
+		{ChannelId: 1221, GroupName: "vip", ModelName: "model-b", ParticipationSet: true},
+	}).Error)
+
+	type ruleResponse struct {
+		Success bool `json:"success"`
+		Data    struct {
+			DurationMinutes *int  `json:"duration_minutes"`
+			TotalRoutes     int   `json:"total_routes"`
+			FixedRoutes     int   `json:"fixed_routes"`
+			ManualUntil     int64 `json:"manual_primary_until"`
+		} `json:"data"`
+	}
+	ctx, recorder := newChannelMonitorControllerContext(
+		t, http.MethodPut, "/api/channel_monitor/channel/1221/schedule/primary-rule",
+		map[string]any{"duration_minutes": 60, "allow_stability_degrade": true},
+	)
+	ctx.AddParam("id", "1221")
+	UpdateChannelMonitorSmartScheduleChannelPrimaryRule(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var saved ruleResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &saved))
+	assert.True(t, saved.Success)
+	assert.Equal(t, 2, saved.Data.TotalRoutes)
+	assert.Equal(t, 2, saved.Data.FixedRoutes)
+	assert.Equal(t, 60, *saved.Data.DurationMinutes)
+
+	ctx, recorder = newChannelMonitorControllerContext(
+		t, http.MethodGet, "/api/channel_monitor/schedule/primary-management", nil,
+	)
+	GetChannelMonitorSmartSchedulePrimaryManagement(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var managementResponse struct {
+		Success bool `json:"success"`
+		Data    struct {
+			ChannelRules []model.ChannelSmartScheduleChannelPrimaryRuleInfo `json:"channel_rules"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &managementResponse))
+	assert.True(t, managementResponse.Success)
+	require.Len(t, managementResponse.Data.ChannelRules, 1)
+	assert.Equal(t, "全模型固定渠道", managementResponse.Data.ChannelRules[0].ChannelName)
+	assert.Len(t, managementResponse.Data.ChannelRules[0].Routes, 2)
+
+	ctx, recorder = newChannelMonitorControllerContext(
+		t, http.MethodPut, "/api/channel_monitor/channel/1221/schedule/primary-rule",
+		map[string]any{"duration_minutes": 0},
+	)
+	ctx.AddParam("id", "1221")
+	UpdateChannelMonitorSmartScheduleChannelPrimaryRule(ctx)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var cleared ruleResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &cleared))
+	assert.True(t, cleared.Success)
+	assert.Zero(t, cleared.Data.ManualUntil)
+}

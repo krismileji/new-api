@@ -124,6 +124,16 @@ func reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(
 	tx *gorm.DB,
 	pools []channelSmartScheduleRoutePool,
 ) (map[ChannelSmartScheduleRouteKey]struct{}, error) {
+	return reapplyChannelSmartScheduleRoutePrimariesTxWithOptions(
+		tx, pools, channelSmartSchedulePrimaryRuleApplyOptions{},
+	)
+}
+
+func reapplyChannelSmartScheduleRoutePrimariesTxWithOptions(
+	tx *gorm.DB,
+	pools []channelSmartScheduleRoutePool,
+	options channelSmartSchedulePrimaryRuleApplyOptions,
+) (map[ChannelSmartScheduleRouteKey]struct{}, error) {
 	changedKeys := make(map[ChannelSmartScheduleRouteKey]struct{})
 	if len(pools) == 0 || !tx.Migrator().HasTable(&ChannelSmartScheduleRouteState{}) {
 		return changedKeys, nil
@@ -168,6 +178,13 @@ func reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(
 			channelStatusById[channel.Id] = channel.Status
 			channelById[channel.Id] = channel
 		}
+		before := channelSmartScheduleAbilityRoutingSnapshot(abilities)
+		if err := reconcileChannelSmartSchedulePrimaryRulePoolTx(
+			tx, pool, states, abilities, channelStatusById, now, options,
+		); err != nil {
+			return nil, err
+		}
+		channelSmartScheduleRecordChangedAbilityRouting(changedKeys, before, abilities)
 		var primaryState *ChannelSmartScheduleRouteState
 		for index := range states {
 			if states[index].ManualPrimaryUntil <= now {

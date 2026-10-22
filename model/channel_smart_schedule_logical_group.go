@@ -1,6 +1,10 @@
 package model
 
-import "sort"
+import (
+	"sort"
+
+	"github.com/QuantumNous/new-api/common"
+)
 
 // channelSmartScheduleLogicalMember is the transient member projection kept
 // on a coalesced route. It deliberately contains only channel IDs and the
@@ -42,6 +46,7 @@ func coalesceChannelSmartScheduleLogicalRoutesWithRouting(
 
 	result := make([]channelSmartScheduleCachedRoute, 0, len(routes))
 	groupIndex := make(map[int64]int)
+	now := common.GetTimestamp()
 	for _, route := range routes {
 		identity, ok := runtime.Channels[route.channelId]
 		if !ok || identity.Revision <= 0 || identity.LogicalChannelID == int64(route.channelId) {
@@ -82,6 +87,38 @@ func coalesceChannelSmartScheduleLogicalRoutesWithRouting(
 		}
 
 		logicalRoute := &result[index]
+		if route.manualPrimaryUntil > now {
+			if logicalRoute.manualPrimaryUntil <= now {
+				logicalRoute.channelId = route.channelId
+				logicalRoute.priority = route.priority
+				logicalRoute.weight = route.weight
+				logicalRoute.officialPriority = route.officialPriority
+				logicalRoute.officialWeight = route.officialWeight
+				logicalRoute.officialInherited = route.officialInherited
+				logicalRoute.participates = route.participates
+				logicalRoute.trafficPausedUntil = route.trafficPausedUntil
+				logicalRoute.temporaryTrafficKind = route.temporaryTrafficKind
+				logicalRoute.temporaryTrafficSince = route.temporaryTrafficSince
+				logicalRoute.stabilityState = route.stabilityState
+				logicalRoute.stabilitySince = route.stabilitySince
+				logicalRoute.degradedRank = route.degradedRank
+				logicalRoute.explorationMaxPromptTokens = route.explorationMaxPromptTokens
+				logicalRoute.stabilityReleaseMaxPromptTokens = route.stabilityReleaseMaxPromptTokens
+				logicalRoute.manualPrimaryUntil = route.manualPrimaryUntil
+				logicalRoute.logicalPriority = route.priority
+				logicalRoute.logicalWeight = route.weight
+				logicalRoute.logicalOfficialPriority = route.officialPriority
+				logicalRoute.logicalOfficialWeight = route.officialWeight
+				logicalRoute.logicalMembers = []channelSmartScheduleLogicalMember{{
+					channelID: route.channelId,
+					weight:    logicalGroupMemberWeight(group, route.channelId),
+				}}
+			}
+			continue
+		}
+		if logicalRoute.manualPrimaryUntil > now {
+			continue
+		}
 		logicalRoute.logicalMembers = append(logicalRoute.logicalMembers, channelSmartScheduleLogicalMember{
 			channelID: route.channelId,
 			weight:    logicalGroupMemberWeight(group, route.channelId),
@@ -120,8 +157,10 @@ func coalesceChannelSmartScheduleLogicalRoutesWithRouting(
 			logicalID: result[index].logicalChannelID, revision: result[index].logicalRevision,
 			group: groupName, model: channelSmartScheduleModelName(modelName),
 		}]; exists {
-			result[index].logicalPriority = overlay.routing.priority
-			result[index].logicalWeight = overlay.routing.weight
+			if result[index].manualPrimaryUntil <= now {
+				result[index].logicalPriority = overlay.routing.priority
+				result[index].logicalWeight = overlay.routing.weight
+			}
 			result[index].participates = overlay.state.Participates()
 			result[index].temporaryTrafficKind = overlay.state.TemporaryTrafficKind
 			result[index].temporaryTrafficSince = overlay.state.TemporaryTrafficSince

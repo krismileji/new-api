@@ -31,6 +31,7 @@ import type { ChannelMonitorSmartScheduleRoute } from '../types'
 
 type ChannelMonitorSmartSchedulePrimaryConfirmDialogProps = {
   route: ChannelMonitorSmartScheduleRoute | null
+  channelRule: boolean
   pending: boolean
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
@@ -43,16 +44,36 @@ export function ChannelMonitorSmartSchedulePrimaryConfirmDialog(
     props.route?.state.stability_state === 'degraded'
       ? '稳定性降级'
       : '稳定性试放'
+  let confirmLabel = '解除保护并固定'
+  if (props.pending) {
+    confirmLabel = '处理中...'
+  } else if (props.channelRule) {
+    confirmLabel = '解除保护并固定渠道'
+  }
 
   return (
     <AlertDialog open={props.route != null} onOpenChange={props.onOpenChange}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>该路由正在稳定性保护中</AlertDialogTitle>
+          <AlertDialogTitle>
+            {props.channelRule
+              ? '部分模型路由处于稳定性保护中'
+              : '该路由正在稳定性保护中'}
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            “{props.route?.channel_name} / {props.route?.group} /{' '}
-            {props.route?.model}”当前处于{protectionLabel}
-            状态。继续后会立即解除当前保护并固定为主渠道；如果保留“允许稳定性降级”，后续再次达到保护失败阈值时仍会重新进入保护。
+            {props.channelRule ? (
+              <>
+                {props.route?.channel_name}{' '}
+                的一个或多个参与调度的模型路由当前处于稳定性保护状态。继续后会解除这些路由的保护，并固定当前及以后新增的符合条件的模型路由。
+                如果保留“允许稳定性降级”，后续再次达到保护失败阈值时仍会重新进入保护。
+              </>
+            ) : (
+              <>
+                “{props.route?.channel_name} / {props.route?.group} /{' '}
+                {props.route?.model}”当前处于{protectionLabel}
+                状态。继续后会立即解除当前保护并固定为主渠道；如果保留“允许稳定性降级”，后续再次达到保护失败阈值时仍会重新进入保护。
+              </>
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -61,7 +82,7 @@ export function ChannelMonitorSmartSchedulePrimaryConfirmDialog(
             disabled={props.pending || props.route == null}
             onClick={props.onConfirm}
           >
-            {props.pending ? '处理中...' : '解除保护并固定'}
+            {confirmLabel}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

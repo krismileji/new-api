@@ -21,6 +21,7 @@ type channelSmartScheduleCachedRoute struct {
 	logicalWeight                   uint
 	logicalOfficialPriority         int64
 	logicalOfficialWeight           uint
+	manualPrimaryUntil              int64
 	priority                        int64
 	weight                          uint
 	officialPriority                int64
@@ -228,6 +229,7 @@ func buildChannelSmartScheduleRouteCache(abilities []*Ability, channels map[int]
 				"temporary_traffic_kind", "temporary_traffic_since", "stability_state", "stability_since",
 				"exploration_max_prompt_tokens",
 				"stability_release_max_prompt_tokens",
+				"manual_primary_until",
 				"last_schedule_score", "last_schedule_score_at", "rolling_stability_score", "rolling_stability_updated_at", "stability_saved_priority",
 				"stability_saved_weight", "base_priority", "base_weight",
 			).
@@ -305,6 +307,7 @@ func buildChannelSmartScheduleRouteCacheWithStates(
 			officialPriority:      officialPriority,
 			officialWeight:        officialWeight,
 			officialInherited:     ability.Priority == nil,
+			manualPrimaryUntil:    state.ManualPrimaryUntil,
 			participates:          state.Participates(),
 			temporaryTrafficSince: state.TemporaryTrafficSince,
 			stabilitySince:        state.StabilitySince,

@@ -170,6 +170,7 @@ func deleteChannelMonitorDataTx(tx *gorm.DB, channelIds []int) error {
 		&ChannelMonitorMinuteDurationBucket{},
 		&ChannelRatioMonitor{},
 		&ChannelSmartScheduleRouteState{},
+		&ChannelSmartScheduleChannelPrimaryRule{},
 		&ChannelSmartScheduleGroupPause{},
 		&ChannelSmartScheduleModelSampleState{},
 		&ChannelStatusProbeConfig{},

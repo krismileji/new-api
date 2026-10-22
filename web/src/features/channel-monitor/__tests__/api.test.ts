@@ -24,11 +24,13 @@ import { test } from 'vitest'
 import { api } from '@/lib/api'
 
 import {
+  ChannelMonitorSmartScheduleChannelPrimaryRuleStabilityConfirmationRequiredError,
   ChannelMonitorSmartScheduleStabilityConfirmationRequiredError,
   clearChannelMonitorSmartScheduleRouteExploration,
   clearChannelMonitorSmartScheduleRouteStability,
   getChannelMonitorCostOverview,
   getChannelMonitorSmartScheduleRoutes,
+  getChannelMonitorSmartSchedulePrimaryManagement,
   getChannelMonitorTodaySuccess,
   previewChannelMonitorNotificationEmail,
   updateChannelStatusProbeConfig,
@@ -36,6 +38,7 @@ import {
   updateChannelMonitorSmartScheduleGroupPause,
   updateChannelMonitorSmartScheduleRateLimitCooldown,
   updateChannelMonitorSmartScheduleRoutePrimary,
+  updateChannelMonitorSmartScheduleChannelPrimaryRule,
   updateChannelMonitorSmartScheduleRouteConfig,
 } from '../api'
 
@@ -435,6 +438,151 @@ test('requires and sends explicit confirmation before overriding stability prote
       confirmStabilityOverride: true,
     })
     assert.equal(response.data.stability_protection_cleared, true)
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(requests.length, 2)
+  assert.equal(
+    JSON.parse(String(requests[0]?.data)).confirm_stability_override,
+    undefined
+  )
+  assert.equal(
+    JSON.parse(String(requests[1]?.data)).confirm_stability_override,
+    true
+  )
+})
+
+test('loads fixed-item management and saves or clears a channel-wide primary rule', async () => {
+  const originalAdapter = api.defaults.adapter
+  const requests: AxiosRequestConfig[] = []
+  const adapter: AxiosAdapter = async (config) => {
+    requests.push(config)
+    return {
+      data: {
+        success: true,
+        message: '',
+        data:
+          config.method === 'get'
+            ? { channel_rules: [], route_primaries: [] }
+            : {
+                channel_id: 7,
+                duration_minutes: config.data
+                  ? (
+                      JSON.parse(String(config.data)) as {
+                        duration_minutes: number | null
+                      }
+                    ).duration_minutes
+                  : null,
+                allow_stability_degrade: true,
+                manual_primary_until: 1_900_000_000,
+                total_routes: 3,
+                fixed_routes: 3,
+                skipped_routes: 0,
+                routing_changed: true,
+                task: null,
+              },
+      },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  try {
+    const management = await getChannelMonitorSmartSchedulePrimaryManagement()
+    assert.deepEqual(management.data, {
+      channel_rules: [],
+      route_primaries: [],
+    })
+    await updateChannelMonitorSmartScheduleChannelPrimaryRule({
+      channelId: 7,
+      durationMinutes: 120,
+      allowStabilityDegrade: true,
+    })
+    await updateChannelMonitorSmartScheduleChannelPrimaryRule({
+      channelId: 7,
+      durationMinutes: 0,
+      allowStabilityDegrade: false,
+    })
+  } finally {
+    api.defaults.adapter = originalAdapter
+  }
+
+  assert.equal(
+    requests[0]?.url,
+    '/api/channel_monitor/schedule/primary-management'
+  )
+  assert.equal(
+    requests[1]?.url,
+    '/api/channel_monitor/channel/7/schedule/primary-rule'
+  )
+  assert.deepEqual(JSON.parse(String(requests[1]?.data)), {
+    duration_minutes: 120,
+    allow_stability_degrade: true,
+  })
+  assert.deepEqual(JSON.parse(String(requests[2]?.data)), {
+    duration_minutes: 0,
+    allow_stability_degrade: false,
+  })
+})
+
+test('requires explicit confirmation before applying a channel rule to protected routes', async () => {
+  const originalAdapter = api.defaults.adapter
+  const requests: AxiosRequestConfig[] = []
+  const adapter: AxiosAdapter = async (config) => {
+    requests.push(config)
+    const request = JSON.parse(String(config.data)) as {
+      confirm_stability_override?: boolean
+    }
+    return {
+      data: request.confirm_stability_override
+        ? {
+            success: true,
+            message: '',
+            data: {
+              channel_id: 7,
+              duration_minutes: 60,
+              allow_stability_degrade: true,
+              manual_primary_until: 1_900_000_000,
+              total_routes: 3,
+              fixed_routes: 3,
+              skipped_routes: 0,
+              routing_changed: true,
+              task: null,
+            },
+          }
+        : {
+            success: false,
+            code: 'smart_schedule_channel_primary_stability_confirmation_required',
+            message: '有模型路由处于稳定性保护中',
+            data: null,
+          },
+      status: 200,
+      statusText: 'OK',
+      headers: {},
+      config,
+    }
+  }
+  api.defaults.adapter = adapter
+
+  const request = {
+    channelId: 7,
+    durationMinutes: 60,
+    allowStabilityDegrade: true,
+  }
+  try {
+    await assert.rejects(
+      () => updateChannelMonitorSmartScheduleChannelPrimaryRule(request),
+      ChannelMonitorSmartScheduleChannelPrimaryRuleStabilityConfirmationRequiredError
+    )
+    const response = await updateChannelMonitorSmartScheduleChannelPrimaryRule({
+      ...request,
+      confirmStabilityOverride: true,
+    })
+    assert.equal(response.data.fixed_routes, 3)
   } finally {
     api.defaults.adapter = originalAdapter
   }

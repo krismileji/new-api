@@ -112,3 +112,44 @@ func TestCoalesceChannelSmartScheduleLogicalRoutesOverlaysLogicalRouting(t *test
 	assert.Equal(t, int64(30), coalesced[0].logicalPriority)
 	assert.Equal(t, uint(20), coalesced[0].logicalWeight)
 }
+
+func TestCoalesceChannelSmartScheduleLogicalRoutesKeepsPinnedPhysicalMember(t *testing.T) {
+	t.Setenv(ChannelLogicalGroupGlobalEnableEnv, "true")
+	runtime := &LogicalChannelRuntimeSnapshot{
+		Channels: map[int]LogicalChannelIdentity{
+			10: {ChannelID: 10, LogicalChannelID: 900, Revision: 4},
+			20: {ChannelID: 20, LogicalChannelID: 900, Revision: 4},
+		},
+		Groups: map[int64]LogicalChannelGroupSnapshot{
+			900: {
+				LogicalChannelID: 900, Revision: 4, Status: ChannelLogicalGroupStatusEnabled,
+				Members: []LogicalChannelMemberSnapshot{{ChannelID: 10, Weight: 3}, {ChannelID: 20, Weight: 1}},
+			},
+		},
+	}
+	routes := []channelSmartScheduleCachedRoute{
+		{channelId: 10, priority: 80, weight: 20},
+		{channelId: 20, priority: 101, weight: 1000, manualPrimaryUntil: 2_000_000_000},
+	}
+	routings := map[channelLogicalSmartScheduleRouteKey]channelLogicalSmartScheduleRouteOverlay{
+		{logicalID: 900, revision: 4, group: "vip", model: "model-a"}: {
+			routing: channelLogicalSmartScheduleRouting{priority: 30, weight: 20},
+			state:   ChannelSmartScheduleRouteState{ParticipationSet: true},
+		},
+	}
+
+	coalesced := coalesceChannelSmartScheduleLogicalRoutesWithRouting(
+		routes, runtime, "vip", "model-a", routings,
+	)
+	require.Len(t, coalesced, 1)
+	assert.Equal(t, 20, coalesced[0].channelId)
+	assert.Equal(t, int64(101), coalesced[0].logicalPriority)
+	assert.Equal(t, []channelSmartScheduleLogicalMember{{channelID: 20, weight: 1}}, coalesced[0].logicalMembers)
+
+	oldChannels := channelsIDM
+	t.Cleanup(func() { channelsIDM = oldChannels })
+	channelsIDM = map[int]*Channel{10: {Id: 10}, 20: {Id: 20}}
+	selectedID, err := selectLogicalSmartScheduleMemberID(coalesced[0], runtime)
+	require.NoError(t, err)
+	assert.Equal(t, 20, selectedID)
+}

@@ -254,9 +254,7 @@ function RouteSamples(props: {
   stability?: ChannelMonitorSmartScheduleRouteStability
   samples?: ChannelMonitorSmartScheduleSampleItem
 }) {
-  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(
-    props.route
-  )
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(props.route)
   const performanceSamples =
     props.samples?.performance_window ?? props.route.shared_samples
   const stabilitySamples =
@@ -327,9 +325,7 @@ function RouteAdaptiveHealthSummary(props: {
   if (!props.placement?.isActualPrimary && !props.placement?.isScoringWinner) {
     return null
   }
-  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(
-    props.route
-  )
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(props.route)
   const details =
     props.route.current_window_score_details ??
     runtimeState.last_schedule_score_details
@@ -368,15 +364,16 @@ function RouteAdaptiveHealthSummary(props: {
 function ManualPrimaryIndicator(props: {
   route: ChannelMonitorSmartScheduleRoute
 }) {
-  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(
-    props.route
-  )
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(props.route)
   if (runtimeState.manual_primary_until <= 0) return null
 
   const degradeLabel = runtimeState.manual_primary_allow_stability_degrade
     ? '允许稳定性降级'
     : '固定期间不降级'
-  const label = `管理员固定至 ${formatChannelMonitorSmartScheduleUntil(runtimeState.manual_primary_until)} · ${degradeLabel}`
+  const sourceLabel = props.route.state.manual_primary_channel_rule
+    ? '渠道规则固定至'
+    : '管理员固定至'
+  const label = `${sourceLabel} ${formatChannelMonitorSmartScheduleUntil(runtimeState.manual_primary_until)} · ${degradeLabel}`
   return (
     <span className='text-primary shrink-0' title={label} aria-label={label}>
       <HugeiconsIcon icon={PinIcon} className='size-3.5' aria-hidden='true' />
@@ -546,9 +543,7 @@ function RouteDecisionBadges(props: {
 function RouteTemporaryTraffic(props: {
   route: ChannelMonitorSmartScheduleRoute
 }) {
-  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(
-    props.route
-  )
+  const runtimeState = channelMonitorSmartScheduleRouteRuntimeState(props.route)
   const samplingOrderLabel = runtimeState.sampling_order
     ? getChannelMonitorSmartScheduleSamplingOrderLabel(
         runtimeState.sampling_order,
@@ -561,8 +556,7 @@ function RouteTemporaryTraffic(props: {
         <span className='text-muted-foreground'>当前未采样</span>
         {runtimeState.sampling_candidate ? (
           <span className='text-muted-foreground text-[11px]'>
-            候选 · 欠账 {runtimeState.sampling_debt} · 顺序{' '}
-            {samplingOrderLabel}
+            候选 · 欠账 {runtimeState.sampling_debt} · 顺序 {samplingOrderLabel}
           </span>
         ) : null}
       </div>
@@ -668,6 +662,8 @@ function RouteActions(props: {
   const fixed =
     channelMonitorSmartScheduleRouteRuntimeState(props.route)
       .manual_primary_until > 0
+  const fixedByChannelRule =
+    props.route.state.manual_primary_channel_rule === true
   const trafficPaused = channelMonitorSmartScheduleRouteIsTrafficPaused(
     props.route
   )
@@ -676,6 +672,14 @@ function RouteActions(props: {
   const rateLimitPending =
     props.rateLimitCooldownKey ===
     channelMonitorSmartScheduleRouteKey(props.route)
+  let primaryActionLabel = `固定 ${props.route.channel_name} 为主渠道`
+  let primaryActionTitle = '固定为主渠道'
+  if (fixed) {
+    primaryActionLabel = fixedByChannelRule
+      ? `管理 ${props.route.channel_name} 的渠道固定规则`
+      : `取消固定 ${props.route.channel_name}`
+    primaryActionTitle = fixedByChannelRule ? '管理渠道固定规则' : '取消固定'
+  }
   return (
     <div className='flex items-center justify-end gap-1'>
       <Button
@@ -695,12 +699,8 @@ function RouteActions(props: {
           props.onSetPrimary(props.route)
         }}
         aria-pressed={fixed}
-        aria-label={
-          fixed
-            ? `取消固定 ${props.route.channel_name}`
-            : `固定 ${props.route.channel_name} 为主渠道`
-        }
-        title={fixed ? '取消固定' : '固定为主渠道'}
+        aria-label={primaryActionLabel}
+        title={primaryActionTitle}
       >
         <HugeiconsIcon icon={PinIcon} aria-hidden='true' />
       </Button>

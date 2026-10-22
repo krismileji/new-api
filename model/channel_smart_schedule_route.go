@@ -71,6 +71,7 @@ type ChannelSmartScheduleRouteState struct {
 	// restore markers and are intentionally not exposed to API consumers.
 	ManualPrimaryUntil                 int64 `json:"manual_primary_until" gorm:"bigint;index"`
 	ManualPrimaryAllowStabilityDegrade bool  `json:"manual_primary_allow_stability_degrade"`
+	ManualPrimaryChannelRule           bool  `json:"manual_primary_channel_rule"`
 	ManualPrimarySaved                 bool  `json:"-"`
 	ManualPrimarySavedPriority         int64 `json:"-" gorm:"bigint"`
 	ManualPrimarySavedWeight           uint  `json:"-"`
@@ -116,6 +117,7 @@ func resetChannelSmartScheduleInactiveRouteState(state *ChannelSmartScheduleRout
 		state.RollingStabilityUpdatedAt != 0 || state.SamplingDebt != 0 ||
 		state.SamplingCandidate || state.SamplingOrder != "" || state.LastSamplingAt != 0 ||
 		state.ManualPrimaryUntil != 0 || state.ManualPrimaryAllowStabilityDegrade ||
+		state.ManualPrimaryChannelRule ||
 		state.ManualPrimarySaved || state.ManualPrimarySavedPriority != 0 ||
 		state.ManualPrimarySavedWeight != 0
 	state.StabilityState = ""
@@ -145,6 +147,7 @@ func resetChannelSmartScheduleInactiveRouteState(state *ChannelSmartScheduleRout
 	state.LastSamplingAt = 0
 	state.ManualPrimaryUntil = 0
 	state.ManualPrimaryAllowStabilityDegrade = false
+	state.ManualPrimaryChannelRule = false
 	state.ManualPrimarySaved = false
 	state.ManualPrimarySavedPriority = 0
 	state.ManualPrimarySavedWeight = 0
@@ -775,6 +778,15 @@ func SaveChannelSmartScheduleRouteConfig(channelId int, group string, modelName 
 		} else if err := saveChannelSmartScheduleRouteStateTx(tx, targetState); err != nil {
 			return err
 		}
+		changedKeys, err := reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(tx, pools)
+		if err != nil {
+			return err
+		}
+		routingChanged = routingChanged || len(changedKeys) > 0
+		if err := tx.Where("channel_id = ? AND group_name = ? AND model_name = ?", channelId, group, modelName).
+			First(targetState).Error; err != nil {
+			return err
+		}
 		state = *targetState
 		return nil
 	})
@@ -896,6 +908,11 @@ func SaveChannelSmartScheduleChannelConfig(channelId int, excluded bool) (result
 			result.Updated++
 			result.RoutingChanged = result.RoutingChanged || routingChanged
 		}
+		changedKeys, err := reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(tx, pools)
+		if err != nil {
+			return err
+		}
+		result.RoutingChanged = result.RoutingChanged || len(changedKeys) > 0
 		return nil
 	})
 	return result, err
@@ -960,6 +977,17 @@ func SaveChannelSmartScheduleRoutePrimary(
 
 		if durationMinutes == 0 {
 			if targetState.ManualPrimaryUntil <= 0 && !targetState.ManualPrimarySaved {
+				changedKeys, reapplyErr := reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(
+					tx, []channelSmartScheduleRoutePool{{group: group, model: modelName}},
+				)
+				if reapplyErr != nil {
+					return reapplyErr
+				}
+				result.RoutingChanged = result.RoutingChanged || len(changedKeys) > 0
+				if err := tx.Where("channel_id = ? AND group_name = ? AND model_name = ?", channelId, group, modelName).
+					First(targetState).Error; err != nil {
+					return err
+				}
 				result.State = *targetState
 				return nil
 			}
@@ -975,6 +1003,17 @@ func SaveChannelSmartScheduleRoutePrimary(
 				return clearErr
 			}
 			result.RoutingChanged = result.RoutingChanged || changed
+			changedKeys, reapplyErr := reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(
+				tx, []channelSmartScheduleRoutePool{{group: group, model: modelName}},
+			)
+			if reapplyErr != nil {
+				return reapplyErr
+			}
+			result.RoutingChanged = result.RoutingChanged || len(changedKeys) > 0
+			if err := tx.Where("channel_id = ? AND group_name = ? AND model_name = ?", channelId, group, modelName).
+				First(targetState).Error; err != nil {
+				return err
+			}
 			result.State = *targetState
 			return nil
 		}
@@ -1021,8 +1060,16 @@ func SaveChannelSmartScheduleRoutePrimary(
 				targetState.ManualPrimaryUntil = now + int64(durationMinutes)*60
 			}
 			targetState.ManualPrimaryAllowStabilityDegrade = options.AllowStabilityDegrade
+			targetState.ManualPrimaryChannelRule = false
 			targetState.Revision++
 			if err := saveChannelSmartScheduleRouteStateTx(tx, targetState); err != nil {
+				return err
+			}
+			if err := reapplyChannelSmartScheduleRoutePrimariesTx(tx, []channelSmartScheduleRoutePool{{group: group, model: modelName}}); err != nil {
+				return err
+			}
+			if err := tx.Where("channel_id = ? AND group_name = ? AND model_name = ?", channelId, group, modelName).
+				First(targetState).Error; err != nil {
 				return err
 			}
 			result.State = *targetState
@@ -1124,6 +1171,7 @@ func SaveChannelSmartScheduleRoutePrimary(
 			targetState.ManualPrimaryUntil = now + int64(durationMinutes)*60
 		}
 		targetState.ManualPrimaryAllowStabilityDegrade = options.AllowStabilityDegrade
+		targetState.ManualPrimaryChannelRule = false
 		targetState.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
 		targetState.LastScheduleError = "管理员已固定该路由为主渠道"
 		targetState.LastScheduleScore = nil
@@ -1134,6 +1182,17 @@ func SaveChannelSmartScheduleRoutePrimary(
 		targetState.LastScheduleTime = now
 		targetState.Revision++
 		if err := saveChannelSmartScheduleRouteStateTx(tx, targetState); err != nil {
+			return err
+		}
+		changedKeys, err := reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(
+			tx, []channelSmartScheduleRoutePool{{group: group, model: modelName}},
+		)
+		if err != nil {
+			return err
+		}
+		result.RoutingChanged = result.RoutingChanged || len(changedKeys) > 0
+		if err := tx.Where("channel_id = ? AND group_name = ? AND model_name = ?", channelId, group, modelName).
+			First(targetState).Error; err != nil {
 			return err
 		}
 		result.State = *targetState
@@ -1150,21 +1209,21 @@ func ClearExpiredChannelSmartScheduleRoutePrimaries(now int64) (routingChanged b
 	defer channelStatusLock.Unlock()
 
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		var expiredCount int64
-		if err := tx.Model(&ChannelSmartScheduleRouteState{}).
-			Where("manual_primary_until > ? AND manual_primary_until <= ?", 0, now).
-			Count(&expiredCount).Error; err != nil {
-			return err
-		}
-		if expiredCount == 0 {
-			return nil
-		}
-
 		var expiredStates []ChannelSmartScheduleRouteState
 		if err := tx.Select("channel_id", "group_name", "model_name").
 			Where("manual_primary_until > ? AND manual_primary_until <= ?", 0, now).
 			Find(&expiredStates).Error; err != nil {
 			return err
+		}
+		var expiredRules []ChannelSmartScheduleChannelPrimaryRule
+		if tx.Migrator().HasTable(&ChannelSmartScheduleChannelPrimaryRule{}) {
+			if err := tx.Where("manual_primary_until > ? AND manual_primary_until <= ?", 0, now).
+				Find(&expiredRules).Error; err != nil {
+				return err
+			}
+		}
+		if len(expiredStates) == 0 && len(expiredRules) == 0 {
+			return nil
 		}
 		expiredPools := make([]channelSmartScheduleRoutePool, 0, len(expiredStates))
 		for _, state := range expiredStates {
@@ -1173,27 +1232,48 @@ func ClearExpiredChannelSmartScheduleRoutePrimaries(now int64) (routingChanged b
 				model: state.ModelName,
 			})
 		}
+		channelIds := make([]int, 0, len(expiredStates)+len(expiredRules))
+		for _, state := range expiredStates {
+			channelIds = append(channelIds, state.ChannelId)
+		}
+		for _, rule := range expiredRules {
+			channelIds = append(channelIds, rule.ChannelId)
+		}
+		if len(expiredRules) > 0 {
+			var ruleAbilities []Ability
+			if err := tx.Select(commonGroupCol, "model", "channel_id").
+				Where("channel_id IN ?", channelIds).
+				Find(&ruleAbilities).Error; err != nil {
+				return err
+			}
+			expiredPools = append(expiredPools, channelSmartScheduleRoutePoolsFromAbilities(ruleAbilities)...)
+		}
 		expiredPools = channelSmartScheduleRoutePoolsFromAbilities(nil, expiredPools...)
-		if len(expiredPools) == 0 {
-			return nil
+		for _, pool := range expiredPools {
+			var poolChannelIds []int
+			if err := tx.Model(&Ability{}).
+				Where(&Ability{Group: pool.group, Model: pool.model}).
+				Pluck("channel_id", &poolChannelIds).Error; err != nil {
+				return err
+			}
+			channelIds = append(channelIds, poolChannelIds...)
 		}
 		if tx.Migrator().HasTable(&Channel{}) {
-			channelIds := make([]int, 0, len(expiredStates))
-			for _, state := range expiredStates {
-				channelIds = append(channelIds, state.ChannelId)
-			}
-			for _, pool := range expiredPools {
-				var poolChannelIds []int
-				if err := tx.Model(&Ability{}).
-					Where(&Ability{Group: pool.group, Model: pool.model}).
-					Pluck("channel_id", &poolChannelIds).Error; err != nil {
-					return err
-				}
-				channelIds = append(channelIds, poolChannelIds...)
-			}
 			if _, err := lockChannelsForDependentWriteTx(tx, channelIds); err != nil {
 				return err
 			}
+		}
+		if len(expiredPools) == 0 {
+			if len(expiredRules) > 0 {
+				ruleIds := make([]int64, 0, len(expiredRules))
+				for _, rule := range expiredRules {
+					ruleIds = append(ruleIds, rule.Id)
+				}
+				if err := tx.Where("id IN ?", ruleIds).Delete(&ChannelSmartScheduleChannelPrimaryRule{}).Error; err != nil {
+					return err
+				}
+			}
+			return nil
 		}
 		states, err := lockChannelSmartScheduleRoutePoolStatesTx(tx, expiredPools)
 		if err != nil {
@@ -1202,6 +1282,19 @@ func ClearExpiredChannelSmartScheduleRoutePrimaries(now int64) (routingChanged b
 		abilities, err := lockChannelSmartScheduleRoutePoolAbilitiesTx(tx, expiredPools)
 		if err != nil {
 			return err
+		}
+		if len(expiredRules) > 0 {
+			ruleIds := make([]int64, 0, len(expiredRules))
+			for _, rule := range expiredRules {
+				ruleIds = append(ruleIds, rule.Id)
+			}
+			var lockedRules []ChannelSmartScheduleChannelPrimaryRule
+			if err := lockForUpdate(tx).Where("id IN ?", ruleIds).Find(&lockedRules).Error; err != nil {
+				return err
+			}
+			if err := tx.Where("id IN ?", ruleIds).Delete(&ChannelSmartScheduleChannelPrimaryRule{}).Error; err != nil {
+				return err
+			}
 		}
 		abilityByKey := make(map[ChannelSmartScheduleRouteKey]*Ability, len(abilities))
 		for index := range abilities {
@@ -1233,6 +1326,11 @@ func ClearExpiredChannelSmartScheduleRoutePrimaries(now int64) (routingChanged b
 			}
 			routingChanged = routingChanged || changed
 		}
+		changedKeys, err := reapplyChannelSmartScheduleRoutePrimariesTxWithChanges(tx, expiredPools)
+		if err != nil {
+			return err
+		}
+		routingChanged = routingChanged || len(changedKeys) > 0
 		return nil
 	})
 	if err != nil {
@@ -1246,7 +1344,7 @@ func restoreChannelSmartScheduleRoutePrimaryTx(
 	state *ChannelSmartScheduleRouteState,
 	ability *Ability,
 ) (routingChanged bool, err error) {
-	if state.ManualPrimaryUntil <= 0 && !state.ManualPrimarySaved {
+	if state.ManualPrimaryUntil <= 0 && !state.ManualPrimarySaved && !state.ManualPrimaryChannelRule {
 		return false, nil
 	}
 	if state.Revision == math.MaxInt64 {
@@ -1288,6 +1386,7 @@ func restoreChannelSmartScheduleRoutePrimaryTx(
 	}
 	state.ManualPrimaryUntil = 0
 	state.ManualPrimaryAllowStabilityDegrade = false
+	state.ManualPrimaryChannelRule = false
 	state.ManualPrimarySaved = false
 	state.ManualPrimarySavedPriority = 0
 	state.ManualPrimarySavedWeight = 0

@@ -462,6 +462,7 @@ func migrateDB() error {
 		&ChannelMonitorVariableGroup{},
 		&ChannelMonitorUpstreamAccount{},
 		&ChannelSmartScheduleRouteState{},
+		&ChannelSmartScheduleChannelPrimaryRule{},
 		&ChannelLogicalSmartScheduleRouteState{},
 		&ChannelLogicalSmartScheduleSampleState{},
 		&ChannelSmartScheduleGroupPause{},

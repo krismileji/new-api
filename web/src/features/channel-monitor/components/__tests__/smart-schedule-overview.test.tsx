@@ -63,6 +63,7 @@ function createProps(): ComponentProps<
     runDisabled: false,
     running: false,
     onOpenHistory: vi.fn(),
+    onOpenPrimaryManagement: vi.fn(),
     onOpenSettings: vi.fn(),
     onRun: vi.fn(),
   }
@@ -103,6 +104,7 @@ test('when scheduling is disabled, hide previous runtime metrics and keep settin
   expect(screen.queryByText('路由已生效')).not.toBeInTheDocument()
   expect(screen.queryByText('调度数据可能已过期')).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: '立即调度' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: '固定项管理' })).toBeEnabled()
   expect(screen.getByRole('button', { name: '调度设置' })).toBeEnabled()
 })
 
@@ -139,14 +141,19 @@ test('when no route has execution history, show an empty history state', () => {
   expect(execution.getByText('暂无执行记录')).toBeVisible()
 })
 
-test('the history, settings and run actions remain keyboard accessible', async () => {
+test('fixed management, history, settings and run actions remain keyboard accessible', async () => {
   const user = userEvent.setup()
   const props = createProps()
   render(<ChannelMonitorSmartScheduleOverview {...props} />)
 
+  const management = screen.getByRole('button', { name: '固定项管理' })
   const history = screen.getByRole('button', { name: '智能调度记录' })
   const settings = screen.getByRole('button', { name: '调度设置' })
   const run = screen.getByRole('button', { name: '立即调度' })
+  await user.tab()
+  expect(management).toHaveFocus()
+  await user.keyboard('{Enter}')
+  expect(props.onOpenPrimaryManagement).toHaveBeenCalledOnce()
   await user.tab()
   expect(history).toHaveFocus()
   await user.keyboard('{Enter}')

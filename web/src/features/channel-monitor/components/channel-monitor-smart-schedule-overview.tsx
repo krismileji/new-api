@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import {
   HistoryIcon,
+  PinIcon,
   Refresh01Icon,
   Route01Icon,
   Settings02Icon,
@@ -47,6 +48,7 @@ type ChannelMonitorSmartScheduleOverviewProps = {
   runDisabled: boolean
   running: boolean
   onOpenHistory: () => void
+  onOpenPrimaryManagement: () => void
   onOpenSettings: () => void
   onRun: () => void
 }
@@ -84,6 +86,22 @@ export function ChannelMonitorSmartScheduleOverview(
         </div>
 
         <div className='flex shrink-0 items-center gap-2 self-end sm:self-auto'>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='icon-sm'
+                  aria-label='固定项管理'
+                  onClick={props.onOpenPrimaryManagement}
+                />
+              }
+            >
+              <HugeiconsIcon icon={PinIcon} aria-hidden='true' />
+            </TooltipTrigger>
+            <TooltipContent role='tooltip'>固定项管理</TooltipContent>
+          </Tooltip>
           <Tooltip>
             <TooltipTrigger
               render={
