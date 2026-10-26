@@ -15,10 +15,13 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	taskdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/channelprobe"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 
@@ -809,6 +812,128 @@ func TestUpdateChannelMonitorErrorMessageKeywordsValidatesAndPersists(t *testing
 	var option model.Option
 	require.NoError(t, db.Where("key = ?", channelMonitorErrorMessageKeywordsOption).First(&option).Error)
 	assert.Equal(t, strings.TrimSpace(keywords), option.Value)
+}
+
+func TestRetryExcludedByErrorContent(t *testing.T) {
+	previousRanges := operation_setting.AutomaticRetryStatusCodeRanges
+	operation_setting.AutomaticRetryStatusCodeRanges = []operation_setting.StatusCodeRange{{Start: 500, End: 503}}
+	t.Cleanup(func() { operation_setting.AutomaticRetryStatusCodeRanges = previousRanges })
+	for _, tc := range []struct {
+		name, keywords, message string
+		wantRetry               bool
+	}{
+		{name: "unsupported endpoint", keywords: "channel does not support /v1/alpha/search", message: "channel does not support /v1/alpha/search"},
+		{name: "case insensitive substring with CRLF", keywords: " other failure \r\n\r\n /V1/ALPHA/SEARCH \r\n", message: "channel does not support /v1/alpha/search"},
+		{name: "literal punctuation", keywords: "failure.*", message: "failure.* reported by provider"},
+		{name: "formatted status and message", keywords: "status_code=500, failure", message: "failure"},
+		{name: "punctuation is not a regexp", keywords: "failure.*", message: "failure reported by provider", wantRetry: true},
+		{name: "unmatched error", keywords: "channel does not support", message: "upstream temporarily unavailable", wantRetry: true},
+		{name: "blank configuration", keywords: " \r\n\n ", message: "channel does not support /v1/alpha/search", wantRetry: true},
+		{name: "invalid stored configuration is ignored", keywords: "failure\n" + strings.Repeat("x", 129), message: "failure", wantRetry: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			useChannelMonitorOptionMap(t, map[string]string{service.RetryExcludeKeywordsOptionKey: tc.keywords})
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			apiErr := types.NewErrorWithStatusCode(errors.New(tc.message), types.ErrorCodeInvalidRequest, http.StatusInternalServerError)
+			assert.Equal(t, tc.wantRetry, shouldRetry(ctx, apiErr, 2))
+			assert.Equal(t, tc.wantRetry, isFastFailureSameChannelRetryable(ctx, apiErr))
+			decision := service.DecideRelayRetry(ctx, apiErr, 2)
+			assert.Equal(t, tc.wantRetry, decision.Action == "retry")
+			if !tc.wantRetry {
+				assert.Equal(t, "命中不重试关键字", decision.Reason)
+			}
+			assert.Equal(t, tc.message, apiErr.Error(), "matching keeps the original error intact")
+
+			taskErr := &taskdto.TaskError{Message: tc.message, StatusCode: http.StatusInternalServerError}
+			assert.Equal(t, tc.wantRetry, shouldRetryTaskRelay(ctx, 1, taskErr, 2))
+			taskDecision := decideTaskRetry(ctx, taskErr, 2)
+			assert.Equal(t, tc.wantRetry, taskDecision.Action == "retry")
+			if !tc.wantRetry {
+				assert.Equal(t, "命中不重试关键字", taskDecision.Reason)
+			}
+		})
+	}
+}
+
+func TestChannelMonitorRetryExcludeKeywordsSettings(t *testing.T) {
+	db, dialect := openTaskDialectDatabase(t, &model.Option{}, &model.User{})
+	logDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, logDB.AutoMigrate(&model.AuditLog{}))
+	sqlLogDB, err := logDB.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlLogDB.Close()) })
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
+	previousRedis, previousMemoryCache := common.RedisEnabled, common.MemoryCacheEnabled
+	model.DB, model.LOG_DB = db, logDB
+	common.SetDatabaseTypes(dialect, common.DatabaseTypeSQLite)
+	common.RedisEnabled, common.MemoryCacheEnabled = false, false
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = previousDB, previousLogDB
+		common.SetDatabaseTypes(previousMainType, previousLogType)
+		common.RedisEnabled, common.MemoryCacheEnabled = previousRedis, previousMemoryCache
+	})
+	useChannelMonitorOptionMap(t, map[string]string{})
+	require.NoError(t, db.Create(&model.User{Id: 1, Username: "retry-settings-root", Role: common.RoleRootUser}).Error)
+	settings, err := loadChannelMonitorSettings(t.Context())
+	require.NoError(t, err)
+	assert.Empty(t, settings.RetryExcludeKeywords)
+
+	for _, tc := range []struct {
+		name, raw, want string
+		invalid         bool
+	}{
+		{name: "save", raw: " /v1/alpha/search\r\n 上游不支持 ", want: "/v1/alpha/search\r\n 上游不支持"},
+		{name: "unrelated update preserves rules", want: "/v1/alpha/search\r\n 上游不支持"},
+		{name: "reject too many", raw: strings.Repeat("failure\n", 33), invalid: true, want: "/v1/alpha/search\r\n 上游不支持"},
+		{name: "reject too long", raw: strings.Repeat("字", 129), invalid: true, want: "/v1/alpha/search\r\n 上游不支持"},
+		{name: "update immediately", raw: "temporary failure", want: "temporary failure"},
+		{name: "clear", raw: " \r\n\t"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			patch := map[string]any{"retry_exclude_keywords": tc.raw}
+			if tc.name == "unrelated update preserves rules" {
+				patch = map[string]any{"auto_update_retry_count": 2}
+			}
+			ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", patch)
+			UpdateChannelMonitorSettings(ctx)
+			if tc.invalid {
+				require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+			} else {
+				require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+				var response channelMonitorSettingsAPIResponse
+				require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+				require.True(t, response.Success, response.Message)
+				assert.Equal(t, tc.want, response.Data.RetryExcludeKeywords)
+			}
+			var stored model.Option
+			require.NoError(t, db.Where(&model.Option{Key: service.RetryExcludeKeywordsOptionKey}).First(&stored).Error)
+			assert.Equal(t, tc.want, stored.Value)
+			assert.Equal(t, tc.want, service.GetConfiguredRetryExcludeKeywords())
+			loaded, err := loadChannelMonitorSettings(t.Context())
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, loaded.RetryExcludeKeywords)
+			assert.Equal(t, strings.Contains(tc.want, "/v1/alpha/search"), service.ShouldExcludeErrorFromRetry("status_code=500, channel does not support /v1/alpha/search"))
+		})
+	}
+}
+
+func TestRetryExcludeKeywordsOverridesChannelAndCapacityRetries(t *testing.T) {
+	useChannelMonitorOptionMap(t, map[string]string{
+		service.RetryExcludeKeywordsOptionKey: "do not retry",
+		service.ErrorMessageMappingOptionKey:  `{"500":"服务暂不可用"}`,
+		service.ErrorMessageKeywordsOptionKey: "do not retry",
+	})
+	for _, apiErr := range []*types.NewAPIError{
+		types.NewError(errors.New("do not retry this channel"), types.ErrorCodeChannelInvalidKey),
+		types.WithOpenAIError(types.OpenAIError{Type: "server_error", Code: "server_is_overloaded", Message: "Selected model is at capacity. do not retry"}, http.StatusBadRequest),
+	} {
+		ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+		assert.False(t, shouldRetry(ctx, apiErr, 2))
+		assert.False(t, isFastFailureSameChannelRetryable(ctx, apiErr))
+		assert.Equal(t, service.PolicyDecision{Action: "stop", Reason: service.RetryExcludeKeywordsReason, Source: "global"}, service.DecideRelayRetry(ctx, apiErr, 2))
+	}
 }
 
 func TestChannelMonitorEmailNotificationTypesDistinguishesMissingFromExplicitEmpty(t *testing.T) {

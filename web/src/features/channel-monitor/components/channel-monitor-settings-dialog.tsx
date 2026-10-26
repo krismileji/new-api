@@ -862,6 +862,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       errorMessageMapping: props.settings.error_message_mapping ?? '',
       errorMessageWhitelist: props.settings.error_message_whitelist ?? '',
       errorMessageKeywords: props.settings.error_message_keywords ?? '',
+      retryExcludeKeywords: props.settings.retry_exclude_keywords ?? '',
       probeResponseEnabled: props.settings.probe_response_enabled ?? false,
       probeResponseAllowedIPs: props.settings.probe_response_allowed_ips ?? '',
       probeResponseRules: props.settings.probe_response_rules?.map((rule) => ({
@@ -1291,7 +1292,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                     <h3 className='text-sm font-medium'>错误规则</h3>
                     <ChannelMonitorFieldInfo
                       label='错误规则'
-                      description='统一控制上游错误的用户可见文案、屏蔽关键字和白名单调度排除。重试状态码请在系统设置中配置。'
+                      description='统一控制错误的用户可见文案、屏蔽关键字、不重试关键字和白名单调度排除。重试状态码请在系统设置中配置。'
                     />
                   </div>
                   <div className='flex flex-col gap-5'>
@@ -1368,6 +1369,30 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                             <Textarea
                               rows={4}
                               placeholder='每行填写一个关键字'
+                              {...field}
+                              disabled={mutation.isPending}
+                            />
+                          </FormControl>
+                          <FormMessage />
+                        </FormItem>
+                      )}
+                    />
+                    <FormField
+                      control={form.control}
+                      name='retryExcludeKeywords'
+                      render={({ field }) => (
+                        <FormItem className='space-y-3 border-t pt-4'>
+                          <div className='flex items-center gap-1'>
+                            <FormLabel>不重试关键字</FormLabel>
+                            <ChannelMonitorFieldInfo
+                              label='不重试关键字'
+                              description='全局应用于所有渠道；每行一个关键字，最多 32 个、每个不超过 128 个字符。按原始错误内容（含 status_code）进行不区分大小写的子串匹配，命中任一项即停止普通重试和同渠道快速重试，优先于重试状态码。留空则不启用。'
+                            />
+                          </div>
+                          <FormControl>
+                            <Textarea
+                              rows={4}
+                              placeholder='例如：channel does not support /v1/alpha/search'
                               {...field}
                               disabled={mutation.isPending}
                             />

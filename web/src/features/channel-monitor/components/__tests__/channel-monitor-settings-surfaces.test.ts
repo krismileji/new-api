@@ -29,6 +29,8 @@ type SettingsSurfaceResult = {
   conflictHistoryQueryInvalidated: boolean
   conflictMonitorQueryInvalidated: boolean
   errorSettingsUseDedicatedTab: boolean
+  retryExcludeKeywordsLoadedAndSaved: boolean
+  retryExcludeKeywordsDisabledWhileSaving: boolean
   generalHasSchedule: boolean
   generalTabCount: number
   generalTitle: string
@@ -96,6 +98,8 @@ test(
     assert.equal(result.generalInputGroupsUseInsetRing, true)
     assert.equal(result.generalUsesInsetRing, false)
     assert.equal(result.errorSettingsUseDedicatedTab, true)
+    assert.equal(result.retryExcludeKeywordsLoadedAndSaved, true)
+    assert.equal(result.retryExcludeKeywordsDisabledWhileSaving, true)
     assert.equal(result.retentionSettingsLoaded, true)
     assert.equal(result.allNotificationTypesSelected, true)
     assert.equal(result.notificationTypeCanBeUnchecked, true)

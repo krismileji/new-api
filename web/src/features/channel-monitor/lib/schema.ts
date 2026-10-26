@@ -102,6 +102,8 @@ export const MAX_ERROR_MESSAGE_MAPPING_KEY_LENGTH = 128
 export const MAX_ERROR_MESSAGE_MAPPING_MESSAGE_LENGTH = 4096
 export const MAX_ERROR_MESSAGE_KEYWORDS = 32
 export const MAX_ERROR_MESSAGE_KEYWORD_LENGTH = 128
+export const MAX_RETRY_EXCLUDE_KEYWORDS = 32
+export const MAX_RETRY_EXCLUDE_KEYWORD_LENGTH = 128
 export const MAX_ERROR_MESSAGE_WHITELIST_CODES = 32
 export const MAX_ERROR_MESSAGE_WHITELIST_CODE_LENGTH = 128
 export const DEFAULT_PROBE_RESPONSE_MATCH_INPUT = 'hi'
@@ -989,6 +991,34 @@ const errorMessageWhitelistSchema = errorCodeListSchema(
   MAX_ERROR_MESSAGE_WHITELIST_CODE_LENGTH
 )
 
+const retryExcludeKeywordsSchema = z
+  .string()
+  .trim()
+  .default('')
+  .superRefine((value, context) => {
+    const keywords = value
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+    if (keywords.length > MAX_RETRY_EXCLUDE_KEYWORDS) {
+      context.addIssue({
+        code: 'custom',
+        message: `不重试关键字最多支持 ${MAX_RETRY_EXCLUDE_KEYWORDS} 个`,
+      })
+      return
+    }
+    if (
+      keywords.some(
+        (keyword) => [...keyword].length > MAX_RETRY_EXCLUDE_KEYWORD_LENGTH
+      )
+    ) {
+      context.addIssue({
+        code: 'custom',
+        message: `不重试关键字长度不能超过 ${MAX_RETRY_EXCLUDE_KEYWORD_LENGTH} 个字符`,
+      })
+    }
+  })
+
 function errorCodeListSchema(
   label: string,
   maxCount: number,
@@ -1323,6 +1353,7 @@ export function createChannelMonitorSettingsSchema() {
       errorMessageMapping: errorMessageMappingSchema,
       errorMessageWhitelist: errorMessageWhitelistSchema,
       errorMessageKeywords: errorMessageKeywordsSchema,
+      retryExcludeKeywords: retryExcludeKeywordsSchema,
       probeResponseEnabled: z.boolean(),
       probeResponseAllowedIPs: probeResponseAllowedIPsSchema,
       probeResponseRules: probeResponseRulesSchema.default([

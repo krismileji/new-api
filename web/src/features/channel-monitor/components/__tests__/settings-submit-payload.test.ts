@@ -104,6 +104,7 @@ const formValues = {
   errorMessageMapping: '{"429":"请求过于频繁，请稍后再试"}',
   errorMessageWhitelist: 'provider_specific_error\n503',
   errorMessageKeywords: 'secret\nupstream',
+  retryExcludeKeywords: 'channel does not support /v1/alpha/search',
   probeResponseEnabled: true,
   probeResponseRules: [
     { matchInput: 'health check', responseText: 'healthy' },
@@ -441,6 +442,7 @@ describe('channel monitor settings submit payload', () => {
       'probe_response_rules',
       'ratio_history_retention_days',
       'ratio_monitor_task_retention_days',
+      'retry_exclude_keywords',
       'route_metric_retention_days',
       'smart_schedule_probe_task_retention_days',
       'smart_schedule_task_retention_days',
@@ -488,6 +490,10 @@ describe('channel monitor settings submit payload', () => {
       'provider_specific_error\n503'
     )
     assert.equal(payload.error_message_keywords, 'secret\nupstream')
+    assert.equal(
+      payload.retry_exclude_keywords,
+      'channel does not support /v1/alpha/search'
+    )
     assert.equal(
       payload.probe_response_allowed_ips,
       '203.0.113.10\n2001:db8::10'

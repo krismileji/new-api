@@ -666,6 +666,8 @@ describe('channel monitor settings schema', () => {
         ),
       },
       { errorMessageKeywords: 'x'.repeat(129) },
+      { retryExcludeKeywords: Array(33).fill('failure').join('\n') },
+      { retryExcludeKeywords: '字'.repeat(129) },
     ]) {
       assert.equal(
         schema.safeParse({ ...baseSettings, ...patch }).success,
@@ -673,6 +675,14 @@ describe('channel monitor settings schema', () => {
       )
     }
     assert.equal(schema.parse(baseSettings).syncFailureAlertThreshold, 10)
+    assert.equal(schema.parse(baseSettings).retryExcludeKeywords, '')
+    assert.equal(
+      schema.parse({
+        ...baseSettings,
+        retryExcludeKeywords: ' /v1/alpha/search\r\n\n上游不支持 ',
+      }).retryExcludeKeywords,
+      '/v1/alpha/search\r\n\n上游不支持'
+    )
     for (const syncFailureAlertThreshold of [1, 3, 100]) {
       assert.equal(
         schema.parse({ ...baseSettings, syncFailureAlertThreshold })

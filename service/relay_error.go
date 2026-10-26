@@ -32,6 +32,9 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if GetChannelConstraints(c).SuppressesRetry() {
 		return PolicyDecision{Action: "stop", Reason: "pinned_channel", Source: "channel_constraint"}
 	}
+	if ShouldExcludeErrorFromRetry(err.ErrorWithStatusCode()) {
+		return PolicyDecision{Action: "stop", Reason: RetryExcludeKeywordsReason, Source: "global"}
+	}
 	if types.IsChannelError(err) {
 		return PolicyDecision{Action: "retry", Reason: "channel_error", Source: "system"}
 	}

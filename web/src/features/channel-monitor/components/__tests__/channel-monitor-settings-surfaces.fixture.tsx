@@ -63,6 +63,7 @@ for (const key of domGlobals) {
 }
 
 const { act } = await import('react')
+const { fireEvent } = await import('@testing-library/react')
 const { createRoot } = await import('react-dom/client')
 const { QueryClient, QueryClientProvider } =
   await import('@tanstack/react-query')
@@ -114,6 +115,7 @@ const settings = {
   notification_email: 'alerts@example.com',
   email_notification_types: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
   error_message_keywords: '',
+  retry_exclude_keywords: '/v1/alpha/search',
   error_message_mapping: '',
   error_message_whitelist: '',
   probe_response_enabled: false,
@@ -316,7 +318,71 @@ const errorSettingsUseDedicatedTab =
   monitorExcludesErrorSettings &&
   errorHandlingPanelText.includes('错误信息映射') &&
   errorHandlingPanelText.includes('错误码白名单') &&
-  errorHandlingPanelText.includes('错误屏蔽关键字')
+  errorHandlingPanelText.includes('错误屏蔽关键字') &&
+  errorHandlingPanelText.includes('不重试关键字')
+const retryExcludeKeywordsInput = tabPanelFor(
+  errorHandlingTab
+)?.querySelector<HTMLTextAreaElement>('textarea[name="retryExcludeKeywords"]')
+assert.ok(retryExcludeKeywordsInput)
+assert.equal(retryExcludeKeywordsInput.value, '/v1/alpha/search')
+assert.ok(retryExcludeKeywordsInput.id)
+assert.equal(
+  generalDialog.querySelector(`label[for="${retryExcludeKeywordsInput.id}"]`)
+    ?.textContent,
+  '不重试关键字'
+)
+await act(async () => {
+  fireEvent.change(retryExcludeKeywordsInput, {
+    target: { value: '/v1/alpha/search\nunsupported endpoint' },
+  })
+})
+const generalAdapterBefore = api.defaults.adapter
+let savedRetryExcludeKeywords: string | undefined
+let finishGeneralSave: (() => void) | undefined
+let generalSaveStarted: (() => void) | undefined
+const generalSaveReady = new Promise<void>((resolve) => {
+  generalSaveStarted = resolve
+})
+const generalSaveFinished = new Promise<void>((resolve) => {
+  finishGeneralSave = resolve
+})
+api.defaults.adapter = async (config) => {
+  savedRetryExcludeKeywords = JSON.parse(
+    config.data as string
+  ).retry_exclude_keywords
+  generalSaveStarted?.()
+  await generalSaveFinished
+  return {
+    config,
+    data: {
+      success: true,
+      data: { ...settings, retry_exclude_keywords: savedRetryExcludeKeywords },
+    },
+    headers: {},
+    status: 200,
+    statusText: 'OK',
+  }
+}
+let retryExcludeKeywordsDisabledWhileSaving = false
+try {
+  const saveButton = [...generalDialog.querySelectorAll('button')].find(
+    (button) => button.textContent?.trim() === '保存'
+  )
+  assert.ok(saveButton)
+  await act(async () => {
+    saveButton.click()
+    await generalSaveReady
+  })
+  retryExcludeKeywordsDisabledWhileSaving = retryExcludeKeywordsInput.disabled
+  await act(async () => {
+    finishGeneralSave?.()
+  })
+} finally {
+  finishGeneralSave?.()
+  api.defaults.adapter = generalAdapterBefore
+}
+const retryExcludeKeywordsLoadedAndSaved =
+  savedRetryExcludeKeywords === '/v1/alpha/search\nunsupported endpoint'
 const retentionTabWrapsText = retentionTab.classList.contains('text-wrap')
 const retentionTabIsLast = settingsTabs.at(-1) === retentionTab
 await act(async () => {
@@ -601,6 +667,8 @@ process.stdout.write(
     conflictHistoryQueryInvalidated,
     conflictMonitorQueryInvalidated,
     errorSettingsUseDedicatedTab,
+    retryExcludeKeywordsLoadedAndSaved,
+    retryExcludeKeywordsDisabledWhileSaving,
     generalHasSchedule,
     generalTitle,
     generalUsesContentSizedViewport,

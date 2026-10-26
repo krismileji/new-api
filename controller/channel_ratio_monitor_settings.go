@@ -61,6 +61,7 @@ const (
 	channelMonitorErrorMessageMappingOption                    = service.ErrorMessageMappingOptionKey
 	channelMonitorErrorMessageWhitelistOption                  = service.ErrorMessageWhitelistOptionKey
 	channelMonitorErrorMessageKeywordsOption                   = service.ErrorMessageKeywordsOptionKey
+	channelMonitorRetryExcludeKeywordsOption                   = service.RetryExcludeKeywordsOptionKey
 	channelMonitorProbeResponseOption                          = channelprobe.OptionKey
 	channelMonitorProbeResponseAllowedIPsOption                = channelprobe.AllowedIPsOptionKey
 	channelMonitorProbeResponseMatchInputOption                = channelprobe.MatchInputOptionKey
@@ -237,6 +238,7 @@ type channelMonitorSettings struct {
 	ErrorMessageMapping                   string                     `json:"error_message_mapping"`
 	ErrorMessageWhitelist                 string                     `json:"error_message_whitelist"`
 	ErrorMessageKeywords                  string                     `json:"error_message_keywords"`
+	RetryExcludeKeywords                  string                     `json:"retry_exclude_keywords"`
 	ProbeResponseEnabled                  bool                       `json:"probe_response_enabled"`
 	ProbeResponseAllowedIPs               string                     `json:"probe_response_allowed_ips"`
 	ProbeResponseMatchInput               string                     `json:"probe_response_match_input"`
@@ -306,6 +308,7 @@ type channelMonitorSettingsUpdateRequest struct {
 	ErrorMessageMapping                   *string                     `json:"error_message_mapping"`
 	ErrorMessageWhitelist                 *string                     `json:"error_message_whitelist"`
 	ErrorMessageKeywords                  *string                     `json:"error_message_keywords"`
+	RetryExcludeKeywords                  *string                     `json:"retry_exclude_keywords"`
 	ProbeResponseEnabled                  *bool                       `json:"probe_response_enabled"`
 	ProbeResponseAllowedIPs               *string                     `json:"probe_response_allowed_ips"`
 	ProbeResponseMatchInput               *string                     `json:"probe_response_match_input"`
@@ -388,6 +391,7 @@ func loadChannelMonitorSettings(ctx context.Context) (channelMonitorSettings, er
 		channelMonitorErrorMessageMappingOption,
 		channelMonitorErrorMessageWhitelistOption,
 		channelMonitorErrorMessageKeywordsOption,
+		channelMonitorRetryExcludeKeywordsOption,
 		channelMonitorProbeResponseOption,
 		channelMonitorProbeResponseAllowedIPsOption,
 		channelMonitorProbeResponseMatchInputOption,
@@ -465,6 +469,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	rawErrorMessageMapping := options[channelMonitorErrorMessageMappingOption]
 	rawErrorMessageWhitelist := options[channelMonitorErrorMessageWhitelistOption]
 	rawErrorMessageKeywords := options[channelMonitorErrorMessageKeywordsOption]
+	rawRetryExcludeKeywords := options[channelMonitorRetryExcludeKeywordsOption]
 	rawRelayResponseHeaderTimeout := options[common.RelayResponseHeaderTimeoutOptionKey]
 	rawSmartScheduleEnabled := options[channelMonitorSmartScheduleEnabledOption]
 	rawSmartScheduleGroupPolicies := options[channelMonitorSmartScheduleGroupPoliciesOption]
@@ -687,6 +692,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		ErrorMessageMapping:                   rawErrorMessageMapping,
 		ErrorMessageWhitelist:                 rawErrorMessageWhitelist,
 		ErrorMessageKeywords:                  rawErrorMessageKeywords,
+		RetryExcludeKeywords:                  rawRetryExcludeKeywords,
 		ProbeResponseEnabled:                  probeResponseConfig.Enabled,
 		ProbeResponseAllowedIPs:               probeResponseConfig.AllowedIPs,
 		ProbeResponseMatchInput:               probeResponseConfig.MatchInput,
@@ -1027,6 +1033,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.ErrorMessageMapping == nil &&
 		request.ErrorMessageWhitelist == nil &&
 		request.ErrorMessageKeywords == nil &&
+		request.RetryExcludeKeywords == nil &&
 		request.ProbeResponseEnabled == nil &&
 		request.ProbeResponseAllowedIPs == nil &&
 		request.ProbeResponseMatchInput == nil &&
@@ -1104,6 +1111,15 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		}
 		settings.ErrorMessageKeywords = errorMessageKeywords
 		values[channelMonitorErrorMessageKeywordsOption] = errorMessageKeywords
+	}
+	if request.RetryExcludeKeywords != nil {
+		keywords := strings.TrimSpace(*request.RetryExcludeKeywords)
+		if err := service.ValidateRetryExcludeKeywords(keywords); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+			return
+		}
+		settings.RetryExcludeKeywords = keywords
+		values[channelMonitorRetryExcludeKeywordsOption] = keywords
 	}
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
@@ -1788,6 +1804,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"error_message_mapping_configured":           strings.TrimSpace(settings.ErrorMessageMapping) != "",
 		"error_message_whitelist_configured":         strings.TrimSpace(settings.ErrorMessageWhitelist) != "",
 		"error_message_keywords_configured":          strings.TrimSpace(settings.ErrorMessageKeywords) != "",
+		"retry_exclude_keywords_configured":          strings.TrimSpace(settings.RetryExcludeKeywords) != "",
 		"probe_response_enabled":                     settings.ProbeResponseEnabled,
 		"probe_response_match_input":                 settings.ProbeResponseMatchInput,
 		"probe_response_text":                        settings.ProbeResponseText,

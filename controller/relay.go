@@ -534,6 +534,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 	if service.GetChannelConstraints(c).SuppressesRetry() {
 		return false
 	}
+	if service.ShouldExcludeErrorFromRetry(openaiErr.ErrorWithStatusCode()) {
+		return false
+	}
 	if types.IsChannelError(openaiErr) {
 		return true
 	}
@@ -1377,6 +1380,9 @@ func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *taskdto.TaskEr
 	if service.GetChannelConstraints(c).SuppressesRetry() {
 		return false
 	}
+	if service.ShouldExcludeErrorFromRetry(taskErrorForChannelLog(taskErr).ErrorWithStatusCode()) {
+		return false
+	}
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		return true
 	}
@@ -1426,6 +1432,8 @@ func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int)
 		stop.Reason, stop.Source = "attempt_budget_exhausted", "global"
 	case service.GetChannelConstraints(c).SuppressesRetry():
 		stop.Reason, stop.Source = "pinned_channel", "channel_constraint"
+	case service.ShouldExcludeErrorFromRetry(taskErrorForChannelLog(taskErr).ErrorWithStatusCode()):
+		stop.Reason, stop.Source = service.RetryExcludeKeywordsReason, "global"
 	case taskErr.StatusCode == http.StatusTooManyRequests, taskErr.StatusCode == 307:
 		return retry
 	case taskErr.StatusCode/100 == 5:
