@@ -108,6 +108,9 @@ func migrateTokenControllerTestDB(t *testing.T, db *gorm.DB) {
 	if err := db.AutoMigrate(&model.Token{}); err != nil {
 		t.Fatalf("failed to migrate token table: %v", err)
 	}
+	if err := db.AutoMigrate(&model.TokenAutoDisableConfig{}, &model.TokenAutoDisableRecord{}, &model.ChannelMonitorRequestStatsDisable{}); err != nil {
+		t.Fatalf("failed to migrate token status history tables: %v", err)
+	}
 }
 
 func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
@@ -614,7 +617,7 @@ func TestAPITokenAuditDatabaseMatrix(t *testing.T) {
 				db, _ := newAuditTestDatabase(t, database.name, dsn)
 				model.DB = db
 				common.SetDatabaseTypes(database.typ, database.typ)
-				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Token{}))
+				require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}, &model.Token{}, &model.TokenAutoDisableConfig{}, &model.TokenAutoDisableRecord{}, &model.ChannelMonitorRequestStatsDisable{}))
 				// Initialize production column quoting as well as the existing audit table.
 				require.NoError(t, model.InitLogDB())
 				if separateLog {

@@ -38,6 +38,7 @@ function renderToolbar(
       upstreamAccounts: vi.fn(),
       automations: vi.fn(),
       tokenProtection: vi.fn(),
+      requestStatistics: vi.fn(),
       groupMonitorSettings: vi.fn(),
       smartScheduleSettings: vi.fn(),
       refresh: vi.fn(),
@@ -62,13 +63,13 @@ function renderToolbar(
 }
 
 describe('渠道监控顶部操作', () => {
-  test('默认只展示四个文字入口，记录和配置在菜单内按需展开', () => {
+  test('展示用户请求统计入口，记录和配置在菜单内按需展开', () => {
     renderToolbar()
     const toolbar = screen.getByRole('toolbar', { name: '渠道监控操作' })
     const buttons = within(toolbar).getAllByRole('button')
 
     expect(buttons.map((button) => button.textContent).filter(Boolean)).toEqual(
-      ['运行记录', '配置管理', '连通性测试', '刷新']
+      ['运行记录', '配置管理', '用户请求统计', '连通性测试', '刷新']
     )
     expect(
       within(toolbar).getByRole('button', { name: '隐藏敏感信息' })

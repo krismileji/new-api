@@ -590,6 +590,9 @@ func TestSecurityAccountEmailConfirmationAndAudit(t *testing.T) {
 		t.Run(scenario, func(t *testing.T) {
 			user, identity := setupSecurityEnrollmentTest(t)
 			mailbox := newSecurityMailbox(t)
+			var verifiedEmailCount int64
+			require.NoError(t, model.DB.Model(&model.VerifiedNotificationEmail{}).Where("user_id = ?", user.Id).Count(&verifiedEmailCount).Error)
+			assert.Zero(t, verifiedEmailCount, "an unconfirmed address must not be recorded as verified")
 			method, previous := service.VerificationMethodPassword, ""
 			if scenario != "first email" {
 				previous = "previous@example.com"
@@ -624,6 +627,10 @@ func TestSecurityAccountEmailConfirmationAndAudit(t *testing.T) {
 			stored, err := model.GetUserById(user.Id, false)
 			require.NoError(t, err)
 			assert.Equal(t, flow.Email, stored.Email)
+			var verifiedEmail model.VerifiedNotificationEmail
+			require.NoError(t, model.DB.First(&verifiedEmail, "user_id = ?", user.Id).Error)
+			assert.Equal(t, flow.Email, verifiedEmail.Email)
+			assert.Positive(t, verifiedEmail.VerifiedAt)
 			_, err = service.FinishEmailBinding(identity, flow.FlowToken, newCode, oldCode)
 			assert.ErrorIs(t, err, model.ErrAuthFlowConsumed)
 			legacy := securityEnrollmentRequest("POST", "/api/oauth/email/bind", `{"email":"other@example.com","code":"123456"}`, "", identity, EmailBind)

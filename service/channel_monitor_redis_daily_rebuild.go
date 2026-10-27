@@ -306,6 +306,7 @@ func loadChannelMonitorDailyRebuildTokenOwnersForIDs(ctx context.Context, ids []
 
 func channelMonitorRedisDailySuccessAggregate(source ChannelMonitorRedisSharedAggregate) ChannelMonitorRedisSharedAggregate {
 	return ChannelMonitorRedisSharedAggregate{
+		RequestStats:       cloneRequestStatsDistribution(source.RequestStats),
 		ActualSuccessCount: source.ActualSuccessCount, ActualFailureCount: source.ActualFailureCount,
 		FinalSuccessCount: source.FinalSuccessCount, FinalFailureCount: source.FinalFailureCount,
 		CacheHitCount: source.CacheHitCount, CacheSampleCount: source.CacheSampleCount,
@@ -368,6 +369,11 @@ func buildChannelMonitorRedisDailySuccessLedgerFields(
 			InputTokens:            row.InputTokens,
 			CacheWriteRequestCount: row.CacheWriteCount,
 			APIKeyName:             row.APIKeyName,
+		}
+		if row.AggregateJSON != "" {
+			if err := common.UnmarshalJsonStr(row.AggregateJSON, &source); err != nil {
+				return nil, err
+			}
 		}
 		for _, scope := range channelMonitorRedisSuccessDayScopes(event) {
 			target := aggregates[scope]
@@ -458,6 +464,9 @@ func encodeChannelMonitorRedisDailySuccessAggregates(
 ) map[string]string {
 	fields := make(map[string]string, len(aggregates)*9)
 	for scope, aggregate := range aggregates {
+		for metric, count := range aggregate.RequestStats {
+			fields[scope+":"+requestStatsMetricPrefix+metric] = strconv.FormatInt(count, 10)
+		}
 		for metric, value := range map[string]int64{
 			channelMonitorRedisSharedMetricEventCount:             aggregate.EventCount,
 			channelMonitorRedisSharedMetricBusinessRequests:       aggregate.BusinessRequestCount,

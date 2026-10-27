@@ -299,6 +299,11 @@ func Register(c *gin.Context) {
 		return
 	}
 	// 生成默认令牌
+	if common.EmailVerificationEnabled {
+		if err := model.RecordVerifiedNotificationEmail(model.DB, insertedUser.Id, insertedUser.Email); err != nil {
+			common.SysError("记录已验证通知邮箱失败: " + err.Error())
+		}
+	}
 	if constant.GenerateDefaultToken {
 		key, err := common.GenerateKey()
 		if err != nil {

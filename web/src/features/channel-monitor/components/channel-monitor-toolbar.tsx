@@ -49,6 +49,7 @@ type ChannelMonitorToolbarProps = {
     upstreamAccounts: () => void
     automations: () => void
     tokenProtection: () => void
+    requestStatistics: () => void
     groupMonitorSettings: () => void
     smartScheduleSettings: () => void
     refresh: () => void
@@ -181,6 +182,9 @@ export function ChannelMonitorToolbar(props: ChannelMonitorToolbarProps) {
       </div>
       <div className='flex items-center gap-2'>
         <ChannelMonitorPrivacyToggle />
+        <Button variant='outline' onClick={props.actions.requestStatistics}>
+          用户请求统计
+        </Button>
         <Tooltip>
           <TooltipTrigger
             render={

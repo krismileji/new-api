@@ -25,7 +25,7 @@ func setupTokenProtectionTest(t *testing.T) (*gorm.DB, *model.Token) {
 	require.NoError(t, err)
 	oldDB, oldManager, redis := model.DB, tokenProtection.Load(), common.RedisEnabled
 	model.DB, common.RedisEnabled = db, false
-	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.TokenAutoDisableConfig{}, &model.TokenAutoDisableRecord{}))
+	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.TokenAutoDisableConfig{}, &model.TokenAutoDisableRecord{}, &model.ChannelMonitorRequestStatsDisable{}))
 	token := &model.Token{Id: 9001, UserId: 42, Key: "auto-disable-test-key", Name: "测试 Key", Status: common.TokenStatusEnabled, ExpiredTime: -1, RemainQuota: 500}
 	require.NoError(t, db.Create(token).Error)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -126,6 +126,46 @@ func TestTokenProtectionRestoresBlockAfterRestart(t *testing.T) {
 	defer unregister()
 	require.NotNil(t, denied)
 	assert.Equal(t, "此 Key 已被禁用", denied.Record.ResponseMessage)
+}
+
+func TestRequestStatsDisabledKeyCanBeRestoredByUserWithoutBypassingExpiry(t *testing.T) {
+	db, token := setupTokenProtectionTest(t)
+	require.NoError(t, db.Model(&model.Token{}).Where("id = ?", token.Id).Update("status", common.TokenStatusDisabled).Error)
+	record := model.ChannelMonitorRequestStatsDisable{
+		DayStart: 1_750_000_000, APIKeyId: token.Id, UserId: token.UserId, Reason: "low_input_rate",
+		KnownInputRequests: 100, LowInputCount: 80, MailStatus: "sent",
+	}
+	require.NoError(t, db.Create(&record).Error)
+
+	requested := *token
+	requested.Status = common.TokenStatusEnabled
+	require.NoError(t, model.UpdateTokenWithRequestStats(&requested, model.RequestStatsTokenMutation{
+		StatusOnly: true, RestoreSource: "user",
+	}))
+	var restored model.ChannelMonitorRequestStatsDisable
+	require.NoError(t, db.First(&restored, "api_key_id = ?", token.Id).Error)
+	assert.Positive(t, restored.RestoredAt)
+	assert.Equal(t, "user", restored.RestoredBy)
+	var saved model.Token
+	require.NoError(t, db.First(&saved, token.Id).Error)
+	assert.Equal(t, common.TokenStatusEnabled, saved.Status)
+
+	require.NoError(t, db.Model(&model.Token{}).Where("id = ?", token.Id).Updates(map[string]any{
+		"status": common.TokenStatusDisabled, "expired_time": common.GetTimestamp() - 1,
+	}).Error)
+	record.DayStart += 24 * 60 * 60
+	record.Id = 0
+	record.RestoredAt = 0
+	record.RestoredBy = ""
+	require.NoError(t, db.Create(&record).Error)
+	require.ErrorContains(t, model.UpdateTokenWithRequestStats(&requested, model.RequestStatsTokenMutation{
+		StatusOnly: true, RestoreSource: "user",
+	}), "已过期或额度不足")
+	var expiredRecord model.ChannelMonitorRequestStatsDisable
+	require.NoError(t, db.First(&expiredRecord, "day_start = ? AND api_key_id = ?", record.DayStart, token.Id).Error)
+	assert.Zero(t, expiredRecord.RestoredAt)
+	require.NoError(t, db.First(&saved, token.Id).Error)
+	assert.Equal(t, common.TokenStatusDisabled, saved.Status)
 }
 
 func TestTokenProtectionUsesRawUpstreamErrorsWithoutMatchingModelOutput(t *testing.T) {

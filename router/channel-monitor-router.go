@@ -16,6 +16,12 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 	)
 	{
 		registerChannelModelDetectionRoutes(monitorRoute)
+		monitorRoute.GET("/request-stats", controller.GetChannelMonitorRequestStats)
+		monitorRoute.GET("/request-stats/settings", controller.GetChannelMonitorRequestStatsSettings)
+		monitorRoute.PUT("/request-stats/settings", controller.SaveChannelMonitorRequestStatsSettings)
+		monitorRoute.GET("/request-stats/auto-disable/settings", controller.GetChannelMonitorRequestStatsSettings)
+		monitorRoute.PUT("/request-stats/auto-disable/settings", controller.SaveChannelMonitorRequestStatsSettings)
+		monitorRoute.GET("/request-stats/disable-history", controller.ListChannelMonitorRequestStatsDisableHistory)
 		monitorRoute.GET("/limit-groups", controller.ListChannelLimitGroups)
 		monitorRoute.POST("/limit-groups", controller.SaveChannelLimitGroup)
 		monitorRoute.PUT("/limit-groups/:id", controller.SaveChannelLimitGroup)

@@ -450,7 +450,11 @@ func UpdateToken(c *gin.Context) {
 			}
 		}
 	}
-	err = service.UpdateTokenWithProtection(cleanToken)
+	restoreSource := "user"
+	if c.GetInt("role") >= common.RoleAdminUser {
+		restoreSource = "admin"
+	}
+	err = service.UpdateTokenWithProtection(cleanToken, model.RequestStatsTokenMutation{StatusOnly: statusOnly != "", RestoreSource: restoreSource})
 	if err != nil {
 		common.ApiError(c, err)
 		return

@@ -64,7 +64,7 @@ func readChannelMonitorRedisDailyHash(ctx context.Context, client *redis.Client,
 			if err == nil {
 				for field, raw := range values {
 					metric := field[strings.LastIndexByte(field, ':')+1:]
-					if _, integer := channelMonitorRedisSharedIntegerMetrics[metric]; integer {
+					if _, integer := channelMonitorRedisSharedIntegerMetrics[metric]; integer || strings.HasPrefix(metric, requestStatsMetricPrefix) {
 						value, parseErr := strconv.ParseInt(raw, 10, 64)
 						if parseErr != nil || value < 0 {
 							return nil, fmt.Errorf("渠道监控日汇总整数指标无效: %s", metric)

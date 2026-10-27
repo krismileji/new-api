@@ -35,11 +35,14 @@ const tokenCacheFenceSeconds = 10
 // invalidateTokenCacheForMutation is called before a token metadata mutation
 // writes to the database: it raises the fence and drops the cached hash so no
 // reader can act on (or re-publish) the pre-mutation state.
-func invalidateTokenCacheForMutation(key string) error {
+func invalidateTokenCacheForMutation(key string, contexts ...context.Context) error {
 	if !common.RedisEnabled || key == "" {
 		return nil
 	}
 	ctx := context.Background()
+	if len(contexts) > 0 && contexts[0] != nil {
+		ctx = contexts[0]
+	}
 	err := common.RDB.Set(ctx, getTokenCacheFenceKey(key), 1, time.Duration(tokenCacheFenceSeconds)*time.Second).Err()
 	if err != nil {
 		return err

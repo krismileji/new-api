@@ -120,6 +120,27 @@ func TestChannelMonitorAPIResponsesDisableHTTPCaching(t *testing.T) {
 	assert.Equal(t, "0", recorder.Header().Get("Expires"))
 }
 
+func TestChannelMonitorRequestStatsSettingsRequireRootAndDisableCache(t *testing.T) {
+	rootToken, commonToken := setupChannelModelDetectionRouterAuthTest(t)
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	registerChannelMonitorRoutes(engine.Group("/api"))
+	route := channelModelDetectionRouteContract{method: http.MethodGet, pattern: "/api/channel_monitor/request-stats/settings", concretePath: "/api/channel_monitor/request-stats/settings"}
+
+	missing := performChannelModelDetectionRouterRequest(engine, route, "")
+	assert.Equal(t, http.StatusUnauthorized, missing.Code, missing.Body.String())
+	commonUser := performChannelModelDetectionRouterRequest(engine, route, commonToken)
+	assert.Equal(t, http.StatusForbidden, commonUser.Code, commonUser.Body.String())
+
+	root := performChannelModelDetectionRouterRequest(engine, route, rootToken)
+	require.Equal(t, http.StatusOK, root.Code, root.Body.String())
+	assert.Equal(t, "no-store, no-cache, must-revalidate, private, max-age=0", root.Header().Get("Cache-Control"))
+	assert.Equal(t, "no-cache", root.Header().Get("Pragma"))
+	assert.Equal(t, "0", root.Header().Get("Expires"))
+	assert.NotContains(t, root.Body.String(), rootToken)
+	assert.NotContains(t, root.Body.String(), commonToken)
+}
+
 func TestChannelModelDetectionRelayEndpointUsesDedicatedRuntimeBearer(t *testing.T) {
 	previousDB := model.DB
 	model.DB = nil
@@ -202,6 +223,7 @@ func setupChannelModelDetectionRouterAuthTest(t *testing.T) (string, string) {
 		&model.ChannelModelDetectionExecution{},
 		&model.ChannelModelDetectionCostEvent{},
 		&model.ChannelDailyCost{},
+		&model.ChannelMonitorRequestStatsConfig{},
 	))
 	model.DB = db
 	common.RedisEnabled = false

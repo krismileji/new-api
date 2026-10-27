@@ -17,13 +17,14 @@ import (
 )
 
 type ChannelMonitorSuccessEventInput struct {
-	PromptTokens      int
-	CompletionTokens  int
-	CacheReadTokens   int
-	CacheWriteTokens  int
-	InputTokens       int
-	CostEventId       string
-	PerformanceTiming *RelayPerformanceTiming
+	PromptTokens        int
+	CompletionTokens    int
+	CacheReadTokens     int
+	CacheWriteTokens    int
+	InputTokens         int
+	ReliableInputTokens *int64
+	CostEventId         string
+	PerformanceTiming   *RelayPerformanceTiming
 }
 
 func EmitChannelMonitorSuccessEvent(
@@ -86,6 +87,7 @@ func EmitChannelMonitorSuccessEvent(
 	event.CacheReadTokens = channelMonitorNonNegativeIntPointer(input.CacheReadTokens)
 	event.CacheWriteTokens = channelMonitorNonNegativeIntPointer(input.CacheWriteTokens)
 	event.InputTokens = channelMonitorNonNegativeIntPointer(input.InputTokens)
+	event.ReliableInputTokens = input.ReliableInputTokens
 	if costEventId := strings.TrimSpace(input.CostEventId); costEventId != "" {
 		if other, err := common.Marshal(map[string]string{"cost_event_id": costEventId}); err == nil {
 			event.OtherJson = string(other)

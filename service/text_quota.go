@@ -563,10 +563,11 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		inputTokens += summary.CacheTokens + cacheWriteTokens
 	}
 	EmitChannelMonitorSuccessEvent(ctx, relayInfo, ChannelMonitorSuccessEventInput{
-		PromptTokens:     summary.PromptTokens,
-		CompletionTokens: summary.CompletionTokens,
-		CacheReadTokens:  summary.CacheTokens,
-		CacheWriteTokens: cacheWriteTokens,
-		InputTokens:      inputTokens,
+		PromptTokens:        summary.PromptTokens,
+		CompletionTokens:    summary.CompletionTokens,
+		CacheReadTokens:     summary.CacheTokens,
+		CacheWriteTokens:    cacheWriteTokens,
+		InputTokens:         inputTokens,
+		ReliableInputTokens: channelMonitorReliableInputTokens(ctx, relayInfo, originUsage),
 	})
 }

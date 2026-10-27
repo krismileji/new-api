@@ -221,6 +221,9 @@ const ChannelLimitGroupsDialog = lazy(() =>
 const LazyTokenProtectionDialog = lazy(
   () => import('./components/token-protection-dialog')
 )
+const LazyRequestStatisticsDialog = lazy(
+  () => import('./components/request-statistics-dialog')
+)
 
 const LazyUpstreamAutomationsDialog = lazy(
   () => import('./components/upstream-automations-dialog')
@@ -437,6 +440,7 @@ function ChannelMonitorContent() {
   const [performanceModelFilter, setPerformanceModelFilter] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [tokenProtectionOpen, setTokenProtectionOpen] = useState(false)
+  const [requestStatisticsOpen, setRequestStatisticsOpen] = useState(false)
   const [variableGroupsOpen, setVariableGroupsOpen] = useState(false)
   const [limitGroupsOpen, setLimitGroupsOpen] = useState(false)
   const limitGroupsQuery = useChannelLimitGroups()
@@ -1683,6 +1687,7 @@ function ChannelMonitorContent() {
               upstreamAccounts: () => setUpstreamAccountsOpen(true),
               automations: () => setAutomationsOpen(true),
               tokenProtection: () => setTokenProtectionOpen(true),
+              requestStatistics: () => setRequestStatisticsOpen(true),
               groupMonitorSettings: () => setGroupMonitorSettingsOpen(true),
               smartScheduleSettings: openSmartScheduleSettings,
               refresh: () => void refreshChannelMonitor(),
@@ -1730,6 +1735,7 @@ function ChannelMonitorContent() {
           variableGroupsOpen ||
           limitGroupsOpen ||
           tokenProtectionOpen ||
+          requestStatisticsOpen ||
           settingsOpen ||
           groupMonitorSettingsOpen ||
           smartScheduleSettingsOpen ||
@@ -1749,6 +1755,7 @@ function ChannelMonitorContent() {
           setVariableGroupsOpen(false)
           setLimitGroupsOpen(false)
           setTokenProtectionOpen(false)
+          setRequestStatisticsOpen(false)
           setSettingsOpen(false)
           setGroupMonitorSettingsOpen(false)
           setSmartScheduleSettingsOpen(false)
@@ -1881,6 +1888,13 @@ function ChannelMonitorContent() {
         {tokenProtectionOpen && (
           <Suspense fallback={null}>
             <LazyTokenProtectionDialog onOpenChange={setTokenProtectionOpen} />
+          </Suspense>
+        )}
+        {requestStatisticsOpen && (
+          <Suspense fallback={null}>
+            <LazyRequestStatisticsDialog
+              onOpenChange={setRequestStatisticsOpen}
+            />
           </Suspense>
         )}
         {settingsOpen && (

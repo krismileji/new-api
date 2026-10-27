@@ -98,18 +98,19 @@ type ChannelMonitorEvent struct {
 	SchedulingEligible        bool `json:"scheduling_eligible"`
 	RuntimeProtectionEligible bool `json:"runtime_protection_eligible"`
 
-	StatusCode        *int     `json:"status_code,omitempty"`
-	ErrorType         string   `json:"error_type,omitempty"`
-	ErrorCode         string   `json:"error_code,omitempty"`
-	ErrorMessage      string   `json:"error_message,omitempty"`
-	FirstTokenMs      *float64 `json:"first_token_ms,omitempty"`
-	TPS               *float64 `json:"tps,omitempty"`
-	PromptTokens      *int64   `json:"prompt_tokens,omitempty"`
-	CompletionTokens  *int64   `json:"completion_tokens,omitempty"`
-	CacheReadTokens   *int64   `json:"cache_read_tokens,omitempty"`
-	CacheWriteTokens  *int64   `json:"cache_write_tokens,omitempty"`
-	InputTokens       *int64   `json:"input_tokens,omitempty"`
-	AttemptDurationMs *int64   `json:"attempt_duration_ms,omitempty"`
+	StatusCode          *int     `json:"status_code,omitempty"`
+	ErrorType           string   `json:"error_type,omitempty"`
+	ErrorCode           string   `json:"error_code,omitempty"`
+	ErrorMessage        string   `json:"error_message,omitempty"`
+	FirstTokenMs        *float64 `json:"first_token_ms,omitempty"`
+	TPS                 *float64 `json:"tps,omitempty"`
+	PromptTokens        *int64   `json:"prompt_tokens,omitempty"`
+	CompletionTokens    *int64   `json:"completion_tokens,omitempty"`
+	CacheReadTokens     *int64   `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens    *int64   `json:"cache_write_tokens,omitempty"`
+	InputTokens         *int64   `json:"input_tokens,omitempty"`
+	ReliableInputTokens *int64   `json:"reliable_input_tokens,omitempty"`
+	AttemptDurationMs   *int64   `json:"attempt_duration_ms,omitempty"`
 
 	SettledCostNanoCNY    int64  `json:"settled_cost_nano_cny,omitempty"`
 	UnresolvedCostNanoCNY int64  `json:"unresolved_cost_nano_cny,omitempty"`
@@ -249,6 +250,9 @@ func (event ChannelMonitorEvent) Validate() error {
 	if event.InputTokens != nil && *event.InputTokens < 0 {
 		return errors.New("渠道监控事件总输入 token 不能为负数")
 	}
+	if event.ReliableInputTokens != nil && *event.ReliableInputTokens < 0 {
+		return errors.New("渠道监控事件实际输入 token 不能为负数")
+	}
 	if event.AttemptDurationMs != nil && *event.AttemptDurationMs < 0 {
 		return errors.New("渠道监控事件请求耗时不能为负数")
 	}
@@ -291,6 +295,10 @@ func (event ChannelMonitorEvent) Marshal() ([]byte, error) {
 // Clone freezes pointer-backed optional measurements before an event crosses
 // the asynchronous queue boundary.
 func (event ChannelMonitorEvent) Clone() ChannelMonitorEvent {
+	if event.ReliableInputTokens != nil {
+		value := *event.ReliableInputTokens
+		event.ReliableInputTokens = &value
+	}
 	if event.GroupMonitorProbe != nil {
 		probe := *event.GroupMonitorProbe
 		if probe.FirstTokenMs != nil {

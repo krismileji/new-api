@@ -54,9 +54,44 @@ func TestChannelMonitorConsistencyDatabaseMatrix(t *testing.T) {
 		common.SetDatabaseTypes(oldMainType, oldLogType)
 	})
 	baseline := os.Getenv("CHANNEL_MONITOR_CONSISTENCY_BASELINE")
-	if baseline == "fresh" {
+	if baseline == "fresh" || baseline == "upgrade" {
 		require.NoError(t, db.Create(&model.Channel{Id: 900001, Name: "released-fixture-channel", Key: "test-fixture", Type: 1}).Error)
 		require.NoError(t, db.Create(&model.User{Id: 900002, Username: "cm_schema_user", Password: "test-fixture", Quota: 1234567, Group: "default"}).Error)
+	}
+	if baseline == "upgrade" {
+		day := model.ChannelDailyCostDayStart(1_700_000_000)
+		require.NoError(t, db.Create(&model.ChannelDailyCostOutbox{EventId: "migration-old-outbox", ChannelId: 900101, OccurredAt: day + 1, CostNanoCNY: 123, SettledDelta: 1, APIKeyName: "", KeyFingerprint: "", KeyDisplay: ""}).Error)
+		require.NoError(t, db.Create(&model.ChannelTaskCostEvent{CostEventId: "migration-old-task", RegistrationToken: "migration-old-registration", ChannelId: 900101, DayStart: day, OccurredAt: day + 1, InitialQuota: 1, InitialCostNanoCNY: 123, CostNanoCNY: 123}).Error)
+		require.NoError(t, db.Create(&model.ChannelMonitorDailySuccessLedger{DayStart: day, ChannelId: 900101, UserAttribution: "unknown", APIKeyKey: "unknown", ModelKey: "model", ModelName: "model-a", GroupKey: "group", GroupName: "default", ActualSuccessCount: 5}).Error)
+		upgradeModels := []any{&model.ChannelMonitorRequestStatsConfig{}, &model.ChannelMonitorRequestStatsDay{}, &model.ChannelMonitorRequestStatsDisable{}, &model.VerifiedNotificationEmail{}}
+		for _, target := range upgradeModels {
+			require.NoError(t, db.Migrator().DropTable(target))
+			assert.False(t, db.Migrator().HasTable(target), "feature tables must be absent in the release baseline")
+		}
+		require.NoError(t, sqlDB.Close())
+		if logSQL != sqlDB {
+			require.NoError(t, logSQL.Close())
+		}
+		require.NoError(t, model.InitDB())
+		require.NoError(t, model.InitLogDB())
+		db = model.DB
+		sqlDB, err = db.DB()
+		require.NoError(t, err)
+		logSQL, err = model.LOG_DB.DB()
+		require.NoError(t, err)
+		for _, target := range upgradeModels {
+			assert.True(t, db.Migrator().HasTable(target), "startup must create new feature tables during upgrade")
+		}
+		var previous model.ChannelDailyCostOutbox
+		require.NoError(t, db.First(&previous, "event_id = ?", "migration-old-outbox").Error)
+		assert.Equal(t, int64(123), previous.CostNanoCNY)
+		var previousTask model.ChannelTaskCostEvent
+		require.NoError(t, db.First(&previousTask, "cost_event_id = ?", "migration-old-task").Error)
+		assert.Zero(t, previousTask.ProjectionVersion)
+		var previousStatistics model.ChannelMonitorDailySuccessLedger
+		require.NoError(t, db.First(&previousStatistics, "channel_id = ?", 900101).Error)
+		assert.Equal(t, int64(5), previousStatistics.ActualSuccessCount)
+		assert.Empty(t, previousStatistics.AggregateJSON)
 	}
 	if baseline == "downstream" {
 		var previous model.ChannelDailyCostOutbox

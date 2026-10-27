@@ -95,12 +95,19 @@ func SendEmail(subject string, receiver string, content string) error {
 // SendEmailWithTimeout bounds connection setup and the complete SMTP exchange.
 // A zero timeout preserves the existing SendEmail behavior.
 func SendEmailWithTimeout(subject string, receiver string, content string, timeout time.Duration) error {
+	return sendEmailWithContentType(subject, receiver, content, "text/html; charset=UTF-8", "", timeout)
+}
+
+func sendEmailWithContentType(subject, receiver, content, contentType, messageID string, timeout time.Duration) error {
 	if SMTPFrom == "" { // for compatibility
 		SMTPFrom = SMTPAccount
 	}
-	id, err2 := generateMessageID()
-	if err2 != nil {
-		return err2
+	if messageID == "" {
+		var err error
+		messageID, err = generateMessageID()
+		if err != nil {
+			return err
+		}
 	}
 	if SMTPServer == "" && SMTPAccount == "" {
 		return fmt.Errorf("SMTP 服务器未配置")
@@ -111,8 +118,9 @@ func SendEmailWithTimeout(subject string, receiver string, content string, timeo
 		"Subject: %s\r\n"+
 		"Date: %s\r\n"+
 		"Message-ID: %s\r\n"+ // 添加 Message-ID 头
-		"Content-Type: text/html; charset=UTF-8\r\n\r\n%s\r\n",
-		receiver, SystemName, SMTPFrom, encodedSubject, time.Now().Format(time.RFC1123Z), id, content))
+		"MIME-Version: 1.0\r\n"+
+		"Content-Type: %s\r\n\r\n%s\r\n",
+		receiver, SystemName, SMTPFrom, encodedSubject, time.Now().Format(time.RFC1123Z), messageID, contentType, content))
 	auth := getSMTPAuth()
 	addr := fmt.Sprintf("%s:%d", SMTPServer, SMTPPort)
 	to := strings.Split(receiver, ";")

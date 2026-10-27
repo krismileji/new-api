@@ -51,6 +51,7 @@ type ChannelMonitorEventPublishStats struct {
 	PublishedEvents         int64 `json:"published_events"`
 	QueuedEvents            int64 `json:"queued_events"`
 	DroppedEvents           int64 `json:"dropped_events"`
+	LastDroppedAt           int64 `json:"last_dropped_at"`
 	InvalidEvents           int64 `json:"invalid_events"`
 	DroppedQueueFull        int64 `json:"dropped_queue_full"`
 	DroppedRedisUnavailable int64 `json:"dropped_redis_unavailable"`
@@ -71,6 +72,7 @@ type channelMonitorEventPublisherStats struct {
 	publishedEvents         atomic.Int64
 	queuedEvents            atomic.Int64
 	droppedEvents           atomic.Int64
+	lastDroppedAt           atomic.Int64
 	invalidEvents           atomic.Int64
 	failedEvents            atomic.Int64
 	timeoutEvents           atomic.Int64
@@ -99,6 +101,7 @@ func recordChannelMonitorEventEnqueueStatus(status ChannelMonitorEventPublishSta
 		ChannelMonitorEventPublishStatusUnavailable,
 		ChannelMonitorEventPublishStatusTimeout:
 		channelMonitorEventPublisherStatsState.droppedEvents.Add(1)
+		channelMonitorEventPublisherStatsState.lastDroppedAt.Store(time.Now().Unix())
 	}
 }
 
@@ -278,6 +281,7 @@ func GetChannelMonitorEventPublishStats() ChannelMonitorEventPublishStats {
 		PublishedEvents:         channelMonitorEventPublisherStatsState.publishedEvents.Load(),
 		QueuedEvents:            channelMonitorEventPublisherStatsState.queuedEvents.Load(),
 		DroppedEvents:           channelMonitorEventPublisherStatsState.droppedEvents.Load(),
+		LastDroppedAt:           channelMonitorEventPublisherStatsState.lastDroppedAt.Load(),
 		InvalidEvents:           channelMonitorEventPublisherStatsState.invalidEvents.Load(),
 		DroppedQueueFull:        channelMonitorEventPublisherStatsState.droppedQueueFull.Load(),
 		DroppedRedisUnavailable: channelMonitorEventPublisherStatsState.droppedRedisUnavailable.Load(),
@@ -295,6 +299,7 @@ func resetChannelMonitorEventPublishStatsForTest() {
 	channelMonitorEventPublisherStatsState.publishedEvents.Store(0)
 	channelMonitorEventPublisherStatsState.queuedEvents.Store(0)
 	channelMonitorEventPublisherStatsState.droppedEvents.Store(0)
+	channelMonitorEventPublisherStatsState.lastDroppedAt.Store(0)
 	channelMonitorEventPublisherStatsState.invalidEvents.Store(0)
 	channelMonitorEventPublisherStatsState.droppedQueueFull.Store(0)
 	channelMonitorEventPublisherStatsState.droppedRedisUnavailable.Store(0)

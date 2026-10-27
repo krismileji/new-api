@@ -442,10 +442,14 @@ func ReleaseTokenProtection(ctx context.Context, id string, actor int) error {
 }
 
 // User-facing token edits cannot race a disable or release into re-enabling a key.
-func UpdateTokenWithProtection(token *model.Token) error {
+func UpdateTokenWithProtection(token *model.Token, intents ...model.RequestStatsTokenMutation) error {
+	intent := model.RequestStatsTokenMutation{StatusOnly: true, RestoreSource: "user"}
+	if len(intents) > 0 {
+		intent = intents[0]
+	}
 	m := tokenProtection.Load()
 	if m == nil {
-		return token.Update()
+		return model.UpdateTokenWithRequestStats(token, intent)
 	}
 	m.mutationMu.Lock()
 	defer m.mutationMu.Unlock()
@@ -455,5 +459,5 @@ func UpdateTokenWithProtection(token *model.Token) error {
 	if blocked && token.Status == common.TokenStatusEnabled {
 		return errors.New("此 API Key 已被自动禁用，仅管理员可以解除")
 	}
-	return token.Update()
+	return model.UpdateTokenWithRequestStats(token, intent)
 }

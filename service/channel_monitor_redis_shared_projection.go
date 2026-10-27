@@ -285,7 +285,8 @@ const (
 // ChannelMonitorRedisSharedAggregate contains compact counters, costs and
 // latency values. Failure samples are bounded separately per category.
 type ChannelMonitorRedisSharedAggregate struct {
-	APIKeyName string `json:"api_key_name,omitempty"`
+	RequestStats channelMonitorRequestDistribution `json:"request_stats,omitempty"`
+	APIKeyName   string                            `json:"api_key_name,omitempty"`
 
 	EventCount           int64 `json:"event_count"`
 	BusinessRequestCount int64 `json:"business_request_count"`
@@ -440,6 +441,7 @@ func cloneChannelMonitorRedisSharedAggregate(
 	aggregate ChannelMonitorRedisSharedAggregate,
 ) ChannelMonitorRedisSharedAggregate {
 	cloned := aggregate
+	cloned.RequestStats = cloneRequestStatsDistribution(aggregate.RequestStats)
 	if aggregate.LatestFirstTokenMs != nil {
 		value := *aggregate.LatestFirstTokenMs
 		cloned.LatestFirstTokenMs = &value
@@ -667,8 +669,12 @@ func (projection *ChannelMonitorRedisSharedProjection) WriteChannelMonitorEvents
 							projection.appendCostDelta(opCtx, pipe, current, 1, event.Source == model.ChannelMonitorEventSourceBusiness, !dailyCostDatabaseSnapshots[ChannelMonitorRedisCostDayKey(current.DayStart)])
 						}
 					}
-					if event.Source == model.ChannelMonitorEventSourceBusiness && (event.FinalRetrySummary || costEventIsCurrent) {
-						projection.appendDashboardEventDelta(opCtx, pipe, event)
+					if event.Source == model.ChannelMonitorEventSourceBusiness {
+						if event.FinalRetrySummary || costEventIsCurrent {
+							projection.appendDashboardEventDelta(opCtx, pipe, event)
+						}
+						// A dispatched attempt still counts when its cost correction
+						// arrived first. Corrections themselves are not dispatched.
 						successDayKey := ChannelMonitorRedisSuccessDayKey(model.ChannelDailyCostDayStart(event.OccurredAt))
 						watermark := dailyWatermarks[successDayKey]
 						covered := watermark > 0 && event.EventSequence > 0 && event.EventSequence <= watermark
@@ -827,7 +833,7 @@ func channelMonitorRedisSharedValidateWriteKeys(ctx context.Context, tx *redis.T
 				}
 				continue
 			}
-			if _, ok := channelMonitorRedisSharedIntegerMetrics[metric]; ok {
+			if _, ok := channelMonitorRedisSharedIntegerMetrics[metric]; ok || strings.HasPrefix(metric, requestStatsMetricPrefix) {
 				if _, err := strconv.ParseInt(raw, 10, 64); err != nil {
 					return fmt.Errorf("渠道监控 Redis 投影整数数值无效: key=%s field=%s: %w", key, field, err)
 				}
@@ -1280,6 +1286,9 @@ func channelMonitorRedisSharedEventDeltaFromEvent(event model.ChannelMonitorEven
 		return delta, false
 	}
 	delta.Integers[channelMonitorRedisSharedMetricEventCount] = 1
+	for metric, count := range requestStatsEventMetrics(event) {
+		delta.Integers[requestStatsMetricPrefix+metric] = count
+	}
 	switch event.Outcome {
 	case model.ChannelMonitorEventOutcomeSuccess:
 		delta.Integers[channelMonitorRedisSharedMetricActualSuccess] = 1
@@ -1292,7 +1301,8 @@ func channelMonitorRedisSharedEventDeltaFromEvent(event model.ChannelMonitorEven
 			delta.Integers[channelMonitorRedisSharedMetricFinalFailure] = 1
 		}
 	default:
-		return channelMonitorRedisSharedEventDelta{}, false
+		delete(delta.Integers, channelMonitorRedisSharedMetricEventCount)
+		return delta, len(delta.Integers) > 0
 	}
 	delta.Integers[channelMonitorRedisSharedMetricBusinessRequests] = 1
 	if event.FirstTokenMs != nil {
@@ -2188,6 +2198,10 @@ func mergeChannelMonitorRedisSharedAggregateMap[K comparable](items map[K]Channe
 }
 
 func mergeChannelMonitorRedisSharedAggregate(target *ChannelMonitorRedisSharedAggregate, source ChannelMonitorRedisSharedAggregate) error {
+	requestStats, err := mergeRequestStatsDistribution(target.RequestStats, source.RequestStats)
+	if err != nil {
+		return err
+	}
 	for _, value := range []struct {
 		target *int64
 		delta  int64
@@ -2227,6 +2241,7 @@ func mergeChannelMonitorRedisSharedAggregate(target *ChannelMonitorRedisSharedAg
 		}
 	}
 	target.EventCount += source.EventCount
+	target.RequestStats = requestStats
 	target.BusinessRequestCount += source.BusinessRequestCount
 	target.ActualSuccessCount += source.ActualSuccessCount
 	target.ActualFailureCount += source.ActualFailureCount
@@ -2501,6 +2516,17 @@ func initializeDailyCostView(view *ChannelMonitorRedisSharedDailyCostView) {
 }
 
 func addChannelMonitorRedisAggregateField(aggregate *ChannelMonitorRedisSharedAggregate, metric, raw string) error {
+	if name, ok := strings.CutPrefix(metric, requestStatsMetricPrefix); ok {
+		value, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil || value < 0 {
+			return fmt.Errorf("请求统计指标无效: %s", metric)
+		}
+		if aggregate.RequestStats == nil {
+			aggregate.RequestStats = make(channelMonitorRequestDistribution)
+		}
+		aggregate.RequestStats[name], err = channelMonitorRedisSharedCheckedAddInt64(aggregate.RequestStats[name], value)
+		return err
+	}
 	switch metric {
 	case channelMonitorRedisSharedMetricAPIKeyName:
 		aggregate.APIKeyName = raw
