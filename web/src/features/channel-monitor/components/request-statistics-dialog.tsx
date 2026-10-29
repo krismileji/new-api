@@ -20,6 +20,7 @@ import {
   type RequestStatsQuery,
   type RequestStatsRow,
 } from '../lib/request-statistics'
+import { ContentCapturePanel } from './content-capture-panel'
 import { RequestStatisticsHistory } from './request-statistics-history'
 import { RequestStatisticsSettings } from './request-statistics-settings'
 import { RequestStatisticsTable } from './request-statistics-table'
@@ -130,6 +131,7 @@ export default function RequestStatisticsDialog(props: {
         <TabsList>
           <TabsTrigger value='statistics'>请求统计</TabsTrigger>
           <TabsTrigger value='settings'>统计与自动禁用设置</TabsTrigger>
+          <TabsTrigger value='content-capture'>请求内容抓取</TabsTrigger>
         </TabsList>
         <TabsContent value='statistics' className='space-y-4'>
           <form
@@ -364,6 +366,9 @@ export default function RequestStatisticsDialog(props: {
               settings={settings.data}
             />
           )}
+        </TabsContent>
+        <TabsContent value='content-capture' className='pt-3'>
+          {tab === 'content-capture' && <ContentCapturePanel />}
         </TabsContent>
       </Tabs>
       {history && (
