@@ -23,8 +23,11 @@ import { useTranslation } from 'react-i18next'
 import { PublicLayout } from '@/components/layout'
 import { RichContent } from '@/components/rich-content'
 import { Skeleton } from '@/components/ui/skeleton'
+import { SiteInfo } from '@/features/home/components/site-info'
+import { useStatus } from '@/hooks/use-status'
 import { isHttpUrl, isLikelyHtml } from '@/lib/content-format'
 import { requireServerSuccess } from '@/lib/server-error-message'
+import { isCoderProxySite } from '@/lib/site-identity'
 
 import { getAboutContent } from './api'
 
@@ -115,6 +118,7 @@ function EmptyAboutState() {
 
 export function About() {
   const { t } = useTranslation()
+  const { status } = useStatus()
   const { data, isLoading } = useQuery({
     queryKey: ['about-content'],
     queryFn: async () => requireServerSuccess(await getAboutContent()),
@@ -141,7 +145,11 @@ export function About() {
   if (!hasContent) {
     return (
       <PublicLayout>
-        <EmptyAboutState />
+        {isCoderProxySite(status?.server_address) ? (
+          <SiteInfo variant='about' />
+        ) : (
+          <EmptyAboutState />
+        )}
       </PublicLayout>
     )
   }

@@ -22,6 +22,9 @@ import { useTranslation } from 'react-i18next'
 
 import { AnimateInView } from '@/components/animate-in-view'
 import { Button } from '@/components/ui/button'
+import { useStatus } from '@/hooks/use-status'
+import { normalizeInterfaceLanguage } from '@/i18n/languages'
+import { isCoderProxySite } from '@/lib/site-identity'
 
 interface CTAProps {
   className?: string
@@ -29,7 +32,18 @@ interface CTAProps {
 }
 
 export function CTA(props: CTAProps) {
-  const { t } = useTranslation()
+  const { i18n, t } = useTranslation()
+  const { status } = useStatus()
+  const hostedSite = isCoderProxySite(status?.server_address)
+  let description = t(
+    'Deploy your own gateway and start routing requests through your configured upstream services.'
+  )
+  if (hostedSite) {
+    description =
+      normalizeInterfaceLanguage(i18n.language) === 'zhCN'
+        ? '在 Coder Proxy 创建账户，通过本站支持的统一 API 接入 AI 模型。'
+        : 'Create a Coder Proxy account and access supported AI models through the unified API.'
+  }
 
   if (props.isAuthenticated) {
     return null
@@ -61,9 +75,7 @@ export function CTA(props: CTAProps) {
           </span>
         </h2>
         <p className='text-muted-foreground/80 mx-auto mt-5 max-w-md text-sm leading-relaxed md:text-base'>
-          {t(
-            'Deploy your own gateway and start routing requests through your configured upstream services.'
-          )}
+          {description}
         </p>
         <div className='mt-8 flex items-center justify-center gap-3'>
           <Button className='group rounded-lg' render={<Link to='/sign-up' />}>
