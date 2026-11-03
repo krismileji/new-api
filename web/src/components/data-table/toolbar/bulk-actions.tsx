@@ -35,6 +35,7 @@ type DataTableBulkActionsProps<TData> = {
   table: Table<TData>
   placement?: 'floating' | 'inline'
   entityName: string
+  selectedCount?: number
   children: React.ReactNode
 }
 
@@ -52,11 +53,12 @@ export function DataTableBulkActions<TData>({
   table,
   entityName,
   placement = 'floating',
+  selectedCount: selectedCountOverride,
   children,
 }: DataTableBulkActionsProps<TData>): React.ReactNode | null {
   const { t } = useTranslation()
   const selectedRows = table.getFilteredSelectedRowModel().rows
-  const selectedCount = selectedRows.length
+  const selectedCount = selectedCountOverride ?? selectedRows.length
   const toolbarRef = useRef<HTMLDivElement>(null)
   const buttonsRef = useRef<HTMLButtonElement[]>([])
   const [announcement, setAnnouncement] = useState('')

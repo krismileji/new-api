@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1054,6 +1055,13 @@ type ManageRequest struct {
 	Mode   string `json:"mode"`
 }
 
+const maxBatchManageUserIDs = 500
+
+type BatchManageUsersRequest struct {
+	IDs    []int  `json:"ids"`
+	Action string `json:"action"`
+}
+
 // ManageUser Only admin user can do this
 func ManageUser(c *gin.Context) {
 	var req ManageRequest
@@ -1192,6 +1200,107 @@ func ManageUser(c *gin.Context) {
 		"data":    clearUser,
 	})
 	return
+}
+
+func ManageUsersBatch(c *gin.Context) {
+	var req BatchManageUsersRequest
+	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if len(req.IDs) == 0 || len(req.IDs) > maxBatchManageUserIDs || !slices.Contains([]string{"disable", "enable", "delete"}, req.Action) {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+
+	seen := make(map[int]struct{}, len(req.IDs))
+	for _, id := range req.IDs {
+		if id <= 0 {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		if _, exists := seen[id]; exists {
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+			return
+		}
+		seen[id] = struct{}{}
+	}
+
+	var foundUsers []model.User
+	if err := model.DB.Where("id IN ?", req.IDs).Find(&foundUsers).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if len(foundUsers) != len(req.IDs) {
+		common.ApiErrorI18n(c, i18n.MsgUserNotExists)
+		return
+	}
+	usersByID := make(map[int]model.User, len(foundUsers))
+	for _, user := range foundUsers {
+		usersByID[user.Id] = user
+	}
+	users := make([]model.User, 0, len(req.IDs))
+	myRole := c.GetInt("role")
+	for _, id := range req.IDs {
+		user := usersByID[id]
+		if !canManageTargetRole(myRole, user.Role) {
+			common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+			return
+		}
+		if user.Role == common.RoleRootUser && req.Action == "disable" {
+			common.ApiErrorI18n(c, i18n.MsgUserCannotDisableRootUser)
+			return
+		}
+		if user.Role == common.RoleRootUser && req.Action == "delete" {
+			common.ApiErrorI18n(c, i18n.MsgUserCannotDeleteRootUser)
+			return
+		}
+		users = append(users, user)
+	}
+
+	succeededIDs := make([]int, 0, len(users))
+	failedIDs := make([]int, 0)
+	for i := range users {
+		user := &users[i]
+		var err error
+		switch req.Action {
+		case "disable":
+			user.Status = common.UserStatusDisabled
+			err = user.Update(false)
+		case "enable":
+			user.Status = common.UserStatusEnabled
+			err = user.Update(false)
+		case "delete":
+			err = model.HardDeleteUserById(user.Id)
+		}
+		if err != nil {
+			common.SysLog(fmt.Sprintf("批量用户操作失败 action=%s user_id=%d: %v", req.Action, user.Id, err))
+			failedIDs = append(failedIDs, user.Id)
+			continue
+		}
+
+		if req.Action == "delete" {
+			recordManageAuditFor(c, user.Id, "user.delete", map[string]any{
+				"username": user.Username,
+				"id":       user.Id,
+			})
+		} else {
+			if err := model.InvalidateUserTokensCache(user.Id); err != nil {
+				common.SysLog(fmt.Sprintf("failed to invalidate tokens cache for user %d: %s", user.Id, err.Error()))
+			}
+			recordManageAuditFor(c, user.Id, "user.manage", map[string]any{
+				"action":   req.Action,
+				"username": user.Username,
+				"id":       user.Id,
+			})
+		}
+		succeededIDs = append(succeededIDs, user.Id)
+	}
+
+	common.ApiSuccess(c, gin.H{
+		"succeeded_ids": succeededIDs,
+		"failed_ids":    failedIDs,
+	})
 }
 
 type topUpRequest struct {

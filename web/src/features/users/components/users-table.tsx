@@ -18,7 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import type { OnChangeFn, SortingState } from '@tanstack/react-table'
+import type {
+  ColumnFiltersState,
+  OnChangeFn,
+  RowSelectionState,
+  SortingState,
+} from '@tanstack/react-table'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -31,6 +36,7 @@ import {
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { createServerError } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getUsers, searchUsers } from '../api'
 import {
@@ -65,6 +71,8 @@ export function UsersTable() {
   const { refreshTrigger } = useUsers()
   const isMobile = useMediaQuery('(max-width: 640px)')
   const [sorting, setSorting] = useState<SortingState>([])
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
+  const currentRole = useAuthStore((state) => state.auth.user?.role ?? 0)
 
   const {
     globalFilter,
@@ -117,6 +125,18 @@ export function UsersTable() {
     if (pagination.pageIndex > 0) {
       onPaginationChange({ ...pagination, pageIndex: 0 })
     }
+  }
+
+  const handleGlobalFilterChange: OnChangeFn<string> = (updater) => {
+    setRowSelection({})
+    onGlobalFilterChange?.(updater)
+  }
+
+  const handleColumnFiltersChange: OnChangeFn<ColumnFiltersState> = (
+    updater
+  ) => {
+    setRowSelection({})
+    onColumnFiltersChange?.(updater)
   }
 
   // Fetch data with React Query
@@ -173,7 +193,11 @@ export function UsersTable() {
   const { table } = useDataTable({
     data: users,
     columns,
-    enableRowSelection: true,
+    enableRowSelection: (row) =>
+      row.original.role < currentRole && !isUserDeleted(row.original),
+    getRowId: (row) => String(row.id),
+    rowSelection,
+    onRowSelectionChange: setRowSelection,
     columnFilters,
     globalFilter,
     pagination,
@@ -192,8 +216,8 @@ export function UsersTable() {
       )
     },
     onPaginationChange,
-    onGlobalFilterChange,
-    onColumnFiltersChange,
+    onGlobalFilterChange: handleGlobalFilterChange,
+    onColumnFiltersChange: handleColumnFiltersChange,
     onSortingChange: handleSortingChange,
     manualPagination: true,
     manualFiltering: true,
@@ -214,6 +238,8 @@ export function UsersTable() {
       )}
       skeletonKeyPrefix='users-skeleton'
       applyHeaderSize
+      showMobileBulkActions
+      mobileProps={{ enableRowSelection: true }}
       toolbarProps={{
         searchPlaceholder: t('Filter by username, name or email...'),
         searchDebounceMs: 500,
@@ -236,7 +262,12 @@ export function UsersTable() {
         if (!isDisabledUserRow(row.original)) return undefined
         return isMobile ? DISABLED_ROW_MOBILE : DISABLED_ROW_DESKTOP
       }}
-      bulkActions={<DataTableBulkActions table={table} />}
+      bulkActions={
+        <DataTableBulkActions
+          table={table}
+          selectedCount={Object.values(rowSelection).filter(Boolean).length}
+        />
+      }
     />
   )
 }

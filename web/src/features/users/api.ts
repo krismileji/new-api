@@ -29,6 +29,8 @@ import type {
   UserFormData,
   ManageUserAction,
   ManageUserQuotaPayload,
+  BulkManageUserResult,
+  BulkUserManageAction,
   ApiResponse,
 } from './types'
 
@@ -127,6 +129,15 @@ export async function manageUser(
   action: ManageUserAction
 ): Promise<ApiResponse<Partial<User>>> {
   const res = await api.post('/api/user/manage', { id, action })
+  return res.data
+}
+
+/** Manage multiple users in one request (disable, enable, or delete). */
+export async function manageUsers(
+  ids: number[],
+  action: BulkUserManageAction
+): Promise<ApiResponse<BulkManageUserResult>> {
+  const res = await api.post('/api/user/manage/batch', { ids, action })
   return res.data
 }
 

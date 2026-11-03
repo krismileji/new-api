@@ -93,6 +93,153 @@ func performManageUserRequest(t *testing.T, body string) *httptest.ResponseRecor
 	return recorder
 }
 
+func performManageUsersBatchRequest(t *testing.T, body string, role int) *httptest.ResponseRecorder {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/user/manage/batch", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Set("id", 9999)
+	c.Set("role", role)
+	c.Set("username", "test-operator")
+	c.Set(common.RequestIdKey, "batch-test-request")
+	ManageUsersBatch(c)
+	return recorder
+}
+
+func TestManageUsersBatchDisableAndEnableUpdatesStatusAndRevokesSessions(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	now := time.Now().Unix()
+	users := []model.User{
+		{Username: "batch-disable-one", Password: "password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "batch-disable-1", AuthVersion: 1},
+		{Username: "batch-disable-two", Password: "password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "batch-disable-2", AuthVersion: 1},
+	}
+	require.NoError(t, db.Create(&users).Error)
+	for i := range users {
+		require.NoError(t, db.Create(&model.UserSession{
+			SID: fmt.Sprintf("batch-disable-session-%d", i), UserID: users[i].Id,
+			Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive,
+			RefreshHash: fmt.Sprintf("refresh-%d", i), LoginMethod: "password",
+			LastActiveAt: now, ExpiresAt: now + 3600,
+		}).Error)
+	}
+
+	body := fmt.Sprintf(`{"ids":[%d,%d],"action":"disable"}`, users[0].Id, users[1].Id)
+	recorder := performManageUsersBatchRequest(t, body, common.RoleRootUser)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			SucceededIDs []int `json:"succeeded_ids"`
+			FailedIDs    []int `json:"failed_ids"`
+		} `json:"data"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.True(t, response.Success)
+	assert.ElementsMatch(t, []int{users[0].Id, users[1].Id}, response.Data.SucceededIDs)
+	assert.Empty(t, response.Data.FailedIDs)
+
+	for i := range users {
+		var updated model.User
+		require.NoError(t, db.First(&updated, users[i].Id).Error)
+		assert.Equal(t, common.UserStatusDisabled, updated.Status)
+		assert.EqualValues(t, 2, updated.AuthVersion)
+		var session model.UserSession
+		require.NoError(t, db.First(&session, "sid = ?", fmt.Sprintf("batch-disable-session-%d", i)).Error)
+		assert.Equal(t, model.UserSessionStatusRevoked, session.Status)
+	}
+
+	body = fmt.Sprintf(`{"ids":[%d,%d],"action":"enable"}`, users[0].Id, users[1].Id)
+	recorder = performManageUsersBatchRequest(t, body, common.RoleRootUser)
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.True(t, response.Success)
+	assert.ElementsMatch(t, []int{users[0].Id, users[1].Id}, response.Data.SucceededIDs)
+	for i := range users {
+		var updated model.User
+		require.NoError(t, db.First(&updated, users[i].Id).Error)
+		assert.Equal(t, common.UserStatusEnabled, updated.Status)
+		assert.EqualValues(t, 3, updated.AuthVersion)
+	}
+}
+
+func TestManageUsersBatchPrevalidatesAuthorizationBeforeChangingAccounts(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	users := []model.User{
+		{Username: "batch-authorized-user", Password: "password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "batch-auth-user", AuthVersion: 1},
+		{Username: "batch-same-level-admin", Password: "password", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "batch-auth-admin", AuthVersion: 1},
+	}
+	require.NoError(t, db.Create(&users).Error)
+
+	body := fmt.Sprintf(`{"ids":[%d,%d],"action":"disable"}`, users[0].Id, users[1].Id)
+	recorder := performManageUsersBatchRequest(t, body, common.RoleAdminUser)
+	assert.Contains(t, recorder.Body.String(), `"success":false`)
+	for i := range users {
+		var unchanged model.User
+		require.NoError(t, db.First(&unchanged, users[i].Id).Error)
+		assert.Equal(t, common.UserStatusEnabled, unchanged.Status)
+		assert.EqualValues(t, 1, unchanged.AuthVersion)
+	}
+}
+
+func TestManageUsersBatchProtectsRootAndRejectsOversizedRequests(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	users := []model.User{
+		{Username: "batch-root-protection-user", Password: "password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "batch-root-user", AuthVersion: 1},
+		{Username: "batch-root-protection-root", Password: "password", Role: common.RoleRootUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "batch-root-admin", AuthVersion: 1},
+	}
+	require.NoError(t, db.Create(&users).Error)
+
+	for _, action := range []string{"disable", "delete"} {
+		body := fmt.Sprintf(`{"ids":[%d,%d],"action":%q}`, users[0].Id, users[1].Id, action)
+		recorder := performManageUsersBatchRequest(t, body, common.RoleRootUser)
+		assert.Contains(t, recorder.Body.String(), `"success":false`)
+		var unchanged model.User
+		require.NoError(t, db.First(&unchanged, users[0].Id).Error)
+		assert.Equal(t, common.UserStatusEnabled, unchanged.Status)
+	}
+
+	ids := make([]int, maxBatchManageUserIDs+1)
+	for i := range ids {
+		ids[i] = i + 1
+	}
+	body, err := common.Marshal(map[string]any{"ids": ids, "action": "disable"})
+	require.NoError(t, err)
+	recorder := performManageUsersBatchRequest(t, string(body), common.RoleRootUser)
+	assert.Contains(t, recorder.Body.String(), `"success":false`)
+	var unchanged model.User
+	require.NoError(t, db.First(&unchanged, users[0].Id).Error)
+	assert.Equal(t, common.UserStatusEnabled, unchanged.Status)
+}
+
+func TestManageUsersBatchDeleteHardDeletesSelectedAccounts(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	require.NoError(t, db.AutoMigrate(
+		&model.Token{}, &model.TwoFA{}, &model.TwoFABackupCode{}, &model.AuthFlow{},
+		&model.PasskeyCredential{}, &model.UserOAuthBinding{}, &model.ExternalIdentityClaim{},
+	))
+	users := []model.User{
+		{Username: "batch-delete-one", Password: "password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "batch-delete-1", AuthVersion: 1},
+		{Username: "batch-delete-two", Password: "password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "batch-delete-2", AuthVersion: 1},
+	}
+	require.NoError(t, db.Create(&users).Error)
+	for i := range users {
+		require.NoError(t, db.Create(&model.Token{UserId: users[i].Id, Key: fmt.Sprintf("batch-delete-token-%d", i)}).Error)
+	}
+
+	body := fmt.Sprintf(`{"ids":[%d,%d],"action":"delete"}`, users[0].Id, users[1].Id)
+	recorder := performManageUsersBatchRequest(t, body, common.RoleRootUser)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `"success":true`)
+	for i := range users {
+		var count int64
+		require.NoError(t, db.Unscoped().Model(&model.User{}).Where("id = ?", users[i].Id).Count(&count).Error)
+		assert.Zero(t, count)
+		require.NoError(t, db.Unscoped().Model(&model.Token{}).Where("user_id = ?", users[i].Id).Count(&count).Error)
+		assert.Zero(t, count)
+	}
+}
+
 func TestManageUserDisableAdvancesAuthVersionOnceAndRevokesSession(t *testing.T) {
 	db := setupManageUserTestDB(t)
 	now := time.Now().Unix()

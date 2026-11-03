@@ -194,6 +194,7 @@ export function MobileCardList<TData>(props: MobileCardListProps<TData>) {
                   aria-label={t('Select row {{number}}', {
                     number: row.index + 1,
                   })}
+                  disabled={!row.getCanSelect()}
                 />
               )}
               <div className='min-w-0 flex-1'>
