@@ -1386,13 +1386,13 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                             <FormLabel>不重试关键字</FormLabel>
                             <ChannelMonitorFieldInfo
                               label='不重试关键字'
-                              description='全局应用于所有渠道；每行一个关键字，最多 32 个、每个不超过 128 个字符。按原始错误内容（含 status_code）进行不区分大小写的子串匹配，命中任一项即停止普通重试和同渠道快速重试，优先于重试状态码。留空则不启用。'
+                              description='全局应用于所有渠道；每行一个关键字，最多 32 个、每个不超过 128 个字符。按原始错误内容（含 status_code）进行不区分大小写的子串匹配，命中即停止重试。可在行末加 => 400 设置返回给客户端的 HTTP 状态码（400–599）；不填写则保持原状态码，多项命中时以首项为准。管理员日志仍记录原始错误。'
                             />
                           </div>
                           <FormControl>
                             <Textarea
                               rows={4}
-                              placeholder='例如：channel does not support /v1/alpha/search'
+                              placeholder='例如：channel does not support /v1/alpha/search => 400'
                               {...field}
                               disabled={mutation.isPending}
                             />

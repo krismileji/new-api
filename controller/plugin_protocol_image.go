@@ -233,6 +233,9 @@ func respondTaskPluginImageError(c *gin.Context, taskErr *dto.TaskError) {
 	if taskErr.StatusCode >= 400 && taskErr.StatusCode <= 599 {
 		status = taskErr.StatusCode
 	}
+	if override := service.RetryExcludedErrorStatusCode(taskErrorForChannelLog(taskErr).ErrorWithStatusCode()); override != 0 {
+		status = override
+	}
 	code := taskErr.Code
 	message := taskErr.Message
 	var upstream struct {

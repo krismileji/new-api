@@ -821,8 +821,11 @@ func TestRetryExcludedByErrorContent(t *testing.T) {
 	for _, tc := range []struct {
 		name, keywords, message string
 		wantRetry               bool
+		wantStatus              int
 	}{
 		{name: "unsupported endpoint", keywords: "channel does not support /v1/alpha/search", message: "channel does not support /v1/alpha/search"},
+		{name: "unsupported endpoint returns 400", keywords: "channel does not support /v1/alpha/search => 400", message: "channel does not support /v1/alpha/search", wantStatus: 400},
+		{name: "first matching rule wins", keywords: "channel does not support\n/v1/alpha/search => 404", message: "channel does not support /v1/alpha/search"},
 		{name: "case insensitive substring with CRLF", keywords: " other failure \r\n\r\n /V1/ALPHA/SEARCH \r\n", message: "channel does not support /v1/alpha/search"},
 		{name: "literal punctuation", keywords: "failure.*", message: "failure.* reported by provider"},
 		{name: "formatted status and message", keywords: "status_code=500, failure", message: "failure"},
@@ -830,6 +833,7 @@ func TestRetryExcludedByErrorContent(t *testing.T) {
 		{name: "unmatched error", keywords: "channel does not support", message: "upstream temporarily unavailable", wantRetry: true},
 		{name: "blank configuration", keywords: " \r\n\n ", message: "channel does not support /v1/alpha/search", wantRetry: true},
 		{name: "invalid stored configuration is ignored", keywords: "failure\n" + strings.Repeat("x", 129), message: "failure", wantRetry: true},
+		{name: "invalid stored status is ignored", keywords: "failure => 200", message: "failure", wantRetry: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			useChannelMonitorOptionMap(t, map[string]string{service.RetryExcludeKeywordsOptionKey: tc.keywords})
@@ -843,6 +847,8 @@ func TestRetryExcludedByErrorContent(t *testing.T) {
 				assert.Equal(t, "命中不重试关键字", decision.Reason)
 			}
 			assert.Equal(t, tc.message, apiErr.Error(), "matching keeps the original error intact")
+			assert.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
+			assert.Equal(t, tc.wantStatus, service.RetryExcludedErrorStatusCode(apiErr.ErrorWithStatusCode()))
 
 			taskErr := &taskdto.TaskError{Message: tc.message, StatusCode: http.StatusInternalServerError}
 			assert.Equal(t, tc.wantRetry, shouldRetryTaskRelay(ctx, 1, taskErr, 2))
@@ -886,8 +892,12 @@ func TestChannelMonitorRetryExcludeKeywordsSettings(t *testing.T) {
 	}{
 		{name: "save", raw: " /v1/alpha/search\r\n 上游不支持 ", want: "/v1/alpha/search\r\n 上游不支持"},
 		{name: "unrelated update preserves rules", want: "/v1/alpha/search\r\n 上游不支持"},
-		{name: "reject too many", raw: strings.Repeat("failure\n", 33), invalid: true, want: "/v1/alpha/search\r\n 上游不支持"},
-		{name: "reject too long", raw: strings.Repeat("字", 129), invalid: true, want: "/v1/alpha/search\r\n 上游不支持"},
+		{name: "save status override", raw: "channel does not support /v1/alpha/search => 400", want: "channel does not support /v1/alpha/search => 400"},
+		{name: "reject too many", raw: strings.Repeat("failure\n", 33), invalid: true, want: "channel does not support /v1/alpha/search => 400"},
+		{name: "reject too long", raw: strings.Repeat("字", 129), invalid: true, want: "channel does not support /v1/alpha/search => 400"},
+		{name: "reject invalid status", raw: "failure => 200", invalid: true, want: "channel does not support /v1/alpha/search => 400"},
+		{name: "reject malformed status", raw: "failure => abc", invalid: true, want: "channel does not support /v1/alpha/search => 400"},
+		{name: "reject empty keyword", raw: "=> 400", invalid: true, want: "channel does not support /v1/alpha/search => 400"},
 		{name: "update immediately", raw: "temporary failure", want: "temporary failure"},
 		{name: "clear", raw: " \r\n\t"},
 	} {
@@ -916,6 +926,35 @@ func TestChannelMonitorRetryExcludeKeywordsSettings(t *testing.T) {
 			assert.Equal(t, tc.want, loaded.RetryExcludeKeywords)
 			assert.Equal(t, strings.Contains(tc.want, "/v1/alpha/search"), service.ShouldExcludeErrorFromRetry("status_code=500, channel does not support /v1/alpha/search"))
 		})
+	}
+}
+
+func TestRetryExcludedKeywordOverridesOnlyClientResponseStatus(t *testing.T) {
+	useChannelMonitorOptionMap(t, map[string]string{
+		service.RetryExcludeKeywordsOptionKey: "channel does not support /v1/alpha/search => 400",
+		service.ErrorMessageMappingOptionKey:  `{"500":"接口不受支持"}`,
+	})
+	message := "channel does not support /v1/alpha/search"
+	apiErr := types.NewOpenAIError(errors.New(message), types.ErrorCodeInvalidRequest, http.StatusInternalServerError)
+	for _, relayFormat := range []types.RelayFormat{types.RelayFormatOpenAI, types.RelayFormatClaude} {
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", nil)
+		writeRelayErrorResponse(ctx, nil, relayFormat, apiErr)
+		assert.Equal(t, http.StatusBadRequest, recorder.Code)
+		assert.Contains(t, recorder.Body.String(), "接口不受支持")
+		assert.NotContains(t, recorder.Body.String(), message)
+		assert.Equal(t, http.StatusInternalServerError, apiErr.StatusCode)
+	}
+
+	for _, respond := range []func(*gin.Context, *taskdto.TaskError){respondTaskError, respondPluginProtocolSubmissionError, respondTaskPluginImageError} {
+		taskErr := &taskdto.TaskError{Message: message, Code: "invalid_request", StatusCode: http.StatusInternalServerError}
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/alpha/search", nil)
+		respond(ctx, taskErr)
+		assert.Equal(t, http.StatusBadRequest, recorder.Code)
+		assert.Equal(t, http.StatusInternalServerError, taskErr.StatusCode)
 	}
 }
 

@@ -668,6 +668,9 @@ describe('channel monitor settings schema', () => {
       { errorMessageKeywords: 'x'.repeat(129) },
       { retryExcludeKeywords: Array(33).fill('failure').join('\n') },
       { retryExcludeKeywords: '字'.repeat(129) },
+      { retryExcludeKeywords: 'failure => 200' },
+      { retryExcludeKeywords: 'failure => abc' },
+      { retryExcludeKeywords: '=> 400' },
     ]) {
       assert.equal(
         schema.safeParse({ ...baseSettings, ...patch }).success,
@@ -676,6 +679,14 @@ describe('channel monitor settings schema', () => {
     }
     assert.equal(schema.parse(baseSettings).syncFailureAlertThreshold, 10)
     assert.equal(schema.parse(baseSettings).retryExcludeKeywords, '')
+    assert.equal(
+      schema.parse({
+        ...baseSettings,
+        retryExcludeKeywords:
+          'channel does not support /v1/alpha/search => 400',
+      }).retryExcludeKeywords,
+      'channel does not support /v1/alpha/search => 400'
+    )
     assert.equal(
       schema.parse({
         ...baseSettings,

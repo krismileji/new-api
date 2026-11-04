@@ -98,6 +98,10 @@ func writeRelayErrorResponse(c *gin.Context, ws *websocket.Conn, relayFormat typ
 			delete(c.Keys, relaycommon.EventStreamHeadersSetContextKey)
 		}
 	}
+	statusCode := apiErr.StatusCode
+	if override := service.RetryExcludedErrorStatusCode(apiErr.ErrorWithStatusCode()); override != 0 {
+		statusCode = override
+	}
 
 	switch relayFormat {
 	case types.RelayFormatOpenAIRealtime:
@@ -105,12 +109,12 @@ func writeRelayErrorResponse(c *gin.Context, ws *websocket.Conn, relayFormat typ
 		// this path, so it is outside the pre-response replacement boundary.
 		helper.WssError(c, ws, relayOpenAIErrorForUser(c, apiErr))
 	case types.RelayFormatClaude:
-		c.JSON(apiErr.StatusCode, gin.H{
+		c.JSON(statusCode, gin.H{
 			"type":  "error",
 			"error": relayClaudeErrorForUser(c, apiErr),
 		})
 	default:
-		c.JSON(apiErr.StatusCode, gin.H{
+		c.JSON(statusCode, gin.H{
 			"error": relayOpenAIErrorForUser(c, apiErr),
 		})
 	}

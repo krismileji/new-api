@@ -1311,7 +1311,15 @@ func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
 func respondTaskSubmissionError(c *gin.Context, taskErr *taskdto.TaskError) {
 	service.RecordRequestPolicyTermination(c, taskErrorForChannelLog(taskErr))
 	newTaskPluginSubmitDiagnostics(c).presentError(taskErr)
-	if middleware.RespondTaskPluginError(c, taskErr) {
+	responseErr := taskErr
+	if taskErr != nil {
+		if status := service.RetryExcludedErrorStatusCode(taskErrorForChannelLog(taskErr).ErrorWithStatusCode()); status != 0 {
+			copy := *taskErr
+			copy.StatusCode = status
+			responseErr = &copy
+		}
+	}
+	if middleware.RespondTaskPluginError(c, responseErr) {
 		return
 	}
 	respondTaskError(c, taskErr)
@@ -1337,6 +1345,10 @@ func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 	if taskErr == nil || relayResponseStarted(c) {
 		return
 	}
+	statusCode := taskErr.StatusCode
+	if override := service.RetryExcludedErrorStatusCode(taskErrorForChannelLog(taskErr).ErrorWithStatusCode()); override != 0 {
+		statusCode = override
+	}
 	if taskErr.StatusCode == http.StatusTooManyRequests {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
@@ -1348,7 +1360,7 @@ func respondTaskError(c *gin.Context, taskErr *taskdto.TaskError) {
 	); ok {
 		taskErr.Message = message
 	}
-	c.JSON(taskErr.StatusCode, taskErr)
+	c.JSON(statusCode, taskErr)
 }
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *taskdto.TaskError, retryTimes int) bool {

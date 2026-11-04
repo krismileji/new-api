@@ -120,11 +120,11 @@
 | `ChannelMonitorErrorMessageMapping` | 空 | JSON 对象，最多 `100` 条；键是上游错误码或 HTTP 状态码，最长 `128`；值是用户可见消息，最长 `4096` |
 | `ChannelMonitorErrorMessageWhitelist` | 空 | 最多 `32` 个错误码/状态码，命中后跳过用户侧错误处理，并排除智能调度失败样本与保护；普通统计仍记录真实失败 |
 | `ChannelMonitorErrorMessageKeywords` | 空 | 每行一个关键字，最多 `32` 个，每个最长 `128`，大小写不敏感子串屏蔽 |
-| `ChannelMonitorRetryExcludeKeywords` | 空 | JSON 字段 `retry_exclude_keywords`；每行一个关键字，最多 `32` 个，每个最长 `128`；原始错误内容（含 `status_code`）命中任一大小写不敏感子串后停止重试 |
+| `ChannelMonitorRetryExcludeKeywords` | 空 | JSON 字段 `retry_exclude_keywords`；每行 `关键字` 或 `关键字 => HTTP 状态码`，最多 `32` 条，每个关键字最长 `128`；命中原始错误内容（含 `status_code`）后停止重试，可将客户端响应状态码改为 `400..599` |
 
 无效的已保存映射在请求时被忽略，不会把上游失败变成网关新错误。管理员日志保留原始错误。
 
-“渠道监控设置 → 错误处理 → 不重试关键字”全局作用于所有渠道。填写 `channel does not support /v1/alpha/search` 可让该错误即使返回 HTTP 500 也直接结束本次请求；留空恢复原有重试策略。规则在错误映射和屏蔽前匹配，适用于普通请求和任务提交，优先于状态码和同渠道快速重试规则。已保存的关键字配置若无效，运行时忽略整份配置。
+“渠道监控设置 → 错误处理 → 不重试关键字”全局作用于所有渠道。填写 `channel does not support /v1/alpha/search => 400` 可让该错误即使原始状态为 HTTP 500，也停止重试并向客户端返回 HTTP 400；不写 `=> 400` 则保留原始状态。规则在错误映射和屏蔽前匹配，适用于普通请求和任务提交，优先于状态码和同渠道快速重试规则。多项命中时以首项为准；状态码覆盖仅改变客户端 HTTP 响应，管理员日志与渠道保护仍使用原始错误。已保存的关键字配置若无效，运行时忽略整份配置。
 
 ### 本地探针
 

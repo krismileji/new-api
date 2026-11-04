@@ -115,7 +115,7 @@ const settings = {
   notification_email: 'alerts@example.com',
   email_notification_types: DEFAULT_CHANNEL_MONITOR_EMAIL_NOTIFICATION_TYPES,
   error_message_keywords: '',
-  retry_exclude_keywords: '/v1/alpha/search',
+  retry_exclude_keywords: '/v1/alpha/search => 400',
   error_message_mapping: '',
   error_message_whitelist: '',
   probe_response_enabled: false,
@@ -324,7 +324,7 @@ const retryExcludeKeywordsInput = tabPanelFor(
   errorHandlingTab
 )?.querySelector<HTMLTextAreaElement>('textarea[name="retryExcludeKeywords"]')
 assert.ok(retryExcludeKeywordsInput)
-assert.equal(retryExcludeKeywordsInput.value, '/v1/alpha/search')
+assert.equal(retryExcludeKeywordsInput.value, '/v1/alpha/search => 400')
 assert.ok(retryExcludeKeywordsInput.id)
 assert.equal(
   generalDialog.querySelector(`label[for="${retryExcludeKeywordsInput.id}"]`)
@@ -333,7 +333,7 @@ assert.equal(
 )
 await act(async () => {
   fireEvent.change(retryExcludeKeywordsInput, {
-    target: { value: '/v1/alpha/search\nunsupported endpoint' },
+    target: { value: '/v1/alpha/search => 400\nunsupported endpoint' },
   })
 })
 const generalAdapterBefore = api.defaults.adapter
@@ -382,7 +382,7 @@ try {
   api.defaults.adapter = generalAdapterBefore
 }
 const retryExcludeKeywordsLoadedAndSaved =
-  savedRetryExcludeKeywords === '/v1/alpha/search\nunsupported endpoint'
+  savedRetryExcludeKeywords === '/v1/alpha/search => 400\nunsupported endpoint'
 const retentionTabWrapsText = retentionTab.classList.contains('text-wrap')
 const retentionTabIsLast = settingsTabs.at(-1) === retentionTab
 await act(async () => {

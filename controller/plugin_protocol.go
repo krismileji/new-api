@@ -1274,6 +1274,11 @@ func respondPluginProtocolSubmissionError(c *gin.Context, taskErr *dto.TaskError
 	if taskErr != nil && taskErr.StatusCode >= 400 && taskErr.StatusCode <= 599 {
 		status = taskErr.StatusCode
 	}
+	if taskErr != nil {
+		if override := service.RetryExcludedErrorStatusCode(taskErrorForChannelLog(taskErr).ErrorWithStatusCode()); override != 0 {
+			status = override
+		}
+	}
 	switch status {
 	case http.StatusBadRequest:
 		message := "Invalid task protocol request"

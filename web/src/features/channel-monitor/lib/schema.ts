@@ -996,26 +996,44 @@ const retryExcludeKeywordsSchema = z
   .trim()
   .default('')
   .superRefine((value, context) => {
-    const keywords = value
+    const lines = value
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean)
-    if (keywords.length > MAX_RETRY_EXCLUDE_KEYWORDS) {
+    if (lines.length > MAX_RETRY_EXCLUDE_KEYWORDS) {
       context.addIssue({
         code: 'custom',
         message: `不重试关键字最多支持 ${MAX_RETRY_EXCLUDE_KEYWORDS} 个`,
       })
       return
     }
-    if (
-      keywords.some(
-        (keyword) => [...keyword].length > MAX_RETRY_EXCLUDE_KEYWORD_LENGTH
-      )
-    ) {
-      context.addIssue({
-        code: 'custom',
-        message: `不重试关键字长度不能超过 ${MAX_RETRY_EXCLUDE_KEYWORD_LENGTH} 个字符`,
-      })
+    for (const line of lines) {
+      const separator = line.indexOf('=>')
+      const keyword = (separator < 0 ? line : line.slice(0, separator)).trim()
+      if (!keyword) {
+        context.addIssue({
+          code: 'custom',
+          message: '不重试关键字不能为空',
+        })
+        return
+      }
+      if ([...keyword].length > MAX_RETRY_EXCLUDE_KEYWORD_LENGTH) {
+        context.addIssue({
+          code: 'custom',
+          message: `不重试关键字长度不能超过 ${MAX_RETRY_EXCLUDE_KEYWORD_LENGTH} 个字符`,
+        })
+        return
+      }
+      if (
+        separator >= 0 &&
+        !/^[45]\d{2}$/.test(line.slice(separator + 2).trim())
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: '不重试关键字的返回状态码必须是 400 到 599',
+        })
+        return
+      }
     }
   })
 
