@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/yuin/goldmark"
@@ -23,6 +24,7 @@ var siteSEOHTMLPattern = regexp.MustCompile(`(?i)<!doctype html|<html[\s>]|<head
 
 type siteSEOPages struct {
 	home    [4]map[string][]byte
+	pricing [4]map[string][]byte
 	about   [4]map[string][]byte
 	contact [4]map[string][]byte
 }
@@ -97,7 +99,7 @@ var siteSEOBody = template.Must(template.New("site-seo-body").Parse(`
       <nav class="seo-links" aria-label="Navigation">
         <a href="/{{if eq .Lang "zh-CN"}}?lang=zh-CN{{end}}">{{.HomeLabel}}</a>
         <a href="/about{{if eq .Lang "zh-CN"}}?lang=zh-CN{{end}}">{{.AboutLabel}}</a>
-        <a href="/pricing">{{.PricingLabel}}</a>
+        <a href="/pricing{{if eq .Lang "zh-CN"}}?lang=zh-CN{{end}}">{{.PricingLabel}}</a>
         <a href="/contact{{if eq .Lang "zh-CN"}}?lang=zh-CN{{end}}">{{.ContactLabel}}</a>
         {{if .OtherLang}}<a class="seo-language" href="{{.PagePath}}{{if eq .OtherLang "zh-CN"}}?lang=zh-CN{{end}}" lang="{{.OtherLang}}">{{.OtherLabel}}</a>{{end}}
       </nav>
@@ -109,7 +111,7 @@ var siteSEOBody = template.Must(template.New("site-seo-body").Parse(`
       {{if eq .PageKind "home"}}
       <div class="seo-actions">
         <a href="/sign-up">{{.SignupLabel}}</a>
-        <a href="/pricing">{{.PricingLabel}}</a>
+        <a href="/pricing{{if eq .Lang "zh-CN"}}?lang=zh-CN{{end}}">{{.PricingLabel}}</a>
         <a href="https://docs.newapi.pro/">{{.DocsLabel}}</a>
       </div>
       {{end}}
@@ -158,8 +160,32 @@ func siteCopy(kind, lang string) siteSEOCopy {
 			copy.Description = "通过 Coder Proxy 的统一 API 接入多种 AI 模型。查看当前价格、创建账户，并在控制台管理用量。"
 			copy.Heading = "一个入口，连接多种 AI 模型 API"
 			copy.Lead = "Coder Proxy 是 AI 聚合平台。你可以通过统一 API 调用本站支持的模型，在同一账户中查看当前价格、管理密钥并追踪用量。"
-			copy.Sections = []siteSEOSection{{"接入 AI 模型", "通过本站支持的 API 协议和模型路由连接应用。具体可用模型和能力以当前服务配置为准。"}, {"了解费用", "使用前查看公开定价页；登录后可以在控制台查看用量与费用记录。"}, {"参考接入文档", "创建账户、获取 API 密钥，并根据所选协议的文档完成接入。"}}
+			copy.Sections = []siteSEOSection{
+				{"Coder Proxy 是什么？", "Coder Proxy 是面向开发者的托管 AI API 聚合服务。你通过本站账户和统一接口调用当前开放的模型，不需要自行部署网关或管理上游渠道。本站与网关软件的功能范围不同，实际可用模型和接口以公开定价页及接入文档为准。"},
+				{"如何开始调用？", "先创建账户，在控制台获取本站 API 密钥，再按所选协议的接入文档配置请求地址和模型名称。密钥用于你的应用调用，请勿放在公开网页或提交到代码仓库。完成接入后，可在账户中查看调用记录。"},
+				{"支持哪些模型和接口？", "可用范围取决于本站当前配置，不等同于网关软件支持的全部提供方、模型或端点。选择模型前，先在定价页查看当前展示的模型与计费方式；再结合接入文档确认所需协议和参数。页面未列出的能力不要视为已经开放。"},
+				{"费用与用量在哪里查看？", "使用前可公开查看定价页。实际价格、单位及适用条件以该页当前数据为准，不应依赖旧截图或固定宣传数字。登录后可在控制台查看账户用量与费用记录；如对记录有疑问，可提供请求时间和相关标识联系本站支持。"},
+			}
 			copy.ContactIntro = "关于接入、计费或使用问题，可以通过以下方式联系。"
+		}
+	case "pricing":
+		home := siteCopy("home", lang)
+		copy.Title = "New API | " + copy.PricingLabel
+		copy.SocialTitle, copy.Description = "Coder Proxy | "+copy.PricingLabel, home.Sections[1].Text
+		copy.Heading, copy.Lead = copy.PricingLabel, home.Sections[1].Text
+		about := siteCopy("about", lang)
+		copy.Sections, copy.ContactIntro = []siteSEOSection{home.Sections[1], about.Sections[1], home.Sections[2]}, home.ContactIntro
+		if lang == "zh-CN" {
+			copy.SocialTitle = "Coder Proxy｜当前模型价格与用量说明"
+			copy.Description = "查看 Coder Proxy 当前开放模型的价格、计费单位与用量记录入口。具体价格以实时定价数据为准。"
+			copy.Heading = "如何查看 Coder Proxy 当前价格？"
+			copy.Lead = "本站的模型价格随服务配置更新。请在下方交互式定价列表查看当前开放的模型、价格和适用条件；登录后可在控制台核对自己的调用用量与费用记录。"
+			copy.Sections = []siteSEOSection{
+				{"价格以什么为准？", "以本页实时展示的数据为准。不同模型和计费方式可能使用不同单位，比较前请查看对应模型的详细说明；不要把过去保存的截图、示例金额或其他站点的价格视为本站现价。"},
+				{"如何选择模型？", "先在定价列表确认本站当前开放的模型，再核对所需接口、能力和适用条件。列表会随服务配置变化，不能把网关软件支持的全部模型视为本站已经开放。"},
+				{"如何核对用量？", "登录后在控制台查看调用记录、用量与费用。如对某次调用有疑问，请通过联系页面提供相关请求时间和标识，不要发送 API 密钥或密码。"},
+			}
+			copy.ContactIntro = "对价格、用量或接入有疑问，可通过以下渠道联系本站。"
 		}
 	case "about":
 		copy.Title = "New API | About Coder Proxy"
@@ -213,10 +239,11 @@ func buildSiteSEOPages(indexPage []byte) siteSEOPages {
 	var pages siteSEOPages
 	for legalState := range 4 {
 		pages.home[legalState] = make(map[string][]byte)
+		pages.pricing[legalState] = make(map[string][]byte)
 		pages.about[legalState] = make(map[string][]byte)
 		pages.contact[legalState] = make(map[string][]byte)
 		for _, lang := range []string{"en", "zh-CN"} {
-			for _, kind := range []string{"home", "about", "contact"} {
+			for _, kind := range []string{"home", "pricing", "about", "contact"} {
 				copy := siteCopy(kind, lang)
 				copy.ShowAgreement = legalState&1 != 0
 				copy.ShowPrivacy = legalState&2 != 0
@@ -228,6 +255,8 @@ func buildSiteSEOPages(indexPage []byte) siteSEOPages {
 				switch kind {
 				case "home":
 					pages.home[legalState][lang] = page
+				case "pricing":
+					pages.pricing[legalState][lang] = page
 				case "about":
 					pages.about[legalState][lang] = page
 				case "contact":
@@ -239,7 +268,7 @@ func buildSiteSEOPages(indexPage []byte) siteSEOPages {
 	return pages
 }
 
-func siteSEOSitemap(includeHome, includeAbout, includeAgreement, includePrivacy bool) []byte {
+func siteSEOSitemap(includeHome, includeAbout, includePricing, includeAgreement, includePrivacy bool) []byte {
 	type sitemapURL struct {
 		Loc string `xml:"loc"`
 	}
@@ -255,6 +284,9 @@ func siteSEOSitemap(includeHome, includeAbout, includeAgreement, includePrivacy 
 	}
 	if includeAbout {
 		paths = append(paths, "/about")
+	}
+	if includePricing {
+		paths = append(paths, "/pricing")
 	}
 	paths = append(paths, "/contact")
 	for _, path := range paths {
@@ -299,7 +331,7 @@ func renderSiteSEOLegalPage(kind, content string, legalState int) ([]byte, error
 
 func renderSiteSEOPage(indexPage []byte, copy siteSEOCopy) ([]byte, error) {
 	base := indexPage
-	if copy.PageKind != "home" {
+	if copy.PageKind != "home" && copy.PageKind != "pricing" {
 		base = []byte("<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body></body></html>")
 	}
 	doc, err := html.Parse(bytes.NewReader(base))
@@ -328,7 +360,25 @@ func renderSiteSEOPage(indexPage []byte, copy siteSEOCopy) ([]byte, error) {
 		return nil, html.ErrBufferExceeded
 	}
 	setSEOAttr(root, "lang", copy.Lang)
-	if copy.PageKind != "home" {
+	if copy.PageKind == "pricing" {
+		for child := head.FirstChild; child != nil; child = child.NextSibling {
+			if child.Type == html.ElementNode && child.Data == "title" && child.FirstChild != nil {
+				child.FirstChild.Data = copy.Title
+			}
+			if child.Type == html.ElementNode && child.Data == "meta" {
+				for i := range child.Attr {
+					if child.Attr[i].Key == "name" {
+						switch child.Attr[i].Val {
+						case "description":
+							setSEOAttr(child, "content", copy.Description)
+						case "title":
+							setSEOAttr(child, "content", copy.Title)
+						}
+					}
+				}
+			}
+		}
+	} else if copy.PageKind != "home" {
 		title := &html.Node{Type: html.ElementNode, Data: "title"}
 		title.AppendChild(&html.Node{Type: html.TextNode, Data: copy.Title})
 		head.AppendChild(title)
@@ -366,6 +416,15 @@ func renderSiteSEOPage(indexPage []byte, copy siteSEOCopy) ([]byte, error) {
 	style := &html.Node{Type: html.ElementNode, Data: "style"}
 	style.AppendChild(&html.Node{Type: html.TextNode, Data: siteSEOStyle})
 	head.AppendChild(style)
+	if copy.PageKind == "home" || copy.PageKind == "pricing" {
+		publicJSON, err := siteSEOPublicJSON(copy)
+		if err != nil {
+			return nil, err
+		}
+		publicScript := &html.Node{Type: html.ElementNode, Data: "script", Attr: []html.Attribute{{Key: "id", Val: "site-public-content"}, {Key: "type", Val: "application/json"}}}
+		publicScript.AppendChild(&html.Node{Type: html.TextNode, Data: string(publicJSON)})
+		head.AppendChild(publicScript)
+	}
 	var content bytes.Buffer
 	if err := siteSEOBody.Execute(&content, copy); err != nil {
 		return nil, err
@@ -377,9 +436,9 @@ func renderSiteSEOPage(indexPage []byte, copy siteSEOCopy) ([]byte, error) {
 	for _, fragment := range fragments {
 		body.AppendChild(fragment)
 	}
-	if copy.PageKind == "home" {
+	if copy.PageKind == "home" || copy.PageKind == "pricing" {
 		init := &html.Node{Type: html.ElementNode, Data: "script"}
-		init.AppendChild(&html.Node{Type: html.TextNode, Data: `(function(){var lang=new URLSearchParams(location.search).get('lang');try{var saved=localStorage.getItem('i18nextLng');if(lang==='zh-CN'){localStorage.setItem('i18nextLng','zhCN')}else if(saved==='zhCN'||!saved&&/^(zh-CN|zh)$/i.test(navigator.language)){location.replace('/?lang=zh-CN');return}}catch(e){}var root=document.getElementById('root');var fallback=document.getElementById('seo-initial');if(!root||!fallback)return;var observer=new MutationObserver(function(){if(root.firstChild){fallback.remove();observer.disconnect()}});observer.observe(root,{childList:true});})();`})
+		init.AppendChild(&html.Node{Type: html.TextNode, Data: `(function(){var lang=new URLSearchParams(location.search).get('lang');try{var saved=localStorage.getItem('i18nextLng');if(lang==='zh-CN'){localStorage.setItem('i18nextLng','zhCN')}else if(saved==='zhCN'||!saved&&/^(zh-CN|zh)$/i.test(navigator.language)){var target=new URL(location.href);target.searchParams.set('lang','zh-CN');location.replace(target.pathname+target.search);return}}catch(e){}var root=document.getElementById('root');var fallback=document.getElementById('seo-initial');if(!root||!fallback)return;root.style.display='none';var observer=new MutationObserver(function(){if(root.querySelector('[data-site-public-ready]')){root.style.display='';fallback.remove();observer.disconnect()}});observer.observe(root,{childList:true,subtree:true});})();`})
 		body.AppendChild(init)
 	}
 	var output bytes.Buffer
@@ -387,6 +446,24 @@ func renderSiteSEOPage(indexPage []byte, copy siteSEOCopy) ([]byte, error) {
 		return nil, err
 	}
 	return output.Bytes(), nil
+}
+
+func siteSEOPublicJSON(copy siteSEOCopy) ([]byte, error) {
+	return common.Marshal(map[string]any{
+		"kind":         copy.PageKind,
+		"lang":         copy.Lang,
+		"title":        copy.Title,
+		"heading":      copy.Heading,
+		"lead":         copy.Lead,
+		"sections":     copy.Sections,
+		"contactIntro": copy.ContactIntro,
+		"contactLabel": copy.ContactLabel,
+		"aboutLabel":   copy.AboutLabel,
+		"projectNote":  copy.ProjectNote,
+		"signupLabel":  copy.SignupLabel,
+		"pricingLabel": copy.PricingLabel,
+		"docsLabel":    copy.DocsLabel,
+	})
 }
 
 func appendSEOMeta(head *html.Node, key, name, value string) {
@@ -421,6 +498,7 @@ func (pages siteSEOPages) serve(c *gin.Context) {
 	hasCustomAbout := common.OptionMap["About"] != ""
 	common.OptionMapRWMutex.RUnlock()
 	legal := system_setting.GetLegalSettings()
+	pricingPublic := middleware.HeaderNavModuleIsPublic("pricing")
 	legalState := 0
 	if legal.UserAgreement != "" {
 		legalState |= 1
@@ -437,6 +515,13 @@ func (pages siteSEOPages) serve(c *gin.Context) {
 			return
 		}
 		content = pages.home[legalState][lang]
+	case "/pricing", "/pricing/":
+		if !pricingPublic {
+			c.Header("X-Robots-Tag", "noindex")
+			c.Next()
+			return
+		}
+		content = pages.pricing[legalState][lang]
 	case "/about", "/about/":
 		if hasCustomAbout {
 			c.Next()
@@ -450,7 +535,28 @@ func (pages siteSEOPages) serve(c *gin.Context) {
 		content = []byte("User-agent: *\nAllow: /\nDisallow: /dashboard\nDisallow: /system-settings\n\nUser-agent: GPTBot\nDisallow: /\n\nUser-agent: ClaudeBot\nDisallow: /\n\nUser-agent: Google-Extended\nDisallow: /\n\nUser-agent: Applebot-Extended\nDisallow: /\n\nUser-agent: meta-externalagent\nDisallow: /\n\nUser-agent: Amazonbot\nDisallow: /\n\nUser-agent: CCBot\nDisallow: /\n\nUser-agent: Bytespider\nDisallow: /\n\nSitemap: " + siteSEOOrigin + "/sitemap.xml\n")
 	case "/sitemap.xml":
 		contentType = "application/xml; charset=utf-8"
-		content = siteSEOSitemap(!hasCustomHome, !hasCustomAbout, siteSEORenderableLegal(legal.UserAgreement), siteSEORenderableLegal(legal.PrivacyPolicy))
+		content = siteSEOSitemap(!hasCustomHome, !hasCustomAbout, pricingPublic, siteSEORenderableLegal(legal.UserAgreement), siteSEORenderableLegal(legal.PrivacyPolicy))
+	case "/site-public-content.json":
+		kind := c.Query("page")
+		if kind != "home" && kind != "pricing" {
+			c.Status(http.StatusNotFound)
+			c.Abort()
+			return
+		}
+		if kind == "pricing" && !pricingPublic {
+			c.Status(http.StatusNotFound)
+			c.Abort()
+			return
+		}
+		contentType = "application/json; charset=utf-8"
+		c.Header("X-Robots-Tag", "noindex")
+		var err error
+		content, err = siteSEOPublicJSON(siteCopy(kind, lang))
+		if err != nil {
+			c.Status(http.StatusInternalServerError)
+			c.Abort()
+			return
+		}
 	case "/llms.txt":
 		contentType = "text/plain; charset=utf-8"
 		var links strings.Builder
@@ -460,6 +566,9 @@ func (pages siteSEOPages) serve(c *gin.Context) {
 		}
 		if !hasCustomAbout {
 			links.WriteString("- [关于本站](" + siteSEOOrigin + "/about?lang=zh-CN)\n")
+		}
+		if pricingPublic {
+			links.WriteString("- [当前价格](" + siteSEOOrigin + "/pricing?lang=zh-CN)\n")
 		}
 		links.WriteString("- [联系我们](" + siteSEOOrigin + "/contact?lang=zh-CN)\n")
 		if siteSEORenderableLegal(legal.UserAgreement) {

@@ -24,6 +24,7 @@ import { getModuleAccessForGuard } from '@/lib/nav-modules'
 import { useAuthStore } from '@/stores/auth-store'
 
 const pricingSearchSchema = z.object({
+  lang: z.literal('zh-CN').optional(),
   search: z.string().optional(),
   sort: z.string().optional(),
   vendor: z.string().optional(),

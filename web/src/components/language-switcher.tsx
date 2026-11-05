@@ -34,7 +34,7 @@ import {
   toIntlLocale,
 } from '@/i18n/languages'
 import { api } from '@/lib/api'
-import { siteHomeLanguageURL } from '@/lib/site-identity'
+import { sitePublicLanguageURL } from '@/lib/site-identity'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -57,7 +57,7 @@ export function LanguageSwitcher() {
           // Best-effort persistence; don't block the UI on failure
         }
       }
-      const nextURL = siteHomeLanguageURL(
+      const nextURL = sitePublicLanguageURL(
         window.location.href,
         code,
         status?.server_address

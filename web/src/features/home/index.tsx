@@ -22,8 +22,14 @@ import { useTranslation } from 'react-i18next'
 import { PublicLayout } from '@/components/layout'
 import { Footer } from '@/components/layout/components/footer'
 import { RichContent } from '@/components/rich-content'
+import {
+  SitePublicContent,
+  SitePublicFooter,
+} from '@/components/site-public-content'
 import { useTheme } from '@/context/theme-provider'
+import { useStatus } from '@/hooks/use-status'
 import { isLikelyHtml } from '@/lib/content-format'
+import { isCoderProxySite } from '@/lib/site-identity'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { CTA, Features, Hero, HowItWorks, Stats } from './components'
@@ -37,6 +43,7 @@ export function Home() {
   const { auth } = useAuthStore()
   const isAuthenticated = !!auth.user
   const { content, isLoaded, isUrl } = useHomePageContent()
+  const { status } = useStatus()
 
   const syncIframePreferences = useCallback(() => {
     try {
@@ -117,6 +124,15 @@ export function Home() {
             className='custom-home-content'
           />
         </div>
+      </PublicLayout>
+    )
+  }
+
+  if (isCoderProxySite(status?.server_address)) {
+    return (
+      <PublicLayout showMainContainer={false}>
+        <SitePublicContent page='home' />
+        <SitePublicFooter />
       </PublicLayout>
     )
   }

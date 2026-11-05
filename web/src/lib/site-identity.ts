@@ -5,7 +5,7 @@ export function isCoderProxySite(address: unknown): boolean {
   )
 }
 
-export function siteHomeLanguageURL(
+export function sitePublicLanguageURL(
   currentURL: string,
   code: string,
   address: unknown
@@ -14,7 +14,8 @@ export function siteHomeLanguageURL(
     return null
   }
   const nextURL = new URL(currentURL)
-  if (nextURL.pathname !== '/') return null
+  if (!['/', '/pricing', '/pricing/'].includes(nextURL.pathname)) return null
+  if (nextURL.pathname === '/pricing/') nextURL.pathname = '/pricing'
   nextURL.searchParams.delete('lang')
   if (code === 'zhCN') nextURL.searchParams.set('lang', 'zh-CN')
   return nextURL.href === currentURL ? null : nextURL.href
