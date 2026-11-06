@@ -73,6 +73,10 @@ func TestCoderProxyPublicSEOResponses(t *testing.T) {
 	assert.Contains(t, chinese.Body.String(), "Coder Proxy 是什么？")
 	assert.Contains(t, chinese.Body.String(), "如何开始调用？")
 	assert.Contains(t, chinese.Body.String(), "不需要自行部署网关或管理上游渠道")
+	assert.Contains(t, chinese.Body.String(), `<time datetime="2026-11-06">更新于 2026 年 11 月 06 日</time>`)
+	assert.Contains(t, chinese.Body.String(), `name="author" content="Coder Proxy"`)
+	assert.Contains(t, chinese.Body.String(), `href="/pricing?lang=zh-CN">本站当前定价</a>`)
+	assert.Contains(t, chinese.Body.String(), `href="https://docs.newapi.pro/">网关软件接入文档</a>`)
 	assert.Contains(t, chinese.Body.String(), `id="site-public-content"`)
 	assert.NotContains(t, chinese.Body.String(), "50+ 上游服务")
 
@@ -86,6 +90,43 @@ func TestCoderProxyPublicSEOResponses(t *testing.T) {
 	assert.Contains(t, pricing.Body.String(), `id="root"`)
 	assert.Contains(t, pricing.Body.String(), `id="site-public-content"`)
 	assert.Equal(t, 1, strings.Count(pricing.Body.String(), "<h1>"))
+	assert.Contains(t, pricing.Body.String(), `<time datetime="2026-11-06">更新于 2026 年 11 月 06 日</time>`)
+
+	homeDoc, err := html.Parse(strings.NewReader(chinese.Body.String()))
+	require.NoError(t, err)
+	var graphJSON string
+	var inspectGraph func(*html.Node)
+	inspectGraph = func(node *html.Node) {
+		if node.Type == html.ElementNode && node.Data == "script" && node.FirstChild != nil && strings.Contains(node.FirstChild.Data, `"@graph"`) {
+			graphJSON = node.FirstChild.Data
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			inspectGraph(child)
+		}
+	}
+	inspectGraph(homeDoc)
+	require.NotEmpty(t, graphJSON)
+	var graph struct {
+		Entities []struct {
+			Type         string `json:"@type"`
+			ID           string `json:"@id"`
+			DateModified string `json:"dateModified"`
+			Author       struct {
+				ID string `json:"@id"`
+			} `json:"author"`
+			Provider struct {
+				ID string `json:"@id"`
+			} `json:"provider"`
+		} `json:"@graph"`
+	}
+	require.NoError(t, common.Unmarshal([]byte(graphJSON), &graph))
+	require.Len(t, graph.Entities, 3)
+	assert.Equal(t, "Organization", graph.Entities[0].Type)
+	assert.Equal(t, "WebPage", graph.Entities[1].Type)
+	assert.Equal(t, "2026-11-06", graph.Entities[1].DateModified)
+	assert.Equal(t, graph.Entities[0].ID, graph.Entities[1].Author.ID)
+	assert.Equal(t, "Service", graph.Entities[2].Type)
+	assert.Equal(t, graph.Entities[0].ID, graph.Entities[2].Provider.ID)
 
 	publicJSON := performPluginRequest(outer, http.MethodGet, "/site-public-content.json?page=pricing&lang=zh-CN")
 	require.Equal(t, http.StatusOK, publicJSON.Code)

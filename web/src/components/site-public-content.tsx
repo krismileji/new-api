@@ -34,11 +34,22 @@ const publicContentSchema = z.object({
   title: z.string(),
   heading: z.string(),
   lead: z.string(),
-  sections: z.array(z.object({ Title: z.string(), Text: z.string() })),
+  sections: z.array(
+    z.object({
+      Title: z.string(),
+      Text: z.string(),
+      ReferenceLabel: z.string(),
+      ReferenceURL: z.string(),
+    })
+  ),
   contactIntro: z.string(),
   contactLabel: z.string(),
   aboutLabel: z.string(),
   projectNote: z.string(),
+  maintainerLabel: z.string(),
+  updatedLabel: z.string(),
+  updatedDate: z.string(),
+  modifiedDate: z.string(),
   signupLabel: z.string(),
   pricingLabel: z.string(),
   docsLabel: z.string(),
@@ -91,6 +102,14 @@ export function SitePublicContent(props: { page: 'home' | 'pricing' }) {
           <p className='text-muted-foreground mt-6 text-base leading-8 md:text-lg'>
             {data.lead}
           </p>
+          {data.modifiedDate && (
+            <p className='text-muted-foreground mt-4 text-sm'>
+              {data.maintainerLabel}: Coder Proxy ·{' '}
+              <time dateTime={data.modifiedDate}>
+                {data.updatedLabel} {data.updatedDate}
+              </time>
+            </p>
+          )}
           {props.page === 'home' && (
             <div className='mt-8 flex flex-wrap gap-3'>
               <Button size='lg' render={<Link to='/sign-up' />}>
@@ -127,6 +146,14 @@ export function SitePublicContent(props: { page: 'home' | 'pricing' }) {
               <p className='text-muted-foreground mt-3 leading-7'>
                 {section.Text}
               </p>
+              {section.ReferenceURL && (
+                <a
+                  className='text-primary mt-3 inline-block text-sm hover:underline'
+                  href={section.ReferenceURL}
+                >
+                  {section.ReferenceLabel}
+                </a>
+              )}
             </section>
           ))}
         </div>

@@ -75,12 +75,21 @@ test('uses the server-published Chinese pricing copy and links to real support c
     heading: '如何查看 Coder Proxy 当前价格？',
     lead: '请查看当前价格和适用条件。',
     sections: [
-      { Title: '价格以什么为准？', Text: '以本页实时展示的数据为准。' },
+      {
+        Title: '价格以什么为准？',
+        Text: '以本页实时展示的数据为准。',
+        ReferenceLabel: '联系价格支持',
+        ReferenceURL: '/contact?lang=zh-CN',
+      },
     ],
     contactIntro: '对价格或用量有疑问，可联系我们。',
     contactLabel: '联系我们',
     aboutLabel: '关于我们',
     projectNote: '本站网关软件基于 New API 项目',
+    maintainerLabel: '内容维护',
+    updatedLabel: '更新于',
+    updatedDate: '2026 年 11 月 06 日',
+    modifiedDate: '2026-11-06',
     signupLabel: '开始使用',
     pricingLabel: '查看价格',
     docsLabel: '使用文档',
@@ -104,6 +113,11 @@ test('uses the server-published Chinese pricing copy and links to real support c
   ).toBeVisible()
   expect(document.title).toBe('New API | 查看价格')
   expect(screen.getByText('以本页实时展示的数据为准。')).toBeVisible()
+  expect(screen.getByRole('time')).toHaveAttribute('datetime', '2026-11-06')
+  expect(screen.getByRole('link', { name: '联系价格支持' })).toHaveAttribute(
+    'href',
+    '/contact?lang=zh-CN'
+  )
   expect(screen.getByRole('link', { name: /krismileji/ })).toHaveAttribute(
     'href',
     'https://t.me/krismileji'

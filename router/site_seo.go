@@ -19,6 +19,7 @@ import (
 )
 
 const siteSEOOrigin = "https://coder.work-proxy.com"
+const siteSEOContentModified = "2026-11-06"
 
 var siteSEOHTMLPattern = regexp.MustCompile(`(?i)<!doctype html|<html[\s>]|<head[\s>]|<body[\s>]|<style[\s>]|<script[\s>]|</?[a-z][\s\S]*>`)
 
@@ -30,33 +31,39 @@ type siteSEOPages struct {
 }
 
 type siteSEOCopy struct {
-	Lang          string
-	OtherLang     string
-	OtherLabel    string
-	HomeLabel     string
-	AboutLabel    string
-	ContactLabel  string
-	PricingLabel  string
-	DocsLabel     string
-	SignupLabel   string
-	Title         string
-	SocialTitle   string
-	Description   string
-	Heading       string
-	Lead          string
-	Sections      []siteSEOSection
-	ContactIntro  string
-	ProjectNote   string
-	PagePath      string
-	PageKind      string
-	ShowAgreement bool
-	ShowPrivacy   bool
-	LegalContent  template.HTML
+	Lang            string
+	OtherLang       string
+	OtherLabel      string
+	HomeLabel       string
+	AboutLabel      string
+	ContactLabel    string
+	PricingLabel    string
+	DocsLabel       string
+	SignupLabel     string
+	Title           string
+	SocialTitle     string
+	Description     string
+	Heading         string
+	Lead            string
+	Sections        []siteSEOSection
+	ContactIntro    string
+	ProjectNote     string
+	MaintainerLabel string
+	UpdatedLabel    string
+	UpdatedDate     string
+	ModifiedDate    string
+	PagePath        string
+	PageKind        string
+	ShowAgreement   bool
+	ShowPrivacy     bool
+	LegalContent    template.HTML
 }
 
 type siteSEOSection struct {
-	Title string
-	Text  string
+	Title          string
+	Text           string
+	ReferenceLabel string
+	ReferenceURL   string
 }
 
 const siteSEOStyle = `
@@ -81,6 +88,9 @@ const siteSEOStyle = `
   #seo-initial .seo-sections { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 38px; border-top: 1px solid #dce4e8; padding-top: 36px; }
   #seo-initial h2 { font-size: 20px; margin: 0 0 12px; }
   #seo-initial .seo-sections p, #seo-initial .seo-note, #seo-initial .seo-contact p { color: #44535e; line-height: 1.75; margin: 0; }
+  #seo-initial .seo-sections .seo-reference { margin-top: 10px; font-size: 14px; }
+  #seo-initial .seo-sections .seo-reference a { color: #17666e; }
+  #seo-initial .seo-byline { color: #596771; font-size: 14px; margin: 0 0 28px; }
   #seo-initial .seo-contact { border-top: 1px solid #dce4e8; margin-top: 50px; padding-top: 36px; }
   #seo-initial .seo-contact p + p { margin-top: 10px; }
   #seo-initial .seo-note { margin-top: 54px; font-size: 14px; }
@@ -108,6 +118,7 @@ var siteSEOBody = template.Must(template.New("site-seo-body").Parse(`
       <p class="seo-eyebrow">Coder Proxy</p>
       <h1>{{.Heading}}</h1>
       {{if .Lead}}<p class="seo-lead">{{.Lead}}</p>{{end}}
+      {{if .ModifiedDate}}<p class="seo-byline">{{.MaintainerLabel}}: Coder Proxy · <time datetime="{{.ModifiedDate}}">{{.UpdatedLabel}} {{.UpdatedDate}}</time></p>{{end}}
       {{if eq .PageKind "home"}}
       <div class="seo-actions">
         <a href="/sign-up">{{.SignupLabel}}</a>
@@ -117,7 +128,7 @@ var siteSEOBody = template.Must(template.New("site-seo-body").Parse(`
       {{end}}
       {{if .Sections}}
       <div class="seo-sections">
-        {{range .Sections}}<section><h2>{{.Title}}</h2><p>{{.Text}}</p></section>{{end}}
+        {{range .Sections}}<section><h2>{{.Title}}</h2><p>{{.Text}}</p>{{if .ReferenceURL}}<p class="seo-reference"><a href="{{.ReferenceURL}}">{{.ReferenceLabel}}</a></p>{{end}}</section>{{end}}
       </div>
       {{end}}
       {{if .LegalContent}}<article class="seo-legal">{{.LegalContent}}</article>{{end}}
@@ -136,7 +147,7 @@ var siteSEOBody = template.Must(template.New("site-seo-body").Parse(`
 </div>`))
 
 func siteCopy(kind, lang string) siteSEOCopy {
-	copy := siteSEOCopy{Lang: lang, PageKind: kind, PagePath: "/", OtherLang: "zh-CN", OtherLabel: "简体中文", HomeLabel: "Home", AboutLabel: "About", ContactLabel: "Contact", PricingLabel: "Pricing", DocsLabel: "Documentation", SignupLabel: "Get started", ProjectNote: "The gateway software is based on the New API project by"}
+	copy := siteSEOCopy{Lang: lang, PageKind: kind, PagePath: "/", OtherLang: "zh-CN", OtherLabel: "简体中文", HomeLabel: "Home", AboutLabel: "About", ContactLabel: "Contact", PricingLabel: "Pricing", DocsLabel: "Documentation", SignupLabel: "Get started", ProjectNote: "The gateway software is based on the New API project by", MaintainerLabel: "Maintained by", UpdatedLabel: "Updated", UpdatedDate: "November 6, 2026"}
 	if kind != "home" {
 		copy.PagePath = "/" + kind
 	}
@@ -145,15 +156,17 @@ func siteCopy(kind, lang string) siteSEOCopy {
 		copy.HomeLabel, copy.AboutLabel, copy.ContactLabel = "首页", "关于我们", "联系我们"
 		copy.PricingLabel, copy.DocsLabel, copy.SignupLabel = "查看价格", "使用文档", "开始使用"
 		copy.ProjectNote = "本站网关软件基于 New API 项目，原项目及作者："
+		copy.MaintainerLabel, copy.UpdatedLabel, copy.UpdatedDate = "内容维护", "更新于", "2026 年 11 月 06 日"
 	}
 	switch kind {
 	case "home":
+		copy.ModifiedDate = siteSEOContentModified
 		copy.Title = "New API"
 		copy.SocialTitle = "Coder Proxy | AI API aggregation platform"
 		copy.Description = "Access multiple AI models through Coder Proxy's unified API gateway. Explore pricing, create an account, and connect your applications."
 		copy.Heading = "One gateway for AI model APIs"
 		copy.Lead = "Coder Proxy is an AI aggregation platform. Use one account to access supported models through a unified API, review current pricing, and manage your usage from one dashboard."
-		copy.Sections = []siteSEOSection{{"Access AI models", "Connect applications through supported API protocols and model routes. Available models and capabilities depend on the current service configuration."}, {"Understand costs", "Check the public pricing page before use. Usage and charges can be reviewed in your account dashboard."}, {"Start with documentation", "Create an account, obtain an API key, and follow the integration documentation for your chosen protocol."}}
+		copy.Sections = []siteSEOSection{{"Access AI models", "Connect applications through supported API protocols and model routes. Available models and capabilities depend on the current service configuration.", "Current model pricing", "/pricing"}, {"Understand costs", "Check the public pricing page before use. Usage and charges can be reviewed in your account dashboard.", "Current pricing", "/pricing"}, {"Start with documentation", "Create an account, obtain an API key, and follow the integration documentation for your chosen protocol.", "Gateway software documentation", "https://docs.newapi.pro/"}}
 		copy.ContactIntro = "Questions about access, billing, or integration? Reach us through these channels."
 		if lang == "zh-CN" {
 			copy.SocialTitle = "Coder Proxy｜AI 模型聚合 API 平台"
@@ -161,14 +174,15 @@ func siteCopy(kind, lang string) siteSEOCopy {
 			copy.Heading = "一个入口，连接多种 AI 模型 API"
 			copy.Lead = "Coder Proxy 是 AI 聚合平台。你可以通过统一 API 调用本站支持的模型，在同一账户中查看当前价格、管理密钥并追踪用量。"
 			copy.Sections = []siteSEOSection{
-				{"Coder Proxy 是什么？", "Coder Proxy 是面向开发者的托管 AI API 聚合服务。你通过本站账户和统一接口调用当前开放的模型，不需要自行部署网关或管理上游渠道。本站与网关软件的功能范围不同，实际可用模型和接口以公开定价页及接入文档为准。"},
-				{"如何开始调用？", "先创建账户，在控制台获取本站 API 密钥，再按所选协议的接入文档配置请求地址和模型名称。密钥用于你的应用调用，请勿放在公开网页或提交到代码仓库。完成接入后，可在账户中查看调用记录。"},
-				{"支持哪些模型和接口？", "可用范围取决于本站当前配置，不等同于网关软件支持的全部提供方、模型或端点。选择模型前，先在定价页查看当前展示的模型与计费方式；再结合接入文档确认所需协议和参数。页面未列出的能力不要视为已经开放。"},
-				{"费用与用量在哪里查看？", "使用前可公开查看定价页。实际价格、单位及适用条件以该页当前数据为准，不应依赖旧截图或固定宣传数字。登录后可在控制台查看账户用量与费用记录；如对记录有疑问，可提供请求时间和相关标识联系本站支持。"},
+				{"Coder Proxy 是什么？", "Coder Proxy 是面向开发者的托管 AI API 聚合服务。你通过本站账户和统一接口调用当前开放的模型，不需要自行部署网关或管理上游渠道。本站与网关软件的功能范围不同，实际可用模型和接口以公开定价页及接入文档为准。", "关于本站", "/about?lang=zh-CN"},
+				{"如何开始调用？", "先创建账户，在控制台获取本站 API 密钥，再按所选协议的接入文档配置请求地址和模型名称。密钥用于你的应用调用，请勿放在公开网页或提交到代码仓库。完成接入后，可在账户中查看调用记录。", "网关软件接入文档", "https://docs.newapi.pro/"},
+				{"支持哪些模型和接口？", "可用范围取决于本站当前配置，不等同于网关软件支持的全部提供方、模型或端点。选择模型前，先在定价页查看当前展示的模型与计费方式；再结合接入文档确认所需协议和参数。页面未列出的能力不要视为已经开放。", "本站当前定价", "/pricing?lang=zh-CN"},
+				{"费用与用量在哪里查看？", "使用前可公开查看定价页。实际价格、单位及适用条件以该页当前数据为准，不应依赖旧截图或固定宣传数字。登录后可在控制台查看账户用量与费用记录；如对记录有疑问，可提供请求时间和相关标识联系本站支持。", "本站当前定价", "/pricing?lang=zh-CN"},
 			}
 			copy.ContactIntro = "关于接入、计费或使用问题，可以通过以下方式联系。"
 		}
 	case "pricing":
+		copy.ModifiedDate = siteSEOContentModified
 		home := siteCopy("home", lang)
 		copy.Title = "New API | " + copy.PricingLabel
 		copy.SocialTitle, copy.Description = "Coder Proxy | "+copy.PricingLabel, home.Sections[1].Text
@@ -181,9 +195,9 @@ func siteCopy(kind, lang string) siteSEOCopy {
 			copy.Heading = "如何查看 Coder Proxy 当前价格？"
 			copy.Lead = "本站的模型价格随服务配置更新。请在下方交互式定价列表查看当前开放的模型、价格和适用条件；登录后可在控制台核对自己的调用用量与费用记录。"
 			copy.Sections = []siteSEOSection{
-				{"价格以什么为准？", "以本页实时展示的数据为准。不同模型和计费方式可能使用不同单位，比较前请查看对应模型的详细说明；不要把过去保存的截图、示例金额或其他站点的价格视为本站现价。"},
-				{"如何选择模型？", "先在定价列表确认本站当前开放的模型，再核对所需接口、能力和适用条件。列表会随服务配置变化，不能把网关软件支持的全部模型视为本站已经开放。"},
-				{"如何核对用量？", "登录后在控制台查看调用记录、用量与费用。如对某次调用有疑问，请通过联系页面提供相关请求时间和标识，不要发送 API 密钥或密码。"},
+				{"价格以什么为准？", "以本页实时展示的数据为准。不同模型和计费方式可能使用不同单位，比较前请查看对应模型的详细说明；不要把过去保存的截图、示例金额或其他站点的价格视为本站现价。", "联系价格支持", "/contact?lang=zh-CN"},
+				{"如何选择模型？", "先在定价列表确认本站当前开放的模型，再核对所需接口、能力和适用条件。列表会随服务配置变化，不能把网关软件支持的全部模型视为本站已经开放。", "网关软件接入文档", "https://docs.newapi.pro/"},
+				{"如何核对用量？", "登录后在控制台查看调用记录、用量与费用。如对某次调用有疑问，请通过联系页面提供相关请求时间和标识，不要发送 API 密钥或密码。", "联系本站支持", "/contact?lang=zh-CN"},
 			}
 			copy.ContactIntro = "对价格、用量或接入有疑问，可通过以下渠道联系本站。"
 		}
@@ -193,7 +207,7 @@ func siteCopy(kind, lang string) siteSEOCopy {
 		copy.Description = "Learn what Coder Proxy provides, how its AI API gateway works, and how to contact the service."
 		copy.Heading = "About Coder Proxy"
 		copy.Lead = "Coder Proxy provides a hosted AI aggregation platform for people building applications with AI models."
-		copy.Sections = []siteSEOSection{{"What the service does", "The platform provides account access, API credentials, model routing, pricing information, and usage records in one place."}, {"What to check before use", "Supported providers, models, capabilities, and prices can change. Review the live pricing page and integration documentation before choosing a route."}, {"Project attribution", "Coder Proxy uses the New API gateway project. The original New API project and QuantumNous attribution remain with that project; this site's support channels are listed below."}}
+		copy.Sections = []siteSEOSection{{Title: "What the service does", Text: "The platform provides account access, API credentials, model routing, pricing information, and usage records in one place."}, {Title: "What to check before use", Text: "Supported providers, models, capabilities, and prices can change. Review the live pricing page and integration documentation before choosing a route."}, {Title: "Project attribution", Text: "Coder Proxy uses the New API gateway project. The original New API project and QuantumNous attribution remain with that project; this site's support channels are listed below."}}
 		copy.ContactIntro = "For questions about this service, contact us directly."
 		if lang == "zh-CN" {
 			copy.Title = "New API | 关于 Coder Proxy"
@@ -201,7 +215,7 @@ func siteCopy(kind, lang string) siteSEOCopy {
 			copy.Description = "了解 Coder Proxy 的 AI 聚合服务、统一 API 接入方式与本站联系方式。"
 			copy.Heading = "关于 Coder Proxy"
 			copy.Lead = "Coder Proxy 为需要调用 AI 模型的开发者和应用提供托管的 AI 聚合服务。"
-			copy.Sections = []siteSEOSection{{"服务内容", "本站集中提供账户、API 密钥、模型路由、价格查询和用量记录，便于在一个平台接入与管理 AI 调用。"}, {"使用前确认", "支持的提供方、模型、能力与价格可能变化。选择路由前，请查看实时定价页与接入文档。"}, {"项目归属", "Coder Proxy 使用 New API 网关项目。New API 与 QuantumNous 的原项目署名保持不变；本站支持渠道见下方。"}}
+			copy.Sections = []siteSEOSection{{Title: "服务内容", Text: "本站集中提供账户、API 密钥、模型路由、价格查询和用量记录，便于在一个平台接入与管理 AI 调用。"}, {Title: "使用前确认", Text: "支持的提供方、模型、能力与价格可能变化。选择路由前，请查看实时定价页与接入文档。"}, {Title: "项目归属", Text: "Coder Proxy 使用 New API 网关项目。New API 与 QuantumNous 的原项目署名保持不变；本站支持渠道见下方。"}}
 			copy.ContactIntro = "如需了解本站服务，可直接联系。"
 		}
 	case "contact":
@@ -413,6 +427,36 @@ func renderSiteSEOPage(indexPage []byte, copy siteSEOCopy) ([]byte, error) {
 	script := &html.Node{Type: html.ElementNode, Data: "script", Attr: []html.Attribute{{Key: "type", Val: "application/ld+json"}}}
 	script.AppendChild(&html.Node{Type: html.TextNode, Data: string(website)})
 	head.AppendChild(script)
+	if copy.ModifiedDate != "" {
+		appendSEOMeta(head, "name", "author", "Coder Proxy")
+		organizationID := siteSEOOrigin + "/#organization"
+		serviceID := siteSEOOrigin + "/#service"
+		organization := map[string]any{
+			"@type": "Organization", "@id": organizationID, "name": "Coder Proxy", "url": siteSEOOrigin + "/",
+			"contactPoint": map[string]any{"@type": "ContactPoint", "contactType": "customer support", "email": "krismiledev@gmail.com", "url": "https://t.me/krismileji"},
+		}
+		webpage := map[string]any{
+			"@type": "WebPage", "@id": canonical + "#webpage", "url": canonical, "name": copy.Heading,
+			"description": copy.Description, "inLanguage": copy.Lang, "dateModified": copy.ModifiedDate,
+			"author": map[string]any{"@id": organizationID}, "publisher": map[string]any{"@id": organizationID},
+			"about": map[string]any{"@id": serviceID},
+		}
+		graph := []map[string]any{organization, webpage}
+		if copy.PageKind == "home" {
+			graph = append(graph, map[string]any{
+				"@type": "Service", "@id": serviceID, "name": "Coder Proxy", "serviceType": "AI API gateway",
+				"url": siteSEOOrigin + "/", "description": copy.Lead,
+				"provider": map[string]any{"@id": organizationID},
+			})
+		}
+		structured, err := common.Marshal(map[string]any{"@context": "https://schema.org", "@graph": graph})
+		if err != nil {
+			return nil, err
+		}
+		entityScript := &html.Node{Type: html.ElementNode, Data: "script", Attr: []html.Attribute{{Key: "type", Val: "application/ld+json"}}}
+		entityScript.AppendChild(&html.Node{Type: html.TextNode, Data: string(structured)})
+		head.AppendChild(entityScript)
+	}
 	style := &html.Node{Type: html.ElementNode, Data: "style"}
 	style.AppendChild(&html.Node{Type: html.TextNode, Data: siteSEOStyle})
 	head.AppendChild(style)
@@ -450,19 +494,23 @@ func renderSiteSEOPage(indexPage []byte, copy siteSEOCopy) ([]byte, error) {
 
 func siteSEOPublicJSON(copy siteSEOCopy) ([]byte, error) {
 	return common.Marshal(map[string]any{
-		"kind":         copy.PageKind,
-		"lang":         copy.Lang,
-		"title":        copy.Title,
-		"heading":      copy.Heading,
-		"lead":         copy.Lead,
-		"sections":     copy.Sections,
-		"contactIntro": copy.ContactIntro,
-		"contactLabel": copy.ContactLabel,
-		"aboutLabel":   copy.AboutLabel,
-		"projectNote":  copy.ProjectNote,
-		"signupLabel":  copy.SignupLabel,
-		"pricingLabel": copy.PricingLabel,
-		"docsLabel":    copy.DocsLabel,
+		"kind":            copy.PageKind,
+		"lang":            copy.Lang,
+		"title":           copy.Title,
+		"heading":         copy.Heading,
+		"lead":            copy.Lead,
+		"sections":        copy.Sections,
+		"contactIntro":    copy.ContactIntro,
+		"contactLabel":    copy.ContactLabel,
+		"aboutLabel":      copy.AboutLabel,
+		"projectNote":     copy.ProjectNote,
+		"maintainerLabel": copy.MaintainerLabel,
+		"updatedLabel":    copy.UpdatedLabel,
+		"updatedDate":     copy.UpdatedDate,
+		"modifiedDate":    copy.ModifiedDate,
+		"signupLabel":     copy.SignupLabel,
+		"pricingLabel":    copy.PricingLabel,
+		"docsLabel":       copy.DocsLabel,
 	})
 }
 
