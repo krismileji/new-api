@@ -170,9 +170,9 @@ func siteCopy(kind, lang string) siteSEOCopy {
 		copy.ContactIntro = "Questions about access, billing, or integration? Reach us through these channels."
 		if lang == "zh-CN" {
 			copy.SocialTitle = "Coder Proxy｜AI 模型聚合 API 平台"
-			copy.Description = "通过 Coder Proxy 的统一 API 接入多种 AI 模型。查看当前价格、创建账户，并在控制台管理用量。"
+			copy.Description = "Coder Proxy（亦称 Coder API）提供统一 AI 模型 API 接入。查看当前价格、创建账户，并在控制台管理用量。"
 			copy.Heading = "一个入口，连接多种 AI 模型 API"
-			copy.Lead = "Coder Proxy 是 AI 聚合平台。你可以通过统一 API 调用本站支持的模型，在同一账户中查看当前价格、管理密钥并追踪用量。"
+			copy.Lead = "Coder Proxy（亦称 Coder API）是 AI 聚合平台。你可以通过统一 API 调用本站支持的模型，在同一账户中查看当前价格、管理密钥并追踪用量。"
 			copy.Sections = []siteSEOSection{
 				{"Coder Proxy 是什么？", "Coder Proxy 是面向开发者的托管 AI API 聚合服务。你通过本站账户和统一接口调用当前开放的模型，不需要自行部署网关或管理上游渠道。本站与网关软件的功能范围不同，实际可用模型和接口以公开定价页及接入文档为准。", "关于本站", "/about?lang=zh-CN"},
 				{"如何开始调用？", "先创建账户，在控制台获取本站 API 密钥，再按所选协议的接入文档配置请求地址和模型名称。密钥用于你的应用调用，请勿放在公开网页或提交到代码仓库。完成接入后，可在账户中查看调用记录。", "网关软件接入文档", "https://docs.newapi.pro/"},
@@ -212,9 +212,9 @@ func siteCopy(kind, lang string) siteSEOCopy {
 		if lang == "zh-CN" {
 			copy.Title = "New API | 关于 Coder Proxy"
 			copy.SocialTitle = "关于 Coder Proxy"
-			copy.Description = "了解 Coder Proxy 的 AI 聚合服务、统一 API 接入方式与本站联系方式。"
+			copy.Description = "了解 Coder Proxy（亦称 Coder API）的 AI 聚合服务、统一 API 接入方式与本站联系方式。"
 			copy.Heading = "关于 Coder Proxy"
-			copy.Lead = "Coder Proxy 为需要调用 AI 模型的开发者和应用提供托管的 AI 聚合服务。"
+			copy.Lead = "Coder Proxy 与 Coder API 是本站同一服务的两个名称，为需要调用 AI 模型的开发者和应用提供托管的 AI 聚合服务。"
 			copy.Sections = []siteSEOSection{{Title: "服务内容", Text: "本站集中提供账户、API 密钥、模型路由、价格查询和用量记录，便于在一个平台接入与管理 AI 调用。"}, {Title: "使用前确认", Text: "支持的提供方、模型、能力与价格可能变化。选择路由前，请查看实时定价页与接入文档。"}, {Title: "项目归属", Text: "Coder Proxy 使用 New API 网关项目。New API 与 QuantumNous 的原项目署名保持不变；本站支持渠道见下方。"}}
 			copy.ContactIntro = "如需了解本站服务，可直接联系。"
 		}
@@ -236,13 +236,13 @@ func siteCopy(kind, lang string) siteSEOCopy {
 	case "privacy-policy":
 		copy.Title = "New API | 隐私政策"
 		copy.SocialTitle = "Coder Proxy 隐私政策"
-		copy.Description = "了解 Coder Proxy 已发布的隐私政策。"
+		copy.Description = "了解 Coder API（亦称 Coder Proxy）已发布的隐私政策。"
 		copy.Heading = "隐私政策"
 		copy.OtherLang = ""
 	case "user-agreement":
 		copy.Title = "New API | 用户协议"
 		copy.SocialTitle = "Coder Proxy 用户协议"
-		copy.Description = "阅读 Coder Proxy 已发布的用户协议。"
+		copy.Description = "阅读 Coder API（亦称 Coder Proxy）已发布的用户协议。"
 		copy.Heading = "用户协议"
 		copy.OtherLang = ""
 	}
@@ -420,7 +420,7 @@ func renderSiteSEOPage(indexPage []byte, copy siteSEOCopy) ([]byte, error) {
 			head.AppendChild(&html.Node{Type: html.ElementNode, Data: "link", Attr: []html.Attribute{{Key: "rel", Val: "alternate"}, {Key: "hreflang", Val: alternate.lang}, {Key: "href", Val: alternate.url}}})
 		}
 	}
-	website, err := common.Marshal(map[string]any{"@context": "https://schema.org", "@type": "WebSite", "name": "Coder Proxy", "url": siteSEOOrigin + "/", "inLanguage": []string{"en", "zh-CN"}})
+	website, err := common.Marshal(map[string]any{"@context": "https://schema.org", "@type": "WebSite", "name": "Coder Proxy", "alternateName": "Coder API", "url": siteSEOOrigin + "/", "inLanguage": []string{"en", "zh-CN"}})
 	if err != nil {
 		return nil, err
 	}
@@ -432,7 +432,7 @@ func renderSiteSEOPage(indexPage []byte, copy siteSEOCopy) ([]byte, error) {
 		organizationID := siteSEOOrigin + "/#organization"
 		serviceID := siteSEOOrigin + "/#service"
 		organization := map[string]any{
-			"@type": "Organization", "@id": organizationID, "name": "Coder Proxy", "url": siteSEOOrigin + "/",
+			"@type": "Organization", "@id": organizationID, "name": "Coder Proxy", "alternateName": "Coder API", "url": siteSEOOrigin + "/",
 			"contactPoint": map[string]any{"@type": "ContactPoint", "contactType": "customer support", "email": "krismiledev@gmail.com", "url": "https://t.me/krismileji"},
 		}
 		webpage := map[string]any{
@@ -444,7 +444,7 @@ func renderSiteSEOPage(indexPage []byte, copy siteSEOCopy) ([]byte, error) {
 		graph := []map[string]any{organization, webpage}
 		if copy.PageKind == "home" {
 			graph = append(graph, map[string]any{
-				"@type": "Service", "@id": serviceID, "name": "Coder Proxy", "serviceType": "AI API gateway",
+				"@type": "Service", "@id": serviceID, "name": "Coder Proxy", "alternateName": "Coder API", "serviceType": "AI API gateway",
 				"url": siteSEOOrigin + "/", "description": copy.Lead,
 				"provider": map[string]any{"@id": organizationID},
 			})
@@ -608,7 +608,7 @@ func (pages siteSEOPages) serve(c *gin.Context) {
 	case "/llms.txt":
 		contentType = "text/plain; charset=utf-8"
 		var links strings.Builder
-		links.WriteString("# Coder Proxy\n\nAI API aggregation platform / AI 模型聚合 API 平台.\n\n## 页面\n")
+		links.WriteString("# Coder Proxy\n\nCoder API 是 Coder Proxy 的别名，同属本站 AI 模型聚合 API 服务。\n\n## 页面\n")
 		if !hasCustomHome {
 			links.WriteString("- [首页（英文）](" + siteSEOOrigin + "/)\n- [首页（简体中文）](" + siteSEOOrigin + "/?lang=zh-CN)\n")
 		}
