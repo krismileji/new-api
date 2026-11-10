@@ -71,6 +71,8 @@ interface MultiSelectProps {
   emptyText?: string
   /** Optional `id` to wire labels/aria-describedby to the input. */
   id?: string
+  'aria-describedby'?: string
+  'aria-invalid'?: React.AriaAttributes['aria-invalid']
   /** Disable the entire control. */
   disabled?: boolean
   /**
@@ -405,6 +407,8 @@ export function MultiSelect(props: MultiSelectProps) {
         </ComboboxValue>
         <ComboboxChipsInput
           id={props.id}
+          aria-describedby={props['aria-describedby']}
+          aria-invalid={props['aria-invalid']}
           placeholder={
             props.selected.length === 0 && !props.renderSelectedSummary
               ? placeholder

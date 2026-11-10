@@ -162,6 +162,33 @@ export async function getChannelMonitorAnalyticsOptions() {
   return ensureChannelMonitorSuccess(response.data)
 }
 
+export type ChannelMonitorProfitSettings = {
+  cost_only_api_key_ids: number[]
+}
+
+export async function getChannelMonitorProfitSettings() {
+  const response = await api.get<
+    ChannelMonitorApiResponse<ChannelMonitorProfitSettings>
+  >(
+    '/api/channel_monitor/analytics/profit-settings',
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data).data
+}
+
+export async function saveChannelMonitorProfitSettings(
+  settings: ChannelMonitorProfitSettings
+) {
+  const response = await api.put<
+    ChannelMonitorApiResponse<ChannelMonitorProfitSettings>
+  >(
+    '/api/channel_monitor/analytics/profit-settings',
+    settings,
+    channelMonitorRequestConfig()
+  )
+  return ensureChannelMonitorSuccess(response.data).data
+}
+
 export async function getChannelMonitorOverview() {
   const response = await api.get<
     ChannelMonitorApiResponse<ChannelMonitorOverview>

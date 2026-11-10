@@ -3,13 +3,17 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -267,6 +271,118 @@ func runChannelMonitorProfitAnalyticsCases(t *testing.T, db *gorm.DB, day int64)
 	detail, err := queryChannelMonitorProfitAnalytics(context.Background(), filtered)
 	require.NoError(t, err)
 	assert.Equal(t, int64(65_000_000_000), detail.ScopeSummary["profit_nano_cny"])
+
+	t.Run("self_use_keys_exclude_income_but_keep_all_costs", func(t *testing.T) {
+		ctx := context.Background()
+		t.Cleanup(func() {
+			assert.NoError(t, db.Where(&model.Option{Key: channelMonitorProfitSettingsOption}).Delete(&model.Option{}).Error)
+			common.OptionMapRWMutex.Lock()
+			delete(common.OptionMap, channelMonitorProfitSettingsOption)
+			common.OptionMapRWMutex.Unlock()
+		})
+		settings, err := readChannelMonitorProfitSettings(ctx, db)
+		require.NoError(t, err)
+		assert.Empty(t, settings.CostOnlyAPIKeyIDs)
+		common.OptionMapRWMutex.Lock()
+		if common.OptionMap == nil {
+			common.OptionMap = make(map[string]string)
+		}
+		common.OptionMapRWMutex.Unlock()
+		router := gin.New()
+		router.GET("/settings", GetChannelMonitorProfitSettings)
+		router.PUT("/settings", SaveChannelMonitorProfitSettings)
+		for _, body := range []string{`{}`, `{"cost_only_api_key_ids":null}`, `{"cost_only_api_key_ids":[0]}`, `{"cost_only_api_key_ids":[-1]}`, `{"cost_only_api_key_ids":[1.5]}`, `{"cost_only_api_key_ids":[2147483648]}`, `{"cost_only_api_key_ids":["sk-secret"]}`, `{"cost_only_api_key_ids":[` + strings.Repeat("1,", 1000) + `1]}`} {
+			result := httptest.NewRecorder()
+			router.ServeHTTP(result, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(body)))
+			assert.Equal(t, http.StatusBadRequest, result.Code, body)
+		}
+		result := httptest.NewRecorder()
+		router.ServeHTTP(result, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"cost_only_api_key_ids":[202,201,201]}`)))
+		require.Equal(t, http.StatusOK, result.Code, result.Body.String())
+		settings, err = readChannelMonitorProfitSettings(ctx, db)
+		require.NoError(t, err)
+		assert.Equal(t, []int{201, 202}, settings.CostOnlyAPIKeyIDs)
+		result = httptest.NewRecorder()
+		router.ServeHTTP(result, httptest.NewRequest(http.MethodGet, "/settings", nil))
+		assert.JSONEq(t, `{"success":true,"message":"","data":{"cost_only_api_key_ids":[201,202]}}`, result.Body.String())
+
+		for _, dimension := range []string{"channel", "day", "user", "api_key", "model", "channel_model", "api_key_channel_model"} {
+			detailQuery := query
+			detailQuery.GroupBy, detailQuery.PageSize = dimension, 1
+			response, err := queryChannelMonitorProfitAnalytics(ctx, detailQuery)
+			require.NoError(t, err, dimension)
+			assert.Equal(t, int64(0), response.ScopeSummary["income_nano_cny"], dimension)
+			assert.Equal(t, int64(110_000_000_000), response.ScopeSummary["excluded_income_nano_cny"], dimension)
+			assert.Equal(t, int64(0), response.ScopeSummary["wallet_income_nano_cny"], dimension)
+			assert.Equal(t, int64(0), response.ScopeSummary["subscription_income_nano_cny"], dimension)
+			assert.Equal(t, int64(75_000_000_000), response.ScopeSummary["cost_nano_cny"], dimension)
+			assert.Equal(t, int64(-75_000_000_000), response.ScopeSummary["profit_nano_cny"], dimension)
+			assert.Equal(t, true, response.ScopeSummary["profit_confirmed"], dimension)
+			assert.Nil(t, response.ScopeSummary["profit_rate"].(*float64), dimension)
+			require.Len(t, response.Items, 1, dimension)
+		}
+
+		// Changing policy applies to existing history and preserves other keys.
+		result = httptest.NewRecorder()
+		router.ServeHTTP(result, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"cost_only_api_key_ids":[201]}`)))
+		require.Equal(t, http.StatusOK, result.Code)
+		lossQuery := query
+		lossQuery.OnlyLoss, lossQuery.PageSize = true, 1
+		losses, err := queryChannelMonitorProfitAnalytics(ctx, lossQuery)
+		require.NoError(t, err)
+		assert.EqualValues(t, 2, losses.Total)
+		assert.Equal(t, int64(10_000_000_000), losses.ScopeSummary["income_nano_cny"])
+		assert.Equal(t, int64(-65_000_000_000), losses.ScopeSummary["profit_nano_cny"])
+		assert.Equal(t, secondChannel, losses.Items[0]["channel_id"], "profit sort follows the policy before pagination")
+		selfUse, err := queryChannelMonitorProfitAnalytics(ctx, filtered)
+		require.NoError(t, err)
+		assert.Equal(t, int64(-35_000_000_000), selfUse.ScopeSummary["profit_nano_cny"])
+		assert.Equal(t, int64(100_000_000_000), selfUse.ScopeSummary["excluded_income_nano_cny"])
+
+		require.NoError(t, db.AutoMigrate(&model.ChannelMonitorDailySuccessLedger{}, &model.ChannelMonitorDailyCheckpoint{}))
+		require.NoError(t, db.Where("day_start = ? AND channel_id = ?", day, firstChannel).Delete(&model.ChannelMonitorDailySuccessLedger{}).Error)
+		require.NoError(t, db.Where("day_start = ?", day).Delete(&model.ChannelMonitorDailyCheckpoint{}).Error)
+		require.NoError(t, db.Create(&model.ChannelMonitorDailyCheckpoint{DayStart: day, Revision: 1, UpdatedAt: day + 86399}).Error)
+		identity := model.ChannelMonitorDailyMetricIdentity{ChannelID: firstChannel, UserID: 101, APIKeyID: 201, APIKeyKey: "request-key-one", Model: "gpt-4.1"}
+		requests := identity.LedgerRow(day)
+		requests.ActualSuccessCount, requests.ActualFailureCount = 3, 1
+		requests.CacheReadTokens, requests.InputTokens, requests.CacheWriteCount = 40, 100, 1
+		require.NoError(t, db.Create(&requests).Error)
+		overviewQuery := filtered
+		overviewQuery.Metric, overviewQuery.GroupBy = "overview", "api_key"
+		overview, err := queryChannelMonitorHistoricalAnalytics(ctx, overviewQuery)
+		require.NoError(t, err)
+		require.Len(t, overview.Items, 1)
+		assert.EqualValues(t, -35_000_000_000, overview.Items[0]["profit_nano_cny"])
+		assert.EqualValues(t, 4, overview.Items[0]["actual_sample_count"])
+		assert.Equal(t, 0.75, overview.Items[0]["actual_success_rate"])
+		assert.Equal(t, 0.4, overview.Items[0]["cache_utilization_rate"])
+		assert.EqualValues(t, 1, overview.Items[0]["cache_write_request_count"])
+
+		// A pending excluded charge does not block profit, but missing costs do.
+		require.NoError(t, db.Model(&model.ChannelMonitorIncome{}).Where("settlement_key = ?", settlementKeys[0]).Updates(map[string]any{"status": "pending", "cost_recorded": 0}).Error)
+		selfUse, err = queryChannelMonitorProfitAnalytics(ctx, filtered)
+		require.NoError(t, err)
+		assert.Equal(t, int64(0), selfUse.ScopeSummary["pending_income_count"])
+		assert.Equal(t, false, selfUse.ScopeSummary["profit_confirmed"])
+		require.NoError(t, db.Model(&model.ChannelMonitorIncome{}).Where("settlement_key = ?", settlementKeys[0]).Update("cost_recorded", 1).Error)
+		selfUse, err = queryChannelMonitorProfitAnalytics(ctx, filtered)
+		require.NoError(t, err)
+		assert.Equal(t, true, selfUse.ScopeSummary["profit_confirmed"])
+		require.NoError(t, db.Model(&model.ChannelMonitorIncome{}).Where("settlement_key = ?", settlementKeys[0]).Update("status", "settled").Error)
+
+		result = httptest.NewRecorder()
+		router.ServeHTTP(result, httptest.NewRequest(http.MethodPut, "/settings", strings.NewReader(`{"cost_only_api_key_ids":[]}`)))
+		require.Equal(t, http.StatusOK, result.Code)
+		restored, err := queryChannelMonitorProfitAnalytics(ctx, query)
+		require.NoError(t, err)
+		assert.Equal(t, int64(110_000_000_000), restored.ScopeSummary["income_nano_cny"])
+		assert.Equal(t, int64(35_000_000_000), restored.ScopeSummary["profit_nano_cny"])
+		assert.Equal(t, int64(0), restored.ScopeSummary["excluded_income_nano_cny"])
+		require.NoError(t, db.Model(&model.Option{}).Where(&model.Option{Key: channelMonitorProfitSettingsOption}).Update("value", `{"cost_only_api_key_ids":[0]}`).Error)
+		_, err = queryChannelMonitorProfitAnalytics(ctx, query)
+		assert.Error(t, err, "invalid stored policy must not silently count self-use income")
+	})
 
 	require.NoError(t, db.Create(&model.ChannelMonitorIncome{
 		SettlementKey: "profit-income-pending", DayStart: day, ChannelID: 900233,

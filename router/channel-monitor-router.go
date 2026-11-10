@@ -60,6 +60,8 @@ func registerChannelMonitorRoutes(apiRouter *gin.RouterGroup) {
 		monitorRoute.GET("/analytics/trend", controller.GetChannelMonitorAnalyticsTrend)
 		monitorRoute.GET("/analytics/rows", controller.GetChannelMonitorAnalyticsRows)
 		monitorRoute.GET("/analytics/options", controller.GetChannelMonitorAnalyticsOptions)
+		monitorRoute.GET("/analytics/profit-settings", controller.GetChannelMonitorProfitSettings)
+		monitorRoute.PUT("/analytics/profit-settings", controller.SaveChannelMonitorProfitSettings)
 		monitorRoute.POST("/analytics/backfill", controller.RunChannelMonitorAnalyticsBackfill)
 		monitorRoute.GET("/performance", controller.GetChannelMonitorPerformance)
 		monitorRoute.GET("/status", controller.GetChannelStatusProbeOverview)

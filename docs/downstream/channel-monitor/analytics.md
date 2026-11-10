@@ -6,6 +6,8 @@
 
 合并概览按维度匹配两份完整统计后再排序和分页，保留只有失败请求或只有探测成本的行。真实入站 API Key 按用户与 ID 匹配，模型按名称匹配；不把成本与请求统计中的不同指纹直接当作相同身份。“仅看已确认亏损”筛选整行，顶部汇总和趋势仍展示完整范围。金额与请求统计保留各自的完整性提示；统计不完整时，缺失记录不能按零展示。单层合并超过 20,000 个维度时，需缩小日期或搜索范围。
 
+工具栏的“自用 API Key”按入站 Key ID 配置仅计成本的请求：指定 Key 的扣费不计入收入，成本仍从利润中扣除，请求指标保留。该设置对所有日期和渠道全局生效，保存后刷新总览、趋势及明细，清空后可恢复原统计口径。详见[利润统计](profit.md)。
+
 ## 展开顺序与查询范围
 
 | 页签 | 展开顺序 |
@@ -62,6 +64,7 @@
 | `GET /summary`、`GET /rows` | 范围汇总与当前页 |
 | `GET /trend` | 按日趋势，不接受分钟模式 |
 | `GET /options` | 渠道 ID/名称选项；不是通用用户或 Key 搜索接口 |
+| `GET /profit-settings`、`PUT /profit-settings` | 读取或保存全局自用 Key 配置；请求与结果为 `{"cost_only_api_key_ids":[12,34]}`，空列表清空；仅接收正整数 ID，不接收完整密钥 |
 | `POST /backfill` | 有界、幂等的历史成本明细回填 |
 
 查询支持 `metric=cost/profit/success/performance/overview`、日期 `from/to`、`group_by`、父级筛选、`search`、白名单 `sort`、`direction` 和 `page/page_size`。`overview` 返回金额与请求指标的合并明细，支持两类指标排序和 `only_loss`；`coverage` 表示金额核对范围，`request_coverage` 表示请求统计覆盖，`request_metrics_available=false` 的行不能展示为零请求。模型下钻需同时传入模型名称及返回的模型标识。

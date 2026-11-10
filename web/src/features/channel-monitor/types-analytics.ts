@@ -64,6 +64,7 @@ export type ChannelMonitorAnalyticsQuery = {
 }
 
 export type ChannelMonitorAnalyticsSummary = {
+  excluded_income_nano_cny?: number
   request_metrics_available?: boolean
   actual_success_count: number
   actual_failure_count: number

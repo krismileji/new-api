@@ -50,6 +50,7 @@ import {
 } from './channel-monitor-analytics-performance'
 import { ChannelMonitorAnalyticsExpandableTable } from './channel-monitor-analytics-table'
 import { ChannelMonitorProfitValue } from './channel-monitor-profit'
+import { ChannelMonitorProfitSettingsButton } from './channel-monitor-profit-settings'
 import { ChannelMonitorProfitStatus } from './channel-monitor-profit-status'
 
 type ChannelMonitorAnalyticsDialogProps = {
@@ -597,6 +598,16 @@ function ChannelMonitorAnalyticsPanel(
             {formatProfitMoney(
               response.scope_summary.model_detection_cost_nano_cny
             )}
+            {response.scope_summary.excluded_income_nano_cny ? (
+              <>
+                {' '}
+                · 已排除自用扣费{' '}
+                {formatProfitMoney(
+                  response.scope_summary.excluded_income_nano_cny
+                )}
+                （成本仍计入）
+              </>
+            ) : null}
           </p>
           {response.scope_summary.income_started_at ? (
             <p className='text-muted-foreground text-xs'>
@@ -842,6 +853,9 @@ export function ChannelMonitorAnalyticsDialog(
           aria-label='搜索分析明细'
           className='min-w-0 sm:ml-auto sm:max-w-xs'
         />
+        {props.metric === 'profit' || props.metric === 'overview' ? (
+          <ChannelMonitorProfitSettingsButton />
+        ) : null}
         {props.rangeMinutes != null ? (
           <span
             aria-label='统计时间范围'
