@@ -421,8 +421,44 @@ func (channelRatioMonitorTaskHandler) Interval() time.Duration {
 
 func (channelRatioMonitorTaskHandler) NewPayload() any { return nil }
 
+type channelMonitorUpdateWindow struct {
+	Start    int64 `json:"start"`
+	Deadline int64 `json:"deadline"`
+}
+
+func (channelRatioMonitorTaskHandler) NewScheduledPayload(start, deadline time.Time) any {
+	return channelMonitorUpdateWindow{Start: start.Unix(), Deadline: deadline.Unix()}
+}
+
+func channelMonitorUpdateContext(ctx context.Context, task *model.SystemTask) (context.Context, context.CancelFunc, error) {
+	var window channelMonitorUpdateWindow
+	if err := task.DecodePayload(&window); err != nil {
+		return ctx, nil, err
+	}
+	var cancel context.CancelFunc
+	if window.Deadline > 0 {
+		ctx, cancel = context.WithDeadline(ctx, time.Unix(window.Deadline, 0))
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
+	if err := ctx.Err(); err != nil {
+		cancel()
+		return ctx, nil, err
+	}
+	return context.WithValue(ctx, upstreamAccountBalanceRoundKey{}, &upstreamAccountBalanceRound{start: window.Start}), cancel, nil
+}
+
 func (channelRatioMonitorTaskHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	ctx, cancel, err := channelMonitorUpdateContext(ctx, task)
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	defer cancel()
 	summary, err := runChannelRatioMonitorTaskOnce(ctx, service.NewSystemTaskProgressReporter(task, runnerID), common.SendEmail)
+	if err == nil {
+		err = ctx.Err()
+	}
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
 		return
@@ -714,29 +750,23 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 			refreshOptions := channelMonitorRefreshOptions{IncludeSeparateBalance: true}
 			syncSkipped := false
 			retriesUsed := 0
+		retryLoop:
 			for attempt := 0; attempt <= settings.AutoUpdateRetryCount; attempt++ {
 				if attempt > 0 {
 					if settings.AutoUpdateRetryDelaySeconds > 0 {
 						timer := time.NewTimer(time.Duration(settings.AutoUpdateRetryDelaySeconds) * time.Second)
 						select {
 						case <-ctx.Done():
-							if !timer.Stop() {
-								select {
-								case <-timer.C:
-								default:
-								}
-							}
+							timer.Stop()
 							recordTaskError(ctx.Err())
-							reportChannelProgress()
-							return
+							break retryLoop
 						case <-timer.C:
 						}
 					}
 					select {
 					case <-ctx.Done():
 						recordTaskError(ctx.Err())
-						reportChannelProgress()
-						return
+						break retryLoop
 					default:
 					}
 
@@ -775,12 +805,10 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 					stateMu.Unlock()
 				}
 
-				recordedBalance = nil
-				balanceEvaluation = nil
 				balanceFetchFailure = nil
 				if fetchRatio && !ratioUpdated {
 					fetchMonitor := monitor
-					if channelRatioMonitorFailureLimitReached(fetchMonitor.BalanceConsecutiveFailures, settings.AutoUpdateConsecutiveFailureLimit) {
+					if recordedBalance != nil || channelRatioMonitorFailureLimitReached(fetchMonitor.BalanceConsecutiveFailures, settings.AutoUpdateConsecutiveFailureLimit) {
 						fetchMonitor.UpstreamBalanceSyncDisabled = true
 					}
 					outcome, err = fetchAndRecordChannelMonitorUpstreamRatio(ctx, fetchMonitor, channel.GetKeys(), channel.GetSetting().Proxy, requestTimeout, refreshOptions, 0, "系统自动更新")
@@ -1155,6 +1183,9 @@ func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(pro
 	monitorWorkers.Wait()
 	if taskErr != nil {
 		return summary, taskErr
+	}
+	if err := ctx.Err(); err != nil {
+		return summary, err
 	}
 	channels, err := model.GetAllChannelsForMonitor()
 	if err != nil {

@@ -55,6 +55,14 @@ func (h *stubScheduledHandler) Enabled() bool           { return h.enabled }
 func (h *stubScheduledHandler) Interval() time.Duration { return h.interval }
 func (h *stubScheduledHandler) NewPayload() any         { return nil }
 
+type stubFixedIntervalHandler struct {
+	*stubScheduledHandler
+}
+
+func (*stubFixedIntervalHandler) NewScheduledPayload(start, deadline time.Time) any {
+	return map[string]int64{"start": start.Unix(), "deadline": deadline.Unix()}
+}
+
 func countSystemTasks(t *testing.T, taskType string) int64 {
 	t.Helper()
 	var count int64
@@ -105,6 +113,36 @@ func TestSystemTaskSchedulerSkipsDisabled(t *testing.T) {
 
 	runSystemTaskScheduler()
 	assert.Equal(t, int64(0), countSystemTasks(t, handler.taskType))
+}
+
+func TestSystemTaskSchedulerFixedIntervalSkipsMissedAndActiveWindows(t *testing.T) {
+	truncate(t)
+	handler := &stubFixedIntervalHandler{&stubScheduledHandler{taskType: "test_fixed_schedule", enabled: true, interval: time.Minute}}
+	withSystemTaskRegistry(t, handler)
+	start := time.Now().Truncate(time.Minute)
+
+	runSystemTaskSchedulerAt(start.Add(30 * time.Second))
+	assert.Zero(t, countSystemTasks(t, handler.taskType))
+	runSystemTaskSchedulerAt(start)
+	latest, err := model.GetLatestSystemTask(handler.taskType)
+	require.NoError(t, err)
+	require.NotNil(t, latest)
+	var payload map[string]int64
+	require.NoError(t, latest.DecodePayload(&payload))
+	assert.Equal(t, map[string]int64{"start": start.Unix(), "deadline": start.Add(time.Minute).Unix()}, payload)
+
+	runSystemTaskSchedulerAt(start.Add(time.Minute))
+	require.EqualValues(t, 1, countSystemTasks(t, handler.taskType))
+	_, claimed, err := model.ClaimSystemTask(latest.ID, handler.taskType, "fixed-runner", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, model.FinishSystemTask(latest.TaskID, "fixed-runner", model.SystemTaskStatusSucceeded, nil, ""))
+	require.NoError(t, model.DB.Model(latest).Update("updated_at", start.Add(time.Minute+5*time.Second).Unix()).Error)
+	runSystemTaskSchedulerAt(start.Add(time.Minute + 10*time.Second))
+	assert.EqualValues(t, 1, countSystemTasks(t, handler.taskType))
+
+	runSystemTaskSchedulerAt(start.Add(2 * time.Minute))
+	assert.EqualValues(t, 2, countSystemTasks(t, handler.taskType))
 }
 
 func TestSystemTaskClaimPassDispatchesByType(t *testing.T) {

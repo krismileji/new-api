@@ -230,15 +230,22 @@ func TestFetchNewAPIUpstreamKeyGroupUsesChannelAPIKey(t *testing.T) {
 }
 
 func TestFetchSub2APITokenReadsGroupsRatesAndBalance(t *testing.T) {
+	profileStarted := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Bearer legacy-jwt", r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v1/groups/available":
+			select {
+			case <-profileStarted:
+			case <-r.Context().Done():
+				return
+			}
 			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":[{"id":7,"name":"vip","rate_multiplier":1.25}]}`))
 		case "/api/v1/groups/rates":
 			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"7":1.75}}`))
 		case "/api/v1/user/profile":
+			close(profileStarted)
 			_, _ = w.Write([]byte(`{"code":0,"message":"success","data":{"balance":7.25}}`))
 		case "/api/v1/auth/refresh":
 			t.Fatal("legacy token mode must not call refresh endpoint")
@@ -248,7 +255,9 @@ func TestFetchSub2APITokenReadsGroupsRatesAndBalance(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := fetchSub2APIGroupRatio(context.Background(), server.Client(), Sub2APIGroupRatioConfig{
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	result, err := fetchSub2APIGroupRatio(ctx, server.Client(), Sub2APIGroupRatioConfig{
 		BaseURL:     server.URL,
 		Group:       "vip",
 		AuthType:    Sub2APIAuthToken,

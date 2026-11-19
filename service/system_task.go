@@ -46,6 +46,10 @@ type ScheduledSystemTaskHandler interface {
 	NewPayload() any
 }
 
+type fixedIntervalSystemTaskHandler interface {
+	NewScheduledPayload(start, deadline time.Time) any
+}
+
 var (
 	systemTaskHandlersMu sync.RWMutex
 	systemTaskHandlers   = map[string]SystemTaskHandler{}
@@ -130,8 +134,9 @@ func StartSystemTaskRunner() {
 		gopool.Go(func() {
 			logger.LogInfo(context.Background(), fmt.Sprintf("system task runner started: runner=%s idle_interval=%s", runnerID, systemTaskRunnerIdleInterval))
 
-			ticker := time.NewTicker(systemTaskRunnerIdleInterval)
-			defer ticker.Stop()
+			now := time.Now()
+			timer := time.NewTimer(time.Until(now.Truncate(systemTaskSchedulerInterval).Add(systemTaskSchedulerInterval)))
+			defer timer.Stop()
 
 			var lastScheduler time.Time
 			var lastStaleLockCleanup time.Time
@@ -146,9 +151,10 @@ func StartSystemTaskRunner() {
 						logger.LogWarn(context.Background(), fmt.Sprintf("system task stale lock cleanup failed: %v", err))
 					}
 				}
-				if now.Sub(lastScheduler) >= systemTaskSchedulerInterval {
-					lastScheduler = now
-					runSystemTaskScheduler()
+				schedulerTick := now.Truncate(systemTaskSchedulerInterval)
+				if schedulerTick.After(lastScheduler) {
+					lastScheduler = schedulerTick
+					runSystemTaskSchedulerAt(now)
 				}
 				runSystemTaskClaimPass(runnerID)
 			}
@@ -156,7 +162,9 @@ func StartSystemTaskRunner() {
 			runPass()
 			for {
 				select {
-				case <-ticker.C:
+				case <-timer.C:
+					now := time.Now()
+					timer.Reset(time.Until(now.Truncate(systemTaskSchedulerInterval).Add(systemTaskSchedulerInterval)))
 				case <-systemTaskWakeup:
 				}
 				runPass()
@@ -261,7 +269,10 @@ func runSystemTaskClaimPass(runnerID string) {
 // row. The task active_key unique index deduplicates concurrent creation while
 // the per-type lock guarantees only one runner executes the task.
 func runSystemTaskScheduler() {
-	now := common.GetTimestamp()
+	runSystemTaskSchedulerAt(time.Now())
+}
+
+func runSystemTaskSchedulerAt(now time.Time) {
 	handlers := registeredSystemTaskHandlers()
 	scheduledHandlers := make([]ScheduledSystemTaskHandler, 0, len(handlers))
 	taskTypes := make([]string, 0, len(handlers))
@@ -280,15 +291,27 @@ func runSystemTaskScheduler() {
 	}
 	for _, scheduled := range scheduledHandlers {
 		latest := latestTasks[scheduled.Type()]
-		if latest != nil {
-			if latest.Status == model.SystemTaskStatusPending || latest.Status == model.SystemTaskStatusRunning {
-				continue // an active row already exists
-			}
-			if now-latest.UpdatedAt < int64(scheduled.Interval().Seconds()) {
-				continue // not due yet
-			}
+		if latest != nil && (latest.Status == model.SystemTaskStatusPending || latest.Status == model.SystemTaskStatusRunning) {
+			continue
 		}
-		if _, err := model.CreateSystemTask(scheduled.Type(), scheduled.NewPayload(), nil); err != nil {
+		var payload any
+		if fixed, ok := scheduled.(fixedIntervalSystemTaskHandler); ok {
+			interval := scheduled.Interval()
+			if interval <= 0 {
+				continue
+			}
+			slot := now.Truncate(interval)
+			if now.Sub(slot) >= systemTaskSchedulerInterval || (latest != nil && latest.UpdatedAt >= slot.Unix()) {
+				continue
+			}
+			payload = fixed.NewScheduledPayload(slot, slot.Add(interval))
+		} else {
+			if latest != nil && now.Unix()-latest.UpdatedAt < int64(scheduled.Interval().Seconds()) {
+				continue
+			}
+			payload = scheduled.NewPayload()
+		}
+		if _, err := model.CreateSystemTask(scheduled.Type(), payload, nil); err != nil {
 			activeTask, activeErr := model.GetActiveSystemTask(scheduled.Type())
 			if activeErr == nil && activeTask != nil {
 				continue

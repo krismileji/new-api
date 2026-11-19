@@ -60,6 +60,7 @@ type upstreamAccountBalanceRoundKey struct{}
 type upstreamAccountBalanceRound struct {
 	results      sync.Map
 	forceRefresh bool
+	start        int64
 }
 
 type upstreamAccountBalanceResult struct {
@@ -91,6 +92,9 @@ func mergeUpstreamAccountBalanceWarnings(warnings []channelRatioMonitorBalanceWa
 // Each bulk run owns a memo, so every account is polled once even when its
 // channels run concurrently. Manual refreshes have their own fresh scope.
 func withUpstreamAccountBalanceRound(ctx context.Context) context.Context {
+	if _, ok := ctx.Value(upstreamAccountBalanceRoundKey{}).(*upstreamAccountBalanceRound); ok {
+		return ctx
+	}
 	return context.WithValue(ctx, upstreamAccountBalanceRoundKey{}, &upstreamAccountBalanceRound{})
 }
 
@@ -138,7 +142,7 @@ func pollUpstreamAccountBalance(ctx context.Context, monitor model.ChannelRatioM
 	if err != nil {
 		return outcome, err
 	}
-	if scheduled && account.Balance != nil && account.LastBalanceCheck > 0 && common.GetTimestamp() < account.LastBalanceCheck+int64(intervalMinutes)*60 {
+	if scheduled && account.Balance != nil && account.LastBalanceCheck > 0 && upstreamAccountBalanceChecked(account.LastBalanceCheck, round.start, intervalMinutes) {
 		outcome.Result.Balance.Amount = account.Balance
 		outcome.Result.Balance.Error = account.LastBalanceError
 		if account.LastBalanceError != "" {
@@ -149,6 +153,13 @@ func pollUpstreamAccountBalance(ctx context.Context, monitor model.ChannelRatioM
 		return outcome, nil
 	}
 	return refreshUpstreamAccountBalanceUnderLease(ctx, account, monitor, token, timeout)
+}
+
+func upstreamAccountBalanceChecked(lastCheck, roundStart int64, intervalMinutes int) bool {
+	if roundStart > 0 {
+		return lastCheck >= roundStart
+	}
+	return common.GetTimestamp() < lastCheck+int64(intervalMinutes)*60
 }
 
 func refreshUpstreamAccountBalanceUnderLease(ctx context.Context, account model.ChannelMonitorUpstreamAccount, monitor model.ChannelRatioMonitor, token string, timeout time.Duration) (outcome channelMonitorFetchOutcome, err error) {

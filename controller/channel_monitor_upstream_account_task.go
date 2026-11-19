@@ -5,7 +5,6 @@ import (
 	"errors"
 	"time"
 
-	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 )
@@ -14,11 +13,22 @@ type upstreamAccountBalanceTaskHandler struct{}
 
 const upstreamAccountBalanceTaskType = "upstream_account_balance"
 
-func init()                                                       { service.RegisterSystemTaskHandler(upstreamAccountBalanceTaskHandler{}) }
-func (upstreamAccountBalanceTaskHandler) Type() string            { return upstreamAccountBalanceTaskType }
-func (upstreamAccountBalanceTaskHandler) Interval() time.Duration { return 30 * time.Second }
-func (upstreamAccountBalanceTaskHandler) NewPayload() any         { return struct{}{} }
+func init()                                               { service.RegisterSystemTaskHandler(upstreamAccountBalanceTaskHandler{}) }
+func (upstreamAccountBalanceTaskHandler) Type() string    { return upstreamAccountBalanceTaskType }
+func (upstreamAccountBalanceTaskHandler) NewPayload() any { return struct{}{} }
+func (upstreamAccountBalanceTaskHandler) Interval() time.Duration {
+	return channelRatioMonitorTaskHandler{}.Interval()
+}
+
+func (upstreamAccountBalanceTaskHandler) NewScheduledPayload(start, deadline time.Time) any {
+	return channelMonitorUpdateWindow{Start: start.Unix(), Deadline: deadline.Unix()}
+}
+
 func (upstreamAccountBalanceTaskHandler) Enabled() bool {
+	return upstreamAccountBalanceTaskHandler{}.enabledAt(time.Now())
+}
+
+func (upstreamAccountBalanceTaskHandler) enabledAt(now time.Time) bool {
 	intervalMinutes := getChannelMonitorSettings().AutoUpdateIntervalMinutes
 	if model.DB == nil || intervalMinutes <= 0 {
 		return false
@@ -27,8 +37,9 @@ func (upstreamAccountBalanceTaskHandler) Enabled() bool {
 	if err != nil {
 		return false
 	}
+	roundStart := now.Truncate(time.Duration(intervalMinutes) * time.Minute).Unix()
 	for _, account := range accounts {
-		if common.GetTimestamp() < account.LastBalanceCheck+int64(intervalMinutes)*60 {
+		if upstreamAccountBalanceChecked(account.LastBalanceCheck, roundStart, intervalMinutes) {
 			continue
 		}
 		settings, err := account.MonitorSettings()
@@ -43,6 +54,12 @@ func (upstreamAccountBalanceTaskHandler) Enabled() bool {
 	return false
 }
 func (upstreamAccountBalanceTaskHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	ctx, cancel, err := channelMonitorUpdateContext(ctx, task)
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
+		return
+	}
+	defer cancel()
 	monitorSettings := getChannelMonitorSettings()
 	accounts, err := model.ListChannelMonitorUpstreamAccounts(ctx)
 	if err != nil {
@@ -51,13 +68,13 @@ func (upstreamAccountBalanceTaskHandler) Run(ctx context.Context, task *model.Sy
 	}
 	var failures []error
 	checked := 0
-	ctx = withUpstreamAccountBalanceRound(ctx)
+	round, _ := ctx.Value(upstreamAccountBalanceRoundKey{}).(*upstreamAccountBalanceRound)
 	for _, account := range accounts {
 		if ctx.Err() != nil {
 			failures = append(failures, ctx.Err())
 			break
 		}
-		if monitorSettings.AutoUpdateIntervalMinutes <= 0 || common.GetTimestamp() < account.LastBalanceCheck+int64(monitorSettings.AutoUpdateIntervalMinutes)*60 {
+		if monitorSettings.AutoUpdateIntervalMinutes <= 0 || upstreamAccountBalanceChecked(account.LastBalanceCheck, round.start, monitorSettings.AutoUpdateIntervalMinutes) {
 			continue
 		}
 		settings, err := account.MonitorSettings()

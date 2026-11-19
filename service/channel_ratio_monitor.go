@@ -170,6 +170,7 @@ type Sub2APIGroupRatioConfig struct {
 	Proxy                        string
 	ChannelKeys                  []string
 	SkipBalance                  bool
+	parallelBalance              bool
 }
 
 type newAPIGroupRatioEntry struct {
@@ -1174,6 +1175,7 @@ func fetchSub2APIGroupRatio(ctx context.Context, client *http.Client, config Sub
 		}
 		config.BaseURL = baseURL
 		config.AccessToken = accessToken
+		config.parallelBalance = !config.SkipBalance
 		groupsResult, fetchErr := fetchSub2APIUpstreamGroups(ctx, client, config, nil, validateURL)
 		result := NewAPIGroupRatioResult{Balance: groupsResult.Balance}
 		if fetchErr != nil {
@@ -1371,7 +1373,24 @@ func fetchSub2APIUpstreamGroups(ctx context.Context, client *http.Client, config
 		requestContext, cancel = continueChannelMonitorUpstreamRequest(ctx)
 	}
 	defer cancel()
+	var balanceResultCh chan ChannelMonitorUpstreamBalanceResult
+	if config.parallelBalance {
+		balanceResultCh = make(chan ChannelMonitorUpstreamBalanceResult, 1)
+		go func() {
+			balance, balanceErr := fetchSub2APIUpstreamBalanceWithToken(requestContext, client, baseURL, accessToken, validateURL)
+			balance.FetchError = balanceErr
+			balanceResultCh <- balance
+		}()
+	}
 	result, err := fetchSub2APIUpstreamGroupsWithToken(requestContext, client, baseURL, accessToken, validateURL)
+	if balanceResultCh != nil {
+		if errors.Is(err, ErrChannelMonitorUpstreamAuthentication) {
+			cancel()
+			<-balanceResultCh
+		} else {
+			result.Balance = <-balanceResultCh
+		}
+	}
 	if err != nil {
 		if errors.Is(err, ErrChannelMonitorUpstreamAuthentication) && strings.TrimSpace(config.RefreshToken) != "" {
 			refreshConfig := Sub2APIGroupRatioConfig{
@@ -1393,10 +1412,16 @@ func fetchSub2APIUpstreamGroups(ctx context.Context, client *http.Client, config
 			config.RefreshToken = ""
 			return fetchSub2APIUpstreamGroups(ctx, client, config, channelKeys, validateURL)
 		}
+		if result.Balance.FetchError != nil {
+			result.Balance.Error = result.Balance.FetchError.Error()
+		}
 		return result, redactUpstreamGroupRatioSecrets(err, accessToken)
 	}
 	if !config.SkipBalance {
-		balance, balanceErr := fetchSub2APIUpstreamBalanceWithToken(requestContext, client, baseURL, accessToken, validateURL)
+		balance, balanceErr := result.Balance, result.Balance.FetchError
+		if balanceResultCh == nil {
+			balance, balanceErr = fetchSub2APIUpstreamBalanceWithToken(requestContext, client, baseURL, accessToken, validateURL)
+		}
 		if balanceErr != nil {
 			balanceErr = redactUpstreamGroupRatioSecrets(balanceErr, accessToken)
 			if errors.Is(balanceErr, ErrChannelMonitorUpstreamAuthentication) {

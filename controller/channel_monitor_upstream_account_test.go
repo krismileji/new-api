@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -56,7 +57,8 @@ func TestUpstreamAccountDatabaseMatrix(t *testing.T) {
 			members, err := model.SaveChannelMonitorUpstreamAccount(t.Context(), &account, nil, []int{101, 102}, map[int]int64{101: 1, 102: 1})
 			require.NoError(t, err)
 			require.Len(t, members, 2)
-			assert.True(t, (upstreamAccountBalanceTaskHandler{}).Enabled(), "首次余额同步到期")
+			initialCheckTime := time.Now()
+			assert.True(t, (upstreamAccountBalanceTaskHandler{}).enabledAt(initialCheckTime), "首次余额同步到期")
 			ctx := withUpstreamAccountBalanceRound(t.Context())
 			for _, m := range members {
 				outcome, err := fetchAndRecordChannelMonitorUpstreamRatio(ctx, m, nil, "", time.Second, channelMonitorRefreshOptions{IncludeSeparateBalance: true}, 0, "测试")
@@ -66,7 +68,8 @@ func TestUpstreamAccountDatabaseMatrix(t *testing.T) {
 				assert.Equal(t, 100.0, *outcome.Result.Balance.Amount)
 			}
 			assert.EqualValues(t, 1, polls.Load(), "两个不同倍率的渠道只查询一次余额")
-			assert.False(t, (upstreamAccountBalanceTaskHandler{}).Enabled(), "刷新间隔内不生成空轮询任务")
+			assert.False(t, (upstreamAccountBalanceTaskHandler{}).enabledAt(initialCheckTime), "刷新间隔内不生成空轮询任务")
+			checkTime := time.Now().Truncate(5 * time.Minute).Add(3 * time.Minute)
 			for _, tc := range []struct {
 				name           string
 				globalInterval string
@@ -85,15 +88,19 @@ func TestUpstreamAccountDatabaseMatrix(t *testing.T) {
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					useChannelMonitorOptionMap(t, map[string]string{channelMonitorAutoUpdateIntervalOption: tc.globalInterval})
+					intervalMinutes, err := strconv.Atoi(tc.globalInterval)
+					require.NoError(t, err)
 					require.NoError(t, db.Model(&model.ChannelMonitorUpstreamAccount{}).Where("id = ?", account.ID).Updates(map[string]any{
 						"refresh_interval_minutes": tc.legacyInterval,
-						"last_balance_check":       common.GetTimestamp() - 120,
+						"last_balance_check":       checkTime.Add(-2 * time.Minute).Unix(),
 					}).Error)
-					assert.Equal(t, tc.wantEnabled, (upstreamAccountBalanceTaskHandler{}).Enabled())
+					assert.Equal(t, tc.wantEnabled, (upstreamAccountBalanceTaskHandler{}).enabledAt(checkTime))
 					pollContext := t.Context()
 					if !tc.manual {
 						pollContext = withUpstreamAccountBalanceRound(pollContext)
-						pollContext.Value(upstreamAccountBalanceRoundKey{}).(*upstreamAccountBalanceRound).forceRefresh = tc.forced
+						round := pollContext.Value(upstreamAccountBalanceRoundKey{}).(*upstreamAccountBalanceRound)
+						round.forceRefresh = tc.forced
+						round.start = checkTime.Truncate(time.Duration(intervalMinutes) * time.Minute).Unix()
 					}
 					before := polls.Load()
 					outcome, err := fetchAndRecordUpstreamAccountBalance(pollContext, members[0], time.Second)

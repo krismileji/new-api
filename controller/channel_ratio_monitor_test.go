@@ -4925,11 +4925,17 @@ func TestRunChannelRatioMonitorTaskDoesNotRetrySub2APIAuthenticationFailure(t *t
 	})
 	disableChannelMonitorSSRFProtection(t)
 
-	var requestCount atomic.Int32
+	var ratioRequests, balanceRequests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requestCount.Add(1)
+		switch r.URL.Path {
+		case "/api/v1/groups/available":
+			ratioRequests.Add(1)
+		case "/api/v1/user/profile":
+			balanceRequests.Add(1)
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+		}
 		w.Header().Set("Content-Type", "application/json")
-		assert.Equal(t, "/api/v1/groups/available", r.URL.Path)
 		assert.Equal(t, "Bearer jwt-token", r.Header.Get("Authorization"))
 		w.WriteHeader(http.StatusUnauthorized)
 		_, _ = w.Write([]byte(`{"code":401,"message":"token expired","data":null}`))
@@ -4952,7 +4958,8 @@ func TestRunChannelRatioMonitorTaskDoesNotRetrySub2APIAuthenticationFailure(t *t
 	require.Len(t, summary.Failures, 1)
 	assert.Contains(t, summary.Failures[0].Error, "token expired")
 	assert.NotContains(t, summary.Failures[0].Error, "重试")
-	assert.EqualValues(t, 1, requestCount.Load())
+	assert.EqualValues(t, 1, ratioRequests.Load())
+	assert.LessOrEqual(t, balanceRequests.Load(), int32(1))
 
 	monitor, err := model.GetChannelRatioMonitor(1)
 	require.NoError(t, err)
@@ -5054,6 +5061,83 @@ func TestRunChannelRatioMonitorTaskRecoversAfterRetry(t *testing.T) {
 	channel, err := model.GetChannelById(1, true)
 	require.NoError(t, err)
 	assert.Equal(t, common.ChannelStatusEnabled, channel.Status)
+}
+
+func TestRunChannelRatioMonitorTaskRetriesOnlyFailedSub2APIMetric(t *testing.T) {
+	for _, failedPath := range []string{"/api/v1/groups/available", "/api/v1/user/profile"} {
+		t.Run(strings.TrimPrefix(failedPath, "/api/v1/"), func(t *testing.T) {
+			db := setupChannelMonitorControllerTestDB(t)
+			useChannelMonitorOptionMap(t, map[string]string{channelMonitorAutoUpdateRetryCountOption: "1"})
+			disableChannelMonitorSSRFProtection(t)
+			var ratioRequests, balanceRequests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var count int32
+				var response string
+				switch r.URL.Path {
+				case "/api/v1/groups/available":
+					count = ratioRequests.Add(1)
+					response = `{"code":0,"data":[{"id":7,"name":"vip","rate_multiplier":1.25}]}`
+				case "/api/v1/groups/rates":
+					response = `{"code":0,"data":{}}`
+				case "/api/v1/user/profile":
+					count = balanceRequests.Add(1)
+					response = `{"code":0,"data":{"balance":7.25}}`
+				default:
+					http.NotFound(w, r)
+					return
+				}
+				if r.URL.Path == failedPath && count == 1 {
+					w.WriteHeader(http.StatusBadGateway)
+					return
+				}
+				_, _ = w.Write([]byte(response))
+			}))
+			defer server.Close()
+			require.NoError(t, db.Create(&model.Channel{
+				Id: 1, Name: "metric retry", Key: "test-key", Group: "vip", Status: common.ChannelStatusEnabled,
+			}).Error)
+			require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+				ChannelId: 1, UpstreamType: service.Sub2APIUpstreamType, UpstreamBaseURL: server.URL,
+				UpstreamGroup: "vip", UpstreamAuthType: service.Sub2APIAuthToken, UpstreamAccessToken: "jwt-token",
+			}).Error)
+
+			summary, err := runChannelRatioMonitorTaskOnce(t.Context(), nil, nil)
+			require.NoError(t, err)
+			assert.Equal(t, 1, summary.Updated)
+			assert.Equal(t, 1, summary.BalanceUpdated)
+			assert.Equal(t, 1, summary.RecoveredAfterRetry)
+			if failedPath == "/api/v1/user/profile" {
+				assert.EqualValues(t, 1, ratioRequests.Load())
+				assert.EqualValues(t, 2, balanceRequests.Load())
+			} else {
+				assert.EqualValues(t, 2, ratioRequests.Load())
+				assert.EqualValues(t, 1, balanceRequests.Load())
+			}
+			monitor, err := model.GetChannelRatioMonitor(1)
+			require.NoError(t, err)
+			assert.InDelta(t, 1.25, monitor.Ratio, 1e-9)
+			require.NotNil(t, monitor.UpstreamBalance)
+			assert.InDelta(t, 7.25, *monitor.UpstreamBalance, 1e-9)
+		})
+	}
+}
+
+func TestRunChannelRatioMonitorTaskSkipsExpiredScheduledWindow(t *testing.T) {
+	setupChannelMonitorControllerTestDB(t)
+	handler := channelRatioMonitorTaskHandler{}
+	deadline := time.Now().Add(-time.Minute)
+	task, err := model.CreateSystemTask(handler.Type(), handler.NewScheduledPayload(deadline.Add(-time.Minute), deadline), nil)
+	require.NoError(t, err)
+	claimedTask, claimed, err := model.ClaimSystemTask(task.ID, handler.Type(), "expired-window", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	handler.Run(t.Context(), claimedTask, "expired-window")
+	finished, err := model.GetLatestSystemTask(handler.Type())
+	require.NoError(t, err)
+	require.NotNil(t, finished)
+	assert.Equal(t, model.SystemTaskStatusFailed, finished.Status)
+	assert.Contains(t, finished.Error, context.DeadlineExceeded.Error())
 }
 
 func TestSendChannelRatioMonitorNotificationEmailIncludesChannelRemarks(t *testing.T) {
