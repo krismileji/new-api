@@ -35,6 +35,10 @@ func (*taskRetryBillingSettler) NeedsRefund() bool { return false }
 
 func (s *taskRetryBillingSettler) GetPreConsumedQuota() int { return s.preConsumedQuota }
 
+func (s *taskRetryBillingSettler) ReserveBeforeSubmit(targetQuota int) error {
+	return s.Reserve(targetQuota)
+}
+
 func (s *taskRetryBillingSettler) Reserve(targetQuota int) error {
 	s.reserveTargets = append(s.reserveTargets, targetQuota)
 	if targetQuota > s.preConsumedQuota {
@@ -105,6 +109,17 @@ func TestResolveOriginTaskDoesNotRequireExistingChannelMeta(t *testing.T) {
 }
 
 func TestRelayTaskSubmitPreservesOriginTaskBillingRatios(t *testing.T) {
+	previousDB := model.DB
+	db, openErr := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channels.db")), &gorm.Config{})
+	require.NoError(t, openErr)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		sqlDB, err := db.DB()
+		require.NoError(t, err)
+		require.NoError(t, sqlDB.Close())
+	})
 	originalModelPrices := ratio_setting.ModelPrice2JSONString()
 	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
 	t.Cleanup(func() {
@@ -163,6 +178,17 @@ func TestRelayTaskSubmitPreservesOriginTaskBillingRatios(t *testing.T) {
 }
 
 func TestRelayTaskSubmitDoesNotRetryAfterAcceptedResponseParseFailure(t *testing.T) {
+	previousDB := model.DB
+	db, openErr := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channels.db")), &gorm.Config{})
+	require.NoError(t, openErr)
+	require.NoError(t, db.AutoMigrate(&model.Channel{}))
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = previousDB
+		sqlDB, err := db.DB()
+		require.NoError(t, err)
+		require.NoError(t, sqlDB.Close())
+	})
 	originalModelPrices := ratio_setting.ModelPrice2JSONString()
 	originalGroupRatios := ratio_setting.GroupRatio2JSONString()
 	t.Cleanup(func() {

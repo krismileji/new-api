@@ -11,6 +11,8 @@ import (
 func TestGetRandomSatisfiedChannelExcludesFailedChannels(t *testing.T) {
 	originalMemoryCacheEnabled := common.MemoryCacheEnabled
 	channelSyncLock.Lock()
+	originalRoutes := channelSmartScheduleRouteCache
+	channelSmartScheduleRouteCache = nil
 	originalGroup2Model2Channels := group2model2channels
 	originalChannelsIDM := channelsIDM
 	originalAdvancedConfigs := channel2advancedCustomConfig
@@ -32,6 +34,7 @@ func TestGetRandomSatisfiedChannelExcludesFailedChannels(t *testing.T) {
 	t.Cleanup(func() {
 		common.MemoryCacheEnabled = originalMemoryCacheEnabled
 		channelSyncLock.Lock()
+		channelSmartScheduleRouteCache = originalRoutes
 		group2model2channels = originalGroup2Model2Channels
 		channelsIDM = originalChannelsIDM
 		channel2advancedCustomConfig = originalAdvancedConfigs

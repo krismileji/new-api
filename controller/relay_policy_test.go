@@ -14,7 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting"
+
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -40,15 +40,15 @@ func TestHTTPPolicyMatchesActualRetry(t *testing.T) {
 	db := modelManagementDB(t, dialect, dsn)
 	require.NoError(t, db.AutoMigrate(&model.ChannelRatioMonitor{}, &model.ChannelSmartScheduleRouteState{}, &model.Log{}))
 	oldRetries, oldErrorLog := common.RetryTimes, constant.ErrorLogEnabled
-	oldCount, oldSensitive := constant.CountToken, setting.CheckSensitiveEnabled
+	oldCount := constant.CountToken
 	oldFree := operation_setting.GetQuotaSetting().EnableFreeModelPreConsume
 	oldRanges := operation_setting.AutomaticRetryStatusCodeRanges
-	constant.ErrorLogEnabled, constant.CountToken, setting.CheckSensitiveEnabled = true, false, false
+	constant.ErrorLogEnabled, constant.CountToken = true, false
 	operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = false
 	operation_setting.AutomaticRetryStatusCodeRanges = []operation_setting.StatusCodeRange{{Start: 503, End: 503}}
 	t.Cleanup(func() {
 		common.RetryTimes, constant.ErrorLogEnabled = oldRetries, oldErrorLog
-		constant.CountToken, setting.CheckSensitiveEnabled = oldCount, oldSensitive
+		constant.CountToken = oldCount
 		operation_setting.GetQuotaSetting().EnableFreeModelPreConsume = oldFree
 		operation_setting.AutomaticRetryStatusCodeRanges = oldRanges
 	})

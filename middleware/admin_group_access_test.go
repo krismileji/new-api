@@ -90,11 +90,11 @@ func TestTokenAuthUsesRoleAwareGroupAccess(t *testing.T) {
 		wantStatus int
 		wantBody   string
 	}{
-		{name: "ordinary user remains restricted", role: common.RoleCommonUser, group: "internal", wantStatus: http.StatusForbidden, wantBody: "无权访问 internal 分组"},
+		{name: "ordinary user remains restricted", role: common.RoleCommonUser, group: "internal", wantStatus: http.StatusForbidden, wantBody: "No permission to access group internal"},
 		{name: "administrator can use configured group", role: common.RoleAdminUser, group: "internal", wantStatus: http.StatusOK},
 		{name: "root can use configured group", role: common.RoleRootUser, group: "internal", wantStatus: http.StatusOK},
-		{name: "administrator cannot use unconfigured group", role: common.RoleAdminUser, group: "missing", wantStatus: http.StatusForbidden, wantBody: "分组 missing 已被弃用"},
-		{name: "administrator auto access keeps existing opt in", role: common.RoleAdminUser, group: "auto", wantStatus: http.StatusForbidden, wantBody: "无权访问 auto 分组"},
+		{name: "administrator cannot use unconfigured group", role: common.RoleAdminUser, group: "missing", wantStatus: http.StatusForbidden, wantBody: "Group missing has been deprecated"},
+		{name: "administrator auto access keeps existing opt in", role: common.RoleAdminUser, group: "auto", wantStatus: http.StatusForbidden, wantBody: "No permission to access group auto"},
 	}
 
 	for index, test := range tests {

@@ -146,7 +146,7 @@ func TestAudioChannelDailyCostUsageAuthorityDatabaseMatrix(t *testing.T) {
 						info.PriceData.UsePrice, info.PriceData.ModelPrice = true, 0.01
 					}
 					require.Nil(t, PreConsumeBilling(ctx, tc.quota, info))
-					PostAudioConsumeQuota(ctx, info, tc.usage, "")
+					PostAudioConsumeQuota(ctx, info, tc.usage, nil)
 					flushChannelDailyCostEvents(t)
 
 					var cost model.ChannelDailyCost

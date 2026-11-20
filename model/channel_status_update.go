@@ -20,12 +20,11 @@ func updateChannelStatusAtomically(channelId int, usingKey string, status int, r
 		cachedChannel, _ = CacheGetChannel(channelId)
 	}
 
-	changed := false
 	var updatedChannel Channel
-	err := DB.Transaction(func(tx *gorm.DB) error {
-		var channel Channel
-		if err := lockForUpdate(tx).Where("id = ?", channelId).First(&channel).Error; err != nil {
-			return err
+	var statusChanged bool
+	changed, err := updateChannelOtherInfo(channelId, func(channel *Channel) (map[string]any, error) {
+		if status == common.ChannelStatusAutoDisabled && channel.Status == common.ChannelStatusManuallyDisabled {
+			return nil, nil
 		}
 		if cachedChannel != nil && channel.ChannelInfo.IsMultiKey && cachedChannel.ChannelInfo.IsMultiKey {
 			channel.ChannelInfo.MultiKeyPollingIndex = cachedChannel.ChannelInfo.MultiKeyPollingIndex
@@ -36,19 +35,19 @@ func updateChannelStatusAtomically(channelId int, usingKey string, status int, r
 		if channel.ChannelInfo.IsMultiKey {
 			beforeInfo, err := common.Marshal(channel.ChannelInfo)
 			if err != nil {
-				return err
+				return nil, err
 			}
-			handlerMultiKeyUpdate(&channel, usingKey, status, reason)
+			handlerMultiKeyUpdate(channel, usingKey, status, reason)
 			afterInfo, err := common.Marshal(channel.ChannelInfo)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			if previousStatus == channel.Status && bytes.Equal(beforeInfo, afterInfo) && previousOtherInfo == channel.OtherInfo {
-				return nil
+				return nil, nil
 			}
 		} else {
 			if channel.Status == status {
-				return nil
+				return nil, nil
 			}
 			info := channel.GetOtherInfo()
 			info["status_reason"] = reason
@@ -57,19 +56,17 @@ func updateChannelStatusAtomically(channelId int, usingKey string, status int, r
 			channel.Status = status
 		}
 
-		statusChanged := channel.Status != previousStatus
+		statusChanged = channel.Status != previousStatus
 		if statusChanged {
-			markChannelStatusTransition(&channel)
+			markChannelStatusTransition(channel)
 		}
-		if err := tx.Model(&Channel{}).
-			Where("id = ?", channel.Id).
-			Updates(map[string]any{
-				"status":       channel.Status,
-				"other_info":   channel.OtherInfo,
-				"channel_info": channel.ChannelInfo,
-			}).Error; err != nil {
-			return err
+		updatedChannel = *channel
+		updates := map[string]any{"status": channel.Status}
+		if channel.ChannelInfo.IsMultiKey {
+			updates["channel_info"] = channel.ChannelInfo
 		}
+		return updates, nil
+	}, func(tx *gorm.DB, channel *Channel) error {
 		if statusChanged {
 			var abilities []Ability
 			if err := tx.Select(commonGroupCol, "model").
@@ -91,8 +88,6 @@ func updateChannelStatusAtomically(channelId int, usingKey string, status int, r
 				return err
 			}
 		}
-		updatedChannel = channel
-		changed = true
 		return nil
 	})
 	if err != nil || !changed {
@@ -105,6 +100,9 @@ func updateChannelStatusAtomically(channelId int, usingKey string, status int, r
 	}
 	if common.MemoryCacheEnabled {
 		InitChannelCache()
+	}
+	if !common.IsMasterNode && status == common.ChannelStatusAutoDisabled && channelPluginHasHook(&updatedChannel, "scheduled") {
+		BumpSyncTopic(SyncTopicChannels)
 	}
 	return true, nil
 }

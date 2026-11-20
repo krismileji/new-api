@@ -2,7 +2,6 @@ package model
 
 import (
 	"errors"
-	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -62,7 +61,7 @@ func addNewRecord(type_ int, id int, value int) {
 
 	sum := old + value
 	if (value > 0 && sum < old) || (value < 0 && sum > old) {
-		common.SysError(fmt.Sprintf("batch update overflow: type=%d id=%d old=%d value=%d", type_, id, old, value))
+		common.SysError(common.LogText("batch update overflow: type=%d id=%d old=%d value=%d", type_, id, old, value))
 		if value > 0 {
 			sum = math.MaxInt
 		} else {
@@ -94,7 +93,7 @@ func batchUpdate() {
 		return
 	}
 
-	common.SysLog("batch update started")
+	common.SysLog(common.LogText("batch update started"))
 	stores := make([]map[int]int, BatchUpdateTypeCount)
 	for i := range BatchUpdateTypeCount {
 		batchUpdateLocks[i].Lock()
@@ -139,7 +138,7 @@ func batchUpdate() {
 		}
 	}
 	tokenQuotaBatchMutationLock.Unlock()
-	common.SysLog("batch update finished")
+	common.SysLog(common.LogText("batch update finished"))
 }
 
 func RecordExist(err error) (bool, error) {

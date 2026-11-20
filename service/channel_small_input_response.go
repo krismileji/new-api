@@ -5,6 +5,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/tokenkit"
 	"github.com/tidwall/gjson"
 )
 
@@ -88,7 +89,7 @@ func EstimateChannelSmallInput(info *relaycommon.RelayInfo) (tokens int, outputL
 	if err != nil {
 		return
 	}
-	tokens = CountTextToken(string(encoded), info.OriginModelName)
+	tokens = tokenkit.Count(info.OriginModelName, string(encoded))
 	for _, path := range maxPaths {
 		if value := root.Get(path); value.Exists() {
 			limit := value.Int()
@@ -126,7 +127,7 @@ func channelSmallInputTextContext(value gjson.Result) bool {
 }
 
 func BuildChannelSmallInputText(text, modelName string, inputTokens int, outputLimit *int) ChannelSmallInputText {
-	result := ChannelSmallInputText{Text: text, InputTokens: inputTokens, OutputTokens: CountTextToken(text, modelName)}
+	result := ChannelSmallInputText{Text: text, InputTokens: inputTokens, OutputTokens: tokenkit.Count(modelName, text)}
 	if outputLimit == nil || result.OutputTokens <= *outputLimit {
 		return result
 	}
@@ -135,14 +136,14 @@ func BuildChannelSmallInputText(text, modelName string, inputTokens int, outputL
 	low, high := 0, len(runes)
 	for low < high {
 		mid := (low + high + 1) / 2
-		if CountTextToken(string(runes[:mid]), modelName) <= *outputLimit {
+		if tokenkit.Count(modelName, string(runes[:mid])) <= *outputLimit {
 			low = mid
 		} else {
 			high = mid - 1
 		}
 	}
 	result.Text = string(runes[:low])
-	result.OutputTokens = CountTextToken(result.Text, modelName)
+	result.OutputTokens = tokenkit.Count(modelName, result.Text)
 	if *outputLimit == 0 {
 		result.Text = ""
 		result.OutputTokens = 0

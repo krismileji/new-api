@@ -106,7 +106,11 @@ func GetContentCaptureConfig(ctx context.Context) (ContentCaptureConfig, error) 
 	if !common.RedisEnabled {
 		return ContentCaptureConfig{}, ErrContentCaptureRedisRequired
 	}
-	values, err := common.RedisMonitorReadClient().HGetAll(ctx, contentCaptureConfigKey).Result()
+	client := common.RedisMonitorReadClient()
+	if client == nil {
+		return ContentCaptureConfig{}, ErrContentCaptureRedisRequired
+	}
+	values, err := client.HGetAll(ctx, contentCaptureConfigKey).Result()
 	if err != nil {
 		return ContentCaptureConfig{}, err
 	}

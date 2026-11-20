@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"github.com/QuantumNous/new-api/common"
 	"sync"
 	"testing"
 	"time"
@@ -127,7 +128,7 @@ func TestPersistedTaskBillingConcurrentSettlementIsIdempotent(t *testing.T) {
 				mu.Unlock()
 				return
 			}
-			RecalculateTaskQuota(context.Background(), &copyTask, actualQuota, "concurrent settlement")
+			RecalculateTaskQuota(context.Background(), &copyTask, actualQuota, common.NewMessage("concurrent settlement"))
 		}()
 	}
 	close(start)
@@ -161,7 +162,7 @@ func TestUnsavedTaskBillingConcurrentCopiesAreIdempotent(t *testing.T) {
 			defer wg.Done()
 			<-start
 			copyTask := *base
-			RecalculateTaskQuota(context.Background(), &copyTask, actualQuota, "unsaved settlement")
+			RecalculateTaskQuota(context.Background(), &copyTask, actualQuota, common.NewMessage("unsaved settlement"))
 		}()
 	}
 	close(start)
@@ -212,7 +213,7 @@ func TestPersistedTaskBillingPersistsCostResolutionMarker(t *testing.T) {
 		UpdatedAt:          task.SubmitTime,
 	}).Error)
 
-	RecalculateTaskQuota(context.Background(), task, actualQuota, "persist cost marker")
+	RecalculateTaskQuota(context.Background(), task, actualQuota, common.NewMessage("persist cost marker"))
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
@@ -251,7 +252,7 @@ func TestPersistedTaskBillingRollsBackAccountingWhenCostLedgerFails(t *testing.T
 		UpdatedAt:          task.SubmitTime,
 	}).Error)
 
-	RecalculateTaskQuota(context.Background(), task, actualQuota, "cost ledger failure")
+	RecalculateTaskQuota(context.Background(), task, actualQuota, common.NewMessage("cost ledger failure"))
 
 	assert.Equal(t, 10000, getUserQuota(t, userID))
 	assert.Equal(t, 7000, getTokenRemainQuota(t, tokenID))

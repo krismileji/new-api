@@ -92,7 +92,11 @@ func TestTaskSubmissionPolicyMatchesActualRetry(t *testing.T) {
 			require.Nil(t, outcome)
 			require.NotNil(t, taskErr)
 			assert.Equal(t, tc.attempts, attempts)
-			assert.Equal(t, 1, billing.refunds)
+			if tc.written {
+				assert.Zero(t, billing.refunds)
+			} else {
+				assert.Equal(t, 1, billing.refunds)
+			}
 			policyEvents := service.RequestPolicy(c).Events()
 			require.Len(t, policyEvents, tc.attempts*3)
 			for attempt := 0; attempt < tc.attempts; attempt++ {

@@ -633,8 +633,10 @@ func TestRealtimeProfitIncludesEachFundingDeductionAndFinalSettlement(t *testing
 	}
 	usage := &dto.RealtimeUsage{}
 	usage.InputTokenDetails.TextTokens = 10
-	require.NoError(t, PreWssConsumeQuota(ctx, info, usage))
-	require.NoError(t, PreWssConsumeQuota(ctx, info, usage))
+	_, err := PreWssConsumeQuota(ctx, info, usage)
+	require.NoError(t, err)
+	_, err = PreWssConsumeQuota(ctx, info, usage)
+	require.NoError(t, err)
 	require.NoError(t, SettleBilling(ctx, info, 100))
 	var user model.User
 	require.NoError(t, model.DB.First(&user, 892).Error)
@@ -680,8 +682,8 @@ func TestTaskBillingCorrectionsReplaceChannelMonitorIncomeSnapshot(t *testing.T)
 	}
 	require.NoError(t, model.DB.Create(&income).Error)
 
-	RecalculateTaskQuota(context.Background(), task, 1500, "test supplement")
-	RecalculateTaskQuota(context.Background(), task, 1500, "replayed supplement")
+	RecalculateTaskQuota(context.Background(), task, 1500, common.NewMessage("test supplement"))
+	RecalculateTaskQuota(context.Background(), task, 1500, common.NewMessage("replayed supplement"))
 	var saved model.ChannelMonitorIncome
 	require.NoError(t, model.DB.Where("settlement_key = ?", income.SettlementKey).First(&saved).Error)
 	assert.Equal(t, int64(1500), saved.Quota)

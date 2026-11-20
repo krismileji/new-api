@@ -437,7 +437,7 @@ func rebuildChannelMonitorAggregationRange(
 	if mode == "startup_repair" || mode == "dirty_minute_repair" {
 		logger.LogInfo(ctx, message)
 	} else {
-		logger.LogDebug(ctx, message)
+		logger.LogDebug(ctx, "%s", message)
 	}
 	return nil
 }

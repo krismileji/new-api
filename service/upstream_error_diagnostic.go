@@ -150,11 +150,13 @@ func sanitizedUpstreamErrorDetail(err error) string {
 		return ""
 	}
 	detail := err.Error()
+	var upstreamURL string
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) && urlErr.Err != nil {
 		detail = urlErr.Err.Error()
+		upstreamURL = urlErr.URL
 	}
-	detail = strings.TrimSpace(common.MaskSensitiveInfo(detail))
+	detail = strings.TrimSpace(common.MaskSensitiveInfo(detail, upstreamURL))
 	runes := []rune(detail)
 	if len(runes) > 1024 {
 		detail = string(runes[:1024]) + "..."

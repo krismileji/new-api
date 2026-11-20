@@ -121,8 +121,8 @@ func RefreshChannelSmartScheduleRoutePoolCache(group string, modelName string) e
 		enqueueChannelSmartScheduleRefresh(channelSmartScheduleRefreshKey{group: group, model: modelName})
 		return nil
 	}
-	channelCacheRefreshLock.Lock()
-	defer channelCacheRefreshLock.Unlock()
+	channelCacheReloadLock.Lock()
+	defer channelCacheReloadLock.Unlock()
 
 	var abilities []*Ability
 	if err := DB.Where(&Ability{Group: group, Model: modelName}).

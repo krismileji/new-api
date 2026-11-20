@@ -490,7 +490,7 @@ export function ChannelBatchTestDialog(props: ChannelBatchTestDialogProps) {
 
   const channels = useMemo(
     () =>
-      orderBatchTestChannels(
+      orderBatchTestChannels<BatchTestChannel>(
         props.channels ?? channelsQuery.data ?? EMPTY_CHANNELS
       ),
     [channelsQuery.data, props.channels]

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"github.com/QuantumNous/new-api/tokenkit"
 	"strings"
 	"testing"
 
@@ -64,7 +65,7 @@ func TestChannelSmallInputResponseHonorsOutputLimit(t *testing.T) {
 		result := BuildChannelSmallInputText(text, "gpt-4o", 42, &limit)
 		assert.LessOrEqual(t, result.OutputTokens, limit)
 		assert.Equal(t, 42, result.InputTokens)
-		assert.Equal(t, CountTextToken(result.Text, "gpt-4o"), result.OutputTokens)
-		assert.Equal(t, limit < CountTextToken(text, "gpt-4o"), result.Truncated)
+		assert.Equal(t, tokenkit.Count("gpt-4o", result.Text), result.OutputTokens)
+		assert.Equal(t, limit < tokenkit.Count("gpt-4o", text), result.Truncated)
 	}
 }

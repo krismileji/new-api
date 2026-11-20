@@ -27,6 +27,10 @@ func (*relayRetryBillingSettler) NeedsRefund() bool { return false }
 
 func (s *relayRetryBillingSettler) GetPreConsumedQuota() int { return s.preConsumedQuota }
 
+func (s *relayRetryBillingSettler) ReserveBeforeSubmit(targetQuota int) error {
+	return s.Reserve(targetQuota)
+}
+
 func (s *relayRetryBillingSettler) Reserve(targetQuota int) error {
 	s.reserveTargets = append(s.reserveTargets, targetQuota)
 	if targetQuota > s.preConsumedQuota {

@@ -96,7 +96,7 @@ func TestUsageLogsKeepRequestIPVisibleWhenUserOptedIn(t *testing.T) {
 	RecordConsumeLog(c, 1, RecordConsumeLogParams{ModelName: "gpt-test"})
 	RecordErrorLog(c, 1, 9, "gpt-test", "token", "status_code=500", 7, 1, false, "default", nil, false)
 
-	userLogs, _, err := GetUserLogs(1, LogTypeUnknown, 0, 0, "", "", 0, 10, "", "", "")
+	userLogs, _, err := GetUserLogs(1, LogFilter{Type: LogTypeUnknown}, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, userLogs, 2)
 	for _, log := range userLogs {
@@ -123,7 +123,7 @@ func TestAdminLogViewsExposeAdminRequestIPWithoutLeakingItToUser(t *testing.T) {
 		}),
 	}).Error)
 
-	adminLogs, _, err := GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 10, 0, "", "", "")
+	adminLogs, _, err := GetAllLogs(LogFilter{Type: LogTypeUnknown}, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, adminLogs, 1)
 	assert.Equal(t, "192.0.2.44", adminLogs[0].Ip)
@@ -136,7 +136,7 @@ func TestAdminLogViewsExposeAdminRequestIPWithoutLeakingItToUser(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, userVisibleOther, "admin_info")
 
-	userLogs, _, err := GetUserLogs(1, LogTypeUnknown, 0, 0, "", "", 0, 10, "", "", "")
+	userLogs, _, err := GetUserLogs(1, LogFilter{Type: LogTypeUnknown}, 0, 10)
 	require.NoError(t, err)
 	require.Len(t, userLogs, 1)
 	assert.Empty(t, userLogs[0].Ip)

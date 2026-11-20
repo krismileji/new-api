@@ -608,7 +608,7 @@ func TestRunChannelMonitorAggregationOnceClearsExpiredManualPrimaryWhenSchedulin
 	common.LogConsumeEnabled = false
 	constant.ErrorLogEnabled = false
 	common.MemoryCacheEnabled = false
-	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.Ability{}, &model.ChannelSmartScheduleRouteState{}))
+	require.NoError(t, db.AutoMigrate(&model.Channel{}, &model.Option{}, &model.Ability{}, &model.ChannelSmartScheduleRouteState{}))
 	t.Cleanup(func() {
 		model.DB = originalDB
 		common.SetMainDatabaseType(originalMainDatabaseType)
@@ -618,6 +618,7 @@ func TestRunChannelMonitorAggregationOnceClearsExpiredManualPrimaryWhenSchedulin
 		require.NoError(t, sqlDB.Close())
 	})
 
+	require.NoError(t, db.Create(&model.Channel{Id: 1, Name: "scheduled", Status: common.ChannelStatusEnabled, Group: "vip", Models: "model-a"}).Error)
 	forcedPriority := int64(101)
 	require.NoError(t, db.Create(&model.Option{
 		Key: "ChannelMonitorSmartScheduleEnabled", Value: "false",

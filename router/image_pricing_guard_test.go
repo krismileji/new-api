@@ -74,7 +74,7 @@ export const protocols={openai_image:{
 		{"configured ratio reaches plugin", "/v1/images/generations", `{"model":"guard-image"}`, `{"guard-image":2}`, false, 400, "image guard reached plugin parser"},
 		{"explicit zero ratio reaches plugin", "/v1/images/generations", `{"model":"guard-image"}`, `{"guard-image":0}`, false, 400, "image guard reached plugin parser"},
 		{"image edit is unaffected", "/v1/images/edits", `{"model":"guard-image"}`, `{}`, false, 400, "image guard reached plugin parser"},
-		{"malformed request keeps protocol validation", "/v1/images/generations", `{"model":`, `{}`, false, 400, "Invalid task protocol request"},
+		{"malformed request keeps protocol validation", "/v1/images/generations", `{"model":`, `{}`, false, 400, "Invalid request: invalid JSON request body"},
 		{"authentication still runs first", "/v1/images/generations", `{"model":"guard-image"}`, `{}`, true, 401, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

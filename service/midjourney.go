@@ -113,7 +113,6 @@ func RefundMidjourneyQuota(ctx context.Context, task *model.Midjourney, reason s
 	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   model.LogTypeRefund,
-		Content:   "",
 		ChannelId: billingChannelId,
 		ModelName: CovertMjpActionToModelName(task.Action),
 		Quota:     quota,
@@ -337,7 +336,7 @@ func DoMidjourneyHttpRequest(c *gin.Context, timeout time.Duration, fullRequestU
 	resp, err := GetHttpClient().Do(req)
 	ProtectTokenUpstreamResponse(c.Request.Context(), common.GetContextKeyInt(c, constant.ContextKeyChannelId), resp)
 	if err != nil {
-		common.SysLog("do request failed: " + err.Error())
+		common.SysLog(common.LogText("do request failed: %s", err.Error()))
 		return MidjourneyErrorWithStatusCodeWrapper(constant.MjErrorUnknown, "do_request_failed", http.StatusInternalServerError), nullBytes, err
 	}
 	statusCode := resp.StatusCode

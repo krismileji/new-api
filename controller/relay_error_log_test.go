@@ -213,7 +213,7 @@ func TestProcessChannelErrorUsesSnapshotWithoutLeakingChannelMetadata(t *testing
 	assert.Equal(t, "billing-model", adminInfo["billing_model"])
 	assert.Equal(t, map[string]any{"requested_model": "gpt-test", "upstream_model": "", "returned_model": "returned-model"}, storedOther["response_model"])
 
-	logs, total, err := model.GetUserLogs(7, model.LogTypeError, 0, 0, "", "", 0, 10, "", "", "")
+	logs, total, err := model.GetUserLogs(7, model.LogFilter{Type: model.LogTypeError}, 0, 10)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), total)
 	require.Len(t, logs, 1)

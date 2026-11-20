@@ -89,7 +89,7 @@ export const protocols={openai_responses:{
 		{name: "IP outside allowlist", body: `{"model":"probe-model","input":"health check"}`, deniedIP: true, wantText: "probe plugin received input: health check", wantStatus: 400},
 		{name: "nonmatching body remains readable", body: `{"model":"probe-model","input":"real question"}`, wantText: "probe plugin received input: real question", wantStatus: 400},
 		{name: "previous response bypasses local probe", body: `{"model":"probe-model","input":"health check","previous_response_id":"resp_prior"}`, wantText: "probe plugin received input: health check", wantStatus: 400},
-		{name: "malformed JSON", body: `{"model":`, wantText: "Invalid task protocol request", wantStatus: 400},
+		{name: "malformed JSON", body: `{"model":`, wantText: "Invalid request: invalid JSON request body", wantStatus: 400},
 		{name: "authentication before local response", body: `{"model":"probe-model","input":"health check"}`, unauthenticated: true, wantStatus: 401},
 		{name: "chat route preserved", path: "/v1/chat/completions", body: `{"model":"probe-model","messages":[{"role":"user","content":"health check"}]}`, wantText: `"content":"本地探针正常"`, wantStatus: 200},
 		{name: "probe still consumes rate limit", body: `{"model":"probe-model","input":"health check"}`, limited: true, wantText: `"text":"本地探针正常"`, wantStatus: 200},

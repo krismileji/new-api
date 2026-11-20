@@ -191,7 +191,7 @@ func UpdateTokenWithRequestStats(token *Token, intent RequestStatsTokenMutation)
 		if err := lockForUpdate(tx).Where("id = ? AND user_id = ?", token.Id, token.UserId).First(&current).Error; err != nil {
 			return err
 		}
-		columns := []string{"name", "expired_time", "remain_quota", "unlimited_quota", "model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups"}
+		columns := []string{"name", "expired_time", "remain_quota", "unlimited_quota", "model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups", "allow_user_quota_query"}
 		if intent.StatusOnly {
 			columns = []string{"status"}
 			if token.Status != common.TokenStatusEnabled && token.Status != common.TokenStatusDisabled {

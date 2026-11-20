@@ -12,10 +12,10 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	taskdto "github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/pkg/channelprobe"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
@@ -23,6 +23,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
@@ -54,6 +55,8 @@ func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
 		err = relay.ResponsesHelper(c, info)
 	case relayconstant.RelayModeAlphaSearch:
 		err = relay.AlphaSearchHelper(c, info)
+	case relayconstant.RelayModeToolsSearch, relayconstant.RelayModeToolsFetch:
+		err = relay.DeepSeekToolsHelper(c, info)
 	default:
 		err = relay.TextHelper(c, info)
 	}
@@ -92,6 +95,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		defer ws.Close()
 	}
 
+	var ingressRecord []relaycommon.RequestPluginRecord
+	// Registered first so that it runs last: the request plugins' report
+	// hooks receive the request once the client has the whole response and
+	// the request has settled.
+	defer func() {
+		requestplugin.Report(c, relayFormat, relayInfo, ingressRecord, newAPIError)
+	}()
+
 	defer func() {
 		if service.TokenAutoDisableFromContext(c.Request.Context()) != nil {
 			if ws != nil && !c.GetBool("token_protection_ws_notified") {
@@ -103,17 +114,49 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		if newAPIError != nil {
 			service.RecordRequestPolicyTermination(c, newAPIError)
-			logger.LogError(c, fmt.Sprintf("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
+			logger.LogError(c, common.LogText("relay error: %s", common.LocalLogPreview(newAPIError.Error())))
 			newAPIError.SetMessage(common.MessageWithRequestId(newAPIError.Error(), requestId))
-			writeRelayErrorResponse(c, ws, relayFormat, newAPIError)
+			upstreamURLs := common.UpstreamAddresses(c)
+			if relayFormat != types.RelayFormatOpenAIRealtime && c.Writer.Written() &&
+				strings.HasPrefix(c.Writer.Header().Get("Content-Type"), "text/event-stream") {
+				writeRelayStreamError(c, relayFormat, newAPIError)
+				return
+			}
+			if relayFormat != types.RelayFormatOpenAIRealtime {
+				c.Header("Content-Type", "application/json; charset=utf-8")
+			}
+			switch relayFormat {
+			case types.RelayFormatOpenAIRealtime:
+				helper.WssError(c, ws, newAPIError.ToOpenAIError(upstreamURLs...))
+			case types.RelayFormatClaude:
+				c.JSON(newAPIError.StatusCode, gin.H{
+					"type":  "error",
+					"error": newAPIError.ToClaudeError(upstreamURLs...),
+				})
+			default:
+				c.JSON(newAPIError.StatusCode, gin.H{
+					"error": newAPIError.ToOpenAIError(upstreamURLs...),
+				})
+			}
 		}
 	}()
 
-	request, requestCached := channelprobe.ValidatedRequest(c, relayFormat)
-	var err error
-	if !requestCached {
-		request, err = helper.GetAndValidateRequest(c, relayFormat)
+	// Ingress takes the request plugin plan and may patch the stored body
+	// before it is parsed. A Realtime session runs its instances on its
+	// events instead.
+	var ingressSteps []relaycommon.RequestPluginStep
+	if relayFormat == types.RelayFormatOpenAIRealtime {
+		requestplugin.StartRealtime(c)
+	} else if ingressSteps, ingressRecord, newAPIError = requestplugin.Ingress(c, relayFormat); newAPIError != nil {
+		// The request reached no channel; its error log shows what the
+		// plugins did.
+		ingress := &relaycommon.RelayInfo{}
+		ingress.SetRequestPluginIngress(ingressSteps, ingressRecord)
+		service.RecordRelayErrorLog(c, 0, newAPIError, ingress)
+		return
 	}
+
+	request, err := helper.GetAndValidateRequest(c, relayFormat)
 	if err != nil {
 		// Map "request body too large" to 413 so clients can handle it correctly
 		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
@@ -129,6 +172,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
 		return
 	}
+	relayInfo.SetRequestPluginIngress(ingressSteps, ingressRecord)
 	if relayInfo.RelayMode == relayconstant.RelayModeImagesGenerations {
 		if _, enabled := ratio_setting.GetImageRatio(relayInfo.OriginModelName); !enabled {
 			newAPIError = types.NewErrorWithStatusCode(
@@ -159,6 +203,12 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = localErr
 		return
 	}
+	generalSettings := operation_setting.GetGeneralSetting()
+	if relayFormat == types.RelayFormatClaude && relayInfo.IsStream && generalSettings.PingIntervalEnabled {
+		stopKeepAlive := helper.StartStreamKeepAlive(c, time.Duration(generalSettings.PingIntervalSeconds)*time.Second)
+		defer stopKeepAlive()
+	}
+
 	if newAPIError = relay.PrepareRequestBilling(c, relayInfo); newAPIError != nil {
 		return
 	}
@@ -277,6 +327,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
+		// The request plugins' reply checks read the answer this attempt
+		// writes; without a reply instance nothing changes.
 		service.BeginChannelDailyCostAttempt(c, channel.Id)
 		attemptStartedAt := time.Now()
 		service.BeginChannelMonitorPerformanceAttempt(c, attemptStartedAt)
@@ -361,9 +413,26 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	useChannel := c.GetStringSlice("use_channel")
 	if len(useChannel) > 1 {
-		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
+		retryLogStr := common.LogText("retry: %s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
 		logger.LogInfo(c, retryLogStr)
 	}
+}
+
+func writeRelayStreamError(c *gin.Context, format types.RelayFormat, apiError *types.NewAPIError) {
+	// 心跳提交响应头后，最终错误继续通过同一个流返回。
+	status, _ := common.GetContextKeyType[*relaycommon.StreamStatus](c, constant.ContextKeyResponseStreamStatus)
+	if status == nil {
+		status = relaycommon.NewStreamStatus()
+		common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, status)
+	}
+	status.MarkFailed(string(apiError.GetErrorCode()), string(apiError.GetErrorType()), apiError.StatusCode)
+	upstreamURLs := common.UpstreamAddresses(c)
+	if format == types.RelayFormatClaude {
+		_ = helper.ClaudeData(c, dto.ClaudeResponse{Type: "error", Error: apiError.ToClaudeError(upstreamURLs...)})
+		return
+	}
+	_ = helper.ObjectData(c, gin.H{"error": apiError.ToOpenAIError(upstreamURLs...)})
+	helper.Done(c)
 }
 
 // CountClaudeTokens implements Anthropic's token-counting utility endpoint.
@@ -657,6 +726,7 @@ func recordRelayChannelErrorLog(
 	service.AppendRelayLogAdminInfo(c, relayInfo, typedOther)
 	service.AppendResponseModelLogInfo(relayInfo, typedOther)
 	service.AppendTaskPluginContextAuditInfo(c, typedOther)
+	service.AppendRequestPluginRecord(relayInfo, typedOther)
 	startTime := common.GetContextKeyTime(c, constant.ContextKeyRequestStartTime)
 	if startTime.IsZero() {
 		startTime = time.Now()
@@ -712,11 +782,18 @@ func processChannelErrorWithTiming(
 }
 
 func RelayMidjourney(c *gin.Context) {
+	var relayInfo *relaycommon.RelayInfo
 	policy := service.RequestPolicy(c)
 	defer func() {
 		if policy.Attempts > 0 && !policy.Successful {
 			service.RecordRequestPolicyTermination(c, types.NewErrorWithStatusCode(errors.New("Midjourney submission failed"), types.ErrorCodeBadResponseStatusCode, http.StatusBadGateway, types.ErrOptionWithSkipRetry()))
 		}
+	}()
+	var reportErr *types.NewAPIError
+	// Registered first so that it runs last: the request plugins' report
+	// hooks receive a submission once the client has the response.
+	defer func() {
+		requestplugin.Report(c, types.RelayFormatMjProxy, relayInfo, nil, reportErr)
 	}()
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatMjProxy, nil, nil)
 
@@ -737,10 +814,24 @@ func RelayMidjourney(c *gin.Context) {
 		mjErr = relay.RelayMidjourneyTask(c, relayInfo.RelayMode)
 	case relayconstant.RelayModeMidjourneyTaskImageSeed:
 		mjErr = relay.RelayMidjourneyTaskImageSeed(c)
-	case relayconstant.RelayModeSwapFace:
-		mjErr = relay.RelaySwapFace(c, relayInfo)
 	default:
-		mjErr = relay.RelayMidjourneySubmit(c, relayInfo)
+		if reportErr = midjourneyRequestPlugins(c, relayInfo); reportErr != nil {
+			code := constant.MjRequestError
+			if reportErr.StatusCode >= http.StatusInternalServerError {
+				code = constant.MjErrorUnknown
+			}
+			c.JSON(reportErr.StatusCode, gin.H{
+				"description": common.MessageWithRequestId(reportErr.Error(), c.GetString(common.RequestIdKey)),
+				"type":        string(reportErr.GetErrorCode()),
+				"code":        code,
+			})
+			return
+		}
+		if relayInfo.RelayMode == relayconstant.RelayModeSwapFace {
+			mjErr = relay.RelaySwapFace(c, relayInfo)
+		} else {
+			mjErr = relay.RelayMidjourneySubmit(c, relayInfo)
+		}
 	}
 	//err = relayMidjourneySubmit(c, relayMode)
 	log.Println(mjErr)
@@ -748,7 +839,7 @@ func RelayMidjourney(c *gin.Context) {
 		policy.Successful = false
 		statusCode := http.StatusBadRequest
 		if mjErr.Code == 30 {
-			mjErr.Result = "当前分组负载已饱和，请稍后再试，或升级账户以提升服务质量。"
+			mjErr.Result = i18n.T(c, i18n.MsgRelayGroupSaturated)
 			statusCode = http.StatusTooManyRequests
 		}
 		originalDescription := fmt.Sprintf("%s %s", mjErr.Description, mjErr.Result)
@@ -761,14 +852,36 @@ func RelayMidjourney(c *gin.Context) {
 		); ok {
 			description = message
 		}
+		reportErr = types.NewErrorWithStatusCode(fmt.Errorf("%s %s", mjErr.Description, mjErr.Result), types.ErrorCodeBadResponseStatusCode, statusCode)
 		c.JSON(statusCode, gin.H{
 			"description": description,
 			"type":        "upstream_error",
 			"code":        mjErr.Code,
 		})
 		channelId := c.GetInt("channel_id")
-		logger.LogError(c, fmt.Sprintf("relay error (channel #%d, status code %d): %s", channelId, statusCode, originalDescription))
+		logger.LogError(c, common.LogText("relay error (channel #%d, status code %d): %s", channelId, statusCode, originalDescription))
 	}
+}
+
+// midjourneyRequestPlugins runs the request plugins of a Midjourney
+// submission on its client body before the body is read: the request's
+// ingress, then the late ingress of its channel. A Midjourney submission
+// has one attempt, so the late record stays with the request's. A stop is
+// written to the error log.
+func midjourneyRequestPlugins(c *gin.Context, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
+	_, steps, record, apiErr := requestplugin.SubmitIngress(c, types.RelayFormatMjProxy, common.GetContextKeyString(c, constant.ContextKeyOriginalModel))
+	relayInfo.SetRequestPluginIngress(steps, record)
+	channelID := 0
+	if apiErr == nil {
+		relayInfo.InitChannelMeta(c)
+		channelID = relayInfo.ChannelId
+		_, apiErr = requestplugin.TaskAttempt(c, relayInfo)
+		relayInfo.SetRequestPluginIngress(relayInfo.RequestPluginSteps, relayInfo.RequestPluginRecord)
+	}
+	if apiErr != nil {
+		service.RecordRelayErrorLog(c, channelID, apiErr, relayInfo)
+	}
+	return apiErr
 }
 
 func RelayNotImplemented(c *gin.Context) {
@@ -852,6 +965,13 @@ type taskSubmissionOutcome struct {
 }
 
 func RelayTask(c *gin.Context) {
+	var relayInfo *relaycommon.RelayInfo
+	var taskErr *taskdto.TaskError
+	// Registered first so that it runs last: the request plugins' report
+	// hooks receive the submission once the client has the response.
+	defer func() {
+		requestplugin.Report(c, types.RelayFormatTask, relayInfo, nil, taskReportError(taskErr))
+	}()
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
 		respondTaskSubmissionError(c, &taskdto.TaskError{
@@ -865,21 +985,35 @@ func RelayTask(c *gin.Context) {
 		relayInfo.Action = action
 	}
 
-	if taskErr := relay.ResolveOriginTask(c, relayInfo); taskErr != nil {
+	if taskErr = relay.ResolveOriginTask(c, relayInfo); taskErr != nil {
 		respondTaskSubmissionError(c, taskErr)
 		return
 	}
-	if taskErr := relay.ApplyOriginTaskAffinity(c, relayInfo); taskErr != nil {
+	if taskErr = relay.ApplyOriginTaskAffinity(c, relayInfo); taskErr != nil {
 		respondTaskSubmissionError(c, taskErr)
 		return
 	}
 
-	outcome, taskErr := executeTaskSubmission(c, relayInfo)
+	var outcome *taskSubmissionOutcome
+	outcome, taskErr = executeTaskSubmission(c, relayInfo)
 	if taskErr != nil {
 		respondTaskSubmissionError(c, taskErr)
 		return
 	}
 	presentTaskSubmission(c, outcome)
+}
+
+// taskReportError is the error a task submission's client received, as the
+// request plugins' report record shows it; nil when it succeeded.
+func taskReportError(taskErr *taskdto.TaskError) *types.NewAPIError {
+	if taskErr == nil {
+		return nil
+	}
+	err := taskErr.Error
+	if err == nil {
+		err = errors.New(taskErr.Message)
+	}
+	return types.NewErrorWithStatusCode(err, types.ErrorCode(taskErr.Code), taskErr.StatusCode)
 }
 
 // executeTaskSubmission owns the retry, billing, and persistence lifecycle.
@@ -909,7 +1043,9 @@ func executeTaskSubmissionWith(
 	durable := false
 	stage := "start"
 	defer func() {
-		if !durable && relayInfo.Billing != nil {
+		// The client of a relayed event stream already holds the vendor's
+		// work, so the submission is billed instead of refunded.
+		if !durable && relayInfo.Billing != nil && !c.Writer.Written() {
 			diagnostics.refund(stage)
 			relayInfo.Billing.Refund(c)
 		}
@@ -918,6 +1054,37 @@ func executeTaskSubmissionWith(
 	if requestErr := c.Request.Context().Err(); requestErr != nil {
 		diagnostics.cancelled("before_attempt", 0)
 		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
+	}
+
+	// The request plugins' ingress runs once, on the client body, before the
+	// submission is validated, priced or reserved; a changed body is decoded
+	// again.
+	stage = "request_plugins"
+	var format types.RelayFormat = types.RelayFormatTask
+	if pinnedValue, exists := c.Get(pluginruntime.ContextKeyPinnedEndpoint); exists {
+		if pinned, ok := pinnedValue.(pluginruntime.PinnedEndpoint); ok && (pinned.Protocol == string(types.RelayFormatOpenAIResponses) || pinned.Protocol == pluginruntime.ProtocolOpenAIImage) {
+			format = types.RelayFormat(pinned.Protocol)
+		}
+	}
+	ingressModel := relayInfo.OriginModelName
+	if ingressModel == "" {
+		ingressModel = common.GetContextKeyString(c, constant.ContextKeyOriginalModel)
+	}
+	changed, ingressSteps, ingressRecord, ingressErr := requestplugin.SubmitIngress(c, format, ingressModel)
+	relayInfo.SetRequestPluginIngress(ingressSteps, ingressRecord)
+	if ingressErr != nil {
+		// The submission reached no channel and reserved nothing; its error
+		// log shows what the plugins did.
+		service.RecordRelayErrorLog(c, 0, ingressErr, relayInfo)
+		taskErr = requestplugin.TaskError(ingressErr)
+		diagnostics.failed(stage, "request_plugin", taskErr, false)
+		return nil, taskErr
+	}
+	if changed {
+		if taskErr = middleware.RefreshTaskPluginRequest(c); taskErr != nil {
+			diagnostics.failed(stage, "request_decode", taskErr, false)
+			return nil, taskErr
+		}
 	}
 
 	retryParam := &service.RetryParam{
@@ -1101,6 +1268,10 @@ func executeTaskSubmissionWith(
 		} else {
 			finalRetryLogPending = false
 			finalRetryChannelError = nil
+
+			if requestplugin.Stopped(taskErr) {
+				service.RecordRelayErrorLog(c, channel.Id, taskReportError(taskErr), relayInfo)
+			}
 		}
 
 		diagnostics.attemptFailed(attemptIndex+1, channel, taskErr, shouldRetry)
@@ -1121,7 +1292,7 @@ func executeTaskSubmissionWith(
 
 	useChannel := c.GetStringSlice("use_channel")
 	if len(useChannel) > 1 {
-		retryLogStr := fmt.Sprintf("重试：%s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
+		retryLogStr := common.LogText("retry: %s", strings.Trim(strings.Join(strings.Fields(fmt.Sprint(useChannel)), "->"), "[]"))
 		logger.LogInfo(c, retryLogStr)
 	}
 
@@ -1141,17 +1312,22 @@ func executeTaskSubmissionWith(
 
 	// Reserve any submit-time upward billing adjustment before persistence.
 	// This keeps insertion failures fully refundable while ensuring settlement
-	// after the barrier normally has a zero positive delta.
-	if relayInfo.Billing != nil && result.Quota > relayInfo.Billing.GetPreConsumedQuota() {
+	// after the barrier normally has a zero positive delta. A relayed event
+	// stream is billed even when this reserve fails: settlement then charges
+	// past the available quota, as it does for any usage above its reservation.
+	if relayInfo.Billing != nil {
 		stage = "reserve"
 		diagnostics.reserve("reserve_start", result.Quota)
 		if reserveErr := relayInfo.Billing.Reserve(result.Quota); reserveErr != nil {
-			common.SysError("reserve adjusted task billing error: " + reserveErr.Error())
-			taskErr = service.TaskErrorWrapperLocal(errors.New("insufficient quota for adjusted task cost"), string(types.ErrorCodeInsufficientUserQuota), http.StatusForbidden)
-			diagnostics.failed("reserve", "insufficient_quota", taskErr, false)
-			return nil, taskErr
+			common.SysError(common.LogText("reserve adjusted task billing error: %s", reserveErr.Error()))
+			if !c.Writer.Written() {
+				taskErr = service.TaskErrorWrapperLocal(errors.New("insufficient quota for adjusted task cost"), string(types.ErrorCodeInsufficientUserQuota), http.StatusForbidden)
+				diagnostics.failed("reserve", "insufficient_quota", taskErr, false)
+				return nil, taskErr
+			}
+		} else {
+			diagnostics.reserve("reserve_complete", result.Quota)
 		}
-		diagnostics.reserve("reserve_complete", result.Quota)
 	}
 	if requestErr := c.Request.Context().Err(); requestErr != nil {
 		diagnostics.cancelled("before_insert", retryParam.GetRetry()+1)
@@ -1180,6 +1356,9 @@ func executeTaskSubmissionWith(
 	if len(result.PluginState) > 0 {
 		task.PrivateData.PluginState = result.PluginState
 	}
+	// A request plugin instance that may report the task gets it once, at
+	// its final state.
+	task.PrivateData.RequestPlugins = requestplugin.TaskReport(c, relayInfo)
 	task.Action = relayInfo.Action
 	if immediate := result.Immediate; immediate != nil {
 		task.Status = model.TaskStatus(immediate.Status)
@@ -1213,7 +1392,7 @@ func executeTaskSubmissionWith(
 				task.PrivateData.ResultDiscarded = true
 				insertOmits = append(insertOmits, "data")
 			} else {
-				logger.LogWarn(c, fmt.Sprintf("task plugin route %s %s declares retainResult: false but returned an asynchronous result; retaining task %s", pinned.Route.Method, pinned.Route.Path, task.TaskID))
+				logger.LogWarn(c, common.LogText("task plugin route %s %s declares retainResult: false but returned an asynchronous result; retaining task %s", pinned.Route.Method, pinned.Route.Path, task.TaskID))
 			}
 		}
 	}
@@ -1226,23 +1405,38 @@ func executeTaskSubmissionWith(
 	service.PrepareTaskChannelCost(c, task)
 	diagnostics.insertStart(task)
 	if insertErr := service.PersistTaskWithBilling(c, relayInfo, task, insertOmits...); insertErr != nil {
-		common.SysError("insert task error: " + insertErr.Error())
+		common.SysError(common.LogText("insert task error: %s", insertErr.Error()))
 		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to persist task"), "task_insert_failed", http.StatusInternalServerError)
 		diagnostics.failed("insert", "database_error", taskErr, false)
+		// The client of a relayed event stream already holds the vendor's
+		// work, so it is settled and logged without a task row.
+		if c.Writer.Written() {
+			if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
+				common.SysError(common.LogText("settle task billing error: %s", settleErr.Error()))
+				return nil, taskErr
+			}
+			service.LogTaskConsumption(c, relayInfo, task)
+		}
 		return nil, taskErr
 	}
 	durable = true
+	requestplugin.TaskCreated(c)
+	if immediateTerminal {
+		// Reported once settled, whatever the settlement did.
+		defer requestplugin.ReportTask(task)
+	}
 	stage = "settle"
 	diagnostics.durable(task)
 	diagnostics.settleStart(task, result.Quota)
 
 	if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
 		service.FinalizeChannelDailyCostAttempt(c, successfulChannelID, false)
-		common.SysError("settle task billing error: " + settleErr.Error())
+		common.SysError(common.LogText("settle task billing error: %s", settleErr.Error()))
 		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to settle task billing"), "task_billing_settlement_failed", http.StatusInternalServerError)
 		diagnostics.failed("settle", "billing_error", taskErr, true)
 		return nil, taskErr
 	}
+	perfmetrics.RecordImmediateTaskResult(relayInfo, result.Immediate)
 	if task.Status != model.TaskStatusFailure {
 		service.MarkRequestPolicySuccess(c, nil)
 	} else {
@@ -1257,6 +1451,11 @@ func executeTaskSubmissionWith(
 
 func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
 	diagnostics := newTaskPluginSubmitDiagnostics(c)
+	// A native route that relayed the vendor's event stream has answered.
+	if c.Writer.Written() {
+		diagnostics.present(outcome.Task, "native_stream")
+		return
+	}
 	otherRatios := outcome.RelayInfo.PriceData.OtherRatios()
 	if otherRatios == nil {
 		otherRatios = map[string]float64{}
@@ -1273,17 +1472,20 @@ func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
 				viewValue, valueErr := taskPluginProtocolJSONValue(view)
 				if valueErr == nil {
 					if body, callErr := pinned.Plugin.Engine.CallPath(c.Request.Context(), "native", []string{pinned.Route.Render}, requestContext.JSValue(), viewValue); callErr == nil {
-						diagnostics.present(outcome.Task, "native_presenter")
-						c.JSON(http.StatusOK, body)
-						return
+						if replyErr := middleware.WriteNativeReply(c, http.StatusOK, body); replyErr == nil {
+							diagnostics.present(outcome.Task, "native_presenter")
+							return
+						} else {
+							logger.LogError(c, common.LogText("task plugin native submit presenter failed: %s", replyErr.Error()))
+						}
 					} else {
-						logger.LogError(c, "task plugin native submit presenter failed: "+callErr.Error())
+						logger.LogError(c, common.LogText("task plugin native submit presenter failed: %s", callErr.Error()))
 					}
 				} else {
-					logger.LogError(c, "encode task plugin native submit view failed: "+valueErr.Error())
+					logger.LogError(c, common.LogText("encode task plugin native submit view failed: %s", valueErr.Error()))
 				}
 			} else {
-				logger.LogError(c, "build task plugin native submit view failed: "+err.Error())
+				logger.LogError(c, common.LogText("build task plugin native submit view failed: %s", err.Error()))
 			}
 		}
 	}
@@ -1311,6 +1513,11 @@ func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
 func respondTaskSubmissionError(c *gin.Context, taskErr *taskdto.TaskError) {
 	service.RecordRequestPolicyTermination(c, taskErrorForChannelLog(taskErr))
 	newTaskPluginSubmitDiagnostics(c).presentError(taskErr)
+	// The client of a relayed event stream already has the vendor's events,
+	// including any error event; nothing can follow them.
+	if c.Writer.Written() {
+		return
+	}
 	responseErr := taskErr
 	if taskErr != nil {
 		if status := service.RetryExcludedErrorStatusCode(taskErrorForChannelLog(taskErr).ErrorWithStatusCode()); status != 0 {
@@ -1431,6 +1638,8 @@ func decideTaskRetry(c *gin.Context, taskErr *taskdto.TaskError, retryTimes int)
 		stop.Reason = "request_completed"
 	case taskErr.NoRetry:
 		stop.Reason = "task_accepted"
+	case requestplugin.Stopped(taskErr):
+		stop.Reason, stop.Source = "local_rejection", "plugin"
 	case taskErr.LocalError:
 		stop.Reason = "local_rejection"
 	case types.IsClientGoneError(taskErr.Error):

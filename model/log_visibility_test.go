@@ -165,7 +165,7 @@ func TestUserLogQueriesHideRetryAndSystemRequests(t *testing.T) {
 	}
 	require.NoError(t, db.Create(&logs).Error)
 
-	userLogs, total, err := GetUserLogs(1, LogTypeUnknown, 0, 0, "", "", 0, 10, "", "", "")
+	userLogs, total, err := GetUserLogs(1, LogFilter{Type: LogTypeUnknown}, 0, 10)
 	require.NoError(t, err)
 	assert.Equal(t, int64(2), total)
 	require.Len(t, userLogs, 2)
@@ -206,7 +206,7 @@ func TestUserLogQueriesHideRetryAndSystemRequests(t *testing.T) {
 	assert.NotContains(t, other, "admin_info")
 	assert.NotContains(t, other, "audit_info")
 
-	otherUserLogs, otherUserTotal, err := GetUserLogs(2, LogTypeUnknown, 0, 0, "", "", 0, 10, "", "", "")
+	otherUserLogs, otherUserTotal, err := GetUserLogs(2, LogFilter{Type: LogTypeUnknown}, 0, 10)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), otherUserTotal)
 	require.Len(t, otherUserLogs, 1)
@@ -220,7 +220,7 @@ func TestUserLogQueriesHideRetryAndSystemRequests(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 23, visibleStat.Quota)
 
-	userErrorLogs, errorTotal, err := GetUserLogs(1, LogTypeError, 0, 0, "", "", 0, 10, "", "", "")
+	userErrorLogs, errorTotal, err := GetUserLogs(1, LogFilter{Type: LogTypeError}, 0, 10)
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), errorTotal)
 	require.Len(t, userErrorLogs, 1)
@@ -231,7 +231,7 @@ func TestUserLogQueriesHideRetryAndSystemRequests(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, tokenLogs, 2)
 
-	adminLogs, adminTotal, err := GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 20, 0, "", "", "")
+	adminLogs, adminTotal, err := GetAllLogs(LogFilter{Type: LogTypeUnknown}, 0, 20)
 	require.NoError(t, err)
 	assert.Equal(t, int64(11), adminTotal)
 	require.Len(t, adminLogs, 11)
@@ -334,11 +334,11 @@ func TestLogQueriesHydrateChannelNames(t *testing.T) {
 							var err error
 							switch view {
 							case "all":
-								logs, total, err = GetAllLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 10, 0, "", "", "")
+								logs, total, err = GetAllLogs(LogFilter{Type: LogTypeUnknown}, 0, 10)
 							case "user_visible":
 								logs, total, err = GetAllUserVisibleLogs(LogTypeUnknown, 0, 0, "", "", "", 0, 10, "", "", "")
 							case "self":
-								logs, total, err = GetUserLogs(1, LogTypeUnknown, 0, 0, "", "", 0, 10, "", "", "")
+								logs, total, err = GetUserLogs(1, LogFilter{Type: LogTypeUnknown}, 0, 10)
 							}
 							require.NoError(t, err)
 							assert.Equal(t, int64(6), total)

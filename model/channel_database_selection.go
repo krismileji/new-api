@@ -34,7 +34,7 @@ func getRandomSatisfiedChannelWithoutCacheWithTrafficPolicy(
 		return channel, err
 	}
 
-	matchingModelName := ratio_setting.FormatMatchingModelName(modelName)
+	matchingModelName := ratio_setting.RoutingMatchModelName(modelName)
 	if matchingModelName != "" && matchingModelName != modelName {
 		channel, err = getChannelFromDatabasePoolWithTrafficPolicy(
 			group, matchingModelName, modelName, retry, requestPath, options, trafficPolicy,

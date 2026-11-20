@@ -83,8 +83,31 @@ function UserList() {
   )
 }
 
+const proofResponse = {
+  data: {
+    success: true,
+    data: {
+      proof_token: 'batch-proof',
+      method: '2fa',
+      scope: 'admin.user.manage.batch',
+      expires_at: Math.floor(Date.now() / 1000) + 60,
+    },
+  },
+}
 async function setup() {
+  vi.spyOn(api, 'get').mockResolvedValue({
+    data: {
+      success: true,
+      data: {
+        scope: 'admin.user.manage.batch',
+        methods: [{ method: '2fa', available: true }],
+        oauth_providers: [],
+        password_encryption_enabled: false,
+      },
+    },
+  })
   const post = vi.spyOn(api, 'post').mockImplementation(async (_url, body) => {
+    if (_url === '/api/verify') return proofResponse
     const { ids } = body as { ids: number[] }
     return {
       data: {
@@ -154,11 +177,22 @@ it.each([
     }
 
     await user.click(within(dialog).getByRole('button', { name: 'Confirm' }))
+    await user.type(
+      await screen.findByLabelText('Authenticator code or backup code'),
+      '123456'
+    )
+    await user.click(screen.getByRole('button', { name: 'Verify' }))
     await waitFor(() =>
-      expect(post).toHaveBeenCalledWith('/api/user/manage/batch', {
-        ids: [2],
-        action,
-      })
+      expect(post).toHaveBeenCalledWith(
+        '/api/user/manage/batch',
+        {
+          ids: [2],
+          action,
+        },
+        expect.objectContaining({
+          headers: { 'X-Security-Proof': 'batch-proof' },
+        })
+      )
     )
     await waitFor(() => expect(document.body).toHaveTextContent(successMessage))
     expect(screen.getByRole('checkbox', { name: 'user-3' })).not.toBeChecked()
@@ -182,7 +216,7 @@ it('does not submit deletion when its confirmation is canceled', async () => {
 
 it('keeps failed users selected after a partial result', async () => {
   const { post, user } = await setup()
-  post.mockResolvedValueOnce({
+  post.mockResolvedValueOnce(proofResponse).mockResolvedValueOnce({
     data: {
       success: true,
       data: { succeeded_ids: [2], failed_ids: [3] },
@@ -195,11 +229,14 @@ it('keeps failed users selected after a partial result', async () => {
   )
   const dialog = await screen.findByRole('alertdialog')
   await user.click(within(dialog).getByRole('button', { name: 'Confirm' }))
+  await user.type(
+    await screen.findByLabelText('Authenticator code or backup code'),
+    '123456'
+  )
+  await user.click(screen.getByRole('button', { name: 'Verify' }))
 
   await waitFor(() =>
-    expect(document.body).toHaveTextContent(
-      'Processed 1 of 2 users; 1 failed.'
-    )
+    expect(document.body).toHaveTextContent('Processed 1 of 2 users; 1 failed.')
   )
   expect(screen.getByRole('checkbox', { name: 'user-2' })).not.toBeChecked()
   expect(screen.getByRole('checkbox', { name: 'user-3' })).toBeChecked()

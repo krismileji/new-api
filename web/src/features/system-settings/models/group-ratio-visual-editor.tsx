@@ -626,7 +626,6 @@ function GroupPricingTable({
       name = `group_${index}`
     }
     emitRows([
-      ...rows,
       {
         _id: createGroupPricingId(),
         name,
@@ -635,6 +634,7 @@ function GroupPricingTable({
         selectable: true,
         description: '',
       },
+      ...rows,
     ])
   }, [emitRows, rows])
 
@@ -1052,7 +1052,7 @@ function GroupOverrideRules({
           {groupGroupRatioList.length > 0 && (
             <div className='space-y-3'>
               {groupGroupRatioList.map((userGroupData) => (
-                <Collapsible key={userGroupData.userGroup} defaultOpen>
+                <Collapsible key={userGroupData.userGroup}>
                   <div className='rounded-lg border'>
                     <div className='flex items-center justify-between gap-2 p-3'>
                       <CollapsibleTrigger

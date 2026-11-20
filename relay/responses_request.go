@@ -11,6 +11,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/model_setting"
@@ -60,20 +61,11 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 		if err != nil {
 			return nil, nil, nil, types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
 		}
-		jsonData, err := storage.Bytes()
-		if err != nil {
-			return nil, nil, nil, types.NewError(err, types.ErrorCodeReadRequestBodyFailed, types.ErrOptionWithSkipRetry())
+		if apiErr := requestplugin.PassThrough(c, info, storage); apiErr != nil {
+			return nil, nil, nil, apiErr
 		}
-		if normalized, normalizeErr := dto.NormalizeResponsesJSON(jsonData); normalizeErr != nil {
-			logger.LogWarn(c, "responses compatibility normalization skipped: "+normalizeErr.Error())
-		} else {
-			jsonData = normalized
-		}
-		body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
-		if err != nil {
-			return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
-		}
-		return adaptor, body, closer, nil
+		body := common.NewReplayableBodyReader(storage)
+		return adaptor, body, io.NopCloser(body), nil
 	}
 
 	convertedRequest, err := adaptor.ConvertOpenAIResponsesRequest(c, info, *request)
@@ -89,11 +81,25 @@ func PrepareResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, req *d
 	if err != nil {
 		return nil, nil, nil, types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 	}
+	jsonData, apiErr := requestplugin.Outbound(c, info, jsonData)
+	if apiErr != nil {
+		return nil, nil, nil, apiErr
+	}
 	if len(info.ParamOverride) > 0 {
 		jsonData, err = relaycommon.ApplyParamOverrideWithRelayInfo(jsonData, info)
 		if err != nil {
 			return nil, nil, nil, newAPIErrorFromParamOverride(err)
 		}
+	}
+	if finalizer, ok := adaptor.(relaychannel.ResponsesRequestFinalizer); ok {
+		jsonData, err = finalizer.FinalizeResponsesRequest(info, jsonData)
+		if err != nil {
+			return nil, nil, nil, newConvertRequestFailedError(c, info, err)
+		}
+	}
+	// egress reads the body as it is sent, after the channel finalized it.
+	if apiErr = requestplugin.Egress(c, info, jsonData); apiErr != nil {
+		return nil, nil, nil, apiErr
 	}
 
 	logger.LogDebug(c, "requestBody: %s", jsonData)

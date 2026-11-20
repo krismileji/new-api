@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relay/requestplugin"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 
@@ -280,6 +281,8 @@ func relayWithChannelConcurrency(c *gin.Context, info *relaycommon.RelayInfo, re
 	}
 	service.PrepareChannelBalanceAttempt(c, info)
 	resetRelayAttemptResponseState(c)
+	finishReply := requestplugin.Reply(c, relayFormat, info)
+	defer finishReply()
 	var apiErr *types.NewAPIError
 	switch relayFormat {
 	case types.RelayFormatOpenAIRealtime:

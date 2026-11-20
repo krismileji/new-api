@@ -92,7 +92,7 @@ func TestGroupDescriptionsOptionPersistence(t *testing.T) {
 				common.OptionMap = make(map[string]string)
 				common.OptionMapRWMutex.Unlock()
 				require.NoError(t, setting.UpdateUserUsableGroupsByJSONString("{}"))
-				loadOptionsFromDatabase()
+				require.NoError(t, LoadOptionsFromDatabase())
 				common.OptionMapRWMutex.RLock()
 				storedDescriptions := common.OptionMap["GroupDescriptions"]
 				common.OptionMapRWMutex.RUnlock()

@@ -150,7 +150,7 @@ func TestAutoGroupRetryStopsWhenSelectedGroupIsNoLongerAllowed(t *testing.T) {
 	assert.Equal(t, 1, param.GetRetry())
 }
 
-func TestAutoGroupRetryAdvancesAfterLastPriorityWithoutResettingBudget(t *testing.T) {
+func TestAutoGroupRetryAdvancesAfterLastPriorityWithFreshGroupBudget(t *testing.T) {
 	db := setupChannelSelectAutoGroupsTest(t)
 	common.RetryTimes = 2
 	const modelName = "auto-group-last-priority-model"
@@ -188,7 +188,7 @@ func TestAutoGroupRetryAdvancesAfterLastPriorityWithoutResettingBudget(t *testin
 	require.NotNil(t, selected)
 	assert.Equal(t, 2232, selected.Id)
 	assert.Equal(t, "default", selectedGroup)
-	assert.Equal(t, 1, param.GetRetry())
+	assert.Zero(t, param.GetRetry())
 }
 
 func TestChannelRateLimitCooldownUsesOnlyChannelAsFallback(t *testing.T) {

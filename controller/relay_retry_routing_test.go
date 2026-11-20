@@ -951,7 +951,7 @@ func TestRelayRetryRoutingAutoFallbackRevisitsGroupsForLimitedSpecialRoute(t *te
 	assert.False(t, routing.candidatesExhausted())
 }
 
-func TestRelayRetryRoutingDoesNotRestartFailedAutoGroupWithoutCrossGroupPermission(t *testing.T) {
+func TestRelayRetryRoutingRetriesOnlyChannelWithinSelectedAutoGroup(t *testing.T) {
 	t.Cleanup(model.InitChannelCache)
 	db := setupChannelMonitorControllerTestDB(t)
 	configureRelayRetryAutoGroupsTest(t)
@@ -995,7 +995,8 @@ func TestRelayRetryRoutingDoesNotRestartFailedAutoGroupWithoutCrossGroupPermissi
 
 	selected, group, err = routing.selectChannel(param)
 	require.NoError(t, err)
-	assert.Nil(t, selected)
+	require.NotNil(t, selected)
+	assert.Equal(t, 68, selected.Id)
 	assert.Equal(t, "vip", group)
-	assert.True(t, routing.candidatesExhausted())
+	assert.False(t, routing.candidatesExhausted())
 }

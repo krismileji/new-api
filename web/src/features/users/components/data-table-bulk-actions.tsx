@@ -56,16 +56,29 @@ export function DataTableBulkActions({
   selectedCount,
 }: DataTableBulkActionsProps) {
   const { t } = useTranslation()
-  const { triggerRefresh } = useUsers()
+  const { triggerRefresh, requestVerification } = useUsers()
   const [targets, setTargets] = useState<UserManageRequest | null>(null)
 
   const mutation = useMutation({
     mutationFn: async (request: UserManageRequest) => {
-      const result = await manageUsers(request.ids, request.action)
+      const proof = await requestVerification({
+        scope: 'admin.user.manage.batch',
+        context: request,
+        title: confirmationTitle,
+        description: confirmationDescription,
+      })
+      if (!proof) return null
+      const result = await manageUsers(
+        request.ids,
+        request.action,
+        proof.proof_token
+      )
       if (!result.success || !result.data) throw createServerError(result)
       return { request, result: result.data }
     },
-    onSuccess: ({ request, result }) => {
+    onSuccess: (outcome) => {
+      if (!outcome) return
+      const { request, result } = outcome
       if (result.failed_ids.length > 0) {
         toast.error(
           t('Processed {{succeeded}} of {{total}} users; {{failed}} failed.', {

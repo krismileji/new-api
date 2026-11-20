@@ -213,7 +213,7 @@ func setupChannelModelDetectionRouterAuthTest(t *testing.T) (string, string) {
 	db, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "channel-model-detection-router.db")), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&model.User{},
+		&model.User{}, &model.UserSession{},
 		&model.Channel{},
 		&model.ChannelRatioMonitor{},
 		&model.ChannelModelDetectionGlobalConfig{},
@@ -243,7 +243,11 @@ func setupChannelModelDetectionRouterAuthTest(t *testing.T) (string, string) {
 		{Id: 97002, Username: "model-detection-router-user", Password: "unused-password", Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default", AffCode: "model-detection-router-user", AccessToken: &commonToken, AuthVersion: 1},
 	}
 	require.NoError(t, db.Create(&users).Error)
-	return rootToken, commonToken
+	rootSession, err := service.CreateLoginSession(users[0].Id, "password", "127.0.0.1", "router-test")
+	require.NoError(t, err)
+	ordinarySession, err := service.CreateLoginSession(users[1].Id, "password", "127.0.0.1", "router-test")
+	require.NoError(t, err)
+	return rootSession.AccessToken, ordinarySession.AccessToken
 }
 
 func performChannelModelDetectionRouterRequest(engine *gin.Engine, route channelModelDetectionRouteContract, token string) *httptest.ResponseRecorder {

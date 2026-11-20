@@ -155,12 +155,12 @@ func TestResponsesChannelDailyCostUsageAuthorityDatabaseMatrix(t *testing.T) {
 					}
 					accumulator := NewResponsesUsageAccumulator(info)
 					if tc.delta != "" {
-						accumulator.Observe(&dto.ResponsesStreamResponse{Type: "response.output_text.delta", Delta: tc.delta})
+						accumulator.Observe(&dto.ResponsesStreamResponse{Type: "response.output_text.delta", Delta: tc.delta}, nil)
 					}
 					if tc.terminal != "" {
 						var terminal dto.ResponsesStreamResponse
 						require.NoError(t, common.UnmarshalJsonStr(tc.terminal, &terminal))
-						accumulator.Observe(&terminal)
+						accumulator.Observe(&terminal, []byte(tc.terminal))
 					}
 					usage := accumulator.Finish()
 					assert.Equal(t, tc.prompt, usage.PromptTokens)
@@ -175,7 +175,7 @@ func TestResponsesChannelDailyCostUsageAuthorityDatabaseMatrix(t *testing.T) {
 					} else {
 						require.Nil(t, PreConsumeBilling(ctx, tc.quota, info))
 						if tc.mode == "audio" {
-							PostAudioConsumeQuota(ctx, info, usage, "")
+							PostAudioConsumeQuota(ctx, info, usage, nil)
 						} else {
 							PostTextConsumeQuota(ctx, info, usage, nil)
 						}
@@ -217,7 +217,7 @@ func TestResponsesCostConfidenceDoesNotLeakIntoNextCall(t *testing.T) {
 	}
 	info.SetEstimatePromptTokens(100)
 	first := NewResponsesUsageAccumulator(info)
-	first.Observe(&dto.ResponsesStreamResponse{Type: "response.output_text.delta", Delta: "hello"})
+	first.Observe(&dto.ResponsesStreamResponse{Type: "response.output_text.delta", Delta: "hello"}, nil)
 	firstUsage := first.Finish()
 	assert.False(t, CalculateChannelModelDetectionQuota(ctx, info, firstUsage).Reliable)
 	assert.Same(t, firstUsage, first.Finish())
@@ -226,7 +226,7 @@ func TestResponsesCostConfidenceDoesNotLeakIntoNextCall(t *testing.T) {
 	next := NewResponsesUsageAccumulator(info)
 	next.Observe(&dto.ResponsesStreamResponse{Type: "response.completed", Response: &dto.OpenAIResponsesResponse{
 		Usage: &dto.Usage{InputTokens: 20, OutputTokens: 5, TotalTokens: 25},
-	}})
+	}}, nil)
 	result := CalculateChannelModelDetectionQuota(ctx, info, next.Finish())
 	assert.True(t, result.Reliable)
 	assert.Equal(t, int64(25), result.CostBasisQuota)

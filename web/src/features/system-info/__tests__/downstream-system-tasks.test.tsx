@@ -50,7 +50,7 @@ it('offers downstream task types and sends the selected type when listing and cl
     data: {
       success: true,
       data:
-        config?.params?.scope === 'active'
+        (config?.params as { scope?: string } | undefined)?.scope === 'active'
           ? [
               {
                 ...task,

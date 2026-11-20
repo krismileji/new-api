@@ -19,13 +19,18 @@ For commercial licensing, please contact support@quantumnous.com
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, beforeEach, describe, expect, test } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { ChannelsPrimaryButtons } from '../channels-primary-buttons'
 import { ChannelsProvider } from '../channels-provider'
+
+vi.mock('@tanstack/react-router', async (importOriginal) => {
+  const router = await importOriginal<typeof import('@tanstack/react-router')>()
+  return { ...router, getRouteApi: () => ({ useNavigate: () => vi.fn() }) }
+})
 
 describe('ChannelsPrimaryButtons layout', () => {
   beforeEach(() => {
@@ -56,19 +61,18 @@ describe('ChannelsPrimaryButtons layout', () => {
     expect(
       screen.queryByRole('button', { name: '同渠道配置' })
     ).not.toBeInTheDocument()
-    const moreButton = screen.getByRole('button', { name: 'More' })
-    expect(moreButton).toHaveAccessibleName('More')
+    const moreButton = screen.getByRole('button', { name: 'More actions' })
+    expect(moreButton).toHaveAccessibleName('More actions')
 
-    for (const name of ['Batch Operations', 'Tag Mode', 'Sort by ID']) {
-      expect(screen.getByRole('switch', { name }).closest('div')).toHaveClass(
-        'hidden',
-        'sm:flex'
-      )
+    for (const name of ['Batch Operations', 'Tag Mode']) {
+      expect(
+        screen.getByRole('switch', { name }).closest('div.hidden')
+      ).toHaveClass('hidden', 'sm:flex')
     }
 
     await user.click(moreButton)
 
-    for (const name of ['Batch Operations', 'Tag Mode', 'Sort by ID']) {
+    for (const name of ['Batch Operations', 'Tag Mode']) {
       expect(screen.getByRole('menuitemcheckbox', { name })).toHaveClass(
         'sm:hidden'
       )

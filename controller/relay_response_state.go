@@ -35,7 +35,7 @@ func markAcceptedUpstreamResponseError(c *gin.Context, apiErr *types.NewAPIError
 	if c == nil || apiErr == nil || types.IsSkipRetryError(apiErr) {
 		return apiErr
 	}
-	if types.IsModelCapacityError(apiErr) {
+	if types.IsModelCapacityError(apiErr) || apiErr.StatusCode == http.StatusTooManyRequests {
 		return apiErr
 	}
 	statusCode := common.GetContextKeyInt(c, service.UpstreamResponseStatusContextKey)

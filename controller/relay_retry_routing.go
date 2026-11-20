@@ -236,14 +236,6 @@ func (routing *relayRetryRouting) selectChannelCandidates(retryParam *service.Re
 			return nil, selectGroup, nil
 		}
 	}
-	// A token without cross-group retry permission must stay in the group
-	// selected for this request. Restarting here would clear the exclusions and
-	// select the already-failed channel again, defeating the retry boundary.
-	if retryParam.TokenGroup == "auto" && retryParam.IsRetry && retryParam.Ctx != nil &&
-		!common.GetContextKeyBool(retryParam.Ctx, constant.ContextKeyTokenCrossGroupRetry) {
-		routing.exhausted = true
-		return nil, selectGroup, nil
-	}
 	if !allowRestart {
 		routing.exhausted = true
 		return nil, selectGroup, nil

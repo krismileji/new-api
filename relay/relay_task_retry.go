@@ -8,12 +8,9 @@ import (
 )
 
 func prepareTaskBilling(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
-	if info == nil || info.PriceData.FreeModel {
+	if info == nil || info.Billing == nil && info.PriceData.FreeModel {
 		return nil
 	}
 	info.ForcePreConsume = true
-	if info.Billing == nil {
-		return service.TaskErrorFromBillingAPIError(service.PreConsumeBilling(c, info.PriceData.Quota, info))
-	}
-	return service.TaskErrorFromBillingAPIError(service.ReserveBilling(info, info.PriceData.Quota))
+	return service.TaskErrorFromBillingAPIError(service.PreConsumeBilling(c, info.PriceData.Quota, info))
 }

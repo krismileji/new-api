@@ -103,7 +103,9 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
                 props.stackHeaderOnMobile
                   ? 'w-full sm:w-auto sm:flex-1'
                   : 'flex-1',
-                !props.stackHeaderOnMobile && props.stackActionsOnMobile && 'max-sm:basis-full'
+                !props.stackHeaderOnMobile &&
+                  props.stackActionsOnMobile &&
+                  'max-sm:basis-full'
               )}
             >
               <h2 className='truncate text-base font-bold tracking-tight sm:text-lg'>
@@ -114,7 +116,7 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
               <div
                 data-slot='section-page-layout-actions'
                 className={cn(
-                  'flex shrink-0 flex-wrap items-center justify-end gap-2 sm:gap-x-4',
+                  'flex max-w-full shrink-0 flex-wrap items-center justify-end gap-2 sm:gap-x-4',
                   props.stackHeaderOnMobile && 'w-full sm:w-auto'
                 )}
               >

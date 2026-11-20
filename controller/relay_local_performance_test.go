@@ -15,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relaykit/types"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/perf_metrics_setting"
 	"github.com/gin-gonic/gin"
@@ -28,12 +27,9 @@ func TestRelayLocalResponseDoesNotSampleUpstreamPerformance(t *testing.T) {
 	metricsSetting, ok := config.GlobalConfig.Get("perf_metrics_setting").(*perf_metrics_setting.PerfMetricsSetting)
 	require.True(t, ok)
 	previousEnabled := metricsSetting.Enabled
-	previousSensitive := setting.CheckSensitiveEnabled
 	metricsSetting.Enabled = true
-	setting.CheckSensitiveEnabled = false
 	t.Cleanup(func() {
 		metricsSetting.Enabled = previousEnabled
-		setting.CheckSensitiveEnabled = previousSensitive
 	})
 	for _, dialect := range []struct{ name, env string }{
 		{"sqlite", ""}, {"mysql", "TEST_MYSQL_DSN"}, {"postgres", "TEST_POSTGRES_DSN"},

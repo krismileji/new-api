@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"github.com/QuantumNous/new-api/i18n"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,6 +18,7 @@ import (
 )
 
 func TestChannelTestUsageLogFollowsProbeResponseSetting(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.ChannelRatioMonitor{}))
 	withSelfUseModeEnabled(t)
@@ -172,7 +174,7 @@ func TestChannelTestUsageLogFollowsProbeResponseSetting(t *testing.T) {
 		assert.Equal(t, 1, summary.Succeeded)
 		var consumeLog model.Log
 		require.NoError(t, db.Where("type = ?", model.LogTypeConsume).First(&consumeLog).Error)
-		assert.Equal(t, "模型测试", consumeLog.TokenName)
+		assert.Equal(t, "Model test", consumeLog.TokenName)
 		var other map[string]any
 		require.NoError(t, common.UnmarshalJsonStr(consumeLog.Other, &other))
 		assert.Equal(t, true, other[model.ChannelMonitorChannelTestLogKey])
@@ -250,7 +252,7 @@ func TestChannelTestUsageLogFollowsProbeResponseSetting(t *testing.T) {
 		require.NoError(t, db.Where("type IN ?", []int{model.LogTypeConsume, model.LogTypeError}).Find(&logs).Error)
 		require.Len(t, logs, 1)
 		assert.Equal(t, model.LogTypeConsume, logs[0].Type)
-		assert.Equal(t, "模型测试", logs[0].TokenName)
+		assert.Equal(t, "Model test", logs[0].TokenName)
 	})
 }
 

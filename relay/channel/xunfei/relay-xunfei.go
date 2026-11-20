@@ -158,7 +158,7 @@ func xunfeiStreamHandler(c *gin.Context, textRequest dto.GeneralOpenAIRequest, a
 			response := streamResponseXunfei2OpenAI(&xunfeiResponse)
 			jsonResponse, err := common.Marshal(response)
 			if err != nil {
-				common.SysLog("error marshalling stream response: " + err.Error())
+				common.SysLog(common.LogText("error marshalling stream response: %s", err.Error()))
 				streamErr = types.NewError(err, types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry())
 				return false
 			}
@@ -328,7 +328,7 @@ func xunfeiMakeRequest(ctx context.Context, textRequest dto.GeneralOpenAIRequest
 				if requestCtx.Err() != nil {
 					return
 				}
-				common.SysLog("error reading stream response: " + err.Error())
+				common.SysLog(common.LogText("error reading stream response: %s", err.Error()))
 				select {
 				case errorChan <- types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry()):
 				case <-requestCtx.Done():
@@ -338,7 +338,7 @@ func xunfeiMakeRequest(ctx context.Context, textRequest dto.GeneralOpenAIRequest
 			var response XunfeiChatResponse
 			err = common.Unmarshal(msg, &response)
 			if err != nil {
-				common.SysLog("error unmarshalling stream response: " + err.Error())
+				common.SysLog(common.LogText("error unmarshalling stream response: %s", err.Error()))
 				select {
 				case errorChan <- types.NewError(err, types.ErrorCodeBadResponseBody, types.ErrOptionWithSkipRetry()):
 				case <-requestCtx.Done():
@@ -406,6 +406,6 @@ func getAPIVersion(c *gin.Context, modelName string) string {
 		return apiVersion
 	}
 	apiVersion = "v1.1"
-	common.SysLog("api_version not found, using default: " + apiVersion)
+	common.SysLog(common.LogText("api_version not found, using default: %s", apiVersion))
 	return apiVersion
 }

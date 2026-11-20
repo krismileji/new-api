@@ -102,7 +102,7 @@ func (s *responsesWSSession) completeLocalResponse(state *responsesWSCallState, 
 			return nil
 		}
 		if err := s.writeClient(websocket.TextMessage, body); err != nil {
-			state.closeAfter = true
+			state.closeCode = websocket.CloseInternalServerErr
 			return types.NewError(err, types.ErrorCodeBadResponse, types.ErrOptionWithSkipRetry())
 		}
 	}
