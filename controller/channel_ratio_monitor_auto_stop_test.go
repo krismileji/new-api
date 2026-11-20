@@ -73,7 +73,7 @@ func TestRunChannelRatioMonitorTaskZeroFailureLimitKeepsRetrying(t *testing.T) {
 			}).Error)
 
 			previousRequests := int32(0)
-			for _, wantFailures := range []int{103, 106} {
+			for _, wantFailures := range []int{101, 102} {
 				summary, err := runChannelRatioMonitorTaskOnce(context.Background(), nil, nil)
 				require.NoError(t, err)
 				assert.Equal(t, 1, summary.Failed)
@@ -173,7 +173,9 @@ func TestRunChannelRatioMonitorTaskConfiguredFailureAlertNotifiesOncePerFailureE
 				{name: "继续更新并重试未送达邮件", wantFailures: 4, wantEmailAttempts: 2, wantEmailStatus: "sent", wantNotified: true},
 				{name: "持续失败不重复通知", wantFailures: 5, wantEmailAttempts: 2, wantNotified: true},
 				{name: "同步恢复后清除通知状态", healthy: true, wantEmailAttempts: 2},
-				{name: "恢复后再次达到配置次数重新通知", retryCount: 2, wantFailures: 3, wantEmailAttempts: 3, wantEmailStatus: "sent", wantNotified: true},
+				{name: "同一轮的重试只计一次失败", retryCount: 2, wantFailures: 1, wantEmailAttempts: 2},
+				{name: "恢复后第二轮失败", wantFailures: 2, wantEmailAttempts: 2},
+				{name: "恢复后再次达到配置次数重新通知", wantFailures: 3, wantEmailAttempts: 3, wantEmailStatus: "sent", wantNotified: true},
 				{name: "新一轮失败仍只通知一次", wantFailures: 4, wantEmailAttempts: 3, wantNotified: true},
 			} {
 				useChannelMonitorOptionMap(t, map[string]string{
@@ -319,12 +321,13 @@ func TestRunChannelRatioMonitorTaskStopsRatioAtConfiguredConsecutiveFailureLimit
 		ChannelId: 1, UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL,
 		UpstreamGroup: "vip", UpstreamAuthType: service.NewAPIUpstreamAuthPublic,
 		UpstreamBalanceSyncDisabled: true,
+		ConsecutiveFailures:         2,
 	}).Error)
 
 	firstSummary, err := runChannelRatioMonitorTaskOnce(context.Background(), nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, firstSummary.Failed)
-	assert.Equal(t, 2, firstSummary.Retried)
+	assert.Equal(t, 10, firstSummary.Retried)
 	monitor, err := model.GetChannelRatioMonitor(1)
 	require.NoError(t, err)
 	assert.Equal(t, 3, monitor.ConsecutiveFailures)
@@ -361,14 +364,15 @@ func TestRunChannelRatioMonitorTaskStopsBalanceAtConfiguredConsecutiveFailureLim
 	require.NoError(t, db.Create(&model.ChannelRatioMonitor{
 		ChannelId: 1, UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL,
 		UpstreamAuthType: service.NewAPIUpstreamAuthUser, UpstreamUserId: 42, UpstreamAccessToken: "test-token",
-		UpstreamRatioSyncDisabled: true,
+		UpstreamRatioSyncDisabled:  true,
+		BalanceConsecutiveFailures: 2,
 	}).Error)
 
 	firstSummary, err := runChannelRatioMonitorTaskOnce(context.Background(), nil, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 1, firstSummary.Failed)
-	assert.Equal(t, 2, firstSummary.Retried)
-	assert.EqualValues(t, 3, requestCount.Load())
+	assert.Equal(t, 10, firstSummary.Retried)
+	assert.EqualValues(t, 11, requestCount.Load())
 	monitor, err := model.GetChannelRatioMonitor(1)
 	require.NoError(t, err)
 	assert.Equal(t, 3, monitor.BalanceConsecutiveFailures)
@@ -377,10 +381,10 @@ func TestRunChannelRatioMonitorTaskStopsBalanceAtConfiguredConsecutiveFailureLim
 	require.NoError(t, err)
 	assert.Zero(t, secondSummary.Skipped)
 	assert.Equal(t, 1, secondSummary.Failed)
-	assert.EqualValues(t, 3, requestCount.Load())
+	assert.EqualValues(t, 11, requestCount.Load())
 }
 
-func TestRunChannelRatioMonitorTaskAutoDisablesChannelWhenStoppedRatioSyncFails(t *testing.T) {
+func TestRunChannelRatioMonitorTaskDoesNotDisableForHistoricalStoppedRatioFailure(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorAutoUpdateRetryCountOption:              "0",
@@ -414,15 +418,14 @@ func TestRunChannelRatioMonitorTaskAutoDisablesChannelWhenStoppedRatioSyncFails(
 
 	summary, err := runChannelRatioMonitorTaskOnce(context.Background(), nil, nil)
 	require.NoError(t, err)
-	assert.Equal(t, 1, summary.Updated)
+	assert.Zero(t, summary.Updated)
 	assert.Equal(t, 1, summary.Failed)
 	assert.Equal(t, 1, summary.BalanceUpdated)
-	assert.Equal(t, 1, summary.ChannelsDisabled)
+	assert.Zero(t, summary.ChannelsDisabled)
 
 	channel, err := model.GetChannelById(1, true)
 	require.NoError(t, err)
-	assert.Equal(t, common.ChannelStatusAutoDisabled, channel.Status)
-	assert.Equal(t, channelMonitorUpdateFailureDisableReason, channel.GetOtherInfo()["status_reason"])
+	assert.Equal(t, common.ChannelStatusEnabled, channel.Status)
 }
 
 func TestRunChannelRatioMonitorTaskKeepsHealthyUpstreamMetricRunning(t *testing.T) {

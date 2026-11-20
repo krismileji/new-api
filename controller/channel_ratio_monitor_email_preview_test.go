@@ -1,10 +1,14 @@
 package controller
 
 import (
+	"context"
 	"net/http"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,6 +43,62 @@ func TestBuildChannelRatioMonitorNotificationEmailUsesSelectedTypes(t *testing.T
 	assert.NotContains(t, content, "分组倍率更新失败")
 }
 
+func TestBuildChannelRatioMonitorNotificationEmailIncludesTaskTimeoutDetails(t *testing.T) {
+	startedAt := time.Date(2026, 11, 20, 10, 4, 0, 0, time.FixedZone("UTC+8", 8*60*60))
+	failures := []channelRatioMonitorTaskFailure{
+		{
+			ChannelId: 81, ChannelName: "unavailable-group", Kind: model.ChannelRatioFailureAlertRatio,
+			Error: "Sub2API 当前账号不可见分组",
+		},
+		{
+			ChannelId: 82, ChannelName: "slow & ratio", ChannelRemark: "<备用>", Kind: model.ChannelRatioFailureAlertRatio,
+			Error: "Sub2API 读取用户专属倍率失败: context deadline exceeded",
+		},
+	}
+	for _, test := range []struct {
+		name        string
+		types       []string
+		alerts      []channelRatioMonitorTaskFailure
+		wantSubject string
+	}{
+		{
+			name:        "task failure only",
+			types:       []string{channelMonitorEmailTypeTaskFailed},
+			alerts:      []channelRatioMonitorTaskFailure{},
+			wantSubject: "渠道监控：定时更新任务超时",
+		},
+		{
+			name:        "a channel also reaches the alert threshold",
+			types:       []string{channelMonitorEmailTypeTaskFailed, channelMonitorEmailTypeUpstreamSyncFailed},
+			alerts:      failures[:1],
+			wantSubject: "渠道监控：定时更新任务超时，1 项更新失败",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			summary := channelRatioMonitorTaskResult{
+				Total: 70, BalanceUpdated: 31, Failed: len(failures), Skipped: 34,
+				Failures: failures, notificationFailures: test.alerts,
+				notificationTiming: channelRatioMonitorTaskTiming{
+					startedAt: startedAt,
+					deadline:  startedAt.Add(time.Minute).UTC(),
+					elapsed:   63 * time.Second,
+				},
+			}
+			subject, content := buildChannelRatioMonitorNotificationEmail(test.types, nil, nil, nil, nil, summary, context.DeadlineExceeded)
+			assert.Equal(t, test.wantSubject, subject)
+			assert.Contains(t, content, "2026-11-20 10:04:00 UTC+08:00，耗时 63.0 秒")
+			assert.Contains(t, content, "本轮截止时间为 2026-11-20 10:05:00 UTC+08:00")
+			assert.Contains(t, content, "计划检查 70 个渠道，已刷新 31 个渠道的余额")
+			assert.Contains(t, content, "本轮渠道失败明细")
+			assert.Contains(t, content, "slow &amp; ratio（ID: 82）")
+			assert.Contains(t, content, "&lt;备用&gt;")
+			assert.Contains(t, content, "Sub2API 读取用户专属倍率失败: 请求超时")
+			assert.Equal(t, 1, strings.Count(content, "unavailable-group（ID: 81）"))
+			assert.NotContains(t, content, context.DeadlineExceeded.Error())
+		})
+	}
+}
+
 func TestPreviewChannelMonitorNotificationEmailMatchesSelectedTypes(t *testing.T) {
 	ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPost, "/api/channel_monitor/settings/email-preview", map[string]any{
 		"notification_types": []string{channelMonitorEmailTypeBalanceWarning, channelMonitorEmailTypeTaskFailed},
@@ -58,9 +118,10 @@ func TestPreviewChannelMonitorNotificationEmailMatchesSelectedTypes(t *testing.T
 	require.True(t, response.Success)
 	assert.Equal(t, []string{channelMonitorEmailTypeBalanceWarning, channelMonitorEmailTypeTaskFailed}, response.Data.NotificationTypes)
 	assert.Contains(t, response.Data.Subject, "1 个余额预警")
-	assert.Contains(t, response.Data.Subject, "1 项更新失败")
+	assert.Contains(t, response.Data.Subject, "定时更新任务超时")
 	assert.Contains(t, response.Data.HTML, "上游余额预警")
-	assert.Contains(t, response.Data.HTML, "分组倍率更新失败")
+	assert.Contains(t, response.Data.HTML, "本轮截止时间")
+	assert.Contains(t, response.Data.HTML, "示例渠道 F（ID: 1006）")
 	assert.NotContains(t, response.Data.HTML, "渠道倍率变更")
 	assert.NotContains(t, response.Data.HTML, "渠道自动禁用")
 }

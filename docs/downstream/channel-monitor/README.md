@@ -4,7 +4,7 @@ Root 管理入口为 `/channel-monitor`，API 前缀为 `/api/channel_monitor`�
 
 ## 上游配置与余额
 
-- [上游同步](upstream-sync.md)：固定时刻更新、上游请求截止时间、New API、Sub2API、自定义接口、倍率换算与自动处置。
+- [上游同步](upstream-sync.md)：并发更新、到期取消与邮件、连续失败轮数、New API、Sub2API、自定义接口与倍率换算。
 - [共享上游账户](upstream-accounts.md)：共用余额池、余额刷新跟随渠道监控设置、账户配置保存与关联渠道确认，渠道独立保留倍率和转发 Key。
 - [余额预估与恢复](balance-estimation.md)：未启用渠道的首字等待优化、请求占用、Responses 单次生成的完成确认、近期均值、独立于用户预扣的成本预算、同步边界、自动禁用后完成当前 WebSocket 生成并关闭、恢复条件。
 - [独立请求与变量](custom-variable-request.md)：登录取值、变量模板与刷新策略。

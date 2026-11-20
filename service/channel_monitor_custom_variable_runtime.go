@@ -230,7 +230,7 @@ func withChannelMonitorCustomVariables[T any](ctx context.Context, client *http.
 		return zero, err
 	}
 	result, fetchErr := fetch(resolved)
-	if fetchErr == nil || ctx.Err() != nil {
+	if fetchErr == nil || ctx.Err() != nil || config.SingleMetricRequest {
 		return result, fetchErr
 	}
 	var metricErr *channelMonitorCustomMetricError

@@ -73,6 +73,7 @@ const formValues = {
   autoUpdateConsecutiveFailureLimit: 3,
   syncFailureAlertThreshold: 7,
   autoDisableOnUpdateFailure: true,
+  autoDisableFailureRounds: 4,
   autoEnableOnCostRatioRecovery: true,
   autoEnableOnBalanceRecovery: false,
   costRetentionDays: 90,
@@ -402,6 +403,7 @@ describe('channel monitor settings submit payload', () => {
 
     assert.deepEqual(Object.keys(payload).sort(), [
       'api_key_metric_retention_days',
+      'auto_disable_failure_rounds',
       'auto_disable_on_update_failure',
       'auto_enable_on_balance_recovery',
       'auto_enable_on_cost_ratio_recovery',
@@ -453,6 +455,7 @@ describe('channel monitor settings submit payload', () => {
     ])
     assert.equal(payload.upstream_request_timeout_seconds, 45)
     assert.equal(payload.sync_failure_alert_threshold, 7)
+    assert.equal(payload.auto_disable_failure_rounds, 4)
     assert.equal(payload.auto_update_retry_delay_seconds, 6)
     assert.equal(payload.channel_concurrency_wait_seconds, 8)
     assert.equal(payload.execution_detail_retention_days, 14)

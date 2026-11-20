@@ -59,8 +59,44 @@ type upstreamAccountBalanceRoundKey struct{}
 
 type upstreamAccountBalanceRound struct {
 	results      sync.Map
+	leases       sync.Map
 	forceRefresh bool
 	start        int64
+	bulkUpdate   bool
+	leaseUntil   time.Time
+}
+
+type upstreamAccountRoundLease struct {
+	done    chan struct{}
+	token   string
+	release func()
+	err     error
+}
+
+func lockChannelMonitorRoundAccount(ctx context.Context, monitor model.ChannelRatioMonitor, timeout time.Duration) (string, func(), error) {
+	config := service.ChannelMonitorUpstreamConfig{AccountID: monitor.UpstreamAccountID, AccountRevision: monitor.UpstreamAccountRevision, RequestTimeout: timeout}
+	round, _ := ctx.Value(upstreamAccountBalanceRoundKey{}).(*upstreamAccountBalanceRound)
+	if round == nil || !round.bulkUpdate {
+		return service.LockUpstreamAccountRequest(ctx, config)
+	}
+	key := [2]int64{int64(monitor.UpstreamAccountID), monitor.UpstreamAccountRevision}
+	entry := &upstreamAccountRoundLease{done: make(chan struct{})}
+	value, loaded := round.leases.LoadOrStore(key, entry)
+	if loaded {
+		entry = value.(*upstreamAccountRoundLease)
+		select {
+		case <-entry.done:
+		case <-ctx.Done():
+			return "", nil, ctx.Err()
+		}
+	} else {
+		entry.token, entry.release, entry.err = service.LockUpstreamAccountRequestUntil(ctx, config, round.leaseUntil)
+		close(entry.done)
+		if entry.err != nil {
+			round.leases.CompareAndDelete(key, entry)
+		}
+	}
+	return entry.token, func() {}, entry.err
 }
 
 type upstreamAccountBalanceResult struct {
@@ -101,7 +137,8 @@ func withUpstreamAccountBalanceRound(ctx context.Context) context.Context {
 func fetchAndRecordUpstreamAccountBalance(ctx context.Context, monitor model.ChannelRatioMonitor, timeout time.Duration) (channelMonitorFetchOutcome, error) {
 	if round, ok := ctx.Value(upstreamAccountBalanceRoundKey{}).(*upstreamAccountBalanceRound); ok {
 		entry := &upstreamAccountBalanceResult{done: make(chan struct{})}
-		value, loaded := round.results.LoadOrStore(monitor.UpstreamAccountID, entry)
+		key := [2]int64{int64(monitor.UpstreamAccountID), monitor.UpstreamAccountRevision}
+		value, loaded := round.results.LoadOrStore(key, entry)
 		if loaded {
 			entry = value.(*upstreamAccountBalanceResult)
 			select {
@@ -127,13 +164,13 @@ func pollUpstreamAccountBalance(ctx context.Context, monitor model.ChannelRatioM
 		return outcome, model.ErrUpstreamAccountChanged
 	}
 	round, scheduled := ctx.Value(upstreamAccountBalanceRoundKey{}).(*upstreamAccountBalanceRound)
-	scheduled = scheduled && !round.forceRefresh
+	scheduled = scheduled && !round.forceRefresh && !round.bulkUpdate
 	intervalMinutes := getChannelMonitorSettings().AutoUpdateIntervalMinutes
 	if scheduled && intervalMinutes == 0 {
 		outcome.Result.Balance.Amount = account.Balance
 		return outcome, nil
 	}
-	token, release, err := service.LockUpstreamAccountRequest(ctx, service.ChannelMonitorUpstreamConfig{AccountID: account.ID, AccountRevision: account.Revision, RequestTimeout: timeout})
+	token, release, err := lockChannelMonitorRoundAccount(ctx, monitor, timeout)
 	if err != nil {
 		return outcome, err
 	}
@@ -142,12 +179,15 @@ func pollUpstreamAccountBalance(ctx context.Context, monitor model.ChannelRatioM
 	if err != nil {
 		return outcome, err
 	}
-	if scheduled && account.Balance != nil && account.LastBalanceCheck > 0 && upstreamAccountBalanceChecked(account.LastBalanceCheck, round.start, intervalMinutes) {
-		outcome.Result.Balance.Amount = account.Balance
+	if scheduled && account.LastBalanceCheck > 0 && upstreamAccountBalanceChecked(account.LastBalanceCheck, round.start, intervalMinutes) {
 		outcome.Result.Balance.Error = account.LastBalanceError
 		if account.LastBalanceError != "" {
 			return outcome, errors.New(account.LastBalanceError)
 		}
+		if account.Balance == nil {
+			return outcome, errors.New("上游账户未返回余额")
+		}
+		outcome.Result.Balance.Amount = account.Balance
 		evaluation, _ := evaluateChannelMonitorBalance(ctx, monitor, *account.Balance)
 		outcome.BalanceRecorded, outcome.BalanceEvaluation = true, &evaluation
 		return outcome, nil
@@ -217,7 +257,9 @@ func refreshUpstreamAccountBalanceUnderLease(ctx context.Context, account model.
 			return outcome, err
 		}
 	}
-	if err := model.RecordUpstreamAccountBalance(finish, account.ID, account.Revision, token, result.Amount, message); err != nil {
+	round, _ := ctx.Value(upstreamAccountBalanceRoundKey{}).(*upstreamAccountBalanceRound)
+	bulkUpdate := round != nil && round.bulkUpdate
+	if err := model.RecordUpstreamAccountBalance(finish, account.ID, account.Revision, token, result.Amount, message, bulkUpdate); err != nil {
 		return outcome, err
 	}
 	if fetchErr != nil {
@@ -226,6 +268,9 @@ func refreshUpstreamAccountBalanceUnderLease(ctx context.Context, account model.
 	monitor.UpstreamBalance = result.Amount
 	evaluation, _ := evaluateChannelMonitorBalance(finish, monitor, *result.Amount)
 	outcome.BalanceEvaluation, outcome.BalanceRecorded = &evaluation, true
+	if bulkUpdate {
+		return outcome, nil
+	}
 	members, err := model.GetUpstreamAccountMonitors(finish, account.ID)
 	if err != nil {
 		return outcome, err

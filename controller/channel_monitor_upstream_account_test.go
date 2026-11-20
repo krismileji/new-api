@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -57,8 +58,6 @@ func TestUpstreamAccountDatabaseMatrix(t *testing.T) {
 			members, err := model.SaveChannelMonitorUpstreamAccount(t.Context(), &account, nil, []int{101, 102}, map[int]int64{101: 1, 102: 1})
 			require.NoError(t, err)
 			require.Len(t, members, 2)
-			initialCheckTime := time.Now()
-			assert.True(t, (upstreamAccountBalanceTaskHandler{}).enabledAt(initialCheckTime), "首次余额同步到期")
 			ctx := withUpstreamAccountBalanceRound(t.Context())
 			for _, m := range members {
 				outcome, err := fetchAndRecordChannelMonitorUpstreamRatio(ctx, m, nil, "", time.Second, channelMonitorRefreshOptions{IncludeSeparateBalance: true}, 0, "测试")
@@ -68,7 +67,6 @@ func TestUpstreamAccountDatabaseMatrix(t *testing.T) {
 				assert.Equal(t, 100.0, *outcome.Result.Balance.Amount)
 			}
 			assert.EqualValues(t, 1, polls.Load(), "两个不同倍率的渠道只查询一次余额")
-			assert.False(t, (upstreamAccountBalanceTaskHandler{}).enabledAt(initialCheckTime), "刷新间隔内不生成空轮询任务")
 			checkTime := time.Now().Truncate(5 * time.Minute).Add(3 * time.Minute)
 			for _, tc := range []struct {
 				name           string
@@ -76,13 +74,12 @@ func TestUpstreamAccountDatabaseMatrix(t *testing.T) {
 				legacyInterval int
 				manual         bool
 				forced         bool
-				wantEnabled    bool
 				wantFetch      bool
 			}{
 				{name: "全局关闭覆盖旧账户间隔", globalInterval: "0", legacyInterval: 1},
 				{name: "延长全局间隔后复用余额", globalInterval: "5", legacyInterval: 1},
-				{name: "缩短全局间隔后刷新余额", globalInterval: "1", legacyInterval: 60, wantEnabled: true, wantFetch: true},
-				{name: "旧账户关闭值不阻止全局刷新", globalInterval: "1", legacyInterval: 0, wantEnabled: true, wantFetch: true},
+				{name: "缩短全局间隔后刷新余额", globalInterval: "1", legacyInterval: 60, wantFetch: true},
+				{name: "旧账户关闭值不阻止全局刷新", globalInterval: "1", legacyInterval: 0, wantFetch: true},
 				{name: "全局关闭后仍可手动刷新", globalInterval: "0", manual: true, wantFetch: true},
 				{name: "全局关闭后自动任务仍可按需刷新", globalInterval: "0", forced: true, wantFetch: true},
 			} {
@@ -94,7 +91,6 @@ func TestUpstreamAccountDatabaseMatrix(t *testing.T) {
 						"refresh_interval_minutes": tc.legacyInterval,
 						"last_balance_check":       checkTime.Add(-2 * time.Minute).Unix(),
 					}).Error)
-					assert.Equal(t, tc.wantEnabled, (upstreamAccountBalanceTaskHandler{}).enabledAt(checkTime))
 					pollContext := t.Context()
 					if !tc.manual {
 						pollContext = withUpstreamAccountBalanceRound(pollContext)
@@ -156,6 +152,88 @@ func TestUpstreamAccountDatabaseMatrix(t *testing.T) {
 			_, err = model.GetUpstreamAutomation(t.Context(), one.ID)
 			require.NoError(t, err)
 		})
+	}
+}
+
+func TestChannelMonitorSharedAccountPollsBalanceOnceWhileRatiosRun(t *testing.T) {
+	db := setupChannelMonitorBalanceSafetyDB(t, "sqlite")
+	require.NoError(t, db.AutoMigrate(&model.ChannelMonitorUpstreamAccount{}))
+	disableChannelMonitorSSRFProtection(t)
+	useChannelMonitorOptionMap(t, map[string]string{channelMonitorAutoUpdateRetryCountOption: "2"})
+	ratioRequests := make(chan struct{}, 2)
+	balanceRequests := make(chan struct{}, 2)
+	releaseRequests := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/user/self/groups":
+			ratioRequests <- struct{}{}
+			select {
+			case <-releaseRequests:
+				_, _ = w.Write([]byte(`{"success":true,"data":{"cheap":{"ratio":1.2},"vip":{"ratio":1.8}}}`))
+			case <-r.Context().Done():
+			}
+		case "/api/user/self":
+			balanceRequests <- struct{}{}
+			select {
+			case <-releaseRequests:
+				_, _ = w.Write([]byte(`{"success":true,"data":{"quota":900}}`))
+			case <-r.Context().Done():
+			}
+		case "/api/status":
+			_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	accountSettings := model.ChannelMonitorAccountSettings{
+		UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL, UpstreamAuthType: service.NewAPIUpstreamAuthUser,
+		UpstreamUserId: 1, UpstreamAccessToken: "service-account",
+	}
+	raw, err := common.Marshal(accountSettings)
+	require.NoError(t, err)
+	account := model.ChannelMonitorUpstreamAccount{Name: "共用余额", Revision: 1, Settings: string(raw)}
+	require.NoError(t, db.Create(&account).Error)
+	for i, group := range []string{"cheap", "vip"} {
+		id := i + 1
+		require.NoError(t, db.Create(&model.Channel{Id: id, Name: group, Status: common.ChannelStatusEnabled}).Error)
+		require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+			ChannelId: id, UpstreamRevision: 1, UpstreamAccountID: account.ID, UpstreamAccountRevision: account.Revision,
+			UpstreamType: service.NewAPIUpstreamType, UpstreamAuthType: service.NewAPIUpstreamAuthUser, UpstreamGroup: group,
+		}).Error)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	type outcome struct {
+		summary channelRatioMonitorTaskResult
+		err     error
+	}
+	results := make(chan outcome, 1)
+	go func() {
+		summary, runErr := collectChannelRatioMonitorRound(ctx, nil, 0)
+		results <- outcome{summary: summary, err: runErr}
+	}()
+	for _, started := range []<-chan struct{}{balanceRequests, ratioRequests, ratioRequests} {
+		select {
+		case <-started:
+		case <-ctx.Done():
+			cancel()
+			<-results
+			t.Fatal("余额和两个渠道的倍率应当可以同时查询")
+		}
+	}
+	close(releaseRequests)
+	result := <-results
+	require.NoError(t, result.err)
+	assert.Zero(t, result.summary.Failed)
+	assert.Equal(t, 2, result.summary.BalanceUpdated)
+	assert.Empty(t, balanceRequests, "每个账户每轮只查询一次余额")
+	for i, wantRatio := range []float64{1.2, 1.8} {
+		monitor, err := model.GetChannelRatioMonitor(i + 1)
+		require.NoError(t, err)
+		assert.Equal(t, wantRatio, monitor.Ratio)
+		require.NotNil(t, monitor.UpstreamBalance)
+		assert.Equal(t, 9.0, *monitor.UpstreamBalance)
 	}
 }
 

@@ -708,6 +708,18 @@ describe('channel monitor settings schema', () => {
         false
       )
     }
+    assert.equal(schema.parse(baseSettings).autoDisableFailureRounds, 3)
+    assert.equal(
+      schema.parse({ ...baseSettings, autoDisableFailureRounds: '5' })
+        .autoDisableFailureRounds,
+      5
+    )
+    for (const autoDisableFailureRounds of [0, 1.5, 101]) {
+      assert.equal(
+        schema.safeParse({ ...baseSettings, autoDisableFailureRounds }).success,
+        false
+      )
+    }
     for (const autoUpdateConsecutiveFailureLimit of [
       0,
       1,

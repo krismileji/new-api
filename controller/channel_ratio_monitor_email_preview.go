@@ -1,11 +1,13 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -45,15 +47,25 @@ func PreviewChannelMonitorNotificationEmail(c *gin.Context) {
 		return
 	}
 
+	startedAt := time.Now().Truncate(time.Minute).Add(-2 * time.Minute)
 	summary := channelRatioMonitorTaskResult{
-		Failed:            1,
-		GroupUpdateFailed: true,
+		Total:          4,
+		BalanceUpdated: 2,
+		Changed:        1,
+		Skipped:        1,
+		Failed:         1,
 		Failures: []channelRatioMonitorTaskFailure{{
 			ChannelId:     1006,
 			ChannelName:   "示例渠道 F",
 			ChannelRemark: "备用线路",
-			Error:         "请求上游接口超时",
+			Kind:          model.ChannelRatioFailureAlertRatio,
+			Error:         "读取上游分组倍率超时",
 		}},
+		notificationTiming: channelRatioMonitorTaskTiming{
+			startedAt: startedAt,
+			deadline:  startedAt.Add(time.Minute),
+			elapsed:   time.Minute + 3*time.Second,
+		},
 	}
 	var sections []channelMonitorNotificationEmailSection
 	if channelMonitorEmailNotificationTypeEnabled(notificationTypes, channelMonitorEmailTypeSmartScheduleFailed) {
@@ -86,7 +98,7 @@ func PreviewChannelMonitorNotificationEmail(c *gin.Context) {
 			Group: "vip",
 		}},
 		summary,
-		errors.New("自动写入分组倍率失败：数据库暂时不可用"),
+		context.DeadlineExceeded,
 		sections...,
 	)
 	common.ApiSuccess(c, gin.H{

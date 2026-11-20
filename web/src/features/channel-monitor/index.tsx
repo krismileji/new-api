@@ -148,6 +148,7 @@ import { mergeChannelMonitorRealtimeMetadata } from './lib/realtime-metadata'
 import {
   DEFAULT_AUTO_UPDATE_RETRY_COUNT,
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
+  DEFAULT_AUTO_DISABLE_FAILURE_ROUNDS,
   DEFAULT_SYNC_FAILURE_ALERT_THRESHOLD,
   DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS,
   DEFAULT_CHANNEL_MONITOR_API_KEY_METRIC_RETENTION_DAYS,
@@ -848,10 +849,13 @@ function ChannelMonitorContent() {
   const autoUpdateConsecutiveFailureLimit =
     settings.auto_update_consecutive_failure_limit ??
     DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT
-  const autoUpdateFailureLabel =
+  let autoUpdateFailureLabel =
     autoUpdateConsecutiveFailureLimit === 0
       ? '连续失败不停止'
       : `连续失败 ${autoUpdateConsecutiveFailureLimit} 次后停止`
+  if (settings.auto_disable_on_update_failure) {
+    autoUpdateFailureLabel = `连续失败 ${settings.auto_disable_failure_rounds ?? DEFAULT_AUTO_DISABLE_FAILURE_ROUNDS} 轮后禁用渠道`
+  }
   const autoUpdateLabel =
     autoUpdateIntervalMinutes > 0
       ? `自动更新：每 ${autoUpdateIntervalMinutes} 分钟 · 失败重试 ${settings.auto_update_retry_count} 次 · 重试等待 ${autoUpdateRetryDelaySeconds} 秒 · ${autoUpdateFailureLabel}`
@@ -1899,7 +1903,7 @@ function ChannelMonitorContent() {
         )}
         {settingsOpen && (
           <ChannelMonitorSettingsDialog
-            key={`${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${autoUpdateRetryDelaySeconds}:${settings.upstream_request_timeout_seconds ?? DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS}:${autoUpdateConsecutiveFailureLimit}:${settings.sync_failure_alert_threshold ?? DEFAULT_SYNC_FAILURE_ALERT_THRESHOLD}:${settings.auto_disable_on_update_failure}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.route_metric_retention_days}:${settings.duration_bucket_retention_days}:${settings.daily_metric_retention_days}:${settings.execution_detail_retention_days}:${settings.task_retention_days}:${settings.ratio_monitor_task_retention_days}:${settings.smart_schedule_task_retention_days}:${settings.smart_schedule_probe_task_retention_days}:${settings.cleanup_task_retention_days}:${settings.model_detection_task_retention_days}:${settings.channel_test_task_retention_days}:${settings.model_update_task_retention_days}:${settings.task_keep_latest_count}:${settings.ratio_history_retention_days}:${settings.status_probe_history_retention_days}:${settings.group_monitor_retention_days}:${settings.model_detection_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.email_notification_types.join(',')}:${settings.error_message_mapping}:${settings.error_message_whitelist ?? ''}:${settings.error_message_keywords}:${settings.retry_exclude_keywords ?? ''}:${settings.probe_response_enabled}:${settings.probe_response_allowed_ips ?? ''}:${settings.probe_response_match_input ?? DEFAULT_PROBE_RESPONSE_MATCH_INPUT}:${settings.probe_response_text ?? DEFAULT_PROBE_RESPONSE_TEXT}:${settings.probe_response_min_delay_ms ?? DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS}:${settings.probe_response_max_delay_ms ?? DEFAULT_PROBE_RESPONSE_MAX_DELAY_MS}:${settings.probe_response_input_tokens ?? DEFAULT_PROBE_RESPONSE_INPUT_TOKENS}:${settings.probe_response_cache_write_tokens ?? DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS}:${settings.probe_response_cached_tokens ?? DEFAULT_PROBE_RESPONSE_CACHED_TOKENS}:${settings.probe_response_output_tokens ?? DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS}`}
+            key={`${settings.auto_update_interval_minutes}:${settings.auto_update_retry_count}:${autoUpdateRetryDelaySeconds}:${settings.upstream_request_timeout_seconds ?? DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS}:${autoUpdateConsecutiveFailureLimit}:${settings.sync_failure_alert_threshold ?? DEFAULT_SYNC_FAILURE_ALERT_THRESHOLD}:${settings.auto_disable_on_update_failure}:${settings.auto_disable_failure_rounds}:${settings.auto_enable_on_cost_ratio_recovery}:${settings.auto_enable_on_balance_recovery}:${settings.cost_retention_days}:${settings.route_metric_retention_days}:${settings.duration_bucket_retention_days}:${settings.daily_metric_retention_days}:${settings.execution_detail_retention_days}:${settings.task_retention_days}:${settings.ratio_monitor_task_retention_days}:${settings.smart_schedule_task_retention_days}:${settings.smart_schedule_probe_task_retention_days}:${settings.cleanup_task_retention_days}:${settings.model_detection_task_retention_days}:${settings.channel_test_task_retention_days}:${settings.model_update_task_retention_days}:${settings.task_keep_latest_count}:${settings.ratio_history_retention_days}:${settings.status_probe_history_retention_days}:${settings.group_monitor_retention_days}:${settings.model_detection_retention_days}:${settings.email_notification_enabled}:${settings.notification_email}:${settings.email_notification_types.join(',')}:${settings.error_message_mapping}:${settings.error_message_whitelist ?? ''}:${settings.error_message_keywords}:${settings.retry_exclude_keywords ?? ''}:${settings.probe_response_enabled}:${settings.probe_response_allowed_ips ?? ''}:${settings.probe_response_match_input ?? DEFAULT_PROBE_RESPONSE_MATCH_INPUT}:${settings.probe_response_text ?? DEFAULT_PROBE_RESPONSE_TEXT}:${settings.probe_response_min_delay_ms ?? DEFAULT_PROBE_RESPONSE_MIN_DELAY_MS}:${settings.probe_response_max_delay_ms ?? DEFAULT_PROBE_RESPONSE_MAX_DELAY_MS}:${settings.probe_response_input_tokens ?? DEFAULT_PROBE_RESPONSE_INPUT_TOKENS}:${settings.probe_response_cache_write_tokens ?? DEFAULT_PROBE_RESPONSE_CACHE_WRITE_TOKENS}:${settings.probe_response_cached_tokens ?? DEFAULT_PROBE_RESPONSE_CACHED_TOKENS}:${settings.probe_response_output_tokens ?? DEFAULT_PROBE_RESPONSE_OUTPUT_TOKENS}`}
             settings={settings}
             open
             onOpenChange={setSettingsOpen}

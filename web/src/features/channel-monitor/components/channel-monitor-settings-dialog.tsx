@@ -86,6 +86,8 @@ import {
 } from '../lib/query-options'
 import {
   createChannelMonitorSettingsSchema,
+  DEFAULT_AUTO_DISABLE_FAILURE_ROUNDS,
+  MAX_AUTO_DISABLE_FAILURE_ROUNDS,
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
   DEFAULT_SYNC_FAILURE_ALERT_THRESHOLD,
   DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS,
@@ -202,11 +204,12 @@ type ChannelMonitorRetentionFieldName =
   | 'groupMonitorRetentionDays'
   | 'modelDetectionRetentionDays'
 
-type ChannelMonitorCleanupNumberFieldName =
+type ChannelMonitorNumberFieldName =
   | 'cleanupBatchSize'
   | 'cleanupBudgetSeconds'
   | 'cleanupContinuationSeconds'
   | 'cleanupIntervalMinutes'
+  | 'autoDisableFailureRounds'
 
 function ChannelMonitorRetentionDayField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
@@ -254,9 +257,9 @@ function ChannelMonitorRetentionDayField(props: {
   )
 }
 
-function ChannelMonitorCleanupNumberField(props: {
+function ChannelMonitorNumberField(props: {
   form: UseFormReturn<ChannelMonitorSettingsFormValues>
-  name: ChannelMonitorCleanupNumberFieldName
+  name: ChannelMonitorNumberFieldName
   label: string
   description: string
   min: number
@@ -489,7 +492,7 @@ export function ChannelMonitorRetentionFields(props: {
           </div>
         </div>
         <div className='grid gap-4 sm:grid-cols-2 lg:grid-cols-4'>
-          <ChannelMonitorCleanupNumberField
+          <ChannelMonitorNumberField
             form={props.form}
             name='cleanupBatchSize'
             label='单批删除数'
@@ -498,7 +501,7 @@ export function ChannelMonitorRetentionFields(props: {
             max={MAX_CHANNEL_MONITOR_CLEANUP_BATCH_SIZE}
             unit='条'
           />
-          <ChannelMonitorCleanupNumberField
+          <ChannelMonitorNumberField
             form={props.form}
             name='cleanupBudgetSeconds'
             label='单轮清理预算'
@@ -507,7 +510,7 @@ export function ChannelMonitorRetentionFields(props: {
             max={MAX_CHANNEL_MONITOR_CLEANUP_BUDGET_SECONDS}
             unit='秒'
           />
-          <ChannelMonitorCleanupNumberField
+          <ChannelMonitorNumberField
             form={props.form}
             name='cleanupIntervalMinutes'
             label='清理周期'
@@ -516,7 +519,7 @@ export function ChannelMonitorRetentionFields(props: {
             max={MAX_CHANNEL_MONITOR_CLEANUP_INTERVAL_MINUTES}
             unit='分钟'
           />
-          <ChannelMonitorCleanupNumberField
+          <ChannelMonitorNumberField
             form={props.form}
             name='cleanupContinuationSeconds'
             label='续跑间隔'
@@ -544,7 +547,7 @@ export function ChannelMonitorConsecutiveFailureLimitField(props: {
             <FormLabel>连续失败停止次数</FormLabel>
             <ChannelMonitorFieldInfo
               label='连续失败停止次数'
-              description='0 表示不因连续失败停止自动更新，邮件由同步失败告警次数控制。大于 0 时，倍率和余额分别连续失败达到该次数后停止，手动更新成功后恢复。需要停止时可在渠道设置中关闭对应同步。'
+              description='关闭更新失败自动禁用时，倍率和余额分别达到此轮数后暂停，设为 0 可持续同步。开启自动禁用时会持续同步以判定禁用和恢复。'
             />
           </div>
           <FormControl>
@@ -818,6 +821,9 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
         DEFAULT_SYNC_FAILURE_ALERT_THRESHOLD,
       autoDisableOnUpdateFailure:
         props.settings.auto_disable_on_update_failure ?? false,
+      autoDisableFailureRounds:
+        props.settings.auto_disable_failure_rounds ??
+        DEFAULT_AUTO_DISABLE_FAILURE_ROUNDS,
       autoEnableOnCostRatioRecovery:
         props.settings.auto_enable_on_cost_ratio_recovery ?? false,
       autoEnableOnBalanceRecovery:
@@ -1063,10 +1069,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
               className='min-h-0 flex-1 gap-4'
             >
               <TabsList className='grid h-auto w-full shrink-0 grid-cols-2 sm:grid-cols-5'>
-                <TabsTrigger
-                  value='monitor'
-                  className='h-auto px-2 text-wrap'
-                >
+                <TabsTrigger value='monitor' className='h-auto px-2 text-wrap'>
                   倍率与通知
                 </TabsTrigger>
                 <TabsTrigger
@@ -1075,10 +1078,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                 >
                   错误处理
                 </TabsTrigger>
-                <TabsTrigger
-                  value='probe'
-                  className='h-auto px-2 text-wrap'
-                >
+                <TabsTrigger value='probe' className='h-auto px-2 text-wrap'>
                   探针响应
                 </TabsTrigger>
                 <TabsTrigger
@@ -1217,7 +1217,7 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                               <FormLabel>更新失败自动禁用渠道</FormLabel>
                               <ChannelMonitorFieldInfo
                                 label='更新失败自动禁用渠道'
-                                description='开启后，倍率或余额更新在重试后仍失败时自动禁用对应渠道。'
+                                description='开启后，渠道连续失败或超时达到设定轮数时自动禁用。'
                               />
                             </div>
                             <FormControl>
@@ -1229,6 +1229,16 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                             </FormControl>
                           </FormItem>
                         )}
+                      />
+
+                      <ChannelMonitorNumberField
+                        form={form}
+                        name='autoDisableFailureRounds'
+                        label='自动禁用轮数'
+                        description='倍率或余额任一项最终失败或超时，每轮为该渠道累计一次。完整更新成功后清零。'
+                        min={1}
+                        max={MAX_AUTO_DISABLE_FAILURE_ROUNDS}
+                        unit='轮'
                       />
 
                       <FormField

@@ -30,6 +30,7 @@ const (
 	channelMonitorAutoUpdateConsecutiveFailureLimitOption      = "ChannelMonitorAutoUpdateConsecutiveFailureLimit"
 	channelMonitorSyncFailureAlertThresholdOption              = "ChannelMonitorSyncFailureAlertThreshold"
 	channelMonitorAutoDisableOnUpdateFailureOption             = "ChannelMonitorAutoDisableOnUpdateFailure"
+	channelMonitorAutoDisableFailureRoundsOption               = "ChannelMonitorAutoDisableFailureRounds"
 	channelMonitorAutoEnableOnCostRatioRecoveryOption          = "ChannelMonitorAutoEnableOnCostRatioRecovery"
 	channelMonitorAutoEnableOnBalanceRecoveryOption            = "ChannelMonitorAutoEnableOnBalanceRecovery"
 	channelMonitorCostRetentionDaysOption                      = "ChannelMonitorCostRetentionDays"
@@ -106,6 +107,7 @@ const (
 	maxChannelMonitorAutoUpdateConsecutiveFailureLimit         = 100
 	minChannelMonitorSyncFailureAlertThreshold                 = 1
 	maxChannelMonitorSyncFailureAlertThreshold                 = 100
+	maxChannelMonitorAutoDisableFailureRounds                  = 100
 	minChannelMonitorCostRetentionDays                         = 1
 	maxChannelMonitorCostRetentionDays                         = 3650
 	maxChannelMonitorStatusProbeHistoryRetentionDays           = 90
@@ -138,6 +140,7 @@ const (
 	defaultChannelMonitorUpstreamRequestTimeoutSeconds         = 30
 	defaultChannelMonitorAutoUpdateConsecutiveFailureLimit     = 10
 	defaultChannelMonitorSyncFailureAlertThreshold             = 10
+	defaultChannelMonitorAutoDisableFailureRounds              = 3
 	defaultChannelMonitorCostRetentionDays                     = 30
 	defaultChannelMonitorRouteMetricRetentionDays              = 30
 	defaultChannelMonitorDurationBucketRetentionDays           = 30
@@ -207,6 +210,7 @@ type channelMonitorSettings struct {
 	AutoUpdateConsecutiveFailureLimit     int                        `json:"auto_update_consecutive_failure_limit"`
 	SyncFailureAlertThreshold             int                        `json:"sync_failure_alert_threshold"`
 	AutoDisableOnUpdateFailure            bool                       `json:"auto_disable_on_update_failure"`
+	AutoDisableFailureRounds              int                        `json:"auto_disable_failure_rounds"`
 	AutoEnableOnCostRatioRecovery         bool                       `json:"auto_enable_on_cost_ratio_recovery"`
 	AutoEnableOnBalanceRecovery           bool                       `json:"auto_enable_on_balance_recovery"`
 	CostRetentionDays                     int                        `json:"cost_retention_days"`
@@ -277,6 +281,7 @@ type channelMonitorSettingsUpdateRequest struct {
 	AutoUpdateConsecutiveFailureLimit     *int                        `json:"auto_update_consecutive_failure_limit"`
 	SyncFailureAlertThreshold             *int                        `json:"sync_failure_alert_threshold"`
 	AutoDisableOnUpdateFailure            *bool                       `json:"auto_disable_on_update_failure"`
+	AutoDisableFailureRounds              *int                        `json:"auto_disable_failure_rounds"`
 	AutoEnableOnCostRatioRecovery         *bool                       `json:"auto_enable_on_cost_ratio_recovery"`
 	AutoEnableOnBalanceRecovery           *bool                       `json:"auto_enable_on_balance_recovery"`
 	CostRetentionDays                     *int                        `json:"cost_retention_days"`
@@ -360,6 +365,7 @@ func loadChannelMonitorSettings(ctx context.Context) (channelMonitorSettings, er
 		channelMonitorAutoUpdateConsecutiveFailureLimitOption,
 		channelMonitorSyncFailureAlertThresholdOption,
 		channelMonitorAutoDisableOnUpdateFailureOption,
+		channelMonitorAutoDisableFailureRoundsOption,
 		channelMonitorAutoEnableOnCostRatioRecoveryOption,
 		channelMonitorAutoEnableOnBalanceRecoveryOption,
 		channelMonitorCostRetentionDaysOption,
@@ -517,6 +523,10 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	if err != nil {
 		autoDisableOnUpdateFailure = false
 	}
+	autoDisableFailureRounds, err := strconv.Atoi(options[channelMonitorAutoDisableFailureRoundsOption])
+	if err != nil || autoDisableFailureRounds < 1 || autoDisableFailureRounds > maxChannelMonitorAutoDisableFailureRounds {
+		autoDisableFailureRounds = defaultChannelMonitorAutoDisableFailureRounds
+	}
 	autoEnableOnCostRatioRecovery, err := strconv.ParseBool(rawAutoEnableOnCostRatioRecovery)
 	if err != nil {
 		autoEnableOnCostRatioRecovery = false
@@ -661,6 +671,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		AutoUpdateConsecutiveFailureLimit:     consecutiveFailureLimit,
 		SyncFailureAlertThreshold:             syncFailureAlertThreshold,
 		AutoDisableOnUpdateFailure:            autoDisableOnUpdateFailure,
+		AutoDisableFailureRounds:              autoDisableFailureRounds,
 		AutoEnableOnCostRatioRecovery:         autoEnableOnCostRatioRecovery,
 		AutoEnableOnBalanceRecovery:           autoEnableOnBalanceRecovery,
 		CostRetentionDays:                     costRetentionDays,
@@ -1002,6 +1013,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		request.AutoUpdateConsecutiveFailureLimit == nil &&
 		request.SyncFailureAlertThreshold == nil &&
 		request.AutoDisableOnUpdateFailure == nil &&
+		request.AutoDisableFailureRounds == nil &&
 		request.AutoEnableOnCostRatioRecovery == nil &&
 		request.AutoEnableOnBalanceRecovery == nil &&
 		request.CostRetentionDays == nil &&
@@ -1210,6 +1222,14 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 	if request.AutoDisableOnUpdateFailure != nil {
 		settings.AutoDisableOnUpdateFailure = *request.AutoDisableOnUpdateFailure
 		values[channelMonitorAutoDisableOnUpdateFailureOption] = strconv.FormatBool(settings.AutoDisableOnUpdateFailure)
+	}
+	if request.AutoDisableFailureRounds != nil {
+		if *request.AutoDisableFailureRounds < 1 || *request.AutoDisableFailureRounds > maxChannelMonitorAutoDisableFailureRounds {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "自动禁用轮数必须在 1 到 100 轮之间"})
+			return
+		}
+		settings.AutoDisableFailureRounds = *request.AutoDisableFailureRounds
+		values[channelMonitorAutoDisableFailureRoundsOption] = strconv.Itoa(settings.AutoDisableFailureRounds)
 	}
 	if request.AutoEnableOnCostRatioRecovery != nil {
 		settings.AutoEnableOnCostRatioRecovery = *request.AutoEnableOnCostRatioRecovery
@@ -1773,6 +1793,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		"auto_update_consecutive_failure_limit":      settings.AutoUpdateConsecutiveFailureLimit,
 		"sync_failure_alert_threshold":               settings.SyncFailureAlertThreshold,
 		"auto_disable_on_update_failure":             settings.AutoDisableOnUpdateFailure,
+		"auto_disable_failure_rounds":                settings.AutoDisableFailureRounds,
 		"auto_enable_on_cost_ratio_recovery":         settings.AutoEnableOnCostRatioRecovery,
 		"auto_enable_on_balance_recovery":            settings.AutoEnableOnBalanceRecovery,
 		"cost_retention_days":                        settings.CostRetentionDays,

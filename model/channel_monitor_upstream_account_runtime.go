@@ -24,7 +24,7 @@ func ReleaseUpstreamAccountLease(ctx context.Context, id int, token string) erro
 		Updates(map[string]any{"lease_id": "", "lease_until": 0}).Error
 }
 
-func RecordUpstreamAccountBalance(ctx context.Context, id int, revision int64, token string, balance *float64, message string) error {
+func RecordUpstreamAccountBalance(ctx context.Context, id int, revision int64, token string, balance *float64, message string, deferMemberFailures ...bool) error {
 	if balance != nil && (math.IsNaN(*balance) || math.IsInf(*balance, 0)) {
 		return errors.New("上游余额不是有效数字")
 	}
@@ -47,6 +47,9 @@ func RecordUpstreamAccountBalance(ctx context.Context, id int, revision int64, t
 		}
 		if err := tx.Model(&account).Updates(updates).Error; err != nil {
 			return err
+		}
+		if balance == nil && len(deferMemberFailures) > 0 && deferMemberFailures[0] {
+			return nil
 		}
 		delete(updates, "last_balance_check")
 		if balance != nil {

@@ -115,7 +115,7 @@ func TestSystemTaskSchedulerSkipsDisabled(t *testing.T) {
 	assert.Equal(t, int64(0), countSystemTasks(t, handler.taskType))
 }
 
-func TestSystemTaskSchedulerFixedIntervalSkipsMissedAndActiveWindows(t *testing.T) {
+func TestSystemTaskSchedulerFixedIntervalResumesAfterPreviousWindowEnds(t *testing.T) {
 	truncate(t)
 	handler := &stubFixedIntervalHandler{&stubScheduledHandler{taskType: "test_fixed_schedule", enabled: true, interval: time.Minute}}
 	withSystemTaskRegistry(t, handler)
@@ -139,9 +139,19 @@ func TestSystemTaskSchedulerFixedIntervalSkipsMissedAndActiveWindows(t *testing.
 	require.NoError(t, model.FinishSystemTask(latest.TaskID, "fixed-runner", model.SystemTaskStatusSucceeded, nil, ""))
 	require.NoError(t, model.DB.Model(latest).Update("updated_at", start.Add(time.Minute+5*time.Second).Unix()).Error)
 	runSystemTaskSchedulerAt(start.Add(time.Minute + 10*time.Second))
-	assert.EqualValues(t, 1, countSystemTasks(t, handler.taskType))
+	assert.EqualValues(t, 2, countSystemTasks(t, handler.taskType))
+	next, err := model.GetLatestSystemTask(handler.taskType)
+	require.NoError(t, err)
+	require.NoError(t, next.DecodePayload(&payload))
+	assert.Equal(t, map[string]int64{
+		"start": start.Add(time.Minute).Unix(), "deadline": start.Add(2 * time.Minute).Unix(),
+	}, payload)
 
-	runSystemTaskSchedulerAt(start.Add(2 * time.Minute))
+	_, claimed, err = model.ClaimSystemTask(next.ID, handler.taskType, "fixed-runner", common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, model.FinishSystemTask(next.TaskID, "fixed-runner", model.SystemTaskStatusSucceeded, nil, ""))
+	runSystemTaskSchedulerAt(start.Add(time.Minute + 12*time.Second))
 	assert.EqualValues(t, 2, countSystemTasks(t, handler.taskType))
 }
 

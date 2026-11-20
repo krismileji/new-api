@@ -96,6 +96,17 @@ func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, err
 	if err != nil {
 		return nil, err
 	}
+	task, err := newPendingSystemTask(taskID, taskType, payload, state)
+	if err != nil {
+		return nil, err
+	}
+	if err := DB.Create(task).Error; err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+func newPendingSystemTask(taskID, taskType string, payload any, state any) (*SystemTask, error) {
 	payloadText, err := marshalSystemTaskJSON(payload)
 	if err != nil {
 		return nil, err
@@ -105,19 +116,14 @@ func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, err
 		return nil, err
 	}
 
-	task := &SystemTask{
+	return &SystemTask{
 		TaskID:    taskID,
 		Type:      taskType,
 		Status:    SystemTaskStatusPending,
 		ActiveKey: &taskType,
 		Payload:   payloadText,
 		State:     stateText,
-	}
-
-	if err := DB.Create(task).Error; err != nil {
-		return nil, err
-	}
-	return task, nil
+	}, nil
 }
 
 func GetSystemTaskByTaskID(taskID string) (*SystemTask, error) {

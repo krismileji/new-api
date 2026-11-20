@@ -27,7 +27,7 @@ func setupResponsesMonitorDisable(t *testing.T, channel *model.Channel, trigger 
 		monitor.UpstreamType, monitor.UpstreamBaseURL, monitor.UpstreamAuthType, monitor.UpstreamGroup = service.NewAPIUpstreamType, failure.URL, service.NewAPIUpstreamAuthPublic, "default"
 		monitor.UpstreamBalanceSyncDisabled = true
 		disableChannelMonitorSSRFProtection(t)
-		useChannelMonitorOptionMap(t, map[string]string{channelMonitorAutoDisableOnUpdateFailureOption: "true", channelMonitorAutoUpdateRetryCountOption: "0", channelMonitorEmailNotificationOption: "false"})
+		useChannelMonitorOptionMap(t, map[string]string{channelMonitorAutoDisableOnUpdateFailureOption: "true", channelMonitorAutoDisableFailureRoundsOption: "1", channelMonitorAutoUpdateRetryCountOption: "0", channelMonitorEmailNotificationOption: "false"})
 	}
 	require.NoError(t, model.DB.Create(&monitor).Error)
 	t.Cleanup(func() { require.NoError(t, model.DB.Delete(&monitor).Error) })

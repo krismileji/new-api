@@ -10,6 +10,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -39,6 +40,10 @@ const (
 )
 
 var ErrChannelMonitorUpstreamAuthentication = errors.New("channel monitor upstream authentication failed")
+
+// ErrChannelMonitorUpstreamGroupUnavailable indicates that a valid group list
+// excludes the configured group.
+var ErrChannelMonitorUpstreamGroupUnavailable = errors.New("上游分组不存在或当前账号不可见")
 
 type channelMonitorUpstreamAuthenticationError struct {
 	cause error
@@ -79,6 +84,8 @@ type ChannelMonitorUpstreamConfig struct {
 	Proxy                        string
 	RequestTimeout               time.Duration
 	SkipBalance                  bool
+	AllowPartialMetrics          bool
+	SingleMetricRequest          bool
 	CostConversion               ChannelMonitorCostConversion
 	CustomConfig                 ChannelMonitorCustomUpstreamConfig
 	CustomDebug                  bool
@@ -368,7 +375,10 @@ func FetchChannelMonitorUpstreamGroupRatio(ctx context.Context, config ChannelMo
 			return fetchChannelMonitorCustomUpstreamRatio(requestContext, client, config.BaseURL, custom, ratioConfig.SkipBalance, config.CustomDebug)
 		})
 		if err != nil {
-			return result, err
+			var metricErr *channelMonitorCustomMetricError
+			if !config.AllowPartialMetrics || !errors.As(err, &metricErr) || metricErr.ratio {
+				return result, err
+			}
 		}
 		// Release local variable-group locks before the account acquires its own
 		// credentials. Both sources may legitimately use the same variable group.
@@ -695,6 +705,7 @@ func fetchNewAPIGroupRatio(ctx context.Context, client *http.Client, config NewA
 	defer cancel()
 
 	errorsByEndpoint := make([]string, 0, len(endpoints))
+	groupUnavailable := true
 	for _, endpoint := range endpoints {
 		ratios, fetchErr := fetchNewAPIGroupRatiosEndpoint(requestContext, client, config, endpoint, validateURL)
 		if fetchErr == nil {
@@ -702,8 +713,15 @@ func fetchNewAPIGroupRatio(ctx context.Context, client *http.Client, config NewA
 				return NewAPIGroupRatioResult{Ratio: ratio, Endpoint: endpoint}, nil
 			}
 			fetchErr = fmt.Errorf("上游未返回分组 %q", config.Group)
+		} else if errors.Is(fetchErr, ErrChannelMonitorUpstreamAuthentication) {
+			return NewAPIGroupRatioResult{}, fmt.Errorf("%s: %w", endpoint, fetchErr)
+		} else if !errors.Is(fetchErr, ErrChannelMonitorUpstreamGroupUnavailable) {
+			groupUnavailable = false
 		}
 		errorsByEndpoint = append(errorsByEndpoint, endpoint+": "+fetchErr.Error())
+	}
+	if groupUnavailable {
+		return NewAPIGroupRatioResult{}, fmt.Errorf("%w %q", ErrChannelMonitorUpstreamGroupUnavailable, config.Group)
 	}
 	return NewAPIGroupRatioResult{}, errors.New(strings.Join(errorsByEndpoint, "; "))
 }
@@ -817,6 +835,11 @@ func fetchNewAPIGroupRatiosEndpoint(ctx context.Context, client *http.Client, co
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		if config.AuthType == NewAPIUpstreamAuthUser &&
+			(response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden) {
+			upstreamErr := fmt.Errorf("上游返回 %d %s", response.StatusCode, http.StatusText(response.StatusCode))
+			return nil, &channelMonitorUpstreamAuthenticationError{cause: upstreamErr}
+		}
 		return nil, fmt.Errorf("上游返回 %s", response.Status)
 	}
 
@@ -828,7 +851,7 @@ func fetchNewAPIGroupRatiosEndpoint(ctx context.Context, client *http.Client, co
 		return nil, errors.New("上游响应过大")
 	}
 
-	rawRatios := make(map[string]json.RawMessage)
+	var rawRatios map[string]json.RawMessage
 	if endpoint == "/api/pricing" {
 		var payload newAPIPricingResponse
 		if err := common.Unmarshal(body, &payload); err != nil {
@@ -846,11 +869,14 @@ func fetchNewAPIGroupRatiosEndpoint(ctx context.Context, client *http.Client, co
 		if !payload.Success {
 			return nil, upstreamGroupRatioMessage(payload.Message)
 		}
-		for name, entry := range payload.Data {
-			rawRatios[name] = entry.Ratio
+		if payload.Data != nil {
+			rawRatios = make(map[string]json.RawMessage, len(payload.Data))
+			for name, entry := range payload.Data {
+				rawRatios[name] = entry.Ratio
+			}
 		}
 	}
-	if len(rawRatios) == 0 {
+	if rawRatios == nil {
 		return nil, errors.New("上游未返回可用分组")
 	}
 
@@ -873,7 +899,7 @@ func fetchNewAPIGroupRatiosEndpoint(ctx context.Context, client *http.Client, co
 		ratios[name] = ratio
 	}
 	if len(ratios) == 0 {
-		return nil, errors.New("上游未返回可用分组")
+		return nil, ErrChannelMonitorUpstreamGroupUnavailable
 	}
 	return ratios, nil
 }
@@ -1005,6 +1031,10 @@ func requestNewAPIUser(ctx context.Context, client *http.Client, method string, 
 		return nil, fmt.Errorf("New API %s失败: %w", operation, err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		upstreamErr := fmt.Errorf("New API %s失败: 上游返回 %d %s", operation, response.StatusCode, http.StatusText(response.StatusCode))
+		return nil, &channelMonitorUpstreamAuthenticationError{cause: upstreamErr}
+	}
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxUpstreamGroupRatioResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("New API %s失败: %w", operation, err)
@@ -1198,7 +1228,7 @@ func fetchSub2APIGroupRatio(ctx context.Context, client *http.Client, config Sub
 				return result, nil
 			}
 		}
-		return result, fmt.Errorf("Sub2API 当前账号不可见分组 %q", group)
+		return result, fmt.Errorf("Sub2API %w %q", ErrChannelMonitorUpstreamGroupUnavailable, group)
 	default:
 		return NewAPIGroupRatioResult{}, errors.New("Sub2API 认证方式无效")
 	}
@@ -1382,7 +1412,7 @@ func fetchSub2APIUpstreamGroups(ctx context.Context, client *http.Client, config
 			balanceResultCh <- balance
 		}()
 	}
-	result, err := fetchSub2APIUpstreamGroupsWithToken(requestContext, client, baseURL, accessToken, validateURL)
+	result, err := fetchSub2APIUpstreamGroupsWithToken(requestContext, client, baseURL, accessToken, config.Group, validateURL)
 	if balanceResultCh != nil {
 		if errors.Is(err, ErrChannelMonitorUpstreamAuthentication) {
 			cancel()
@@ -1414,6 +1444,15 @@ func fetchSub2APIUpstreamGroups(ctx context.Context, client *http.Client, config
 		}
 		if result.Balance.FetchError != nil {
 			result.Balance.Error = result.Balance.FetchError.Error()
+		}
+		if err == ErrChannelMonitorUpstreamGroupUnavailable {
+			groupErr := fmt.Errorf("Sub2API %w %q", err, strings.ReplaceAll(config.Group, accessToken, "[REDACTED]"))
+			// The balance endpoint can reject the token after the group lookup
+			// succeeds. Let the configured credential refresh handle that case.
+			if errors.Is(result.Balance.FetchError, ErrChannelMonitorUpstreamAuthentication) {
+				return result, &channelMonitorUpstreamAuthenticationError{cause: groupErr}
+			}
+			return result, groupErr
 		}
 		return result, redactUpstreamGroupRatioSecrets(err, accessToken)
 	}
@@ -1621,7 +1660,7 @@ func normalizeSub2APITokenConfig(config Sub2APIGroupRatioConfig) (string, string
 	return baseURL, accessToken, nil
 }
 
-func fetchSub2APIUpstreamGroupsWithToken(ctx context.Context, client *http.Client, baseURL string, accessToken string, validateURL func(string) error) (ChannelMonitorUpstreamGroupsResult, error) {
+func fetchSub2APIUpstreamGroupsWithToken(ctx context.Context, client *http.Client, baseURL string, accessToken string, targetGroup string, validateURL func(string) error) (ChannelMonitorUpstreamGroupsResult, error) {
 	result := ChannelMonitorUpstreamGroupsResult{}
 	groupsData, err := requestSub2API(
 		ctx,
@@ -1639,6 +1678,12 @@ func fetchSub2APIUpstreamGroupsWithToken(ctx context.Context, client *http.Clien
 	var groups []sub2APIGroupRatioEntry
 	if err := common.Unmarshal(groupsData, &groups); err != nil {
 		return result, errors.New("Sub2API 可用分组响应格式无效")
+	}
+	// User-specific rates only override groups in the available list.
+	if targetGroup != "" && groups != nil && !slices.ContainsFunc(groups, func(entry sub2APIGroupRatioEntry) bool {
+		return strings.TrimSpace(entry.Name) == targetGroup || strconv.FormatInt(entry.ID, 10) == targetGroup
+	}) {
+		return result, ErrChannelMonitorUpstreamGroupUnavailable
 	}
 
 	ratesData, err := requestSub2API(
@@ -1808,7 +1853,7 @@ func applySub2APIUpstreamGroup(ctx context.Context, client *http.Client, config 
 		err = redactUpstreamGroupRatioSecrets(err, secrets...)
 	}()
 
-	groupsResult, err := fetchSub2APIUpstreamGroupsWithToken(ctx, client, baseURL, accessToken, validateURL)
+	groupsResult, err := fetchSub2APIUpstreamGroupsWithToken(ctx, client, baseURL, accessToken, "", validateURL)
 	if err != nil {
 		return result, err
 	}

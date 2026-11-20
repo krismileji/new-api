@@ -84,6 +84,7 @@ import {
 import { handleChannelMonitorMutationError } from '../lib/error'
 import {
   CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
+  getChannelMonitorActiveRefetchInterval,
   CHANNEL_MONITOR_TASK_HISTORY_QUERY_KEY,
 } from '../lib/query-options'
 import {
@@ -825,6 +826,7 @@ function ChannelMonitorRatioTaskCard(props: {
                 {result?.recovered_after_retry ?? 0}
               </Badge>
             )}
+            {result?.email_status === 'pending' && <span>邮件发送中</span>}
             {result?.email_status === 'sent' && (
               <Badge variant='outline'>邮件已发送</Badge>
             )}
@@ -1187,6 +1189,12 @@ export function ChannelMonitorTaskHistoryDialog(
     staleTime: 0,
     ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     refetchOnMount: 'always',
+    refetchInterval: (history) =>
+      getChannelMonitorActiveRefetchInterval(
+        !!history.state.data?.data.items.some(
+          (task) => task.result?.email_status === 'pending'
+        )
+      ),
   })
   const tasks = query.data?.data.items ?? []
   const total = query.data?.data.total ?? 0

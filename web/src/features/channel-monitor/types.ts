@@ -791,6 +791,7 @@ export type ChannelMonitorSettings = {
   auto_update_consecutive_failure_limit: number
   sync_failure_alert_threshold?: number
   auto_disable_on_update_failure: boolean
+  auto_disable_failure_rounds?: number
   auto_enable_on_cost_ratio_recovery: boolean
   auto_enable_on_balance_recovery: boolean
   cost_retention_days: number
@@ -1415,7 +1416,7 @@ export type ChannelMonitorTaskResult = {
   failures?: ChannelMonitorTaskFailure[]
   failure_details_truncated?: boolean
   adjustments?: ChannelMonitorTaskAdjustment[]
-  email_status?: 'sent' | 'failed'
+  email_status?: 'pending' | 'sent' | 'failed'
   email_error?: string
 }
 

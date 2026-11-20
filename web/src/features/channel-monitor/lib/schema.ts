@@ -55,6 +55,8 @@ export const DEFAULT_CHANNEL_MONITOR_UPSTREAM_REQUEST_TIMEOUT_SECONDS = 30
 export const MIN_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 0
 export const MAX_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 100
 export const DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT = 10
+export const MAX_AUTO_DISABLE_FAILURE_ROUNDS = 100
+export const DEFAULT_AUTO_DISABLE_FAILURE_ROUNDS = 3
 export const MIN_SYNC_FAILURE_ALERT_THRESHOLD = 1
 export const MAX_SYNC_FAILURE_ALERT_THRESHOLD = 100
 export const DEFAULT_SYNC_FAILURE_ALERT_THRESHOLD = 10
@@ -1127,6 +1129,12 @@ export function createChannelMonitorSettingsSchema() {
           '连续失败停止次数不能超过 100 次'
         ),
       autoDisableOnUpdateFailure: z.boolean(),
+      autoDisableFailureRounds: z.coerce
+        .number()
+        .int('自动禁用轮数必须是整数')
+        .min(1, '自动禁用轮数不能小于 1 轮')
+        .max(MAX_AUTO_DISABLE_FAILURE_ROUNDS, '自动禁用轮数不能超过 100 轮')
+        .default(DEFAULT_AUTO_DISABLE_FAILURE_ROUNDS),
       syncFailureAlertThreshold: z.coerce
         .number()
         .int('同步失败告警次数必须是整数')

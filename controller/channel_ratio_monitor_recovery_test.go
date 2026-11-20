@@ -118,6 +118,7 @@ func TestRunChannelRatioMonitorTaskAutoEnablesChannelAfterRatioUpdateRecovers(t 
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorAutoUpdateRetryCountOption:       "0",
 		channelMonitorAutoDisableOnUpdateFailureOption: "true",
+		channelMonitorAutoDisableFailureRoundsOption:   "1",
 	})
 	disableChannelMonitorSSRFProtection(t)
 

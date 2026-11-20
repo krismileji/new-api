@@ -565,7 +565,7 @@ func fetchChannelMonitorCustomUpstreamRatio(ctx context.Context, client *http.Cl
 				client,
 				baseURL,
 				normalized,
-				channelMonitorCustomHTTPResponse{},
+				nil,
 				includeDebug,
 			)
 			balanceResultCh <- struct {
@@ -583,16 +583,19 @@ func fetchChannelMonitorCustomUpstreamRatio(ctx context.Context, client *http.Cl
 		balanceErr = balanceResult.err
 		if balanceErr != nil {
 			result.Balance.Error = balanceErr.Error()
+			result.Balance.FetchError = balanceErr
 		} else {
 			result.Balance = balanceResult.result
 		}
 	} else {
 		var ratioResponse channelMonitorCustomHTTPResponse
+		var ratioRequestErr error
 		if normalized.Ratio.Source == ChannelMonitorCustomSourceFixed {
 			result.Ratio = *normalized.Ratio.FixedValue
 			result.Endpoint = "固定输入"
 		} else {
-			ratioResponse, err = requestChannelMonitorCustomUpstream(ctx, client, baseURL, *normalized.Ratio.Request, includeDebug)
+			ratioResponse, ratioRequestErr = requestChannelMonitorCustomUpstream(ctx, client, baseURL, *normalized.Ratio.Request, includeDebug)
+			err = ratioRequestErr
 			if err == nil {
 				result.Ratio, err = extractChannelMonitorCustomValue(ratioResponse.body, *normalized.Ratio.Result)
 				result.Endpoint = normalized.Ratio.Request.Path
@@ -602,9 +605,17 @@ func fetchChannelMonitorCustomUpstreamRatio(ctx context.Context, client *http.Cl
 
 		if !skipBalance {
 			var balanceResult ChannelMonitorUpstreamBalanceResult
-			balanceResult, balanceErr = fetchChannelMonitorCustomBalanceWithResponse(ctx, client, baseURL, normalized, ratioResponse, includeDebug)
+			if normalized.BalanceReuseRatioRequest {
+				balanceErr = ratioRequestErr
+				if balanceErr == nil {
+					balanceResult, balanceErr = fetchChannelMonitorCustomBalanceWithResponse(ctx, client, baseURL, normalized, &ratioResponse, includeDebug)
+				}
+			} else {
+				balanceResult, balanceErr = fetchChannelMonitorCustomBalanceWithResponse(ctx, client, baseURL, normalized, nil, includeDebug)
+			}
 			if balanceErr != nil {
 				result.Balance.Error = balanceErr.Error()
+				result.Balance.FetchError = balanceErr
 			} else {
 				result.Balance = balanceResult
 			}
@@ -627,10 +638,10 @@ func fetchChannelMonitorCustomUpstreamBalance(ctx context.Context, client *http.
 	if err != nil {
 		return ChannelMonitorUpstreamBalanceResult{}, err
 	}
-	return fetchChannelMonitorCustomBalanceWithResponse(ctx, client, baseURL, normalized, channelMonitorCustomHTTPResponse{}, includeDebug)
+	return fetchChannelMonitorCustomBalanceWithResponse(ctx, client, baseURL, normalized, nil, includeDebug)
 }
 
-func fetchChannelMonitorCustomBalanceWithResponse(ctx context.Context, client *http.Client, baseURL string, config ChannelMonitorCustomUpstreamConfig, ratioResponse channelMonitorCustomHTTPResponse, includeDebug bool) (ChannelMonitorUpstreamBalanceResult, error) {
+func fetchChannelMonitorCustomBalanceWithResponse(ctx context.Context, client *http.Client, baseURL string, config ChannelMonitorCustomUpstreamConfig, ratioResponse *channelMonitorCustomHTTPResponse, includeDebug bool) (ChannelMonitorUpstreamBalanceResult, error) {
 	if config.Balance.Source == ChannelMonitorCustomSourceAccount {
 		return fetchChannelMonitorAccountBalanceSource(ctx, config.Balance.AccountID, false)
 	}
@@ -643,13 +654,14 @@ func fetchChannelMonitorCustomBalanceWithResponse(ctx context.Context, client *h
 	response := channelMonitorCustomHTTPResponse{}
 	if config.BalanceReuseRatioRequest {
 		requestConfig = config.Ratio.Request
-		response = ratioResponse
 	}
 	if requestConfig == nil {
 		return ChannelMonitorUpstreamBalanceResult{}, errors.New("自定义余额接口配置为空")
 	}
 	var err error
-	if len(response.body) == 0 {
+	if ratioResponse != nil {
+		response = *ratioResponse
+	} else {
 		response, err = requestChannelMonitorCustomUpstream(ctx, client, baseURL, *requestConfig, includeDebug)
 		if err != nil {
 			return ChannelMonitorUpstreamBalanceResult{}, fmt.Errorf("自定义余额更新失败: %w", err)

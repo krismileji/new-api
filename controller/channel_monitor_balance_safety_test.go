@@ -242,6 +242,7 @@ func verifyChannelMonitorPartialBalanceFailure(t *testing.T, db *gorm.DB) {
 		t.Run(test.name, func(t *testing.T) {
 			useChannelMonitorOptionMap(t, map[string]string{
 				channelMonitorAutoDisableOnUpdateFailureOption:        strconv.FormatBool(test.disable),
+				channelMonitorAutoDisableFailureRoundsOption:          "1",
 				channelMonitorAutoUpdateRetryCountOption:              "2",
 				channelMonitorAutoUpdateConsecutiveFailureLimitOption: "0",
 			})
@@ -298,7 +299,7 @@ func verifyChannelMonitorPartialBalanceFailure(t *testing.T, db *gorm.DB) {
 				require.Len(t, summary.Failures, 1)
 				assert.Equal(t, model.ChannelRatioFailureAlertBalance, summary.Failures[0].Kind)
 				assert.Zero(t, summary.RecoveredAfterRetry)
-				assert.Equal(t, 3, monitor.BalanceConsecutiveFailures)
+				assert.Equal(t, 1, monitor.BalanceConsecutiveFailures)
 			}
 			if !test.recover && test.disable && !test.manual {
 				status = common.ChannelStatusAutoDisabled
@@ -320,6 +321,7 @@ func verifyChannelMonitorBalanceRetryGuards(t *testing.T, db *gorm.DB) {
 			useChannelMonitorOptionMap(t, map[string]string{
 				channelMonitorAutoUpdateRetryCountOption:       "3",
 				channelMonitorAutoDisableOnUpdateFailureOption: "true",
+				channelMonitorAutoDisableFailureRoundsOption:   "1",
 			})
 			id := index + 1
 			var balanceCalls atomic.Int32

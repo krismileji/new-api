@@ -12,6 +12,12 @@ import (
 // Account-owned queries serialize rotating credentials across nodes. A task
 // passes its existing lease, keeping metric reads and side effects in one scope.
 func LockUpstreamAccountRequest(ctx context.Context, config ChannelMonitorUpstreamConfig) (string, func(), error) {
+	return LockUpstreamAccountRequestUntil(ctx, config, time.Time{})
+}
+
+// LockUpstreamAccountRequestUntil allows several reads under the same account
+// lease while a bounded monitor round is active.
+func LockUpstreamAccountRequestUntil(ctx context.Context, config ChannelMonitorUpstreamConfig, until time.Time) (string, func(), error) {
 	if config.AccountID == 0 || (config.Type == CustomUpstreamType && config.CustomConfig.Balance.Source == ChannelMonitorCustomSourceAccount) {
 		return config.AccountLeaseID, func() {}, nil
 	}
@@ -33,7 +39,8 @@ func LockUpstreamAccountRequest(ctx context.Context, config ChannelMonitorUpstre
 			return config.AccountLeaseID, func() {}, nil
 		}
 		leaseDuration := max(channelMonitorUpstreamRequestTimeout(config.RequestTimeout), upstreamGroupApplyTimeout) + 15*time.Second
-		locked, err := model.AcquireUpstreamAccountLease(requestCtx, account.ID, account.Revision, token, time.Now().Add(leaseDuration).Unix())
+		locked, err := model.AcquireUpstreamAccountLease(requestCtx, account.ID, account.Revision, token,
+			max(time.Now().Add(leaseDuration).Unix(), until.Unix()))
 		if err != nil {
 			return "", nil, err
 		}

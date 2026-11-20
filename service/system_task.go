@@ -112,7 +112,8 @@ var (
 	// systemTaskWakeup signals the runner to check for runnable tasks
 	// immediately instead of waiting for the idle poll. Buffered so a signal
 	// raised while the runner is busy is not lost and is handled on the next loop.
-	systemTaskWakeup = make(chan struct{}, 1)
+	systemTaskWakeup              = make(chan struct{}, 1)
+	systemTaskFixedScheduleWakeup = make(chan struct{}, 1)
 )
 
 // notifySystemTaskRunner wakes the runner without blocking. If a wakeup is
@@ -140,7 +141,7 @@ func StartSystemTaskRunner() {
 
 			var lastScheduler time.Time
 			var lastStaleLockCleanup time.Time
-			runPass := func() {
+			runPass := func(fixedTaskFinished bool) {
 				// The scheduler/stale-lock pass is throttled independently of the
 				// claim pass: wakeups (e.g. a manual log cleanup) should claim
 				// immediately without re-running the scheduler every time.
@@ -155,19 +156,24 @@ func StartSystemTaskRunner() {
 				if schedulerTick.After(lastScheduler) {
 					lastScheduler = schedulerTick
 					runSystemTaskSchedulerAt(now)
+				} else if fixedTaskFinished {
+					scheduleSystemTasks(now, true)
 				}
 				runSystemTaskClaimPass(runnerID)
 			}
 
-			runPass()
+			runPass(false)
 			for {
+				fixedTaskFinished := false
 				select {
 				case <-timer.C:
 					now := time.Now()
 					timer.Reset(time.Until(now.Truncate(systemTaskSchedulerInterval).Add(systemTaskSchedulerInterval)))
 				case <-systemTaskWakeup:
+				case <-systemTaskFixedScheduleWakeup:
+					fixedTaskFinished = true
 				}
-				runPass()
+				runPass(fixedTaskFinished)
 			}
 		})
 	})
@@ -260,6 +266,12 @@ func runSystemTaskClaimPass(runnerID string) {
 			runWithLeaseHeartbeat(dispatchTask, runnerID, func(ctx context.Context) {
 				dispatchHandler.Run(ctx, dispatchTask, runnerID)
 			})
+			if _, fixed := dispatchHandler.(fixedIntervalSystemTaskHandler); fixed {
+				select {
+				case systemTaskFixedScheduleWakeup <- struct{}{}:
+				default:
+				}
+			}
 		})
 	}
 }
@@ -273,11 +285,19 @@ func runSystemTaskScheduler() {
 }
 
 func runSystemTaskSchedulerAt(now time.Time) {
+	scheduleSystemTasks(now, false)
+}
+
+func scheduleSystemTasks(now time.Time, fixedOnly bool) {
 	handlers := registeredSystemTaskHandlers()
 	scheduledHandlers := make([]ScheduledSystemTaskHandler, 0, len(handlers))
 	taskTypes := make([]string, 0, len(handlers))
 	for _, handler := range handlers {
 		scheduled, ok := handler.(ScheduledSystemTaskHandler)
+		_, fixed := handler.(fixedIntervalSystemTaskHandler)
+		if fixedOnly && !fixed {
+			continue
+		}
 		if !ok || !scheduled.Enabled() {
 			continue
 		}
@@ -294,24 +314,24 @@ func runSystemTaskSchedulerAt(now time.Time) {
 		if latest != nil && (latest.Status == model.SystemTaskStatusPending || latest.Status == model.SystemTaskStatusRunning) {
 			continue
 		}
-		var payload any
+		var createErr error
 		if fixed, ok := scheduled.(fixedIntervalSystemTaskHandler); ok {
 			interval := scheduled.Interval()
 			if interval <= 0 {
 				continue
 			}
 			slot := now.Truncate(interval)
-			if now.Sub(slot) >= systemTaskSchedulerInterval || (latest != nil && latest.UpdatedAt >= slot.Unix()) {
+			if !fixedSystemTaskWindowDue(now, slot, latest) {
 				continue
 			}
-			payload = fixed.NewScheduledPayload(slot, slot.Add(interval))
+			createErr = model.CreateFixedIntervalSystemTask(scheduled.Type(), slot.Unix(), fixed.NewScheduledPayload(slot, slot.Add(interval)))
 		} else {
 			if latest != nil && now.Unix()-latest.UpdatedAt < int64(scheduled.Interval().Seconds()) {
 				continue
 			}
-			payload = scheduled.NewPayload()
+			_, createErr = model.CreateSystemTask(scheduled.Type(), scheduled.NewPayload(), nil)
 		}
-		if _, err := model.CreateSystemTask(scheduled.Type(), payload, nil); err != nil {
+		if createErr != nil {
 			activeTask, activeErr := model.GetActiveSystemTask(scheduled.Type())
 			if activeErr == nil && activeTask != nil {
 				continue
@@ -319,10 +339,31 @@ func runSystemTaskSchedulerAt(now time.Time) {
 			if activeErr != nil {
 				logger.LogWarn(context.Background(), fmt.Sprintf("system task scheduler active lookup failed: type=%s err=%v", scheduled.Type(), activeErr))
 			}
-			logger.LogWarn(context.Background(), fmt.Sprintf("system task scheduler create failed: type=%s err=%v", scheduled.Type(), err))
+			logger.LogWarn(context.Background(), fmt.Sprintf("system task scheduler create failed: type=%s err=%v", scheduled.Type(), createErr))
 			continue
 		}
 	}
+}
+
+func fixedSystemTaskWindowDue(now, slot time.Time, latest *model.SystemTask) bool {
+	if latest != nil {
+		// An older run can finish inside the next window. Only a run created
+		// for this window displaces the next scheduled update.
+		var window struct {
+			Start int64 `json:"start"`
+		}
+		start := latest.CreatedAt
+		if latest.DecodePayload(&window) == nil && window.Start > 0 {
+			start = window.Start
+		}
+		if start >= slot.Unix() {
+			return false
+		}
+		if latest.UpdatedAt >= slot.Unix() {
+			return true
+		}
+	}
+	return now.Sub(slot) < systemTaskSchedulerInterval
 }
 
 // runWithLeaseHeartbeat renews the per-type lock on a background ticker while

@@ -2,12 +2,40 @@ package model
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 
+	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 const SystemTaskListResultMaxCharacters = 64 * 1024
+
+// CreateFixedIntervalSystemTask deduplicates a window even if a competing
+// scheduler creates and completes that window before this insert.
+func CreateFixedIntervalSystemTask(taskType string, windowStart int64, payload any) error {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s:%d", taskType, windowStart)))
+	taskID := fmt.Sprintf("systask_%x", sum[:24])
+	task, err := newPendingSystemTask(taskID, taskType, payload, nil)
+	if err != nil {
+		return err
+	}
+	return DB.Clauses(clause.OnConflict{DoNothing: true}).Create(task).Error
+}
+
+// UpdateFinishedChannelMonitorTaskResult records notification delivery after
+// the update task has released its execution lease.
+func UpdateFinishedChannelMonitorTaskResult(taskID, runnerID string, status SystemTaskStatus, result any) error {
+	raw, err := common.Marshal(result)
+	if err != nil {
+		return err
+	}
+	return DB.Model(&SystemTask{}).
+		Where("task_id = ? AND type = ? AND locked_by = ? AND status = ?", taskID, SystemTaskTypeChannelRatioMonitor, runnerID, status).
+		UpdateColumn("result", string(raw)).Error
+}
 
 func GetSystemTaskTypeByTaskID(ctx context.Context, taskID string) (taskType string, exists bool, err error) {
 	if ctx == nil {

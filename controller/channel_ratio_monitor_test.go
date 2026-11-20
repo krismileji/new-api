@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -41,6 +42,15 @@ type channelMonitorSettingsAPIResponse struct {
 	Success bool                   `json:"success"`
 	Message string                 `json:"message"`
 	Data    channelMonitorSettings `json:"data"`
+}
+
+func runChannelRatioMonitorTaskOnce(ctx context.Context, reportProgress func(int, int), sendEmail func(string, string, string) error) (channelRatioMonitorTaskResult, error) {
+	summary, err := collectChannelRatioMonitorRound(ctx, reportProgress, 0)
+	if deliver := summary.deliverNotification; deliver != nil {
+		summary.deliverNotification = nil
+		deliver(&summary, sendEmail)
+	}
+	return summary, err
 }
 
 type channelMonitorGroupSyncAPIResponse struct {
@@ -4906,7 +4916,7 @@ func TestRunChannelRatioMonitorTaskContinuesAfterFailure(t *testing.T) {
 	assert.Equal(t, model.ChannelRatioFetchStatusFailed, failedMonitor.LastFetchStatus)
 	assert.NotEmpty(t, failedMonitor.LastFetchError)
 	assert.NotZero(t, failedMonitor.LastFetchTime)
-	assert.Equal(t, 4, failedMonitor.ConsecutiveFailures)
+	assert.Equal(t, 1, failedMonitor.ConsecutiveFailures)
 
 	monitor, err := model.GetChannelRatioMonitor(2)
 	require.NoError(t, err)
@@ -4964,6 +4974,332 @@ func TestRunChannelRatioMonitorTaskDoesNotRetrySub2APIAuthenticationFailure(t *t
 	monitor, err := model.GetChannelRatioMonitor(1)
 	require.NoError(t, err)
 	assert.Equal(t, 1, monitor.ConsecutiveFailures)
+}
+
+func TestChannelMonitorUpstreamRetryDatabaseMatrix(t *testing.T) {
+	type upstreamReply struct {
+		status int
+		body   string
+	}
+	const credential = "test-upstream-credential"
+	const otherGroups = `{"code":0,"data":[{"id":7,"name":"other","rate_multiplier":1.25}]}`
+	const profile = `{"code":0,"data":{"balance":7.25}}`
+	const otherPricing = `{"success":true,"group_ratio":{"other":1.25}}`
+	const userGroups = `{"success":true,"data":{"vip":{"ratio":1.25}}}`
+	cases := []struct {
+		name, upstream, auth string
+		refreshToken         string
+		replies              map[string][]upstreamReply
+		retries              int
+		balanceUpdated       bool
+		ratioUpdated         bool
+		failureKind          string
+		failureMessage       string
+	}{
+		{
+			name: "sub2api_invalid_refresh_token", upstream: service.Sub2APIUpstreamType, auth: service.Sub2APIAuthRefreshToken,
+			replies: map[string][]upstreamReply{
+				"/api/v1/auth/refresh": {{http.StatusUnauthorized, `{"code":401,"reason":"REFRESH_TOKEN_INVALID","message":"invalid refresh token ` + credential + `"}`}},
+			},
+			failureKind: model.ChannelRatioFailureAlertRatio, failureMessage: "invalid refresh token",
+		},
+		{
+			name: "sub2api_missing_group", upstream: service.Sub2APIUpstreamType, auth: service.Sub2APIAuthToken,
+			replies: map[string][]upstreamReply{
+				"/api/v1/groups/available": {{http.StatusOK, otherGroups}},
+				"/api/v1/user/profile":     {{http.StatusOK, profile}},
+			},
+			balanceUpdated: true, failureKind: model.ChannelRatioFailureAlertRatio, failureMessage: `当前账号不可见 "vip"`,
+		},
+		{
+			name: "sub2api_missing_group_and_temporary_balance_failure", upstream: service.Sub2APIUpstreamType, auth: service.Sub2APIAuthToken,
+			replies: map[string][]upstreamReply{
+				"/api/v1/groups/available": {{http.StatusOK, `{"code":0,"data":[]}`}},
+				"/api/v1/user/profile":     {{http.StatusBadGateway, ""}, {http.StatusOK, profile}},
+			},
+			retries: 1, balanceUpdated: true, failureKind: model.ChannelRatioFailureAlertRatio, failureMessage: `当前账号不可见 "vip"`,
+		},
+		{
+			name: "sub2api_missing_group_and_balance_recovers_with_refreshed_token", upstream: service.Sub2APIUpstreamType, auth: service.Sub2APIAuthToken,
+			refreshToken: "test-refresh-credential",
+			replies: map[string][]upstreamReply{
+				"/api/v1/groups/available": {{http.StatusOK, otherGroups}, {http.StatusOK, otherGroups}},
+				"/api/v1/user/profile":     {{http.StatusUnauthorized, ""}, {http.StatusOK, profile}},
+				"/api/v1/auth/refresh":     {{http.StatusOK, `{"code":0,"data":{"access_token":"fresh-access-token","expires_in":3600}}`}},
+			},
+			balanceUpdated: true, failureKind: model.ChannelRatioFailureAlertRatio, failureMessage: `当前账号不可见 "vip"`,
+		},
+		{
+			name: "new_api_rejected_token", upstream: service.NewAPIUpstreamType, auth: service.NewAPIUpstreamAuthUser,
+			replies: map[string][]upstreamReply{
+				"/api/user/self/groups": {{http.StatusUnauthorized, ""}},
+				"/api/user/self":        {{http.StatusForbidden, ""}},
+			},
+			failureKind: model.ChannelRatioFailureAlertRatio, failureMessage: "401 Unauthorized",
+		},
+		{
+			name: "new_api_missing_group_after_fallback", upstream: service.NewAPIUpstreamType, auth: service.NewAPIUpstreamAuthPublic,
+			replies: map[string][]upstreamReply{
+				"/api/pricing":     {{http.StatusOK, otherPricing}},
+				"/api/user/groups": {{http.StatusOK, `{"success":true,"data":{}}`}},
+			},
+			failureKind: model.ChannelRatioFailureAlertRatio, failureMessage: `上游分组不存在或当前账号不可见 "vip"`,
+		},
+		{
+			name: "new_api_fallback_rate_limit_recovers", upstream: service.NewAPIUpstreamType, auth: service.NewAPIUpstreamAuthPublic,
+			replies: map[string][]upstreamReply{
+				"/api/pricing":     {{http.StatusOK, otherPricing}, {http.StatusOK, otherPricing}},
+				"/api/user/groups": {{http.StatusTooManyRequests, ""}, {http.StatusOK, userGroups}},
+			},
+			retries: 1, ratioUpdated: true,
+		},
+		{
+			name: "new_api_balance_rejected_and_ratio_recovers", upstream: service.NewAPIUpstreamType, auth: service.NewAPIUpstreamAuthUser,
+			replies: map[string][]upstreamReply{
+				"/api/user/self/groups": {{http.StatusBadGateway, ""}, {http.StatusOK, userGroups}},
+				"/api/user/self":        {{http.StatusUnauthorized, ""}},
+			},
+			retries: 1, ratioUpdated: true, failureKind: model.ChannelRatioFailureAlertBalance, failureMessage: "401 Unauthorized",
+		},
+	}
+	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			for _, test := range cases {
+				t.Run(test.name, func(t *testing.T) {
+					db := setupChannelMonitorBalanceSafetyDB(t, engine)
+					useChannelMonitorOptionMap(t, map[string]string{channelMonitorAutoUpdateRetryCountOption: "2"})
+					disableChannelMonitorSSRFProtection(t)
+
+					var requestsMu sync.Mutex
+					requestCounts := make(map[string]int)
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						path := r.URL.Path
+						requestsMu.Lock()
+						index := requestCounts[path]
+						requestCounts[path]++
+						requestsMu.Unlock()
+						replies := test.replies[path]
+						if index >= len(replies) {
+							t.Errorf("unexpected request %d to %s", index+1, path)
+							http.NotFound(w, r)
+							return
+						}
+						w.Header().Set("Content-Type", "application/json")
+						w.WriteHeader(replies[index].status)
+						_, _ = w.Write([]byte(replies[index].body))
+					}))
+					defer server.Close()
+
+					require.NoError(t, db.Create(&model.Channel{
+						Id: 1, Name: "upstream retry", Key: "test-key", Group: "vip", Status: common.ChannelStatusEnabled,
+					}).Error)
+					require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+						ChannelId: 1, UpstreamType: test.upstream, UpstreamBaseURL: server.URL, UpstreamGroup: "vip",
+						UpstreamAuthType: test.auth, UpstreamAccessToken: credential, UpstreamRefreshToken: test.refreshToken, UpstreamUserId: 1,
+					}).Error)
+					summary, err := runChannelRatioMonitorTaskOnce(t.Context(), nil, nil)
+					require.NoError(t, err)
+					assert.Equal(t, test.retries, summary.Retried)
+					requestsMu.Lock()
+					for path, replies := range test.replies {
+						assert.Equal(t, len(replies), requestCounts[path], path)
+					}
+					requestsMu.Unlock()
+
+					monitor, err := model.GetChannelRatioMonitor(1)
+					require.NoError(t, err)
+					if test.ratioUpdated {
+						assert.InDelta(t, 1.25, monitor.Ratio, 1e-9)
+						assert.Zero(t, monitor.ConsecutiveFailures)
+					}
+					if test.balanceUpdated {
+						require.NotNil(t, monitor.UpstreamBalance)
+						assert.InDelta(t, 7.25, *monitor.UpstreamBalance, 1e-9)
+					}
+					if test.failureKind == "" {
+						assert.Zero(t, summary.Failed)
+						return
+					}
+					require.Len(t, summary.Failures, 1)
+					failure := summary.Failures[0]
+					assert.Equal(t, test.failureKind, failure.Kind)
+					assert.Contains(t, failure.Error, test.failureMessage)
+					assert.NotContains(t, failure.Error, credential)
+					assert.NotContains(t, failure.Error, "重试")
+					if test.failureKind == model.ChannelRatioFailureAlertRatio {
+						assert.Equal(t, 1, monitor.ConsecutiveFailures)
+					} else {
+						assert.Equal(t, 1, monitor.BalanceConsecutiveFailures)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestChannelMonitorRoundsDisableOnlyTheFailingChannel(t *testing.T) {
+	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			db := setupChannelMonitorBalanceSafetyDB(t, engine)
+			disableChannelMonitorSSRFProtection(t)
+			useChannelMonitorOptionMap(t, map[string]string{
+				channelMonitorAutoUpdateRetryCountOption:              "1",
+				channelMonitorAutoUpdateConsecutiveFailureLimitOption: "0",
+				channelMonitorAutoDisableOnUpdateFailureOption:        "true",
+				channelMonitorAutoDisableFailureRoundsOption:          "2",
+				channelMonitorEmailNotificationOption:                 "true",
+				channelMonitorEmailNotificationTypesOption:            `["task_failed"]`,
+				channelMonitorNotificationEmailOption:                 "rounds@example.test",
+			})
+			var failedRatio, blockedBalance atomic.Bool
+			var quota atomic.Int32
+			quota.Store(900)
+			balanceStarted := make(chan struct{}, 1)
+			balanceCanceled := make(chan struct{}, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/user/self/groups":
+					if r.Header.Get("Authorization") == "Bearer affected" && failedRatio.Load() {
+						w.WriteHeader(http.StatusBadGateway)
+						return
+					}
+					_, _ = w.Write([]byte(`{"success":true,"data":{"vip":{"ratio":1.25}}}`))
+				case "/api/user/self":
+					if r.Header.Get("Authorization") == "Bearer affected" && blockedBalance.Load() {
+						balanceStarted <- struct{}{}
+						<-r.Context().Done()
+						balanceCanceled <- struct{}{}
+						return
+					}
+					_, _ = fmt.Fprintf(w, `{"success":true,"data":{"quota":%d}}`, quota.Load())
+				case "/api/status":
+					_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+			t.Cleanup(server.Close)
+			for i, name := range []string{"affected", "healthy"} {
+				id := i + 1
+				require.NoError(t, db.Create(&model.Channel{Id: id, Name: name, Group: "vip", Status: common.ChannelStatusEnabled}).Error)
+				require.NoError(t, db.Create(&model.ChannelRatioMonitor{
+					ChannelId: id, UpstreamRevision: 1, UpstreamType: service.NewAPIUpstreamType, UpstreamAuthType: service.NewAPIUpstreamAuthUser,
+					UpstreamBaseURL: server.URL, UpstreamUserId: id, UpstreamAccessToken: name, UpstreamGroup: "vip",
+				}).Error)
+			}
+			failedRatio.Store(true)
+			handler := channelRatioMonitorTaskHandler{}
+			firstTask, err := model.CreateSystemTask(handler.Type(), nil, nil)
+			require.NoError(t, err)
+			_, claimed, err := model.ClaimSystemTask(firstTask.ID, firstTask.Type, "sync-round", time.Now().Add(time.Minute).Unix())
+			require.NoError(t, err)
+			require.True(t, claimed)
+			first, err := collectChannelRatioMonitorRound(t.Context(), nil, firstTask.ID)
+			require.NoError(t, err)
+			require.NoError(t, model.FinishSystemTask(firstTask.TaskID, "sync-round", model.SystemTaskStatusSucceeded, first, ""))
+			assert.Equal(t, 1, first.Retried)
+			assert.Zero(t, first.ChannelsDisabled)
+			monitor, err := model.GetChannelRatioMonitor(1)
+			require.NoError(t, err)
+			assert.Equal(t, 1, monitor.SyncFailureRounds)
+			assert.Equal(t, 1, monitor.ConsecutiveFailures)
+			_, err = collectChannelRatioMonitorRound(t.Context(), nil, firstTask.ID)
+			require.NoError(t, err)
+			monitor, err = model.GetChannelRatioMonitor(1)
+			require.NoError(t, err)
+			assert.Equal(t, 1, monitor.SyncFailureRounds)
+
+			failedRatio.Store(false)
+			blockedBalance.Store(true)
+			quota.Store(1000)
+			ctx, cancel := context.WithCancelCause(t.Context())
+			defer cancel(context.Canceled)
+			start := time.Now()
+			payload := handler.NewScheduledPayload(start, start.Add(time.Minute))
+			require.NoError(t, model.CreateFixedIntervalSystemTask(handler.Type(), start.Unix(), payload))
+			task, err := model.GetActiveSystemTask(handler.Type())
+			require.NoError(t, err)
+			require.NotNil(t, task)
+			task, claimed, err = model.ClaimSystemTask(task.ID, task.Type, "sync-round", start.Add(time.Minute).Unix())
+			require.NoError(t, err)
+			require.True(t, claimed)
+			mail := make(chan string, 1)
+			mailFinished := make(chan struct{})
+			releaseMail := make(chan struct{})
+			releaseMailOnce := sync.OnceFunc(func() { close(releaseMail) })
+			defer releaseMailOnce()
+			taskReturned := make(chan struct{})
+			go func() {
+				defer close(taskReturned)
+				runChannelRatioMonitorSystemTask(ctx, task, "sync-round", func(subject, _, content string) error {
+					mail <- subject + "\n" + content
+					<-releaseMail
+					close(mailFinished)
+					return nil
+				})
+			}()
+			select {
+			case <-balanceStarted:
+			case <-time.After(5 * time.Second):
+				t.Fatal("余额请求未启动")
+			}
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				current, err := model.GetChannelRatioMonitor(2)
+				if assert.NoError(c, err) && assert.NotNil(c, current.UpstreamBalance) {
+					assert.Equal(c, 10.0, *current.UpstreamBalance)
+				}
+			}, 5*time.Second, 10*time.Millisecond)
+			cancel(context.DeadlineExceeded)
+			select {
+			case <-taskReturned:
+			case <-time.After(5 * time.Second):
+				t.Fatal("超时任务未释放执行锁")
+			}
+			select {
+			case <-balanceCanceled:
+			case <-time.After(5 * time.Second):
+				t.Fatal("未完成的上游请求未被取消")
+			}
+			select {
+			case message := <-mail:
+				assert.Contains(t, message, "定时更新任务超时")
+				assert.Contains(t, message, "affected")
+			case <-time.After(5 * time.Second):
+				t.Fatal("未发送超时通知")
+			}
+			active, err := model.GetActiveSystemTask(handler.Type())
+			require.NoError(t, err)
+			require.Nil(t, active)
+			require.NoError(t, model.CreateFixedIntervalSystemTask(handler.Type(), start.Unix(), payload))
+			active, err = model.GetActiveSystemTask(handler.Type())
+			require.NoError(t, err)
+			require.Nil(t, active, "已结束的轮次不能重复执行")
+			for id, wantStatus := range []int{common.ChannelStatusAutoDisabled, common.ChannelStatusEnabled} {
+				channel, err := model.GetChannelById(id+1, true)
+				require.NoError(t, err)
+				assert.Equal(t, wantStatus, channel.Status)
+			}
+			blockedBalance.Store(false)
+			third, err := collectChannelRatioMonitorRound(t.Context(), nil, task.ID+1)
+			require.NoError(t, err)
+			assert.Equal(t, 1, third.ChannelsEnabled)
+			monitor, err = model.GetChannelRatioMonitor(1)
+			require.NoError(t, err)
+			assert.Zero(t, monitor.SyncFailureRounds)
+			releaseMailOnce()
+			select {
+			case <-mailFinished:
+			case <-time.After(5 * time.Second):
+				t.Fatal("邮件未结束")
+			}
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				finished, err := model.GetSystemTaskByTaskID(task.TaskID)
+				if assert.NoError(c, err) {
+					assert.Contains(c, finished.Result, `"email_status":"sent"`)
+				}
+			}, 2*time.Second, 10*time.Millisecond)
+		})
+	}
 }
 
 func TestRunChannelRatioMonitorTaskUsesSub2APIAccountPassword(t *testing.T) {
@@ -5697,6 +6033,8 @@ func TestRunChannelRatioMonitorTaskAutoDisablesChannelAfterUpdateFailure(t *test
 		channelMonitorAutoUpdateRetryCountOption:              "0",
 		channelMonitorAutoUpdateConsecutiveFailureLimitOption: "1",
 		channelMonitorAutoDisableOnUpdateFailureOption:        "true",
+		channelMonitorAutoDisableFailureRoundsOption:          "1",
+		channelMonitorSyncFailureAlertThresholdOption:         "1",
 		channelMonitorEmailNotificationOption:                 "true",
 		channelMonitorNotificationEmailOption:                 "alerts@example.com",
 	})
@@ -5734,7 +6072,7 @@ func TestRunChannelRatioMonitorTaskAutoDisablesChannelAfterUpdateFailure(t *test
 	assert.Contains(t, subject, "1 项更新失败")
 	assert.Contains(t, content, "渠道自动禁用")
 	assert.Contains(t, content, "&lt;Auto Disabled &amp; API&gt;（ID: 1）")
-	assert.Contains(t, content, "上游倍率或余额更新失败")
+	assert.Contains(t, content, "上游倍率或余额连续 1 轮更新失败或超时")
 
 	channel, err := model.GetChannelById(1, true)
 	require.NoError(t, err)

@@ -61,6 +61,7 @@ export function createChannelMonitorSettingsUpdatePayload(
       values.autoUpdateConsecutiveFailureLimit,
     sync_failure_alert_threshold: values.syncFailureAlertThreshold,
     auto_disable_on_update_failure: values.autoDisableOnUpdateFailure,
+    auto_disable_failure_rounds: values.autoDisableFailureRounds,
     auto_enable_on_cost_ratio_recovery: values.autoEnableOnCostRatioRecovery,
     auto_enable_on_balance_recovery: values.autoEnableOnBalanceRecovery,
     cost_retention_days: values.costRetentionDays,

@@ -50,6 +50,9 @@ type ChannelRatioMonitor struct {
 	LastBalanceError            string   `json:"last_balance_error" gorm:"type:varchar(255)"`
 	BalanceConsecutiveFailures  int      `json:"balance_consecutive_failures"`
 	BalanceFailureAlertNotified bool     `json:"-"`
+	SyncFailureRounds           int      `json:"-"`
+	SyncFailureRoundsRevision   int64    `json:"-"`
+	LastSyncRoundTaskID         int64    `json:"-"`
 	BalanceWarningThreshold     *float64 `json:"balance_warning_threshold"`
 	BalanceAutoDisableThreshold *float64 `json:"balance_auto_disable_threshold"`
 	BalanceAlertNotified        bool     `json:"balance_alert_notified"`

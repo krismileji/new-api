@@ -21,6 +21,15 @@ type channelMonitorBalanceEvaluation struct {
 	Estimate             *service.ChannelBalanceEstimate
 }
 
+func cancelChannelMonitorBalanceSync(ctx context.Context, sync service.ChannelBalanceSync) {
+	if sync.Epoch == "" {
+		return
+	}
+	finish, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_ = service.FailChannelBalanceSync(finish, sync)
+}
+
 func formatChannelMonitorBalanceAmount(amount float64) string {
 	if math.Abs(amount) < 0.0000005 {
 		return "0"

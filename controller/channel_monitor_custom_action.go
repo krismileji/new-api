@@ -22,7 +22,7 @@ func runChannelMonitorCustomActions(ctx context.Context, monitor model.ChannelRa
 
 // Replace the pre-action sample before the caller evaluates balance and ratio
 // policies. Follow-up reads can rearm rules, but cannot execute another action.
-func refreshChannelMonitorAfterCustomAction(ctx context.Context, monitor model.ChannelRatioMonitor, channelKeys []string, proxy string, timeout time.Duration, operatorID int, operatorUsername string) (outcome channelMonitorFetchOutcome, err error) {
+func refreshChannelMonitorAfterCustomAction(ctx context.Context, monitor model.ChannelRatioMonitor, channelKeys []string, proxy string, timeout time.Duration, options channelMonitorRefreshOptions, operatorID int, operatorUsername string) (outcome channelMonitorFetchOutcome, err error) {
 	defer func() {
 		outcome.CustomActionSucceeded = true
 		if err != nil {
@@ -39,7 +39,8 @@ func refreshChannelMonitorAfterCustomAction(ctx context.Context, monitor model.C
 	// Preserve the caller's one-off manual refresh or automatic sync pause.
 	current.UpstreamRatioSyncDisabled = monitor.UpstreamRatioSyncDisabled
 	current.UpstreamBalanceSyncDisabled = monitor.UpstreamBalanceSyncDisabled
-	options := channelMonitorRefreshOptions{IncludeSeparateBalance: true, SkipCustomActions: true}
+	options.IncludeSeparateBalance = true
+	options.SkipCustomActions = true
 	if !current.UpstreamRatioSyncDisabled {
 		return fetchAndRecordChannelMonitorUpstreamRatio(ctx, current, channelKeys, proxy, timeout, options, operatorID, operatorUsername)
 	}
