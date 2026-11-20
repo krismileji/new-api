@@ -783,6 +783,7 @@ export type ChannelMonitorSmartScheduleGroupPolicy = {
 }
 
 export type ChannelMonitorSettings = {
+  round_timeout_minutes?: number
   auto_update_interval_minutes: number
   auto_update_retry_count: number
   auto_update_retry_delay_seconds: number

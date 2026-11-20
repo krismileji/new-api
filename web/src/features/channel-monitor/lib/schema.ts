@@ -59,7 +59,8 @@ export const MAX_AUTO_DISABLE_FAILURE_ROUNDS = 100
 export const DEFAULT_AUTO_DISABLE_FAILURE_ROUNDS = 3
 export const MIN_SYNC_FAILURE_ALERT_THRESHOLD = 1
 export const MAX_SYNC_FAILURE_ALERT_THRESHOLD = 100
-export const DEFAULT_SYNC_FAILURE_ALERT_THRESHOLD = 10
+export const DEFAULT_ROUND_TIMEOUT_MINUTES = 3
+export const DEFAULT_SYNC_FAILURE_ALERT_THRESHOLD = 3
 export const MAX_CHANNEL_CONCURRENCY_LIMIT = 100_000
 export const MAX_CHANNEL_RPM_LIMIT = 100_000
 export const MIN_CHANNEL_MONITOR_COST_RETENTION_DAYS = 1
@@ -1072,6 +1073,12 @@ function errorCodeListSchema(
 export function createChannelMonitorSettingsSchema() {
   return z
     .object({
+      roundTimeoutMinutes: z.coerce
+        .number()
+        .int('单轮执行超时必须是整数')
+        .min(1, '单轮执行超时至少为 1 分钟')
+        .max(1440, '单轮执行超时不能超过 1440 分钟')
+        .default(DEFAULT_ROUND_TIMEOUT_MINUTES),
       autoUpdateIntervalMinutes: z.coerce
         .number()
         .int('自动更新间隔必须是整数')

@@ -53,6 +53,9 @@ type channelRatioMonitorTaskResult struct {
 	SkippedDetailsTruncated       bool                             `json:"skipped_details_truncated,omitempty"`
 	Failures                      []channelRatioMonitorTaskFailure `json:"failures,omitempty"`
 	FailureDetailsTruncated       bool                             `json:"failure_details_truncated,omitempty"`
+	TaskFailureRounds             int                              `json:"task_failure_rounds,omitempty"`
+	TaskFailureNotified           bool                             `json:"task_failure_notified,omitempty"`
+	TaskFailureMailID             int64                            `json:"task_failure_mail_id,omitempty"`
 	EmailStatus                   string                           `json:"email_status,omitempty"`
 	EmailError                    string                           `json:"email_error,omitempty"`
 	notificationTiming            channelRatioMonitorTaskTiming
@@ -441,12 +444,11 @@ func (channelRatioMonitorTaskHandler) Interval() time.Duration {
 func (channelRatioMonitorTaskHandler) NewPayload() any { return nil }
 
 type channelMonitorUpdateWindow struct {
-	Start    int64 `json:"start"`
-	Deadline int64 `json:"deadline"`
+	Start int64 `json:"start"`
 }
 
-func (channelRatioMonitorTaskHandler) NewScheduledPayload(start, deadline time.Time) any {
-	return channelMonitorUpdateWindow{Start: start.Unix(), Deadline: deadline.Unix()}
+func (channelRatioMonitorTaskHandler) NewScheduledPayload(start, _ time.Time) any {
+	return channelMonitorUpdateWindow{Start: start.Unix()}
 }
 
 func channelMonitorUpdateContext(ctx context.Context, task *model.SystemTask) (context.Context, context.CancelFunc, error) {
@@ -454,12 +456,7 @@ func channelMonitorUpdateContext(ctx context.Context, task *model.SystemTask) (c
 	if err := task.DecodePayload(&window); err != nil {
 		return ctx, nil, err
 	}
-	var cancel context.CancelFunc
-	if window.Deadline > 0 {
-		ctx, cancel = context.WithDeadline(ctx, time.Unix(window.Deadline, 0))
-	} else {
-		ctx, cancel = context.WithCancel(ctx)
-	}
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(getChannelMonitorSettings().RoundTimeoutMinutes)*time.Minute)
 	return context.WithValue(ctx, upstreamAccountBalanceRoundKey{}, &upstreamAccountBalanceRound{start: window.Start}), cancel, nil
 }
 
@@ -499,6 +496,49 @@ func runChannelRatioMonitorSystemTask(ctx context.Context, task *model.SystemTas
 	}
 }
 
+// The previous finished round is the checkpoint. While its SMTP delivery is
+// pending, carry the sending task ID forward so other runners can see its outcome.
+func (result *channelRatioMonitorTaskResult) continueTaskFailure(taskID int64) error {
+	result.TaskFailureRounds = 1
+	var previous model.SystemTask
+	err := model.DB.Select("id", "result", "status", "updated_at").
+		Where("type = ? AND id < ?", model.SystemTaskTypeChannelRatioMonitor, taskID).
+		Order("id desc").Limit(1).Find(&previous).Error
+	if err != nil || previous.Status != model.SystemTaskStatusFailed || previous.Result == "" {
+		return err
+	}
+	var last channelRatioMonitorTaskResult
+	if err := common.UnmarshalJsonStr(previous.Result, &last); err != nil {
+		return err
+	}
+	result.TaskFailureRounds += last.TaskFailureRounds
+	result.TaskFailureNotified = last.TaskFailureNotified
+	if last.TaskFailureMailID == 0 || result.TaskFailureNotified {
+		return nil
+	}
+	if last.TaskFailureMailID != previous.ID {
+		var sender model.SystemTask
+		if err := model.DB.Select("result", "updated_at").Where("id = ?", last.TaskFailureMailID).Limit(1).Find(&sender).Error; err != nil {
+			return err
+		}
+		if sender.Result == "" {
+			return nil
+		}
+		previous = sender
+		var delivery channelRatioMonitorTaskResult
+		if err := common.UnmarshalJsonStr(sender.Result, &delivery); err != nil {
+			return err
+		}
+		last = delivery
+	}
+	result.TaskFailureNotified = last.TaskFailureNotified
+	// SMTP has a 20s deadline. Allow retry after a crashed delivery worker.
+	if last.EmailStatus == "pending" && time.Since(time.Unix(previous.UpdatedAt, 0)) < 2*time.Minute {
+		result.TaskFailureMailID = last.TaskFailureMailID
+	}
+	return nil
+}
+
 func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(processed, total int), taskID int64) (summary channelRatioMonitorTaskResult, taskErr error) {
 	startedAt := time.Now()
 	if reportProgress == nil {
@@ -512,10 +552,6 @@ func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(pr
 		failureStopLimit = 0
 	}
 	failureAlertLimit := settings.SyncFailureAlertThreshold
-	if failureStopLimit > 0 && failureStopLimit < failureAlertLimit {
-		// 提前停止后不会再累积失败次数，因此停止时至少告警一次。
-		failureAlertLimit = failureStopLimit
-	}
 	emailChanges := make([]channelRatioMonitorEmailChange, 0)
 	balanceWarnings := make([]channelRatioMonitorBalanceWarning, 0)
 	disabledChannels := make([]channelRatioMonitorDisabledChannel, 0)
@@ -552,11 +588,23 @@ func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(pr
 			summary.notificationFailures = append(summary.notificationFailures, notification.Detail)
 		}
 		summary.notificationFailuresTruncated = failureNotificationsTruncated
+		types := settings.EmailNotificationTypes
+		taskFailure := summary.GroupUpdateFailed || taskErr != nil
+		if taskFailure {
+			err := summary.continueTaskFailure(taskID)
+			if err != nil {
+				logger.LogWarn(ctx, fmt.Sprintf("读取渠道监控连续失败记录失败：%v", err))
+			}
+			if err != nil || summary.TaskFailureRounds < settings.SyncFailureAlertThreshold || summary.TaskFailureNotified || summary.TaskFailureMailID != 0 {
+				types = slices.DeleteFunc(slices.Clone(types), func(kind string) bool { return kind == channelMonitorEmailTypeTaskFailed })
+			}
+		}
+		notifyTaskFailure := taskFailure && channelMonitorEmailNotificationTypeEnabled(types, channelMonitorEmailTypeTaskFailed)
 		notifyRound :=
 			(channelMonitorEmailNotificationTypeEnabled(settings.EmailNotificationTypes, channelMonitorEmailTypeRatioChange) && len(emailChanges) > 0) ||
 				(channelMonitorEmailNotificationTypeEnabled(settings.EmailNotificationTypes, channelMonitorEmailTypeChannelDisabled) && len(disabledChannels) > 0) ||
 				(channelMonitorEmailNotificationTypeEnabled(settings.EmailNotificationTypes, channelMonitorEmailTypeGroupMembershipRemoved) && len(removedGroupMemberships) > 0) ||
-				(channelMonitorEmailNotificationTypeEnabled(settings.EmailNotificationTypes, channelMonitorEmailTypeTaskFailed) && (summary.GroupUpdateFailed || taskErr != nil))
+				notifyTaskFailure
 		notifyBalance := channelMonitorEmailNotificationTypeEnabled(settings.EmailNotificationTypes, channelMonitorEmailTypeBalanceWarning) && len(balanceWarnings) > 0
 		notifyFailure := channelMonitorEmailNotificationTypeEnabled(settings.EmailNotificationTypes, channelMonitorEmailTypeUpstreamSyncFailed) && len(failureNotifications) > 0
 		if !settings.EmailNotificationEnabled || settings.NotificationEmail == "" || !(notifyRound || notifyBalance || notifyFailure) {
@@ -567,6 +615,9 @@ func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(pr
 			startedAt: startedAt,
 			deadline:  deadline,
 			elapsed:   time.Since(startedAt),
+		}
+		if notifyTaskFailure {
+			summary.TaskFailureMailID = taskID
 		}
 		summary.EmailStatus = "pending"
 		summary.deliverNotification = func(result *channelRatioMonitorTaskResult, sendEmail func(string, string, string) error) {
@@ -609,7 +660,7 @@ func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(pr
 				result.EmailStatus = ""
 				return
 			}
-			if err := sendChannelRatioMonitorNotificationEmailForTypes(settings.NotificationEmail, settings.EmailNotificationTypes, emailChanges, mergeUpstreamAccountBalanceWarnings(currentWarnings), disabledChannels, removedGroupMemberships, *result, taskErr, sendEmail); err != nil {
+			if err := sendChannelRatioMonitorNotificationEmailForTypes(settings.NotificationEmail, types, emailChanges, mergeUpstreamAccountBalanceWarnings(currentWarnings), disabledChannels, removedGroupMemberships, *result, taskErr, sendEmail); err != nil {
 				result.EmailStatus = "failed"
 				errorRunes := []rune(err.Error())
 				result.EmailError = string(errorRunes[:min(len(errorRunes), 255)])
@@ -617,6 +668,10 @@ func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(pr
 				return
 			}
 			result.EmailStatus = "sent"
+			if notifyTaskFailure {
+				result.TaskFailureNotified = true
+				result.TaskFailureMailID = 0
+			}
 			if err := model.MarkChannelRatioMonitorFailureAlertsNotified(failureGuards); err != nil {
 				logger.LogWarn(context.Background(), fmt.Sprintf("channel ratio monitor: failure alert state update failed: %v", err))
 			}
@@ -819,8 +874,10 @@ func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(pr
 			ratioUpdated := false
 			retryRatio := fetchRatio
 			refreshOptions := channelMonitorRefreshOptions{IncludeSeparateBalance: true, DeferFailureRecording: true}
+			started := false
 			var sharedBalance <-chan upstreamAccountBalanceResult
 			if fetchRatio && balanceAutoFetchEnabled && monitor.UpstreamAccountID > 0 {
+				started = ctx.Err() == nil
 				result := make(chan upstreamAccountBalanceResult, 1)
 				sharedBalance = result
 				go func(monitor model.ChannelRatioMonitor) {
@@ -877,6 +934,7 @@ func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(pr
 					stateMu.Unlock()
 				}
 
+				started = true
 				if retryRatio && !ratioUpdated {
 					fetchMonitor := monitor
 					if sharedBalance != nil || recordedBalance != nil ||
@@ -967,6 +1025,14 @@ func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(pr
 			}
 			if errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
 				recordTaskError(context.Cause(ctx))
+				if !started {
+					stateMu.Lock()
+					summary.Skipped++
+					summary.recordSkippedChannel(channelRatioMonitorTaskSkipped{ChannelId: monitor.ChannelId, ChannelName: channel.Name, ChannelRemark: channelRemark, Reason: "任务超时，本轮未执行"})
+					stateMu.Unlock()
+					reportChannelProgress()
+					return
+				}
 				if !ratioUpdated && err == nil && fetchRatio {
 					err = context.DeadlineExceeded
 				}
@@ -1575,22 +1641,6 @@ func buildChannelRatioMonitorNotificationEmail(notificationTypes []string, chang
 		if summary.Total > 0 {
 			fmt.Fprintf(&content, "<p>计划检查 %d 个渠道，已刷新 %d 个渠道的余额，倍率变更 %d 个，记录 %d 项同步失败，跳过 %d 个渠道。</p>",
 				summary.Total, summary.BalanceUpdated, summary.Changed, summary.Failed, summary.Skipped)
-		}
-		taskFailures := summary.Failures
-		if includeUpstreamSyncFailures {
-			taskFailures = nil
-			for _, failure := range summary.Failures {
-				if !slices.Contains(failureDetails, failure) {
-					taskFailures = append(taskFailures, failure)
-				}
-			}
-		}
-		if len(taskFailures) > 0 {
-			content.WriteString("<h4>本轮渠道失败明细</h4>")
-			writeChannelRatioMonitorFailureTable(&content, taskFailures)
-		}
-		if summary.FailureDetailsTruncated {
-			fmt.Fprintf(&content, "<p>本轮保留了前 %d 项渠道失败明细，可结合服务日志进一步排查。</p>", len(summary.Failures))
 		}
 		content.WriteString("<p>请在「渠道监控 → 运行记录 → 倍率与余额更新记录」中查看本轮详情。</p>")
 	}

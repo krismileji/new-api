@@ -22,6 +22,7 @@ import (
 )
 
 const (
+	channelMonitorRoundTimeoutOption                           = "ChannelMonitorRoundTimeoutMinutes"
 	channelMonitorAutoUpdateIntervalOption                     = "ChannelMonitorAutoUpdateIntervalMinutes"
 	channelMonitorAutoUpdateRetryCountOption                   = "ChannelMonitorAutoUpdateRetryCount"
 	channelMonitorAutoUpdateRetryDelaySecondsOption            = "ChannelMonitorAutoUpdateRetryDelaySeconds"
@@ -139,7 +140,7 @@ const (
 	defaultChannelMonitorChannelConcurrencyWaitSeconds         = 1
 	defaultChannelMonitorUpstreamRequestTimeoutSeconds         = 30
 	defaultChannelMonitorAutoUpdateConsecutiveFailureLimit     = 10
-	defaultChannelMonitorSyncFailureAlertThreshold             = 10
+	defaultChannelMonitorSyncFailureAlertThreshold             = 3
 	defaultChannelMonitorAutoDisableFailureRounds              = 3
 	defaultChannelMonitorCostRetentionDays                     = 30
 	defaultChannelMonitorRouteMetricRetentionDays              = 30
@@ -202,6 +203,7 @@ func init() {
 }
 
 type channelMonitorSettings struct {
+	RoundTimeoutMinutes                   int                        `json:"round_timeout_minutes"`
 	AutoUpdateIntervalMinutes             int                        `json:"auto_update_interval_minutes"`
 	AutoUpdateRetryCount                  int                        `json:"auto_update_retry_count"`
 	AutoUpdateRetryDelaySeconds           int                        `json:"auto_update_retry_delay_seconds"`
@@ -273,6 +275,7 @@ type channelMonitorSettings struct {
 }
 
 type channelMonitorSettingsUpdateRequest struct {
+	RoundTimeoutMinutes                   *int                        `json:"round_timeout_minutes"`
 	AutoUpdateIntervalMinutes             *int                        `json:"auto_update_interval_minutes"`
 	AutoUpdateRetryCount                  *int                        `json:"auto_update_retry_count"`
 	AutoUpdateRetryDelaySeconds           *int                        `json:"auto_update_retry_delay_seconds"`
@@ -357,6 +360,7 @@ func loadChannelMonitorSettings(ctx context.Context) (channelMonitorSettings, er
 	}
 
 	optionKeys := []string{
+		channelMonitorRoundTimeoutOption,
 		channelMonitorAutoUpdateIntervalOption,
 		channelMonitorAutoUpdateRetryCountOption,
 		channelMonitorAutoUpdateRetryDelaySecondsOption,
@@ -488,6 +492,10 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 	rawGroupRatios := options["GroupRatio"]
 	rawGroupCoefficients := options[channelMonitorGroupCoefficientsOption]
 
+	roundTimeout, err := strconv.Atoi(options[channelMonitorRoundTimeoutOption])
+	if err != nil || roundTimeout < 1 || roundTimeout > 1440 {
+		roundTimeout = 3
+	}
 	interval, err := strconv.Atoi(rawInterval)
 	if err != nil || interval < 0 || interval > maxChannelMonitorAutoUpdateIntervalMinutes {
 		interval = 0
@@ -663,6 +671,7 @@ func channelMonitorSettingsFromOptions(options map[string]string) channelMonitor
 		smartScheduleConfigError = smartScheduleConfigErr.Error()
 	}
 	settings := channelMonitorSettings{
+		RoundTimeoutMinutes:                   roundTimeout,
 		AutoUpdateIntervalMinutes:             interval,
 		AutoUpdateRetryCount:                  retryCount,
 		AutoUpdateRetryDelaySeconds:           retryDelaySeconds,
@@ -1005,7 +1014,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的参数"})
 		return
 	}
-	if request.AutoUpdateIntervalMinutes == nil &&
+	if request.RoundTimeoutMinutes == nil && request.AutoUpdateIntervalMinutes == nil &&
 		request.AutoUpdateRetryCount == nil &&
 		request.AutoUpdateRetryDelaySeconds == nil &&
 		request.ChannelConcurrencyWaitSeconds == nil &&
@@ -1132,6 +1141,14 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		}
 		settings.RetryExcludeKeywords = keywords
 		values[channelMonitorRetryExcludeKeywordsOption] = keywords
+	}
+	if request.RoundTimeoutMinutes != nil {
+		if *request.RoundTimeoutMinutes < 1 || *request.RoundTimeoutMinutes > 1440 {
+			c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "单轮执行超时必须在 1 到 1440 分钟之间"})
+			return
+		}
+		settings.RoundTimeoutMinutes = *request.RoundTimeoutMinutes
+		values[channelMonitorRoundTimeoutOption] = strconv.Itoa(settings.RoundTimeoutMinutes)
 	}
 	if request.AutoUpdateIntervalMinutes != nil && (*request.AutoUpdateIntervalMinutes < 0 ||
 		*request.AutoUpdateIntervalMinutes > maxChannelMonitorAutoUpdateIntervalMinutes) {
@@ -1785,6 +1802,7 @@ func UpdateChannelMonitorSettings(c *gin.Context) {
 		}
 	}
 	auditDetails := map[string]interface{}{
+		"round_timeout_minutes":                      settings.RoundTimeoutMinutes,
 		"auto_update_interval_minutes":               settings.AutoUpdateIntervalMinutes,
 		"auto_update_retry_count":                    settings.AutoUpdateRetryCount,
 		"auto_update_retry_delay_seconds":            settings.AutoUpdateRetryDelaySeconds,

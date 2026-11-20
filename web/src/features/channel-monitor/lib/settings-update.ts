@@ -52,6 +52,7 @@ export function createChannelMonitorSettingsUpdatePayload(
   }
 
   return {
+    round_timeout_minutes: values.roundTimeoutMinutes,
     auto_update_interval_minutes: values.autoUpdateIntervalMinutes,
     auto_update_retry_count: values.autoUpdateRetryCount,
     auto_update_retry_delay_seconds: values.autoUpdateRetryDelaySeconds,

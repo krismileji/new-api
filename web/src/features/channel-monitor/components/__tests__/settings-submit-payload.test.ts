@@ -65,6 +65,7 @@ type StorageSettingsAreRequired =
 const storageSettingsAreRequired: StorageSettingsAreRequired = true
 
 const formValues = {
+  roundTimeoutMinutes: 7,
   autoUpdateIntervalMinutes: 15,
   autoUpdateRetryCount: 2,
   autoUpdateRetryDelaySeconds: 6,
@@ -445,6 +446,7 @@ describe('channel monitor settings submit payload', () => {
       'ratio_history_retention_days',
       'ratio_monitor_task_retention_days',
       'retry_exclude_keywords',
+      'round_timeout_minutes',
       'route_metric_retention_days',
       'smart_schedule_probe_task_retention_days',
       'smart_schedule_task_retention_days',

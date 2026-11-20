@@ -677,7 +677,8 @@ describe('channel monitor settings schema', () => {
         false
       )
     }
-    assert.equal(schema.parse(baseSettings).syncFailureAlertThreshold, 10)
+    assert.equal(schema.parse(baseSettings).syncFailureAlertThreshold, 3)
+    assert.equal(schema.parse(baseSettings).roundTimeoutMinutes, 3)
     assert.equal(schema.parse(baseSettings).retryExcludeKeywords, '')
     assert.equal(
       schema.parse({

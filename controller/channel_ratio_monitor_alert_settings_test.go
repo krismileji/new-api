@@ -23,11 +23,11 @@ func TestChannelMonitorSyncFailureAlertThresholdDefaults(t *testing.T) {
 		value string
 		want  int
 	}{
-		{value: "", want: 10},
-		{value: "0", want: 10},
-		{value: "-1", want: 10},
-		{value: "101", want: 10},
-		{value: "invalid", want: 10},
+		{value: "", want: 3},
+		{value: "0", want: 3},
+		{value: "-1", want: 3},
+		{value: "101", want: 3},
+		{value: "invalid", want: 3},
 		{value: "1", want: 1},
 		{value: "7", want: 7},
 		{value: "100", want: 100},
@@ -109,8 +109,9 @@ func TestChannelMonitorSyncFailureAlertSettingsDatabaseMatrix(t *testing.T) {
 			})
 			settings, err := loadChannelMonitorSettings(t.Context())
 			require.NoError(t, err)
-			assert.Equal(t, 10, settings.SyncFailureAlertThreshold)
-			wantThreshold := 10
+			assert.Equal(t, 3, settings.SyncFailureAlertThreshold)
+			assert.Equal(t, 3, settings.RoundTimeoutMinutes)
+			wantThreshold := 3
 			for _, threshold := range []float64{-1, 0, 1.5, 101, 1, 7, 100} {
 				ctx, recorder := newChannelMonitorControllerContext(t, http.MethodPut, "/api/channel_monitor/settings", map[string]any{
 					"sync_failure_alert_threshold": threshold,

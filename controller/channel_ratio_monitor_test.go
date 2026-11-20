@@ -1419,6 +1419,8 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		{},
 		{"smart_schedule_groups": []string{"vip"}},
 		{"smart_schedule_strategy": channelMonitorSmartScheduleStrategyRatio},
+		{"round_timeout_minutes": 0},
+		{"round_timeout_minutes": 1441},
 		{"auto_update_interval_minutes": -1},
 		{"auto_update_interval_minutes": maxChannelMonitorAutoUpdateIntervalMinutes + 1},
 		{"auto_update_retry_count": -1},
@@ -1505,6 +1507,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 		},
 	}
 	request := map[string]any{
+		"round_timeout_minutes":                 7,
 		"auto_update_interval_minutes":          15,
 		"auto_update_retry_count":               3,
 		"auto_update_retry_delay_seconds":       12,
@@ -1584,6 +1587,7 @@ func TestUpdateChannelMonitorSettingsValidatesAndPersists(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	require.True(t, response.Success)
 	require.NotEmpty(t, response.Data.SmartScheduleControlRevision)
+	assert.Equal(t, 7, response.Data.RoundTimeoutMinutes)
 	assert.Equal(t, 15, response.Data.AutoUpdateIntervalMinutes)
 	assert.Equal(t, 3, response.Data.AutoUpdateRetryCount)
 	assert.Equal(t, 12, response.Data.AutoUpdateRetryDelaySeconds)
@@ -5149,6 +5153,7 @@ func TestChannelMonitorRoundsDisableOnlyTheFailingChannel(t *testing.T) {
 				channelMonitorAutoDisableFailureRoundsOption:          "2",
 				channelMonitorEmailNotificationOption:                 "true",
 				channelMonitorEmailNotificationTypesOption:            `["task_failed"]`,
+				channelMonitorSyncFailureAlertThresholdOption:         "1",
 				channelMonitorNotificationEmailOption:                 "rounds@example.test",
 			})
 			var failedRatio, blockedBalance atomic.Bool
@@ -5263,7 +5268,7 @@ func TestChannelMonitorRoundsDisableOnlyTheFailingChannel(t *testing.T) {
 			select {
 			case message := <-mail:
 				assert.Contains(t, message, "定时更新任务超时")
-				assert.Contains(t, message, "affected")
+				assert.NotContains(t, message, "affected")
 			case <-time.After(5 * time.Second):
 				t.Fatal("未发送超时通知")
 			}
@@ -5458,22 +5463,94 @@ func TestRunChannelRatioMonitorTaskRetriesOnlyFailedSub2APIMetric(t *testing.T) 
 	}
 }
 
-func TestRunChannelRatioMonitorTaskSkipsExpiredScheduledWindow(t *testing.T) {
+func TestChannelMonitorTaskTimeoutAlertStreak(t *testing.T) {
+	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			setupChannelMonitorBalanceSafetyDB(t, engine)
+			useChannelMonitorOptionMap(t, map[string]string{
+				channelMonitorEmailNotificationOption:         "true",
+				channelMonitorEmailNotificationTypesOption:    `["task_failed"]`,
+				channelMonitorNotificationEmailOption:         "alerts@example.test",
+				channelMonitorSyncFailureAlertThresholdOption: "2",
+			})
+			run := func(timeout bool) (channelRatioMonitorTaskResult, *model.SystemTask) {
+				task, err := model.CreateSystemTask(model.SystemTaskTypeChannelRatioMonitor, nil, nil)
+				require.NoError(t, err)
+				task, claimed, err := model.ClaimSystemTask(task.ID, task.Type, "runner", time.Now().Add(time.Minute).Unix())
+				require.NoError(t, err)
+				require.True(t, claimed)
+				ctx := t.Context()
+				status := model.SystemTaskStatusSucceeded
+				if timeout {
+					expired, cancel := context.WithDeadline(ctx, time.Now().Add(-time.Minute))
+					defer cancel()
+					ctx = expired
+					status = model.SystemTaskStatusFailed
+				}
+				result, err := collectChannelRatioMonitorRound(ctx, nil, task.ID)
+				if timeout {
+					require.ErrorIs(t, err, context.DeadlineExceeded)
+				} else {
+					require.NoError(t, err)
+				}
+				require.NoError(t, model.FinishSystemTask(task.TaskID, "runner", status, result, ""))
+				return result, task
+			}
+			deliver := func(result channelRatioMonitorTaskResult, task *model.SystemTask, smtpErr error) {
+				require.NotNil(t, result.deliverNotification)
+				result.deliverNotification(&result, func(subject, _, _ string) error {
+					assert.Contains(t, subject, "定时更新任务超时")
+					return smtpErr
+				})
+				require.NoError(t, model.UpdateFinishedChannelMonitorTaskResult(task.TaskID, "runner", model.SystemTaskStatusFailed, result))
+			}
+			first, _ := run(true)
+			assert.Empty(t, first.EmailStatus)
+			second, sender := run(true)
+			assert.Equal(t, "pending", second.EmailStatus)
+			pending, _ := run(true)
+			assert.Empty(t, pending.EmailStatus)
+			deliver(second, sender, assert.AnError)
+			retry, sender := run(true)
+			deliver(retry, sender, nil)
+			stillFailed, _ := run(true)
+			assert.Empty(t, stillFailed.EmailStatus)
+			assert.True(t, stillFailed.TaskFailureNotified)
+			run(false)
+			first, _ = run(true)
+			assert.Empty(t, first.EmailStatus)
+			second, _ = run(true)
+			assert.Equal(t, "pending", second.EmailStatus)
+		})
+	}
+}
+
+func TestRunChannelRatioMonitorTaskStartsAfterMissedInterval(t *testing.T) {
 	setupChannelMonitorControllerTestDB(t)
+	useChannelMonitorOptionMap(t, map[string]string{channelMonitorRoundTimeoutOption: "7"})
 	handler := channelRatioMonitorTaskHandler{}
 	deadline := time.Now().Add(-time.Minute)
-	task, err := model.CreateSystemTask(handler.Type(), handler.NewScheduledPayload(deadline.Add(-time.Minute), deadline), nil)
+	task, err := model.CreateSystemTask(handler.Type(), map[string]int64{"start": deadline.Add(-time.Minute).Unix(), "deadline": deadline.Unix()}, nil)
 	require.NoError(t, err)
 	claimedTask, claimed, err := model.ClaimSystemTask(task.ID, handler.Type(), "expired-window", common.GetTimestamp()+60)
 	require.NoError(t, err)
 	require.True(t, claimed)
 
+	before := time.Now()
+	ctx, cancel, err := channelMonitorUpdateContext(t.Context(), claimedTask)
+	require.NoError(t, err)
+	defer cancel()
+	actual, ok := ctx.Deadline()
+	require.True(t, ok)
+	assert.False(t, actual.Before(before.Add(7*time.Minute)))
+	assert.False(t, actual.After(time.Now().Add(7*time.Minute)))
+
 	handler.Run(t.Context(), claimedTask, "expired-window")
 	finished, err := model.GetLatestSystemTask(handler.Type())
 	require.NoError(t, err)
 	require.NotNil(t, finished)
-	assert.Equal(t, model.SystemTaskStatusFailed, finished.Status)
-	assert.Contains(t, finished.Error, context.DeadlineExceeded.Error())
+	assert.Equal(t, model.SystemTaskStatusSucceeded, finished.Status)
+	assert.Empty(t, finished.Error)
 }
 
 func TestSendChannelRatioMonitorNotificationEmailIncludesChannelRemarks(t *testing.T) {
@@ -5907,6 +5984,7 @@ func TestRunChannelRatioMonitorTaskRecordsBalanceFailureWhenRatioSucceeds(t *tes
 func TestRunChannelRatioMonitorTaskEmailsUpdateFailures(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSyncFailureAlertThresholdOption:         "1",
 		channelMonitorAutoUpdateRetryCountOption:              "0",
 		channelMonitorAutoUpdateConsecutiveFailureLimitOption: "1",
 		channelMonitorEmailNotificationOption:                 "true",
@@ -5958,6 +6036,7 @@ func TestRunChannelRatioMonitorTaskEmailsOnlyAtFailureLimitAndRetriesUnacknowled
 	useChannelMonitorOptionMap(t, map[string]string{
 		channelMonitorAutoUpdateRetryCountOption:              "0",
 		channelMonitorAutoUpdateConsecutiveFailureLimitOption: "2",
+		channelMonitorSyncFailureAlertThresholdOption:         "2",
 		channelMonitorEmailNotificationOption:                 "true",
 		channelMonitorNotificationEmailOption:                 "alerts@example.com",
 		channelMonitorEmailNotificationTypesOption:            `["upstream_sync_failed"]`,
@@ -6082,6 +6161,7 @@ func TestRunChannelRatioMonitorTaskAutoDisablesChannelAfterUpdateFailure(t *test
 func TestRunChannelRatioMonitorTaskEmailsGroupUpdateFailure(t *testing.T) {
 	db := setupChannelMonitorControllerTestDB(t)
 	useChannelMonitorOptionMap(t, map[string]string{
+		channelMonitorSyncFailureAlertThresholdOption: "1",
 		"GroupRatio":                          `{"vip":1}`,
 		channelMonitorEmailNotificationOption: "true",
 		channelMonitorNotificationEmailOption: "alerts@example.com",

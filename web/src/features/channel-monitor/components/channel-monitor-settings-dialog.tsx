@@ -89,6 +89,7 @@ import {
   DEFAULT_AUTO_DISABLE_FAILURE_ROUNDS,
   MAX_AUTO_DISABLE_FAILURE_ROUNDS,
   DEFAULT_AUTO_UPDATE_CONSECUTIVE_FAILURE_LIMIT,
+  DEFAULT_ROUND_TIMEOUT_MINUTES,
   DEFAULT_SYNC_FAILURE_ALERT_THRESHOLD,
   DEFAULT_AUTO_UPDATE_RETRY_DELAY_SECONDS,
   DEFAULT_CHANNEL_CONCURRENCY_WAIT_SECONDS,
@@ -209,6 +210,7 @@ type ChannelMonitorNumberFieldName =
   | 'cleanupBudgetSeconds'
   | 'cleanupContinuationSeconds'
   | 'cleanupIntervalMinutes'
+  | 'roundTimeoutMinutes'
   | 'autoDisableFailureRounds'
 
 function ChannelMonitorRetentionDayField(props: {
@@ -590,7 +592,7 @@ export function ChannelMonitorSyncFailureAlertThresholdField(props: {
             <FormLabel>同步失败告警次数</FormLabel>
             <ChannelMonitorFieldInfo
               label='同步失败告警次数'
-              description='启用同步失败邮件时，倍率和余额分别连续失败达到该次数后通知一次；若更早达到停止次数，则在停止时提前通知。持续失败不重复通知，成功恢复后可再次告警；邮件发送失败会继续重试。'
+              description='启用对应邮件类型后，整轮任务、各渠道的倍率和余额分别连续失败达到该次数时通知一次。如需在渠道停止更新前收到告警，告警次数应小于或等于停止次数。持续失败不重复通知，成功恢复后可再次告警；邮件发送失败会继续重试。'
             />
           </div>
           <FormControl>
@@ -802,6 +804,8 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
       createChannelMonitorSettingsSchema()
     ) as Resolver<ChannelMonitorSettingsFormValues>,
     defaultValues: {
+      roundTimeoutMinutes:
+        props.settings.round_timeout_minutes ?? DEFAULT_ROUND_TIMEOUT_MINUTES,
       autoUpdateIntervalMinutes: props.settings.auto_update_interval_minutes,
       autoUpdateRetryCount: props.settings.auto_update_retry_count,
       autoUpdateRetryDelaySeconds:
@@ -1189,6 +1193,15 @@ function ChannelMonitorSettingsForm(props: ChannelMonitorSettingsFormProps) {
                         )}
                       />
 
+                      <ChannelMonitorNumberField
+                        form={form}
+                        name='roundTimeoutMinutes'
+                        label='单轮执行超时'
+                        description='从本轮开始执行时计时。期间到期的更新合并为一轮，等本轮结束后执行。'
+                        min={1}
+                        max={1440}
+                        unit='分钟'
+                      />
                       <ChannelMonitorRetryDelayField form={form} />
                       <ChannelMonitorConcurrencyWaitField form={form} />
                       <ChannelMonitorUpstreamRequestTimeoutField form={form} />
