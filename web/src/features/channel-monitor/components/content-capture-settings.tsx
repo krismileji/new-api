@@ -1,12 +1,13 @@
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { useForm, useWatch } from 'react-hook-form'
 import { toast } from 'sonner'
 import type { z } from 'zod'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { formatTimestamp } from '@/lib/format'
@@ -22,7 +23,7 @@ type Values = z.infer<typeof contentCaptureSchema>
 
 const fields = [
   ['limit', '保留最新记录条数', 1, 1000],
-  ['max_body_kb', '单侧正文上限（KB）', 1, 256],
+  ['max_body_kb', '每项保存上限（KB）', 1, 256],
   ['hours', '自动关闭并清空（小时）', 1, 72],
 ] as const
 
@@ -36,6 +37,7 @@ export function ContentCaptureSettings(props: {
     resolver: zodResolver(contentCaptureSchema),
     defaultValues: {
       limit: props.config.enabled ? props.config.limit : 200,
+      capture_raw: props.config.enabled && props.config.capture_raw === true,
       max_body_kb: props.config.enabled ? props.config.max_body_kb : 64,
       hours: props.config.enabled
         ? Math.max(
@@ -48,6 +50,7 @@ export function ContentCaptureSettings(props: {
         : 24,
     },
   })
+  const captureRaw = useWatch({ control: form.control, name: 'capture_raw' })
   const save = useMutation({
     mutationFn: saveContentCapture,
     onSuccess: async (value, variables) => {
@@ -77,7 +80,7 @@ export function ContentCaptureSettings(props: {
         <p className='text-muted-foreground text-sm'>
           {props.config.enabled
             ? `抓取中：开始于 ${formatTimestamp(props.config.started_at)}，将于 ${formatTimestamp(props.config.expires_at)} 自动关闭并清空。`
-            : '未开启。开启后记录中继请求的请求正文和返回给用户的响应正文，只保存在 Redis 中。'}
+            : '未开启。开启后提取本轮用户输入和模型回复，只保存在 Redis 中。'}
         </p>
         <div className='grid gap-3 sm:grid-cols-3'>
           {fields.map(([name, label, min, max]) => (
@@ -102,6 +105,25 @@ export function ContentCaptureSettings(props: {
             </Field>
           ))}
         </div>
+        <Field orientation='horizontal'>
+          <Checkbox
+            id='content-capture-raw'
+            checked={captureRaw}
+            onCheckedChange={(checked) => form.setValue('capture_raw', checked)}
+            aria-describedby='content-capture-raw-description'
+          />
+          <div>
+            <FieldLabel htmlFor='content-capture-raw'>
+              同时保留原始报文
+            </FieldLabel>
+            <p
+              id='content-capture-raw-description'
+              className='text-muted-foreground text-xs'
+            >
+              保存限额内的原始请求和响应，可能包含系统提示词、工具参数和历史消息。
+            </p>
+          </div>
+        </Field>
         <div className='flex flex-wrap gap-2'>
           <Button type='submit'>
             {props.config.enabled ? '更新设置' : '开始抓取'}
@@ -123,7 +145,7 @@ export function ContentCaptureSettings(props: {
           if (!open) setConfirm(null)
         }}
         title='开始抓取请求内容'
-        desc='抓取期间所有用户的请求和响应正文都会明文保存在 Redis 中，仅 Root 可以查看。请只在排查期间短时开启，并确认符合服务条款与隐私要求。'
+        desc='抓取期间，用户输入、模型回复和选择保留的原始报文会明文保存在 Redis 中，仅 Root 可以查看。请只在排查期间短时开启，并确认符合服务条款与隐私要求。'
         confirmText='开始抓取'
         cancelBtnText='取消'
         isLoading={save.isPending}

@@ -9,14 +9,17 @@ import type {
 } from '../../lib/content-capture'
 import { ContentCapturePanel } from '../content-capture-panel'
 
-const { getContentCaptureMock, saveContentCaptureMock } = vi.hoisted(() => ({
-  getContentCaptureMock: vi.fn(),
-  saveContentCaptureMock: vi.fn(),
-}))
+const { getContentCaptureMock, getRecordMock, saveContentCaptureMock } =
+  vi.hoisted(() => ({
+    getContentCaptureMock: vi.fn(),
+    getRecordMock: vi.fn(),
+    saveContentCaptureMock: vi.fn(),
+  }))
 
 vi.mock('../../lib/content-capture', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../lib/content-capture')>()),
   getContentCapture: getContentCaptureMock,
+  getContentCaptureRecord: getRecordMock,
   saveContentCapture: saveContentCaptureMock,
 }))
 
@@ -54,6 +57,7 @@ const disabled: ContentCaptureState = {
     enabled: false,
     limit: 0,
     max_body_kb: 0,
+    capture_raw: false,
     started_at: 0,
     expires_at: 0,
   },
@@ -65,6 +69,7 @@ const enabled: ContentCaptureState = {
     enabled: true,
     limit: 200,
     max_body_kb: 64,
+    capture_raw: false,
     started_at: 1_790_000_000,
     expires_at: Math.floor(Date.now() / 1000) + 3600,
   },
@@ -89,6 +94,7 @@ function renderPanel() {
 describe('ContentCapturePanel', () => {
   beforeEach(() => {
     getContentCaptureMock.mockReset()
+    getRecordMock.mockReset()
     saveContentCaptureMock.mockReset()
   })
 
@@ -105,10 +111,66 @@ describe('ContentCapturePanel', () => {
 
     await waitFor(() =>
       expect(saveContentCaptureMock).toHaveBeenCalledWith(
-        { enabled: true, limit: 200, max_body_kb: 64, hours: 24 },
+        {
+          enabled: true,
+          limit: 200,
+          max_body_kb: 64,
+          hours: 24,
+          capture_raw: false,
+        },
         expect.anything()
       )
     )
+  })
+
+  test('updating capture can opt into retaining raw bodies', async () => {
+    getContentCaptureMock.mockResolvedValue(enabled)
+    saveContentCaptureMock.mockResolvedValue(enabled)
+    const user = userEvent.setup()
+    renderPanel()
+
+    const checkbox = await screen.findByRole('checkbox', {
+      name: '同时保留原始报文',
+    })
+    expect(checkbox).not.toBeChecked()
+    await user.click(checkbox)
+    await user.click(screen.getByRole('button', { name: '更新设置' }))
+
+    await waitFor(() =>
+      expect(saveContentCaptureMock).toHaveBeenCalledWith(
+        expect.objectContaining({ enabled: true, capture_raw: true }),
+        expect.anything()
+      )
+    )
+  })
+
+  test('new detail records show dialogue and disclose raw data on demand', async () => {
+    getContentCaptureMock.mockResolvedValue(enabled)
+    getRecordMock.mockResolvedValue({
+      ...enabled.items[0],
+      content_extracted: true,
+      request_text: '翻译这一句',
+      response_text: 'Translation\nwith a newline',
+      request_body: '{"tools":["raw definition"]}',
+      response_body: 'data: [DONE]',
+    })
+    const user = userEvent.setup()
+    renderPanel()
+
+    await user.click(await screen.findByRole('button', { name: '查看请求 r1' }))
+    const detail = await screen.findByRole('dialog', { name: '请求内容' })
+    expect(await within(detail).findByText('翻译这一句')).toBeVisible()
+    expect(
+      within(detail).getByText(/Translation\s+with a newline/)
+    ).toBeVisible()
+    const raw = within(detail).getByRole('button', { name: '原始报文' })
+    expect(raw).toHaveAttribute('aria-expanded', 'false')
+    expect(within(detail).queryByText(/raw definition/)).not.toBeInTheDocument()
+
+    raw.focus()
+    await user.keyboard('{Enter}')
+    expect(raw).toHaveAttribute('aria-expanded', 'true')
+    expect(await within(detail).findByText(/raw definition/)).toBeVisible()
   })
 
   test('clicking a user summary filters records to that user', async () => {

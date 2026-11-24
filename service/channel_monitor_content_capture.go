@@ -28,15 +28,16 @@ const (
 
 var ErrContentCaptureRedisRequired = errors.New("请求内容抓取需要启用 Redis")
 
-// ContentCaptureConfig is the active capture session. Session changes on every
-// enable so writes started under an older session are rejected by Redis.
+// ContentCaptureConfig is the active capture session. Starting a new session
+// changes Session so Redis can reject writes from an earlier one.
 type ContentCaptureConfig struct {
-	Enabled   bool   `json:"enabled"`
-	Session   string `json:"-"`
-	Limit     int    `json:"limit"`
-	MaxBodyKB int    `json:"max_body_kb"`
-	StartedAt int64  `json:"started_at"`
-	ExpiresAt int64  `json:"expires_at"`
+	Enabled    bool   `json:"enabled"`
+	Session    string `json:"-"`
+	Limit      int    `json:"limit"`
+	MaxBodyKB  int    `json:"max_body_kb"`
+	CaptureRaw bool   `json:"capture_raw"`
+	StartedAt  int64  `json:"started_at"`
+	ExpiresAt  int64  `json:"expires_at"`
 }
 
 type ContentCaptureSummary struct {
@@ -59,12 +60,21 @@ type ContentCaptureSummary struct {
 	RequestTruncated  bool   `json:"request_truncated"`
 	ResponseTruncated bool   `json:"response_truncated"`
 	RequestPreview    string `json:"request_preview"`
+	ContentExtracted  bool   `json:"content_extracted,omitempty"`
 }
 
 type ContentCaptureRecord struct {
 	ContentCaptureSummary
-	RequestBody  string `json:"request_body"`
-	ResponseBody string `json:"response_body"`
+	ContentCaptureBodies
+}
+
+type ContentCaptureBodies struct {
+	RequestBody           string `json:"request_body"`
+	ResponseBody          string `json:"response_body"`
+	RequestText           string `json:"request_text,omitempty"`
+	ResponseText          string `json:"response_text,omitempty"`
+	RequestTextTruncated  bool   `json:"request_text_truncated,omitempty"`
+	ResponseTextTruncated bool   `json:"response_text_truncated,omitempty"`
 }
 
 var contentCaptureCache struct {
@@ -120,13 +130,14 @@ func GetContentCaptureConfig(ctx context.Context) (ContentCaptureConfig, error) 
 	config := ContentCaptureConfig{Enabled: true, Session: values["session"]}
 	config.Limit, _ = strconv.Atoi(values["limit"])
 	config.MaxBodyKB, _ = strconv.Atoi(values["max_body_kb"])
+	config.CaptureRaw = values["capture_raw"] == "1"
 	config.StartedAt, _ = strconv.ParseInt(values["started_at"], 10, 64)
 	config.ExpiresAt, _ = strconv.ParseInt(values["expires_at"], 10, 64)
 	return config, nil
 }
 
 // KEYS: config, ids, summaries, bodies. ARGV: new session, limit, body KB,
-// started at, expires at, ttl seconds. An active session keeps its records.
+// started at, expires at, ttl seconds, capture raw. An active session keeps its records.
 var contentCaptureEnableScript = redis.NewScript(`
 local session = redis.call('HGET', KEYS[1], 'session')
 if not session then
@@ -134,7 +145,7 @@ if not session then
   session = ARGV[1]
   redis.call('HSET', KEYS[1], 'session', session, 'started_at', ARGV[4])
 end
-redis.call('HSET', KEYS[1], 'limit', ARGV[2], 'max_body_kb', ARGV[3], 'expires_at', ARGV[5])
+redis.call('HSET', KEYS[1], 'limit', ARGV[2], 'max_body_kb', ARGV[3], 'expires_at', ARGV[5], 'capture_raw', ARGV[7])
 local limit = tonumber(ARGV[2])
 while redis.call('LLEN', KEYS[2]) > limit do
   local id = redis.call('RPOP', KEYS[2])
@@ -177,14 +188,18 @@ func contentCaptureKeys() []string {
 
 // EnableContentCapture starts a session, or updates the limits of the active
 // one. The whole capture expires after hours even if nobody turns it off.
-func EnableContentCapture(ctx context.Context, limit, maxBodyKB, hours int) (ContentCaptureConfig, error) {
+func EnableContentCapture(ctx context.Context, limit, maxBodyKB, hours int, captureRaw bool) (ContentCaptureConfig, error) {
 	if !common.RedisEnabled {
 		return ContentCaptureConfig{}, ErrContentCaptureRedisRequired
 	}
 	now := time.Now()
 	ttl := time.Duration(hours) * time.Hour
+	raw := "0"
+	if captureRaw {
+		raw = "1"
+	}
 	_, err := contentCaptureEnableScript.Run(ctx, common.RedisMonitorWriteClient(), contentCaptureKeys(),
-		common.GetUUID(), limit, maxBodyKB, now.Unix(), now.Add(ttl).Unix(), int64(ttl.Seconds())).Result()
+		common.GetUUID(), limit, maxBodyKB, now.Unix(), now.Add(ttl).Unix(), int64(ttl.Seconds()), raw).Result()
 	resetContentCaptureCache()
 	if err != nil {
 		return ContentCaptureConfig{}, err
@@ -204,6 +219,9 @@ func DisableContentCapture(ctx context.Context) error {
 
 func SaveContentCaptureRecord(ctx context.Context, session string, record ContentCaptureRecord) error {
 	preview := record.RequestBody
+	if record.ContentExtracted {
+		preview = record.RequestText
+	}
 	if len(preview) > contentCapturePreviewBytes {
 		preview = strings.ToValidUTF8(preview[:contentCapturePreviewBytes], "")
 	}
@@ -212,7 +230,7 @@ func SaveContentCaptureRecord(ctx context.Context, session string, record Conten
 	if err != nil {
 		return err
 	}
-	body, err := common.Marshal(map[string]string{"request_body": record.RequestBody, "response_body": record.ResponseBody})
+	body, err := common.Marshal(record.ContentCaptureBodies)
 	if err != nil {
 		return err
 	}

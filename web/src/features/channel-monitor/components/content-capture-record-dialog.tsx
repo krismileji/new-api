@@ -4,6 +4,12 @@ import { CopyButton } from '@/components/copy-button'
 import { Dialog } from '@/components/dialog'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
+import { Button } from '@/components/ui/button'
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible'
 import { formatNumber, formatTimestamp } from '@/lib/format'
 
 import {
@@ -23,29 +29,34 @@ function CapturedBody(props: {
   label: string
   body: string
   size: number
-  truncated: boolean
+  truncated?: boolean
+  raw?: boolean
 }) {
-  const text = prettyBody(props.body)
+  const text = props.raw ? prettyBody(props.body) : props.body
   return (
     <section className='space-y-2'>
       <div className='flex items-center justify-between gap-2'>
         <h3 className='font-medium'>
           {props.label}
           <span className='text-muted-foreground ml-2 text-xs font-normal'>
-            {formatNumber(props.size)} 字节
-            {props.truncated && '，已截断'}
+            {props.size >= 0
+              ? `原始报文 ${formatNumber(props.size)} 字节`
+              : '原始报文大小未知'}
+            {props.truncated && '，内容不完整'}
           </span>
         </h3>
-        <CopyButton
-          value={props.body}
-          variant='outline'
-          size='sm'
-          aria-label={`复制${props.label}`}
-        >
-          复制
-        </CopyButton>
+        {props.body && (
+          <CopyButton
+            value={props.body}
+            variant='outline'
+            size='sm'
+            aria-label={`复制${props.label}`}
+          >
+            复制
+          </CopyButton>
+        )}
       </div>
-      <pre className='bg-muted max-h-96 overflow-auto rounded-md p-3 text-xs break-all whitespace-pre-wrap'>
+      <pre className='bg-muted max-h-96 overflow-auto rounded-md p-3 text-xs break-words whitespace-pre-wrap'>
         {text || '（空）'}
       </pre>
     </section>
@@ -106,18 +117,47 @@ export function ContentCaptureRecordDialog(props: {
               </div>
             ))}
           </dl>
-          <CapturedBody
-            label='请求正文'
-            body={data.request_body}
-            size={data.request_size}
-            truncated={data.request_truncated}
-          />
-          <CapturedBody
-            label='响应正文'
-            body={data.response_body}
-            size={data.response_size}
-            truncated={data.response_truncated}
-          />
+          {data.content_extracted && (
+            <>
+              <CapturedBody
+                label='本轮用户输入'
+                body={data.request_text ?? ''}
+                size={data.request_size}
+                truncated={data.request_text_truncated}
+              />
+              <CapturedBody
+                label='模型回复'
+                body={data.response_text ?? ''}
+                size={data.response_size}
+                truncated={data.response_text_truncated}
+              />
+            </>
+          )}
+          {(data.request_body || data.response_body) && (
+            <Collapsible defaultOpen={!data.content_extracted}>
+              <CollapsibleTrigger
+                render={<Button variant='outline' size='sm' />}
+              >
+                原始报文
+              </CollapsibleTrigger>
+              <CollapsibleContent className='space-y-4 pt-3'>
+                <CapturedBody
+                  raw
+                  label='原始请求'
+                  body={data.request_body}
+                  size={data.request_size}
+                  truncated={data.request_truncated}
+                />
+                <CapturedBody
+                  raw
+                  label='原始响应'
+                  body={data.response_body}
+                  size={data.response_size}
+                  truncated={data.response_truncated}
+                />
+              </CollapsibleContent>
+            </Collapsible>
+          )}
         </>
       )}
     </Dialog>

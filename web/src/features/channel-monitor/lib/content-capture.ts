@@ -9,6 +9,7 @@ export type ContentCaptureConfig = {
   enabled: boolean
   limit: number
   max_body_kb: number
+  capture_raw: boolean
   started_at: number
   expires_at: number
 }
@@ -32,10 +33,15 @@ export type ContentCaptureSummary = {
   request_truncated: boolean
   response_truncated: boolean
   request_preview: string
+  content_extracted?: boolean
 }
 export type ContentCaptureRecord = ContentCaptureSummary & {
   request_body: string
   response_body: string
+  request_text?: string
+  response_text?: string
+  request_text_truncated?: boolean
+  response_text_truncated?: boolean
 }
 export type ContentCaptureState = {
   config: ContentCaptureConfig
@@ -59,7 +65,7 @@ export async function getContentCapture(signal?: AbortSignal) {
 export async function saveContentCapture(
   values:
     | { enabled: false }
-    | { enabled: true; limit: number; max_body_kb: number; hours: number }
+    | ({ enabled: true } & z.infer<typeof contentCaptureSchema>)
 ) {
   return requireServerSuccess(
     (
@@ -86,6 +92,7 @@ export async function getContentCaptureRecord(
 }
 
 export const contentCaptureSchema = z.object({
+  capture_raw: z.boolean(),
   limit: z
     .number()
     .int('请输入整数')

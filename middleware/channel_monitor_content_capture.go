@@ -1,9 +1,7 @@
 package middleware
 
 import (
-	"bytes"
 	"context"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -18,9 +16,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// ChannelMonitorContentCapture copies the client request body and the
-// response written to the client for relay POST requests while a temporary
-// capture session is active. Bodies are capped; headers are never stored.
+// ChannelMonitorContentCapture records user input and client-visible replies
+// for relay POST requests while a temporary capture session is active.
 func ChannelMonitorContentCapture() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Method != http.MethodPost || strings.HasPrefix(c.Request.URL.Path, "/api/") {
@@ -33,7 +30,18 @@ func ChannelMonitorContentCapture() gin.HandlerFunc {
 			return
 		}
 		limit := config.MaxBodyKB << 10
-		writer := &contentCaptureWriter{ResponseWriter: c.Writer, limit: limit}
+		record := service.ContentCaptureRecord{}
+		record.ContentExtracted = true
+		record.RequestSize = c.Request.ContentLength
+		record.RequestText = "（请求体未读取）"
+		mediaType := captureMediaType(c.GetHeader("Content-Type"))
+		if !captureJSON(mediaType) && !strings.HasPrefix(mediaType, "text/") {
+			record.RequestText = "（非文本请求，仅记录大小）"
+		}
+		common.ObserveInitialBodyStorage(c, func(storage common.BodyStorage) {
+			recordCaptureRequest(&record, storage, mediaType, limit, config.CaptureRaw)
+		})
+		writer := &capturedResponseWriter{ResponseWriter: c.Writer, limit: limit, rawEnabled: config.CaptureRaw}
 		c.Writer = writer
 		startedAt := time.Now()
 		c.Next()
@@ -44,7 +52,6 @@ func ChannelMonitorContentCapture() gin.HandlerFunc {
 			return
 		}
 
-		record := service.ContentCaptureRecord{}
 		record.Id = c.GetString(common.RequestIdKey)
 		if record.Id == "" {
 			record.Id = common.NewRequestId()
@@ -59,12 +66,8 @@ func ChannelMonitorContentCapture() gin.HandlerFunc {
 		record.Path = c.Request.URL.Path
 		record.Ip = c.ClientIP()
 		record.StatusCode = writer.Status()
-		record.IsStream = strings.HasPrefix(writer.Header().Get("Content-Type"), "text/event-stream")
 		record.DurationMs = time.Since(startedAt).Milliseconds()
-		record.ResponseBody = writer.body.String()
-		record.ResponseSize = writer.size
-		record.ResponseTruncated = writer.size > int64(limit)
-		record.RequestBody, record.RequestSize, record.RequestTruncated = contentCaptureRequestBody(c, limit)
+		writer.recordResponse(&record)
 
 		gopool.Go(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -80,52 +83,3 @@ func ChannelMonitorContentCapture() gin.HandlerFunc {
 		})
 	}
 }
-
-// contentCaptureRequestBody reads the cached body storage before the outer
-// BodyStorageCleanup middleware closes it.
-func contentCaptureRequestBody(c *gin.Context, limit int) (string, int64, bool) {
-	contentType := c.Request.Header.Get("Content-Type")
-	if !strings.Contains(contentType, "json") && !strings.HasPrefix(contentType, "text/") {
-		return "[非文本请求体，未记录]", c.Request.ContentLength, false
-	}
-	// Requests rejected before any handler read the body are not read here.
-	value, _ := c.Get(common.KeyBodyStorage)
-	storage, ok := value.(common.BodyStorage)
-	if !ok || storage == nil {
-		return "[请求体未读取]", c.Request.ContentLength, false
-	}
-	if _, err := storage.Seek(0, io.SeekStart); err != nil {
-		return "[请求体读取失败]", storage.Size(), false
-	}
-	head, _ := io.ReadAll(io.LimitReader(storage, int64(limit)))
-	_, _ = storage.Seek(0, io.SeekStart)
-	return string(head), storage.Size(), storage.Size() > int64(limit)
-}
-
-type contentCaptureWriter struct {
-	gin.ResponseWriter
-	limit int
-	body  bytes.Buffer
-	size  int64
-}
-
-func (writer *contentCaptureWriter) Write(p []byte) (int, error) {
-	n, err := writer.ResponseWriter.Write(p)
-	writer.capture(p[:n])
-	return n, err
-}
-
-func (writer *contentCaptureWriter) WriteString(s string) (int, error) {
-	n, err := writer.ResponseWriter.WriteString(s)
-	writer.capture([]byte(s[:n]))
-	return n, err
-}
-
-func (writer *contentCaptureWriter) capture(p []byte) {
-	writer.size += int64(len(p))
-	if room := writer.limit - writer.body.Len(); room > 0 {
-		writer.body.Write(p[:min(room, len(p))])
-	}
-}
-
-func (writer *contentCaptureWriter) Unwrap() http.ResponseWriter { return writer.ResponseWriter }

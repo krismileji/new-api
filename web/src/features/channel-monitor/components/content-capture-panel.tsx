@@ -125,13 +125,13 @@ export function ContentCapturePanel() {
       },
       {
         id: 'size',
-        header: '请求 / 响应字节',
+        header: '原始请求 / 响应字节',
         cell: ({ row }) =>
           `${formatNumber(row.original.request_size)} / ${formatNumber(row.original.response_size)}`,
       },
       {
         id: 'preview',
-        header: '请求预览',
+        header: '输入预览',
         cell: ({ row }) => (
           <span className='line-clamp-2 max-w-96 text-xs break-all'>
             {row.original.request_preview}

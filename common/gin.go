@@ -23,6 +23,18 @@ import (
 const KeyRequestBody = "key_request_body"
 const KeyBodyStorage = "key_body_storage"
 const keyBodyReadError = "key_body_read_error"
+const keyInitialBodyStorageObserver = "key_initial_body_storage_observer"
+
+// ObserveInitialBodyStorage observes the client body when it is first cached,
+// before relay code can replace it. The observer must leave storage unchanged.
+func ObserveInitialBodyStorage(c *gin.Context, observe func(BodyStorage)) {
+	value, _ := c.Get(KeyBodyStorage)
+	if body, ok := value.(BodyStorage); ok && body != nil {
+		observe(body)
+		return
+	}
+	c.Set(keyInitialBodyStorageObserver, observe)
+}
 
 var ErrRequestBodyTooLarge = errors.New("request body too large")
 
@@ -89,7 +101,11 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
 
 	// 缓存存储对象
 	c.Set(KeyBodyStorage, storage)
-
+	value, _ := c.Get(keyInitialBodyStorageObserver)
+	if observe, ok := value.(func(BodyStorage)); ok {
+		c.Set(keyInitialBodyStorageObserver, nil)
+		observe(storage)
+	}
 	return storage, nil
 }
 
