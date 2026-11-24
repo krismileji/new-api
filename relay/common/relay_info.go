@@ -205,6 +205,11 @@ type RelayInfo struct {
 	FinalRequestRelayFormat types.RelayFormat
 
 	StreamStatus *StreamStatus
+	// RetryEmptyResponse lets the relay hold back an empty result while it
+	// decides whether to retry. CompleteEmptyResponse delivers and settles it
+	// through the original path if this attempt is used as the final result.
+	RetryEmptyResponse    bool
+	CompleteEmptyResponse func() *types.NewAPIError
 	// VendorToolUsage reads the upstream's own billed tool counts from a raw
 	// response body (non-stream) or the raw terminal stream frame. The channel
 	// adaptor's Init sets it for upstreams whose usage extension names a billed

@@ -1,6 +1,7 @@
 package openai
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel/openrouter"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -122,12 +124,35 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	var secondLastStreamData string // 保留倒数第二个stream data；部分兼容网关把完整usage放在倒数第二个事件
 	seenStreamToolCalls := make(map[string]struct{})
 	var streamFunctionCallNames []string
+	emptyOutput := info.RetryEmptyResponse && info.RelayMode == relayconstant.RelayModeChatCompletions
+	// Keep the initial metadata in order without committing the downstream
+	// response before we know whether the upstream returned output.
+	var pendingChunks []string
+	const maxPendingBytes = 64 << 10
+	pendingBudget := maxPendingBytes
+	sendChunk := func(data string) error {
+		err := HandleStreamFormat(c, info, data, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
+		if err != nil {
+			common.SysLog(common.LogText("error handling stream format: %s", err.Error()))
+		}
+		return err
+	}
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+		if emptyOutput && !isEmptyChatOutput(common.StringToByteSlice(data), "delta") {
+			emptyOutput = false
+		}
 		if lastStreamData != "" {
-			if err := HandleStreamFormat(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent); err != nil {
-				common.SysLog(common.LogText("error handling stream format: %s", err.Error()))
-				sr.Error(err)
+			if emptyOutput && !c.Writer.Written() && len(lastStreamData) <= pendingBudget {
+				pendingChunks = append(pendingChunks, lastStreamData)
+				pendingBudget -= len(lastStreamData)
+			} else {
+				for _, chunk := range pendingChunks {
+					sr.Error(sendChunk(chunk))
+				}
+				pendingChunks = nil
+				pendingBudget = 0
+				sr.Error(sendChunk(lastStreamData))
 			}
 		}
 		if len(data) > 0 {
@@ -145,6 +170,8 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	})
 
 	info.StreamStatus.RequireTerminal()
+	canDefer := emptyOutput && !c.Writer.Written() && c.Request.Context().Err() == nil &&
+		(info.StreamStatus.EndReason == relaycommon.StreamEndReasonDone || info.StreamStatus.EndReason == relaycommon.StreamEndReasonEOF)
 
 	// 处理最后的响应
 	shouldSendLastResp := true
@@ -176,12 +203,6 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		}
 	}
 
-	if info.RelayFormat == types.RelayFormatOpenAI {
-		if shouldSendLastResp {
-			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
-		}
-	}
-
 	if !containStreamUsage {
 		usage = service.ResponseText2Usage(c, responseTextBuilder.String(), info.UpstreamModelName, info.GetEstimatePromptTokens())
 		usage.CompletionTokens += toolCount * 7
@@ -193,7 +214,23 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 		info.CountBillableToolCall(dto.BuildInCallFunctionCall, name)
 	}
 
-	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
+	finish := func() *types.NewAPIError {
+		for _, chunk := range pendingChunks {
+			if err := sendChunk(chunk); err != nil {
+				info.StreamStatus.RecordError(err.Error())
+			}
+		}
+		if info.RelayFormat == types.RelayFormatOpenAI && shouldSendLastResp {
+			_ = sendStreamData(c, info, lastStreamData, info.ChannelSetting.ForceFormat, info.ChannelSetting.ThinkingToContent)
+		}
+		HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
+		return nil
+	}
+	if canDefer {
+		info.CompleteEmptyResponse = finish
+		return usage, newEmptyResponseError()
+	}
+	finish()
 
 	return usage, nil
 }
@@ -259,6 +296,14 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		return nil, types.NewOpenAIError(err, types.ErrorCodeReadResponseBodyFailed, http.StatusInternalServerError)
 	}
 	logger.LogDebug(c, "upstream response body: %s", responseBody)
+	checkEmpty := info.RetryEmptyResponse && info.RelayMode == relayconstant.RelayModeChatCompletions && !c.Writer.Written()
+	if checkEmpty && len(bytes.TrimSpace(responseBody)) == 0 {
+		err := common.Unmarshal(responseBody, &simpleResponse)
+		info.CompleteEmptyResponse = func() *types.NewAPIError {
+			return types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+		}
+		return nil, newEmptyResponseError()
+	}
 	// Unmarshal to simpleResponse
 	if info.ChannelType == constant.ChannelTypeOpenRouter && info.ChannelOtherSettings.IsOpenRouterEnterprise() {
 		// 尝试解析为 openrouter enterprise
@@ -285,6 +330,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 	}
 
 	info.ObserveResponseModel(simpleResponse.Model)
+	emptyOutput := checkEmpty && isEmptyChatOutput(responseBody, "message")
 	for _, choice := range simpleResponse.Choices {
 		if choice.FinishReason == constant.FinishReasonContentFilter {
 			info.PerformanceBusinessRejection = true
@@ -368,6 +414,13 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 		responseBody = geminiRespStr
 	}
 
+	if emptyOutput {
+		info.CompleteEmptyResponse = func() *types.NewAPIError {
+			service.IOCopyBytesGracefully(c, resp, responseBody)
+			return nil
+		}
+		return &simpleResponse.Usage, newEmptyResponseError()
+	}
 	service.IOCopyBytesGracefully(c, resp, responseBody)
 
 	return &simpleResponse.Usage, nil

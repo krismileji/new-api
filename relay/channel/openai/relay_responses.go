@@ -89,6 +89,11 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	accumulator := service.NewResponsesUsageAccumulator(info)
 	var streamErr *types.NewAPIError
+	var pending []responsesStreamFrame
+	pendingBytes := 0
+	const maxPendingBytes = 64 << 10
+	var hasOutput bool
+	var emptyCompletion bool
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 
@@ -125,23 +130,63 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		if streamResponse.Response != nil {
 			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
 		}
-		accumulator.Observe(&streamResponse, common.StringToByteSlice(data))
+		payload := common.StringToByteSlice(data)
+		accumulator.Observe(&streamResponse, payload)
+		completed := (streamResponse.Type == "response.completed" || streamResponse.Type == "response.done") &&
+			streamResponse.Response != nil && info.StreamStatus.ResponseOutcome() == string(relaycommon.ResponseOutcomeCompleted)
+		if info.RetryEmptyResponse && completed && !hasOutput && !c.Writer.Written() &&
+			!info.StreamStatus.HasErrors() && c.Request.Context().Err() == nil &&
+			streamResponse.Response.Error == nil && !hasResponsesOutput(ojson.GetBytesNoCopy(payload, "response.output")) {
+			emptyCompletion = true
+			pending = append(pending, responsesStreamFrame{kind: streamResponse.Type, data: data})
+			sr.Done()
+			return
+		}
+		if info.RetryEmptyResponse && !hasOutput && !completed && isResponsesMetadataFrame(streamResponse.Type, payload) {
+			if pendingBytes+len(data) <= maxPendingBytes && !c.Writer.Written() {
+				pending = append(pending, responsesStreamFrame{kind: streamResponse.Type, data: data})
+				pendingBytes += len(data)
+				return
+			}
+		} else {
+			hasOutput = true
+		}
+		for _, frame := range pending {
+			if err := helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: frame.kind}, frame.data); err != nil {
+				sr.Stop(err)
+				return
+			}
+		}
+		pending = nil
 		if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {
 			sr.Stop(err)
 			return
 		}
-		if (streamResponse.Type == "response.completed" || streamResponse.Type == "response.done") &&
-			streamResponse.Response != nil && info.StreamStatus.ResponseOutcome() == string(relaycommon.ResponseOutcomeCompleted) {
+		if completed {
 			sr.Done()
 		}
 	})
 	if streamErr != nil {
 		return nil, streamErr
 	}
-
+	finish := func() *types.NewAPIError {
+		for _, frame := range pending {
+			if err := helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: frame.kind}, frame.data); err != nil {
+				info.StreamStatus.RecordError(err.Error())
+				break
+			}
+		}
+		return nil
+	}
 	common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, info.StreamStatus)
 	info.StreamStatus.RequireTerminal()
-	return accumulator.Finish(), nil
+	usage := accumulator.Finish()
+	if emptyCompletion {
+		info.CompleteEmptyResponse = finish
+		return usage, newEmptyResponseError()
+	}
+	finish()
+	return usage, nil
 }
 
 func rewriteSGLangResponsesCreatedAt(info *relaycommon.RelayInfo, payload []byte, path string, createdAt dto.IntValue) []byte {

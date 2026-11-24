@@ -230,6 +230,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.LastError = nil
 	retryRouting := newRelayRetryRouting()
 	fastFailureRetryBudget := &relayFastFailureRetryBudget{}
+	relayInfo.RetryEmptyResponse = relayFormat == types.RelayFormatOpenAI || relayFormat == types.RelayFormatOpenAIResponses
+	var emptyResponse *relayEmptyResponse
 	attemptIndex := 0
 	finalRetryLogPending := false
 	finalRetryAttemptDuration := time.Duration(0)
@@ -246,6 +248,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	for retryParam.GetRetry() <= common.RetryTimes {
 		if blocked := service.TokenAutoDisableError(c.Request.Context()); blocked != nil {
+			emptyResponse.finalize()
 			newAPIError = blocked
 			return
 		}
@@ -261,6 +264,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		relayInfo.StreamStatus = nil
+		relayInfo.CompleteEmptyResponse = nil
 		relayInfo.PerformanceBusinessRejection = false
 		relayInfo.PerformanceOutputTokens = 0
 		common.SetContextKey(c, service.UpstreamErrorDiagnosticContextKey, nil)
@@ -307,6 +311,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		}
 		channel, concurrencyLease, concurrencyErr := acquireRelayChannelConcurrency(c, relayInfo, retryParam, retryRouting, channel, true)
 		if c.GetBool(service.ChannelLocalResponseContextKey) {
+			emptyResponse.finalize()
 			newAPIError = nil
 			relayInfo.LastError = nil
 			return
@@ -315,6 +320,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			finalRetryLogPending = false
 			finalRetryChannelError = nil
 			newAPIError = concurrencyErr
+			if emptyResponse != nil && concurrencyErr.StatusCode == http.StatusTooManyRequests {
+				newAPIError = relayInfo.LastError
+			}
 			break
 		}
 		addUsedChannel(c, channel.Id)
@@ -326,6 +334,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
+		emptyResponse.finalize()
+		emptyResponse = nil
 
 		// The request plugins' reply checks read the answer this attempt
 		// writes; without a reply instance nothing changes.
@@ -335,8 +345,14 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		service.SetTokenProtectionChannel(c.Request.Context(), channel.Id)
 		newAPIError = relayWithChannelConcurrency(c, relayInfo, relayFormat, concurrencyLease)
 		attemptDuration := time.Since(attemptStartedAt)
-		service.FinalizeChannelDailyCostAttempt(c, channel.Id, false)
+		deferredEmpty := relayInfo.CompleteEmptyResponse != nil
+		if !deferredEmpty {
+			service.FinalizeChannelDailyCostAttempt(c, channel.Id, false)
+		}
 		if blocked := service.TokenAutoDisableError(c.Request.Context()); blocked != nil {
+			if deferredEmpty {
+				service.FinalizeChannelDailyCostAttempt(c, channel.Id, false)
+			}
 			newAPIError = blocked
 			return
 		}
@@ -359,6 +375,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			!responseStarted && isFastFailureSameChannelRetryable(c, newAPIError),
 			!responseStarted && shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()),
 		)
+		if deferredEmpty && retryDecision == relayRetryNone {
+			newAPIError = completeRelayEmptyResponse(c, relayInfo, relayFormat, channel.Id)
+			relayInfo.LastError = newAPIError
+			if newAPIError == nil {
+				return
+			}
+		}
 		shouldRetry := retryDecision != relayRetryNone
 		decision := service.DecideRelayRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
 		if shouldRetry {
@@ -393,6 +416,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if shouldRetry {
 			finalRetryAttemptDuration = attemptDuration
 			finalRetryChannelError = channelError
+			if deferredEmpty {
+				emptyResponse = &relayEmptyResponse{info: *relayInfo, context: c.Copy(), headers: c.Writer.Header().Clone(), channelID: channel.Id}
+			}
 		} else {
 			finalRetryChannelError = nil
 		}
@@ -405,6 +431,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 		attemptIndex++
+	}
+	if emptyResponse != nil && newAPIError == emptyResponse.info.LastError &&
+		!relayAttemptResponseStarted(c, relayInfo, relayFormat) && c.Request.Context().Err() == nil {
+		emptyResponse.restore(c, relayInfo)
+		newAPIError = completeRelayEmptyResponse(c, relayInfo, relayFormat, emptyResponse.channelID)
+		relayInfo.LastError = newAPIError
+		finalRetryLogPending = false
+	} else {
+		emptyResponse.finalize()
 	}
 	if newAPIError != nil && finalRetryLogPending && finalRetryChannelError != nil {
 		processChannelErrorWithTiming(c, *finalRetryChannelError,

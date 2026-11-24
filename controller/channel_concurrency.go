@@ -294,6 +294,9 @@ func relayWithChannelConcurrency(c *gin.Context, info *relaycommon.RelayInfo, re
 	default:
 		apiErr = relayHandler(c, info)
 	}
+	if info.CompleteEmptyResponse != nil {
+		return apiErr
+	}
 	return markAcceptedUpstreamResponseError(c, apiErr)
 }
 
