@@ -31,6 +31,7 @@ function renderProfitSettings() {
         income_nano_cny: excluded ? 0 : 10e9,
         excluded_income_nano_cny: excluded ? 10e9 : 0,
         cost_nano_cny: 6e9,
+        self_use_cost_nano_cny: excluded ? 6e9 : 0,
         profit_nano_cny: excluded ? -6e9 : 4e9,
         profit_confirmed: true,
       }
@@ -78,6 +79,9 @@ function renderProfitSettings() {
 test('saving multiple self-use keys refreshes profit while retaining costs and request metrics, and clearing restores income', async () => {
   const { server, user } = renderProfitSettings()
   await screen.findByRole('row', { name: /渠道 A/ })
+  const selfUseCostCard = screen.getByText('自用成本').parentElement
+  expect(selfUseCostCard).toHaveTextContent('¥0.0000')
+  expect(selfUseCostCard?.previousElementSibling).toHaveTextContent('总成本')
   await user.click(screen.getByRole('button', { name: '自用 API Key' }))
   const input = await screen.findByLabelText('仅计成本的 API Key ID')
   await user.type(input, '201')
@@ -109,6 +113,8 @@ test('saving multiple self-use keys refreshes profit while retaining costs and r
   expect(row.getByText('¥6.0000')).toBeVisible()
   expect(row.getByText('90.0%')).toBeVisible()
   expect(screen.getByText(/已排除自用扣费/)).toHaveTextContent('¥10.0000')
+  expect(selfUseCostCard).toHaveTextContent('¥6.0000')
+  expect(selfUseCostCard?.previousElementSibling).toHaveTextContent('¥6.0000')
 
   await user.click(screen.getByRole('button', { name: '自用 API Key' }))
   const dialog = await screen.findByRole('dialog', { name: '自用 API Key' })
@@ -131,6 +137,7 @@ test('saving multiple self-use keys refreshes profit while retaining costs and r
     within(screen.getByRole('row', { name: /渠道 A/ })).getByText('¥4.0000')
   ).toBeVisible()
   expect(screen.queryByText(/已排除自用扣费/)).not.toBeInTheDocument()
+  expect(selfUseCostCard).toHaveTextContent('¥0.0000')
 })
 
 test('a failed settings read offers retry without allowing an empty replacement to be saved', async () => {

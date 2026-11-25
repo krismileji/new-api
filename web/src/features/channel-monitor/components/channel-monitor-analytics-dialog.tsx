@@ -275,6 +275,7 @@ function AnalyticsSummary(props: {
     values.push(
       ['用户扣费', formatProfitMoney(summary.income_nano_cny)],
       ['总成本', formatProfitMoney(summary.cost_nano_cny)],
+      ['自用成本', formatProfitMoney(summary.self_use_cost_nano_cny)],
       [
         '利润',
         <ChannelMonitorProfitValue
@@ -341,7 +342,8 @@ function AnalyticsSummary(props: {
     <div
       className={cn(
         'bg-border grid shrink-0 grid-cols-2 gap-px overflow-hidden rounded-lg border sm:grid-cols-4',
-        props.metric === 'overview' && 'xl:grid-cols-8'
+        props.metric === 'profit' && 'sm:grid-cols-5',
+        props.metric === 'overview' && 'sm:grid-cols-3 xl:grid-cols-9'
       )}
     >
       {values.map(([label, value]) => (
@@ -482,7 +484,7 @@ function ChannelMonitorAnalyticsPanel(
       '首字延迟越低越快，TPS 越高越快。首字按有效样本平均；TPS = 总输出 Token ÷ 总生成时间。仅统计业务上游调用，重试分别计数；缺失指标的请求不计入对应平均值。'
   } else if (isProfit) {
     description =
-      '利润 = 已确认用户扣费 − 已结算渠道成本。数据未完整时显示暂估值，补账后自动更新。'
+      '利润 = 已确认用户扣费 − 已结算渠道成本。自用成本为所配置自用 API Key 的已结算成本，已包含在总成本中。数据未完整时显示暂估值，补账后自动更新。'
     if (props.metric === 'overview') {
       description +=
         '成功率按上游尝试统计，包含重试；流式缓存利用率按输入 Token 加权，缓存写入次数包含流式和非流式请求。'

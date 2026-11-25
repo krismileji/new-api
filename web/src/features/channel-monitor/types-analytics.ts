@@ -88,6 +88,7 @@ export type ChannelMonitorAnalyticsSummary = {
   tps_output_tokens?: number
   tps_generation_duration_ms?: number
   cost_nano_cny?: number
+  self_use_cost_nano_cny?: number
   settled_count?: number
   unresolved_count?: number
   income_nano_cny?: number

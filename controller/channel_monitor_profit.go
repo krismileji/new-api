@@ -23,6 +23,7 @@ type channelMonitorProfitRow struct {
 	ModelKey                  string `gorm:"column:model_key"`
 	ModelName                 string `gorm:"column:model_name"`
 	Cost                      int64  `gorm:"column:cost_nano_cny"`
+	SelfUseCostNanoCNY        int64  `gorm:"column:self_use_cost_nano_cny"`
 	ProbeCost                 int64  `gorm:"column:probe_cost_nano_cny"`
 	SettledCount              int64  `gorm:"column:settled_count"`
 	UnresolvedCount           int64  `gorm:"column:unresolved_count"`
@@ -50,14 +51,27 @@ func channelMonitorProfitFacts(ctx context.Context, db *gorm.DB, query channelMo
 		Where("day_start >= ? AND day_start < ?", query.From, query.To).
 		Select("*, CASE WHEN "+excluded+" THEN 1 ELSE 0 END AS cost_only", incomeArgs...)
 	income := db.WithContext(ctx).Table("(?) AS income_policy", incomeSource).
-		Select("day_start, channel_id, user_id, api_key_id, api_key_key, api_key_name, model_key, model_name, 'business' AS source_kind, CASE WHEN status = 'settled' AND cost_only = 0 THEN income_nano_cny ELSE 0 END AS income_nano_cny, CASE WHEN status = 'settled' AND cost_only = 1 THEN income_nano_cny ELSE 0 END AS excluded_income_nano_cny, CASE WHEN status = 'settled' AND cost_only = 0 AND billing_source = 'wallet' THEN income_nano_cny ELSE 0 END AS wallet_income_nano_cny, CASE WHEN status = 'settled' AND cost_only = 0 AND billing_source = 'subscription' THEN income_nano_cny ELSE 0 END AS subscription_income_nano_cny, CASE WHEN status = 'settled' OR cost_only = 1 THEN 0 ELSE 1 END AS pending_income_count, CASE WHEN cost_recorded = 1 THEN 0 ELSE 1 END AS pending_cost_count, 0 AS cost_nano_cny, 0 AS probe_cost_nano_cny, 0 AS group_probe_cost_nano_cny, 0 AS model_detection_cost_nano_cny, 0 AS settled_count, 0 AS unresolved_count")
+		Select("day_start, channel_id, user_id, api_key_id, api_key_key, api_key_name, model_key, model_name, 'business' AS source_kind, CASE WHEN status = 'settled' AND cost_only = 0 THEN income_nano_cny ELSE 0 END AS income_nano_cny, CASE WHEN status = 'settled' AND cost_only = 1 THEN income_nano_cny ELSE 0 END AS excluded_income_nano_cny, CASE WHEN status = 'settled' AND cost_only = 0 AND billing_source = 'wallet' THEN income_nano_cny ELSE 0 END AS wallet_income_nano_cny, CASE WHEN status = 'settled' AND cost_only = 0 AND billing_source = 'subscription' THEN income_nano_cny ELSE 0 END AS subscription_income_nano_cny, CASE WHEN status = 'settled' OR cost_only = 1 THEN 0 ELSE 1 END AS pending_income_count, CASE WHEN cost_recorded = 1 THEN 0 ELSE 1 END AS pending_cost_count, 0 AS cost_nano_cny, 0 AS probe_cost_nano_cny, 0 AS group_probe_cost_nano_cny, 0 AS model_detection_cost_nano_cny, 0 AS settled_count, 0 AS unresolved_count, 0 AS self_use_cost_nano_cny")
 	cost := db.WithContext(ctx).Model(&model.ChannelMonitorDailyCostDetail{}).
 		Where("day_start >= ? AND day_start < ?", query.From, query.To).
-		Select("day_start, channel_id, user_id, api_key_id, api_key_key, api_key_name, model_key, model_name, source_kind, 0 AS income_nano_cny, 0 AS excluded_income_nano_cny, 0 AS wallet_income_nano_cny, 0 AS subscription_income_nano_cny, 0 AS pending_income_count, 0 AS pending_cost_count, cost_nano_cny, probe_cost_nano_cny, group_probe_cost_nano_cny, CASE WHEN source_kind = 'model_detection' THEN cost_nano_cny ELSE 0 END AS model_detection_cost_nano_cny, settled_count, unresolved_count")
+		Select("day_start, channel_id, user_id, api_key_id, api_key_key, api_key_name, model_key, model_name, source_kind, 0 AS income_nano_cny, 0 AS excluded_income_nano_cny, 0 AS wallet_income_nano_cny, 0 AS subscription_income_nano_cny, 0 AS pending_income_count, 0 AS pending_cost_count, cost_nano_cny, probe_cost_nano_cny, group_probe_cost_nano_cny, CASE WHEN source_kind = 'model_detection' THEN cost_nano_cny ELSE 0 END AS model_detection_cost_nano_cny, settled_count, unresolved_count, CASE WHEN "+excluded+" THEN cost_nano_cny ELSE 0 END AS self_use_cost_nano_cny", incomeArgs...)
 	if (query.GroupBy == "channel" || query.GroupBy == "day") && !query.hasCostDetailFilter() {
-		cost = db.WithContext(ctx).Model(&model.ChannelDailyCost{}).
+		dailyCost := db.WithContext(ctx).Model(&model.ChannelDailyCost{}).
 			Where("day_start >= ? AND day_start < ?", query.From, query.To).
 			Select("day_start, channel_id, 0 AS user_id, 0 AS api_key_id, '' AS api_key_key, '' AS api_key_name, '' AS model_key, '' AS model_name, '' AS source_kind, 0 AS income_nano_cny, 0 AS excluded_income_nano_cny, 0 AS wallet_income_nano_cny, 0 AS subscription_income_nano_cny, 0 AS pending_income_count, 0 AS pending_cost_count, cost_nano_cny, probe_cost_nano_cny, group_probe_cost_nano_cny, model_detection_cost_nano_cny, settled_count, unresolved_count")
+		cost = db.WithContext(ctx).Table("(?) AS totals", dailyCost).
+			Select("totals.*, 0 AS self_use_cost_nano_cny")
+		if len(settings.CostOnlyAPIKeyIDs) > 0 {
+			// Preserve authoritative totals, including costs without API key detail.
+			// Aggregate before joining so multiple self-use keys never multiply them.
+			selfUseCost := db.WithContext(ctx).Model(&model.ChannelMonitorDailyCostDetail{}).
+				Where("day_start >= ? AND day_start < ?", query.From, query.To).
+				Where("api_key_id IN ?", settings.CostOnlyAPIKeyIDs).
+				Select("day_start, channel_id, SUM(cost_nano_cny) AS cost_nano_cny").
+				Group("day_start, channel_id")
+			cost = cost.Joins("LEFT JOIN (?) AS self_use ON self_use.day_start = totals.day_start AND self_use.channel_id = totals.channel_id", selfUseCost).
+				Select("totals.*, COALESCE(self_use.cost_nano_cny, 0) AS self_use_cost_nano_cny")
+		}
 	}
 	base := db.WithContext(ctx).Table("(? UNION ALL ?) AS facts", income, cost)
 	if query.Channel > 0 {
@@ -84,7 +98,7 @@ func channelMonitorProfitFacts(ctx context.Context, db *gorm.DB, query channelMo
 	return query.applySearch(base)
 }
 
-const channelMonitorProfitSums = "COALESCE(SUM(income_nano_cny),0) AS income_nano_cny, COALESCE(SUM(excluded_income_nano_cny),0) AS excluded_income_nano_cny, COALESCE(SUM(wallet_income_nano_cny),0) AS wallet_income_nano_cny, COALESCE(SUM(subscription_income_nano_cny),0) AS subscription_income_nano_cny, COALESCE(SUM(pending_income_count),0) AS pending_income_count, COALESCE(SUM(pending_cost_count),0) AS pending_cost_count, COALESCE(SUM(cost_nano_cny),0) AS cost_nano_cny, COALESCE(SUM(probe_cost_nano_cny),0) AS probe_cost_nano_cny, COALESCE(SUM(group_probe_cost_nano_cny),0) AS group_probe_cost_nano_cny, COALESCE(SUM(model_detection_cost_nano_cny),0) AS model_detection_cost_nano_cny, COALESCE(SUM(settled_count),0) AS settled_count, COALESCE(SUM(unresolved_count),0) AS unresolved_count"
+const channelMonitorProfitSums = "COALESCE(SUM(income_nano_cny),0) AS income_nano_cny, COALESCE(SUM(excluded_income_nano_cny),0) AS excluded_income_nano_cny, COALESCE(SUM(wallet_income_nano_cny),0) AS wallet_income_nano_cny, COALESCE(SUM(subscription_income_nano_cny),0) AS subscription_income_nano_cny, COALESCE(SUM(pending_income_count),0) AS pending_income_count, COALESCE(SUM(pending_cost_count),0) AS pending_cost_count, COALESCE(SUM(cost_nano_cny),0) AS cost_nano_cny, COALESCE(SUM(self_use_cost_nano_cny),0) AS self_use_cost_nano_cny, COALESCE(SUM(probe_cost_nano_cny),0) AS probe_cost_nano_cny, COALESCE(SUM(group_probe_cost_nano_cny),0) AS group_probe_cost_nano_cny, COALESCE(SUM(model_detection_cost_nano_cny),0) AS model_detection_cost_nano_cny, COALESCE(SUM(settled_count),0) AS settled_count, COALESCE(SUM(unresolved_count),0) AS unresolved_count"
 
 func channelMonitorProfitSummary(row channelMonitorProfitRow, complete bool) map[string]any {
 	profit := row.IncomeNanoCNY - row.Cost
@@ -96,6 +110,7 @@ func channelMonitorProfitSummary(row channelMonitorProfitRow, complete bool) map
 	return map[string]any{
 		"income_nano_cny": row.IncomeNanoCNY, "wallet_income_nano_cny": row.WalletIncomeNanoCNY,
 		"excluded_income_nano_cny":     row.ExcludedIncomeNanoCNY,
+		"self_use_cost_nano_cny":       row.SelfUseCostNanoCNY,
 		"subscription_income_nano_cny": row.SubscriptionIncomeNanoCNY, "pending_income_count": row.PendingIncomeCount,
 		"cost_nano_cny": row.Cost, "probe_cost_nano_cny": row.ProbeCost, "group_probe_cost_nano_cny": row.GroupProbeCost, "model_detection_cost_nano_cny": row.ModelDetectionCostNanoCNY,
 		"profit_nano_cny": profit, "profit_rate": rate, "profit_confirmed": complete && row.PendingIncomeCount == 0 && row.PendingCostCount == 0 && row.UnresolvedCount == 0,

@@ -71,6 +71,7 @@ func TestChannelMonitorAnalyticsReadDatabaseMatrix(t *testing.T) {
 	require.NoError(t, db.Raw(versionSQL).Scan(&version).Error)
 	t.Logf("database=%s version=%s", dialect, strings.TrimSpace(version))
 	tables := []any{
+		&model.Option{}, &model.AuditLog{},
 		&model.User{}, &model.Channel{}, &model.ChannelDailyCost{},
 		&model.ChannelMonitorDailyCostDetail{}, &model.ChannelMonitorDailySuccessLedger{},
 		&model.ChannelMonitorDailyCheckpoint{},
