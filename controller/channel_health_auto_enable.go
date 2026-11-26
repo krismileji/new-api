@@ -76,7 +76,8 @@ func channelMonitorAllowsHealthCheckAutoEnable(channelId int) (bool, error) {
 	multipleChannelsAction := normalizeChannelMonitorPolicyAction(monitor.MultipleChannelsAction)
 	ratioAutoDisableEnabled := ratioSyncEnabled &&
 		(singleChannelAction == channelMonitorPolicyActionDisableChannel ||
-			multipleChannelsAction == channelMonitorPolicyActionDisableChannel)
+			multipleChannelsAction == channelMonitorPolicyActionDisableChannel ||
+			(multipleChannelsAction == channelMonitorPolicyActionRemoveFromGroup && statusReason == channelMonitorCostRatioPolicyDisableReason))
 	if !ratioAutoDisableEnabled {
 		return true, nil
 	}

@@ -1345,19 +1345,34 @@ func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(pr
 		return true
 	})
 	releases.Wait()
-	if taskErr != nil {
+	roundTimedOut := errors.Is(context.Cause(ctx), context.DeadlineExceeded)
+	if taskErr != nil && !roundTimedOut {
 		return summary, taskErr
 	}
-	if err := ctx.Err(); err != nil {
+	if err := ctx.Err(); err != nil && !roundTimedOut {
 		return summary, err
 	}
-	channels, err := model.GetAllChannelsForMonitor()
+	// Give fresh-ratio policies a grace period beyond the round deadline,
+	// including when the deadline expires during policy writes.
+	policyTimeout := 5 * time.Second
+	if deadline, ok := ctx.Deadline(); ok && !roundTimedOut {
+		policyTimeout += max(time.Until(deadline), 0)
+	}
+	policyCtx, cancelPolicy := context.WithTimeout(context.WithoutCancel(ctx), policyTimeout)
+	defer cancelPolicy()
+	stopPolicyCancellation := context.AfterFunc(ctx, func() {
+		if !errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
+			cancelPolicy()
+		}
+	})
+	defer stopPolicyCancellation()
+	channels, err := model.GetAllChannelsForMonitorWithContext(policyCtx)
 	if err != nil {
-		return summary, err
+		return summary, errors.Join(taskErr, err)
 	}
 	groupCoefficients := getChannelMonitorGroupCoefficients()
 	groupRatios := ratio_setting.GetGroupRatioCopy()
-	if settings.AutoEnableOnBalanceRecovery {
+	if settings.AutoEnableOnBalanceRecovery && ctx.Err() == nil {
 		enabledChannelIds, recoveryErr := autoEnableChannelsAfterBalanceRecovery(
 			ctx,
 			channels,
@@ -1366,14 +1381,17 @@ func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(pr
 			groupCoefficients,
 		)
 		if recoveryErr != nil {
-			return summary, recoveryErr
+			if !errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
+				return summary, recoveryErr
+			}
+			taskErr = errors.Join(taskErr, recoveryErr)
 		}
 		if len(enabledChannelIds) > 0 {
 			summary.ChannelsEnabled += len(enabledChannelIds)
 			channelStatusChanged = true
 		}
 	}
-	if settings.AutoEnableOnCostRatioRecovery {
+	if settings.AutoEnableOnCostRatioRecovery && ctx.Err() == nil {
 		enabledChannelIds, recoveryErr := autoEnableChannelsAfterCostRatioRecovery(
 			ctx,
 			channels,
@@ -1382,7 +1400,10 @@ func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(pr
 			groupCoefficients,
 		)
 		if recoveryErr != nil {
-			return summary, recoveryErr
+			if !errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
+				return summary, recoveryErr
+			}
+			taskErr = errors.Join(taskErr, recoveryErr)
 		}
 		if len(enabledChannelIds) > 0 {
 			summary.ChannelsEnabled += len(enabledChannelIds)
@@ -1396,13 +1417,13 @@ func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(pr
 		groupCoefficients,
 	)
 	summary.GroupsSkipped = plan.SkippedGroupCount
-	groupsUpdated, removedMemberships, disabledChannelIds, groupUpdateFailed, err := applyChannelMonitorPolicyPlan(ctx, plan)
+	groupsUpdated, removedMemberships, disabledChannelIds, groupUpdateFailed, err := applyChannelMonitorPolicyPlan(policyCtx, plan)
 	summary.GroupsUpdated = groupsUpdated
 	summary.GroupMembershipsRemoved = len(removedMemberships)
 	summary.ChannelsDisabled += len(disabledChannelIds)
 	summary.GroupUpdateFailed = groupUpdateFailed
 	if err != nil {
-		return summary, err
+		return summary, errors.Join(taskErr, err)
 	}
 	if groupsUpdated > 0 || len(removedMemberships) > 0 {
 		economicInputsChanged = true
@@ -1433,7 +1454,7 @@ func collectChannelRatioMonitorRound(ctx context.Context, reportProgress func(pr
 			})
 		}
 	}
-	return summary, ctx.Err()
+	return summary, errors.Join(taskErr, context.Cause(ctx))
 }
 
 func channelRatioMonitorEmailRemark(remark string) string {

@@ -144,7 +144,7 @@ const MULTIPLE_CHANNELS_ACTION_DESCRIPTIONS: Record<
   none: '目标倍率高于当前分组倍率时仅记录结果',
   update_group_ratio: '更新时采用参与渠道中的最高目标倍率',
   disable_channel: '目标倍率高于当前分组倍率时禁用此渠道',
-  remove_from_group: '仅解除当前分组关联；若这是渠道的唯一分组则不会移除',
+  remove_from_group: '解除当前分组关联；若仅剩一个分组则自动禁用此渠道',
 }
 
 const SUB2API_ACCESS_TOKEN_COMMAND =

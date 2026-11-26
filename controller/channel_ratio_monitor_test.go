@@ -4277,7 +4277,7 @@ func TestPlanChannelMonitorPolicyActions(t *testing.T) {
 		assert.Empty(t, plan.GroupMembershipRemovals)
 	})
 
-	t.Run("membership removal keeps the channel's only group", func(t *testing.T) {
+	t.Run("membership removal disables a channel with only one group", func(t *testing.T) {
 		plan := planChannelMonitorPolicyActions(
 			[]*model.Channel{enabledChannel(1, "vip"), enabledChannel(2, "vip")},
 			map[int]channelMonitorPolicyInput{
@@ -4288,7 +4288,23 @@ func TestPlanChannelMonitorPolicyActions(t *testing.T) {
 			nil,
 		)
 		assert.Empty(t, plan.GroupMembershipRemovals)
-		assert.Empty(t, plan.DisableChannelIds)
+		assert.Equal(t, []int{1}, plan.DisableChannelIds)
+		assert.Empty(t, plan.GroupRatioUpdates)
+	})
+
+	t.Run("membership removal disables instead of removing every group", func(t *testing.T) {
+		plan := planChannelMonitorPolicyActions(
+			[]*model.Channel{enabledChannel(1, "vip,team"), enabledChannel(2, "vip"), enabledChannel(3, "team")},
+			map[int]channelMonitorPolicyInput{
+				1: {CostRatio: 1.5, MultipleChannelsAction: channelMonitorPolicyActionRemoveFromGroup},
+				2: {CostRatio: 1},
+				3: {CostRatio: 1},
+			},
+			map[string]float64{"vip": 1, "team": 1},
+			nil,
+		)
+		assert.Equal(t, []int{1}, plan.DisableChannelIds)
+		assert.Empty(t, plan.GroupMembershipRemovals)
 		assert.Empty(t, plan.GroupRatioUpdates)
 	})
 
@@ -5681,6 +5697,173 @@ func TestRunChannelRatioMonitorTaskEmailsRatioChanges(t *testing.T) {
 			monitor, err := model.GetChannelRatioMonitor(1)
 			require.NoError(t, err)
 			assert.InDelta(t, 1.25, monitor.Ratio, 1e-9)
+		})
+	}
+}
+
+func TestChannelMonitorRatioPolicyDatabaseMatrix(t *testing.T) {
+	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			for _, test := range []struct {
+				name                 string
+				groups               string
+				action               string
+				cancelCause          error
+				balanceFails         bool
+				timeoutAfterSnapshot bool
+				wantDisabled         bool
+				wantRemovals         int
+			}{
+				{name: "last_group_disables", groups: "vip", action: channelMonitorPolicyActionRemoveFromGroup, wantDisabled: true},
+				{name: "other_group_is_preserved", groups: "vip,backup", action: channelMonitorPolicyActionRemoveFromGroup, wantRemovals: 1},
+				{name: "unrelated_timeout_still_disables", groups: "vip", action: channelMonitorPolicyActionDisableChannel, cancelCause: context.DeadlineExceeded, wantDisabled: true},
+				{name: "unrelated_timeout_applies_last_group_fallback", groups: "vip", action: channelMonitorPolicyActionRemoveFromGroup, cancelCause: context.DeadlineExceeded, wantDisabled: true},
+				{name: "balance_failure_keeps_successful_ratio_policy", groups: "vip", action: channelMonitorPolicyActionDisableChannel, balanceFails: true, wantDisabled: true},
+				{name: "timeout_during_policy_still_disables", groups: "vip", action: channelMonitorPolicyActionDisableChannel, cancelCause: context.DeadlineExceeded, timeoutAfterSnapshot: true, wantDisabled: true},
+				{name: "explicit_cancellation_stops_policy", groups: "vip", action: channelMonitorPolicyActionDisableChannel, cancelCause: context.Canceled},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					db := setupChannelMonitorBalanceSafetyDB(t, engine)
+					disableChannelMonitorSSRFProtection(t)
+					useChannelMonitorOptionMap(t, map[string]string{
+						"GroupRatio":                             `{"vip":1,"backup":2,"slow":1}`,
+						channelMonitorAutoUpdateRetryCountOption: "0",
+					})
+					originalRatios := ratio_setting.GroupRatio2JSONString()
+					require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"vip":1,"backup":2,"slow":1}`))
+					t.Cleanup(func() { require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(originalRatios)) })
+					ctx, stop := context.WithTimeout(t.Context(), 10*time.Second)
+					defer stop()
+					ctx, cancel := context.WithCancelCause(ctx)
+					t.Cleanup(func() { cancel(context.Canceled) })
+					if test.timeoutAfterSnapshot {
+						require.NoError(t, db.Callback().Query().After("gorm:query").Register("ratio_policy_deadline", func(tx *gorm.DB) {
+							if _, isSnapshot := tx.Statement.Dest.(*[]*model.Channel); isSnapshot {
+								cancel(test.cancelCause)
+							}
+						}))
+						t.Cleanup(func() { require.NoError(t, db.Callback().Query().Remove("ratio_policy_deadline")) })
+					}
+					blocked := make(chan struct{})
+					var started sync.Once
+					server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						name := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+						if name == "slow" {
+							started.Do(func() { close(blocked) })
+							<-r.Context().Done()
+							return
+						}
+						if test.cancelCause != nil && !test.timeoutAfterSnapshot {
+							select {
+							case <-blocked:
+							case <-r.Context().Done():
+								return
+							}
+						}
+						w.Header().Set("Content-Type", "application/json")
+						switch r.URL.Path {
+						case "/api/user/self/groups":
+							ratio := 1.0
+							if name == "target" {
+								ratio = 1.25
+							}
+							_, _ = fmt.Fprintf(w, `{"success":true,"data":{"vip":{"ratio":%g}}}`, ratio)
+						case "/api/user/self":
+							if test.balanceFails && name == "target" {
+								w.WriteHeader(http.StatusBadGateway)
+								return
+							}
+							_, _ = w.Write([]byte(`{"success":true,"data":{"quota":1000}}`))
+						case "/api/status":
+							_, _ = w.Write([]byte(`{"success":true,"data":{"quota_per_unit":100}}`))
+						default:
+							http.NotFound(w, r)
+						}
+					}))
+					t.Cleanup(server.Close)
+					channels := []model.Channel{
+						{Id: 1, Name: "target", Group: test.groups, Models: "test-model", Status: common.ChannelStatusEnabled},
+						{Id: 2, Name: "peer", Group: "vip", Models: "test-model", Status: common.ChannelStatusEnabled},
+					}
+					if test.cancelCause != nil && !test.timeoutAfterSnapshot {
+						channels = append(channels, model.Channel{Id: 3, Name: "slow", Group: "slow", Models: "test-model", Status: common.ChannelStatusEnabled})
+					}
+					for i := range channels {
+						channel := &channels[i]
+						require.NoError(t, db.Create(channel).Error)
+						require.NoError(t, channel.AddAbilities(nil))
+						monitor := model.ChannelRatioMonitor{
+							ChannelId: channel.Id, Ratio: 1, UpdatedTime: 1, UpstreamRevision: 1,
+							UpstreamType: service.NewAPIUpstreamType, UpstreamBaseURL: server.URL,
+							UpstreamGroup: "vip", UpstreamAuthType: service.NewAPIUpstreamAuthUser,
+							UpstreamUserId: channel.Id, UpstreamAccessToken: channel.Name,
+							UpstreamBalanceSyncDisabled: true,
+						}
+						if channel.Id == 1 {
+							monitor.SingleChannelAction = channelMonitorPolicyActionDisableChannel
+							monitor.MultipleChannelsAction = test.action
+							monitor.UpstreamBalanceSyncDisabled = !test.balanceFails
+							if test.action == channelMonitorPolicyActionRemoveFromGroup {
+								monitor.SingleChannelAction = channelMonitorPolicyActionNone
+							}
+						}
+						if channel.Id == 3 {
+							monitor.Ratio = 2
+							monitor.SingleChannelAction = channelMonitorPolicyActionDisableChannel
+						}
+						require.NoError(t, db.Create(&monitor).Error)
+					}
+					summary, err := collectChannelRatioMonitorRound(ctx, func(processed, _ int) {
+						if test.cancelCause != nil && !test.timeoutAfterSnapshot && processed == 2 {
+							select {
+							case <-blocked:
+							case <-ctx.Done():
+								return
+							}
+							cancel(test.cancelCause)
+						}
+					}, 0)
+					if test.cancelCause == nil {
+						require.NoError(t, err)
+					} else {
+						require.ErrorIs(t, err, test.cancelCause)
+					}
+					monitor, err := model.GetChannelRatioMonitor(1)
+					require.NoError(t, err)
+					assert.Equal(t, 1.25, monitor.Ratio)
+					assert.Equal(t, 1, summary.Changed)
+					assert.Equal(t, test.wantRemovals, summary.GroupMembershipsRemoved)
+					wantStatus, wantDisabledCount := common.ChannelStatusEnabled, 0
+					if test.wantDisabled {
+						wantStatus, wantDisabledCount = common.ChannelStatusAutoDisabled, 1
+					}
+					assert.Equal(t, wantDisabledCount, summary.ChannelsDisabled)
+					target, err := model.GetChannelById(1, true)
+					require.NoError(t, err)
+					assert.Equal(t, wantStatus, target.Status)
+					if test.wantDisabled {
+						allowed, err := channelMonitorAllowsHealthCheckAutoEnable(target.Id)
+						require.NoError(t, err)
+						assert.False(t, allowed, "倍率仍然超标时，健康检查不得撤销自动禁用")
+					}
+					wantGroups := test.groups
+					if test.wantRemovals > 0 {
+						wantGroups = "backup"
+					}
+					assert.Equal(t, wantGroups, target.Group)
+					var abilities []model.Ability
+					require.NoError(t, db.Where("channel_id = ?", target.Id).Find(&abilities).Error)
+					require.Len(t, abilities, len(target.GetGroups()))
+					for _, ability := range abilities {
+						assert.Equal(t, !test.wantDisabled, ability.Enabled)
+					}
+					for _, original := range channels[1:] {
+						current, err := model.GetChannelById(original.Id, true)
+						require.NoError(t, err)
+						assert.Equal(t, common.ChannelStatusEnabled, current.Status)
+					}
+				})
+			}
 		})
 	}
 }

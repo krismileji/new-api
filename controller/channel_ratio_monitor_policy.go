@@ -229,8 +229,11 @@ func planChannelMonitorPolicyActions(
 				continue
 			}
 			for _, member := range members {
-				if member.Target-group.CurrentRatio > channelMonitorRatioEpsilon &&
-					member.MultipleChannelsAction == channelMonitorPolicyActionDisableChannel {
+				if member.Target-group.CurrentRatio <= channelMonitorRatioEpsilon {
+					continue
+				}
+				if member.MultipleChannelsAction == channelMonitorPolicyActionDisableChannel ||
+					(member.MultipleChannelsAction == channelMonitorPolicyActionRemoveFromGroup && channelGroupCounts[member.ChannelId] <= 1) {
 					nextDisableChannelId = member.ChannelId
 					break
 				}
