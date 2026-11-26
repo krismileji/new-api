@@ -16,22 +16,24 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Cancel01Icon, PinIcon } from '@hugeicons/core-free-icons'
-import { HugeiconsIcon } from '@hugeicons/react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import type {
+  ColumnDef,
+  RowSelectionState,
+  Updater,
+} from '@tanstack/react-table'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import {
+  DataTableBulkActions,
+  DataTableView,
+  useDataTable,
+} from '@/components/data-table'
+import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import {
   Empty,
   EmptyDescription,
@@ -39,461 +41,572 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Input } from '@/components/ui/input'
-import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { formatNumber } from '@/lib/format'
 
-import {
-  getChannelMonitorSmartSchedulePrimaryManagement,
-  updateChannelMonitorSmartScheduleChannelPrimaryRule,
-  updateChannelMonitorSmartScheduleRoutePrimary,
-} from '../api'
+import { getChannelMonitorSmartSchedulePrimaryManagement } from '../api'
 import { handleChannelMonitorMutationError } from '../lib/error'
+import { CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS } from '../lib/query-options'
 import {
-  channelMonitorSmartScheduleUntilIsPermanent,
-  formatChannelMonitorSmartScheduleUntil,
-} from '../lib/smart-schedule-display'
-import type {
-  ChannelMonitorSmartScheduleChannelPrimaryRule,
-  ChannelMonitorSmartScheduleManualPrimary,
-  ChannelMonitorSmartSchedulePrimaryRuleRoute,
-} from '../types'
+  primaryEntryStatus,
+  primaryRouteStatus,
+  updatePrimaryEntry,
+  type PrimaryEntry,
+} from '../lib/smart-schedule-primary-management'
+import { ChannelMonitorSmartSchedulePrimaryEditor } from './channel-monitor-smart-schedule-primary-editor'
+import { ChannelMonitorSmartSchedulePrimaryRow } from './channel-monitor-smart-schedule-primary-row'
 
-type Removal =
-  | { kind: 'channel'; rule: ChannelMonitorSmartScheduleChannelPrimaryRule }
-  | {
-      kind: 'channel-update'
-      rule: ChannelMonitorSmartScheduleChannelPrimaryRule
-      durationMinutes: number | null
-      allowStabilityDegrade: boolean
-    }
-  | { kind: 'route'; primary: ChannelMonitorSmartScheduleManualPrimary }
-
-type ChannelMonitorSmartSchedulePrimaryManagementDialogProps = {
+type Props = {
   open: boolean
   onOpenChange: (open: boolean) => void
   onActionComplete: () => Promise<void>
 }
 
-function routeStatusLabel(route: ChannelMonitorSmartSchedulePrimaryRuleRoute) {
-  switch (route.status) {
-    case 'active':
-      return '已生效'
-    case 'not_eligible':
-      return '未参与或已禁用'
-    case 'single_model_override':
-      return `被单模型固定覆盖：${route.current_primary_channel_name}`
-    case 'channel_rule_conflict':
-      return `被渠道固定覆盖：${route.current_primary_channel_name}`
-    case 'stability_protected':
-      return '稳定性保护中，暂未固定'
-    default:
-      return '等待路由参与调度'
-  }
-}
-
-function FixedUntil(props: { until: number }) {
-  if (channelMonitorSmartScheduleUntilIsPermanent(props.until)) {
-    return <span>永久</span>
-  }
-
-  const date = new Date(props.until * 1000)
-  if (!Number.isFinite(props.until) || Number.isNaN(date.getTime())) {
-    return <span>未知</span>
-  }
-
-  return (
-    <time dateTime={date.toISOString()}>
-      {formatChannelMonitorSmartScheduleUntil(props.until)}
-    </time>
-  )
-}
-
-function defaultDurationInput(until: number) {
-  if (channelMonitorSmartScheduleUntilIsPermanent(until)) return ''
-  return String(Math.max(1, Math.ceil((until - Date.now() / 1000) / 60)))
-}
+const MANAGEMENT_KEY = [
+  'channel-monitor',
+  'smart-schedule',
+  'primary-management',
+] as const
+const STATUS_OPTIONS = [
+  { value: 'all', label: '全部状态' },
+  { value: 'partial', label: '部分生效' },
+  { value: 'inactive', label: '未生效' },
+  { value: 'active', label: '全部生效' },
+  { value: 'pending', label: '待新增路由' },
+]
 
 export function ChannelMonitorSmartSchedulePrimaryManagementDialog(
-  props: ChannelMonitorSmartSchedulePrimaryManagementDialogProps
+  props: Props
 ) {
+  // A fresh management session must not reuse drafts from a previous opening.
+  if (!props.open) return null
+  return <PrimaryManagementSession {...props} />
+}
+
+function PrimaryManagementSession(props: Props) {
   const queryClient = useQueryClient()
-  const [durationByChannel, setDurationByChannel] = useState<
-    Record<number, string>
-  >({})
-  const [degradeByChannel, setDegradeByChannel] = useState<
-    Record<number, boolean>
-  >({})
+  const [kind, setKind] = useState<'channel' | 'route'>('channel')
   const [search, setSearch] = useState('')
+  const [group, setGroup] = useState('')
+  const [status, setStatus] = useState('all')
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [editing, setEditing] = useState<PrimaryEntry | null>(null)
+  const [dirty, setDirty] = useState(false)
+  const [validDraft, setValidDraft] = useState(true)
+  const lastEditedKey = useRef<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [discard, setDiscard] = useState<'close' | 'back' | null>(null)
+  const [removing, setRemoving] = useState<PrimaryEntry[]>([])
+  const [failures, setFailures] = useState<
+    Array<{ entry: PrimaryEntry; message: string }>
+  >([])
+  const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
+  useEffect(() => {
+    if (!editing && lastEditedKey.current) {
+      document.getElementById(`primary-edit-${lastEditedKey.current}`)?.focus()
+      lastEditedKey.current = null
+    }
+  }, [editing])
   const query = useQuery({
-    queryKey: ['channel-monitor', 'smart-schedule', 'primary-management'],
+    queryKey: MANAGEMENT_KEY,
     queryFn: getChannelMonitorSmartSchedulePrimaryManagement,
-    enabled: props.open,
+    ...CHANNEL_MONITOR_MANUAL_REFRESH_QUERY_OPTIONS,
     staleTime: 0,
   })
-  const mutation = useMutation({
-    mutationFn: async (removal: Removal) => {
-      if (removal.kind === 'channel') {
-        await updateChannelMonitorSmartScheduleChannelPrimaryRule({
-          channelId: removal.rule.channel_id,
-          group: removal.rule.group,
-          durationMinutes: 0,
-          allowStabilityDegrade: false,
-        })
-        return
+  const entries = useMemo<PrimaryEntry[]>(
+    () => [
+      ...(query.data?.data.channel_rules ?? []).map((rule) => ({
+        ...rule,
+        kind: 'channel' as const,
+        key: `channel:${rule.channel_id}`,
+      })),
+      ...(query.data?.data.route_primaries ?? []).map((primary) => ({
+        ...primary,
+        kind: 'route' as const,
+        key: JSON.stringify([
+          'route',
+          primary.channel_id,
+          primary.group,
+          primary.model,
+        ]),
+      })),
+    ],
+    [query.data]
+  )
+  const normalizedSearch = search.trim().toLowerCase()
+  const filtered = useMemo(
+    () =>
+      entries.filter(
+        (entry) =>
+          entry.kind === kind &&
+          (!group ||
+            entry.group === group ||
+            (entry.kind === 'channel' &&
+              entry.routes.some((route) => route.group === group))) &&
+          (kind === 'route' ||
+            status === 'all' ||
+            primaryEntryStatus(entry) === status) &&
+          [
+            entry.channel_name,
+            String(entry.channel_id),
+            entry.group,
+            ...(entry.kind === 'route'
+              ? [entry.model]
+              : entry.routes.flatMap((route) => [
+                  route.group,
+                  route.model,
+                  primaryRouteStatus(route),
+                ])),
+          ].some((value) => value.toLowerCase().includes(normalizedSearch))
+      ),
+    [entries, kind, group, status, normalizedSearch]
+  )
+  const groups = [
+    ...new Set(
+      entries
+        .flatMap((entry) =>
+          entry.kind === 'route'
+            ? [entry.group]
+            : [entry.group, ...entry.routes.map((route) => route.group)]
+        )
+        .filter(Boolean)
+    ),
+  ].sort()
+  const refresh = async () => {
+    await queryClient.invalidateQueries({ queryKey: MANAGEMENT_KEY })
+    try {
+      await props.onActionComplete()
+    } catch (error) {
+      handleChannelMonitorMutationError(error)
+    }
+  }
+  const removal = useMutation({
+    mutationFn: async (targets: PrimaryEntry[]) => {
+      const failed: Array<{ entry: PrimaryEntry; message: string }> = []
+      // Sequential requests avoid concurrent writes to overlapping route pools.
+      for (const entry of targets) {
+        try {
+          await updatePrimaryEntry({
+            entry,
+            durationMinutes: 0,
+            allowStabilityDegrade: false,
+          })
+        } catch (error) {
+          failed.push({
+            entry,
+            message:
+              error instanceof Error ? error.message : '解除失败，请重试',
+          })
+        }
       }
-      if (removal.kind === 'channel-update') {
-        await updateChannelMonitorSmartScheduleChannelPrimaryRule({
-          channelId: removal.rule.channel_id,
-          group: removal.rule.group,
-          durationMinutes: removal.durationMinutes,
-          allowStabilityDegrade: removal.allowStabilityDegrade,
-        })
-        return
+      return { failed, succeeded: targets.length - failed.length }
+    },
+    onSuccess: async ({ failed, succeeded }) => {
+      setRemoving([])
+      setFailures(failed)
+      setRowSelection(
+        Object.fromEntries(failed.map((item) => [item.entry.key, true]))
+      )
+      if (succeeded > 0) {
+        toast.success(`已解除 ${formatNumber(succeeded, 'zh-CN')} 项固定`)
       }
-      await updateChannelMonitorSmartScheduleRoutePrimary({
-        channelId: removal.primary.channel_id,
-        group: removal.primary.group,
-        model: removal.primary.model,
-        durationMinutes: 0,
-        allowStabilityDegrade: false,
-      })
+      if (failed.length > 0) {
+        toast.error(
+          `${formatNumber(failed.length, 'zh-CN')} 项解除失败，可重试失败项`
+        )
+      }
+      await refresh()
     },
     onError: handleChannelMonitorMutationError,
-    onSuccess: async (_, removal) => {
-      let successMessage = `已解除${removal.kind === 'channel' ? removal.rule.group || '全部分组' : ''}渠道固定`
-      if (removal.kind === 'route') {
-        successMessage = '已解除单模型固定'
-      } else if (removal.kind === 'channel-update') {
-        successMessage = '渠道固定规则已更新'
-      }
-      toast.success(successMessage)
-      await queryClient.invalidateQueries({
-        queryKey: ['channel-monitor', 'smart-schedule', 'primary-management'],
-      })
-      await props.onActionComplete()
-    },
   })
-  const management = query.data?.data
-  const channelRules = management?.channel_rules ?? []
-  const routePrimaries = management?.route_primaries ?? []
-  const hasEntries = channelRules.length > 0 || routePrimaries.length > 0
-  const normalizedSearch = search.trim().toLowerCase()
-  const filteredChannelRules = channelRules.filter((rule) =>
-    [
-      rule.channel_name,
-      rule.group,
-      ...rule.routes.flatMap((route) => [
-        route.group,
-        route.model,
-        routeStatusLabel(route),
-      ]),
-    ].some((value) => value.toLowerCase().includes(normalizedSearch))
+  const pending = saving || removal.isPending
+  const columns = useMemo<ColumnDef<PrimaryEntry>[]>(
+    () => [
+      {
+        id: 'select',
+        header: ({ table: current }) => (
+          <div className='flex items-center gap-2'>
+            <Checkbox
+              aria-label='选择当前筛选结果'
+              disabled={pending || !filtered.length}
+              checked={current.getIsAllRowsSelected()}
+              indeterminate={current.getIsSomeRowsSelected()}
+              onCheckedChange={(checked) =>
+                current.toggleAllRowsSelected(checked === true)
+              }
+            />
+            <span className='sm:hidden'>选择当前筛选结果</span>
+          </div>
+        ),
+      },
+      { id: 'name', header: kind === 'channel' ? '固定渠道' : '模型 / 分组' },
+      { id: 'scope', header: kind === 'channel' ? '作用范围' : '固定渠道' },
+      { id: 'status', header: kind === 'channel' ? '生效情况' : '固定期间' },
+      { id: 'until', header: '固定至' },
+      { id: 'actions', header: '操作' },
+    ],
+    [kind, pending, filtered.length]
   )
-  const filteredRoutePrimaries = routePrimaries.filter((primary) =>
-    [primary.channel_name, primary.group, primary.model].some((value) =>
-      value.toLowerCase().includes(normalizedSearch)
+  const resolveRowSelection = (updater: Updater<RowSelectionState>) => {
+    if (pending) return
+    setRowSelection((current) =>
+      typeof updater === 'function' ? updater(current) : updater
     )
-  )
-  const hasFilteredEntries =
-    filteredChannelRules.length > 0 || filteredRoutePrimaries.length > 0
+  }
+  const { table } = useDataTable({
+    data: filtered,
+    columns,
+    getRowId: (entry) => entry.key,
+    enableRowSelection: !pending,
+    rowSelection,
+    onRowSelectionChange: resolveRowSelection,
+    withPaginationRowModel: false,
+    columnVisibilityStorageKey: false,
+    columnSizingStorageKey: false,
+  })
+  const selected = table.getSelectedRowModel().rows.map((row) => row.original)
+  const clearSelection = () => {
+    setRowSelection({})
+    setFailures([])
+    setExpanded(null)
+  }
+  const leave = (target: 'close' | 'back') => {
+    if (pending) return
+    if (dirty) {
+      setDiscard(target)
+      return
+    }
+    setEditing(null)
+    if (target === 'close') props.onOpenChange(false)
+  }
 
   return (
-    <Dialog
-      open={props.open}
-      onOpenChange={(open) => {
-        if (!open && mutation.isPending) return
-        props.onOpenChange(open)
-      }}
-    >
-      <DialogContent className='flex max-h-[88vh] flex-col overflow-hidden sm:max-w-3xl'>
-        <DialogHeader>
-          <DialogTitle>固定项管理</DialogTitle>
-          <DialogDescription>查看渠道固定范围和单模型固定。</DialogDescription>
-        </DialogHeader>
-        {query.isLoading ? (
-          <div className='text-muted-foreground flex min-h-40 items-center justify-center gap-2 text-sm'>
-            <Spinner aria-hidden='true' />
-            正在加载固定项
-          </div>
-        ) : null}
-        {query.isError ? (
-          <Empty className='min-h-40'>
-            <EmptyHeader>
-              <EmptyTitle>固定项加载失败</EmptyTitle>
-              <EmptyDescription>请重试或刷新页面</EmptyDescription>
-            </EmptyHeader>
-            <Button
-              type='button'
-              variant='outline'
-              onClick={() => void query.refetch()}
-            >
-              重试
-            </Button>
-          </Empty>
-        ) : null}
-        {!query.isLoading && !query.isError && !hasEntries ? (
-          <Empty className='min-h-40'>
-            <EmptyHeader>
-              <EmptyTitle>暂无固定项</EmptyTitle>
-              <EmptyDescription>
-                固定的渠道规则和模型路由会显示在这里
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        ) : null}
-        {!query.isLoading && !query.isError && hasEntries ? (
+    <>
+      <Dialog
+        open
+        onOpenChange={(open) => {
+          if (!open) leave('close')
+        }}
+        title={editing ? '编辑固定项' : '固定项管理'}
+        description={
+          editing
+            ? '调整固定时长与稳定性降级行为。'
+            : '查看固定范围、生效情况，调整主渠道规则。'
+        }
+        contentHeight='min(36rem, 70dvh)'
+        contentClassName='sm:w-[calc(100%-2rem)] sm:max-w-5xl'
+        bodyClassName='py-0'
+        headerClassName='pr-8'
+        footer={
+          editing ? (
+            <>
+              <Button
+                type='button'
+                variant='outline'
+                disabled={pending}
+                onClick={() => leave('back')}
+              >
+                取消
+              </Button>
+              <Button
+                type='submit'
+                form='primary-editor'
+                disabled={pending || !dirty || !validDraft}
+              >
+                {saving ? <Spinner data-icon='inline-start' /> : null}保存更改
+              </Button>
+            </>
+          ) : (
+            <div className='flex w-full flex-wrap items-center justify-between gap-2'>
+              {selected.length ? (
+                <DataTableBulkActions
+                  table={table}
+                  entityName='固定项'
+                  placement='inline'
+                  selectedCount={selected.length}
+                >
+                  <Button
+                    type='button'
+                    size='sm'
+                    variant='outline'
+                    disabled={pending}
+                    onClick={() => setRemoving(selected)}
+                  >
+                    解除所选固定
+                  </Button>
+                </DataTableBulkActions>
+              ) : (
+                <span className='text-muted-foreground text-xs'>
+                  勾选后可批量解除固定
+                </span>
+              )}
+              <Button
+                type='button'
+                variant='outline'
+                disabled={pending}
+                onClick={() => leave('close')}
+              >
+                关闭
+              </Button>
+            </div>
+          )
+        }
+      >
+        {editing ? (
+          <ChannelMonitorSmartSchedulePrimaryEditor
+            key={editing.key}
+            entry={editing}
+            onDirtyChange={setDirty}
+            onValidityChange={setValidDraft}
+            onPendingChange={setSaving}
+            onSaved={async () => {
+              await refresh()
+              setEditing(null)
+            }}
+          />
+        ) : (
           <>
-            <Input
-              type='search'
-              aria-label='搜索固定项'
-              placeholder='搜索渠道、分组或模型'
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-            {!hasFilteredEntries ? (
-              <Empty className='min-h-32'>
-                <EmptyHeader>
-                  <EmptyTitle>没有匹配的固定项</EmptyTitle>
-                  <EmptyDescription>调整搜索内容后重试</EmptyDescription>
-                </EmptyHeader>
-              </Empty>
-            ) : (
-              <ScrollArea className='min-h-0 flex-1 border-y'>
-                <div className='divide-y'>
-                  {filteredChannelRules.length > 0 ? (
-                    <section aria-labelledby='channel-primary-rules-title'>
-                      <h3
-                        id='channel-primary-rules-title'
-                        className='bg-muted/30 sticky top-0 z-10 px-3 py-2 text-xs font-semibold'
-                      >
-                        渠道固定规则（{filteredChannelRules.length}）
-                      </h3>
-                      {filteredChannelRules.map((rule) => {
-                        const activeRoutes = rule.routes.filter(
-                          (route) => route.status === 'active'
-                        ).length
-                        const durationValue =
-                          durationByChannel[rule.channel_id] ??
-                          defaultDurationInput(rule.manual_primary_until)
-                        const allowDegrade =
-                          degradeByChannel[rule.channel_id] ??
-                          rule.allow_stability_degrade
-                        const parsedDuration =
-                          durationValue.trim() === ''
-                            ? null
-                            : Number(durationValue)
-                        const validDuration =
-                          parsedDuration === null ||
-                          (Number.isInteger(parsedDuration) &&
-                            parsedDuration >= 1 &&
-                            parsedDuration <= 525600)
-                        return (
-                          <article key={rule.channel_id} className='px-3 py-3'>
-                            <div className='flex flex-wrap items-start justify-between gap-3'>
-                              <div className='min-w-0'>
-                                <div className='flex items-center gap-2 text-sm font-medium'>
-                                  <HugeiconsIcon
-                                    icon={PinIcon}
-                                    className='text-primary size-4 shrink-0'
-                                    aria-hidden='true'
-                                  />
-                                  <span className='break-words'>
-                                    {rule.channel_name}
-                                  </span>
-                                </div>
-                                <div className='text-muted-foreground mt-1 text-xs'>
-                                  {rule.group || '全部分组'}
-                                  <span className='mx-1'>·</span>
-                                  固定至{' '}
-                                  <FixedUntil
-                                    until={rule.manual_primary_until}
-                                  />
-                                  <span className='mx-1'>·</span>
-                                  {activeRoutes}/{rule.routes.length}{' '}
-                                  个路由已生效
-                                </div>
-                              </div>
-                              <Button
-                                type='button'
-                                variant='outline'
-                                size='sm'
-                                disabled={mutation.isPending}
-                                onClick={() =>
-                                  mutation.mutate({ kind: 'channel', rule })
-                                }
-                              >
-                                {mutation.isPending &&
-                                mutation.variables?.kind === 'channel' &&
-                                mutation.variables.rule.channel_id ===
-                                  rule.channel_id ? (
-                                  <Spinner data-icon='inline-start' />
-                                ) : (
-                                  <HugeiconsIcon
-                                    icon={Cancel01Icon}
-                                    data-icon='inline-start'
-                                  />
-                                )}
-                                解除固定
-                              </Button>
-                            </div>
-                            <div className='mt-3 flex flex-wrap items-end gap-3'>
-                              <label className='grid gap-1 text-xs'>
-                                <span className='text-muted-foreground'>
-                                  固定时长（分钟，留空永久）
-                                </span>
-                                <Input
-                                  type='number'
-                                  min={1}
-                                  max={525600}
-                                  step={1}
-                                  value={durationValue}
-                                  aria-label={`${rule.channel_name} 固定时长（分钟）`}
-                                  onChange={(event) =>
-                                    setDurationByChannel((current) => ({
-                                      ...current,
-                                      [rule.channel_id]: event.target.value,
-                                    }))
-                                  }
-                                />
-                              </label>
-                              <label className='flex min-h-9 items-center gap-2 text-xs'>
-                                <Checkbox
-                                  checked={allowDegrade}
-                                  aria-label={`${rule.channel_name} 允许稳定性降级`}
-                                  onCheckedChange={(checked) =>
-                                    setDegradeByChannel((current) => ({
-                                      ...current,
-                                      [rule.channel_id]: checked === true,
-                                    }))
-                                  }
-                                />
-                                允许稳定性降级
-                              </label>
-                              <Button
-                                type='button'
-                                variant='outline'
-                                size='sm'
-                                disabled={mutation.isPending || !validDuration}
-                                onClick={() =>
-                                  mutation.mutate({
-                                    kind: 'channel-update',
-                                    rule,
-                                    durationMinutes: parsedDuration,
-                                    allowStabilityDegrade: allowDegrade,
-                                  })
-                                }
-                              >
-                                {mutation.isPending &&
-                                mutation.variables?.kind === 'channel-update' &&
-                                mutation.variables.rule.channel_id ===
-                                  rule.channel_id ? (
-                                  <Spinner data-icon='inline-start' />
-                                ) : null}
-                                更新规则
-                              </Button>
-                            </div>
-                            {rule.routes.length > 0 ? (
-                              <ul className='mt-2 grid gap-1 pl-6 text-xs sm:grid-cols-2'>
-                                {rule.routes.map((route) => (
-                                  <li
-                                    key={`${rule.channel_id}:${route.group}:${route.model}`}
-                                    className='min-w-0 break-words'
-                                  >
-                                    <span className='font-medium'>
-                                      {route.group}
-                                    </span>
-                                    <span className='text-muted-foreground'>
-                                      {' '}
-                                      / {route.model} ·{' '}
-                                    </span>
-                                    <span className='text-muted-foreground'>
-                                      {routeStatusLabel(route)}
-                                    </span>
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <p className='text-muted-foreground mt-2 pl-6 text-xs'>
-                                当前没有模型路由；以后新增并参与调度的模型会自动纳入固定。
-                              </p>
-                            )}
-                          </article>
-                        )
-                      })}
-                    </section>
-                  ) : null}
-                  {filteredRoutePrimaries.length > 0 ? (
-                    <section aria-labelledby='route-primary-title'>
-                      <h3
-                        id='route-primary-title'
-                        className='bg-muted/30 sticky top-0 z-10 px-3 py-2 text-xs font-semibold'
-                      >
-                        单模型固定（{filteredRoutePrimaries.length}）
-                      </h3>
-                      {filteredRoutePrimaries.map((primary) => (
-                        <article
-                          key={`${primary.channel_id}:${primary.group}:${primary.model}`}
-                          className='flex flex-wrap items-center justify-between gap-3 px-3 py-3'
-                        >
-                          <div className='min-w-0'>
-                            <div className='text-sm font-medium break-words'>
-                              {primary.channel_name}
-                            </div>
-                            <div className='text-muted-foreground mt-1 text-xs break-words'>
-                              {primary.group} / {primary.model}
-                              <span className='mx-1'>·</span>
-                              固定至{' '}
-                              <FixedUntil
-                                until={primary.manual_primary_until}
-                              />
-                            </div>
-                          </div>
-                          <Button
-                            type='button'
-                            variant='outline'
-                            size='sm'
-                            disabled={mutation.isPending}
-                            onClick={() =>
-                              mutation.mutate({ kind: 'route', primary })
-                            }
-                          >
-                            {mutation.isPending &&
-                            mutation.variables?.kind === 'route' &&
-                            mutation.variables.primary.channel_id ===
-                              primary.channel_id &&
-                            mutation.variables.primary.group ===
-                              primary.group &&
-                            mutation.variables.primary.model ===
-                              primary.model ? (
-                              <Spinner data-icon='inline-start' />
-                            ) : (
-                              <HugeiconsIcon
-                                icon={Cancel01Icon}
-                                data-icon='inline-start'
-                              />
-                            )}
-                            解除固定
-                          </Button>
-                        </article>
+            <div className='bg-popover sticky top-0 z-20 space-y-3 pb-3'>
+              <Tabs
+                value={kind}
+                onValueChange={(value) => {
+                  if (value !== 'channel' && value !== 'route') return
+                  setKind(value)
+                  setStatus('all')
+                  clearSelection()
+                }}
+              >
+                <TabsList variant='line' aria-label='固定项类型'>
+                  <TabsTrigger value='channel'>
+                    渠道固定（
+                    {formatNumber(
+                      entries.filter((entry) => entry.kind === 'channel')
+                        .length,
+                      'zh-CN'
+                    )}
+                    ）
+                  </TabsTrigger>
+                  <TabsTrigger value='route'>
+                    单模型固定（
+                    {formatNumber(
+                      entries.filter((entry) => entry.kind === 'route').length,
+                      'zh-CN'
+                    )}
+                    ）
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <div className='flex flex-wrap gap-2'>
+                <Input
+                  type='search'
+                  aria-label='搜索固定项'
+                  placeholder='搜索渠道、分组或模型'
+                  className='min-w-0 flex-1 max-sm:basis-full'
+                  value={search}
+                  onChange={(event) => {
+                    setSearch(event.target.value)
+                    clearSelection()
+                  }}
+                />
+                <Select
+                  items={[
+                    { value: '', label: '所有分组' },
+                    ...groups.map((value) => ({ value, label: value })),
+                  ]}
+                  value={group}
+                  onValueChange={(value) => {
+                    setGroup(value ?? '')
+                    clearSelection()
+                  }}
+                >
+                  <SelectTrigger
+                    aria-label='按分组筛选'
+                    className='w-36 max-sm:flex-1'
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value=''>所有分组</SelectItem>
+                    {groups.map((value) => (
+                      <SelectItem key={value} value={value}>
+                        {value}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {kind === 'channel' ? (
+                  <Select
+                    items={STATUS_OPTIONS}
+                    value={status}
+                    onValueChange={(value) => {
+                      setStatus(value ?? 'all')
+                      clearSelection()
+                    }}
+                  >
+                    <SelectTrigger
+                      aria-label='按生效情况筛选'
+                      className='w-36 max-sm:flex-1'
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STATUS_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
                       ))}
-                    </section>
-                  ) : null}
-                </div>
-              </ScrollArea>
-            )}
+                    </SelectContent>
+                  </Select>
+                ) : null}
+              </div>
+              <p className='text-muted-foreground text-xs'>
+                显示 {formatNumber(filtered.length, 'zh-CN')} 项 ·
+                单模型固定优先于渠道规则
+              </p>
+            </div>
+            {query.isLoading ? (
+              <div
+                role='status'
+                className='flex min-h-40 items-center justify-center gap-2'
+              >
+                <Spinner />
+                正在加载固定项
+              </div>
+            ) : null}
+            {query.isError ? (
+              <Empty>
+                <EmptyHeader>
+                  <EmptyTitle>固定项加载失败</EmptyTitle>
+                  <EmptyDescription>请重试或刷新页面</EmptyDescription>
+                </EmptyHeader>
+                <Button variant='outline' onClick={() => void query.refetch()}>
+                  重试
+                </Button>
+              </Empty>
+            ) : null}
+            {!query.isLoading && !query.isError ? (
+              <>
+                {failures.length ? (
+                  <div
+                    role='alert'
+                    className='mb-3 space-y-2 rounded-lg border p-3 text-sm'
+                  >
+                    <p>以下固定项解除失败：</p>
+                    <ul>
+                      {failures.map((item) => (
+                        <li key={item.entry.key} className='break-words'>
+                          {item.entry.channel_name} ·{' '}
+                          {item.entry.group || '全部分组'}
+                          {item.entry.kind === 'route'
+                            ? ` / ${item.entry.model}`
+                            : ''}
+                          ：{item.message}
+                        </li>
+                      ))}
+                    </ul>
+                    <Button
+                      variant='outline'
+                      size='sm'
+                      disabled={pending}
+                      onClick={() =>
+                        setRemoving(failures.map((item) => item.entry))
+                      }
+                    >
+                      重试失败项
+                    </Button>
+                  </div>
+                ) : null}
+                <DataTableView
+                  table={table}
+                  emptyTitle={
+                    entries.length ? '没有匹配的固定项' : '暂无固定项'
+                  }
+                  emptyDescription={
+                    entries.length
+                      ? '调整搜索或筛选条件后重试'
+                      : '在渠道或模型路由中固定主渠道后，会显示在这里'
+                  }
+                  tableClassName='table-fixed max-sm:block [&_tbody]:max-sm:block'
+                  tableBodyClassName='max-sm:[&>tr]:h-auto'
+                  tableHeaderClassName='max-sm:block [&_tr]:max-sm:block [&_th:not(:first-child)]:max-sm:hidden [&_th:first-child]:max-sm:w-auto [&_th:first-child]:max-sm:block'
+                  getColumnClassName={(id) => (id === 'select' ? 'w-10' : '')}
+                  renderRow={(row) => (
+                    <ChannelMonitorSmartSchedulePrimaryRow
+                      key={row.id}
+                      row={row}
+                      expanded={expanded === row.id}
+                      search={normalizedSearch}
+                      disabled={pending}
+                      onExpand={() =>
+                        setExpanded(expanded === row.id ? null : row.id)
+                      }
+                      onEdit={() => {
+                        lastEditedKey.current = row.original.key
+                        setValidDraft(true)
+                        setDirty(false)
+                        setEditing(row.original)
+                      }}
+                      onRemove={() => setRemoving([row.original])}
+                    />
+                  )}
+                />
+              </>
+            ) : null}
           </>
-        ) : null}
-        <DialogFooter>
-          <Button
-            type='button'
-            variant='outline'
-            disabled={mutation.isPending}
-            onClick={() => props.onOpenChange(false)}
-          >
-            关闭
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        )}
+      </Dialog>
+      <ConfirmDialog
+        open={removing.length > 0}
+        onOpenChange={(open) => {
+          if (!open && !removal.isPending) setRemoving([])
+        }}
+        title={`解除 ${formatNumber(removing.length, 'zh-CN')} 项固定？`}
+        confirmText='确认解除'
+        cancelBtnText='取消'
+        isLoading={removal.isPending}
+        desc={
+          <div className='space-y-3'>
+            <p>仅解除以下选中的固定项：</p>
+            <ul className='max-h-48 overflow-y-auto overscroll-contain'>
+              {removing.map((entry) => (
+                <li key={entry.key} className='break-words'>
+                  {entry.channel_name} · {entry.group || '全部分组'}
+                  {entry.kind === 'route' ? ` / ${entry.model}` : ' · 渠道固定'}
+                </li>
+              ))}
+            </ul>
+            <p>
+              解除单模型固定后，仍有效的渠道规则可能接管；解除渠道规则不会删除单模型固定。实际结果以重新计算后的调度状态为准。
+            </p>
+          </div>
+        }
+        handleConfirm={() => removal.mutate(removing)}
+      />
+      <ConfirmDialog
+        open={discard !== null}
+        onOpenChange={(open) => {
+          if (!open) setDiscard(null)
+        }}
+        title='放弃未保存的修改？'
+        desc='当前固定项的修改尚未保存。'
+        confirmText='放弃修改'
+        cancelBtnText='继续编辑'
+        handleConfirm={() => {
+          const close = discard === 'close'
+          setDiscard(null)
+          setDirty(false)
+          setEditing(null)
+          if (close) props.onOpenChange(false)
+        }}
+      />
+    </>
   )
 }

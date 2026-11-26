@@ -26,6 +26,7 @@ type ChannelSmartScheduleChannelPrimaryRule struct {
 type ChannelSmartScheduleChannelPrimaryRuleOptions struct {
 	Group                     string
 	DurationMinutes           int
+	PreserveUntil             bool
 	AllowStabilityDegrade     bool
 	ConfirmStabilityOverride  bool
 	StabilityFallbackPriority int64
@@ -128,6 +129,9 @@ func SaveChannelSmartScheduleChannelPrimaryRule(
 		return result, gorm.ErrRecordNotFound
 	}
 	durationMinutes := options.DurationMinutes
+	if options.PreserveUntil && durationMinutes != ChannelSmartSchedulePermanentDurationMinutes {
+		return result, errors.New("保留到期时间时不能同时设置固定时长")
+	}
 	if durationMinutes != ChannelSmartSchedulePermanentDurationMinutes &&
 		(durationMinutes < 0 || durationMinutes > ChannelSmartScheduleManualPrimaryMaxMinutes) {
 		return result, fmt.Errorf("主渠道固定时间必须在 0 到 %d 分钟之间", ChannelSmartScheduleManualPrimaryMaxMinutes)
@@ -187,6 +191,15 @@ func SaveChannelSmartScheduleChannelPrimaryRule(
 		if findErr != nil && !errors.Is(findErr, gorm.ErrRecordNotFound) {
 			return findErr
 		}
+		now := common.GetTimestamp()
+		until := channelSmartSchedulePrimaryRuleUntil(now, durationMinutes)
+		if options.PreserveUntil {
+			if errors.Is(findErr, gorm.ErrRecordNotFound) || rule.ManualPrimaryUntil <= now || rule.Group != options.Group {
+				return errors.New("渠道固定已过期、已解除或范围已改变，请刷新后重试")
+			}
+			until = rule.ManualPrimaryUntil
+		}
+		result.ManualPrimaryUntil = until
 		if durationMinutes == 0 {
 			if !errors.Is(findErr, gorm.ErrRecordNotFound) {
 				if err := tx.Delete(&rule).Error; err != nil {
@@ -197,10 +210,9 @@ func SaveChannelSmartScheduleChannelPrimaryRule(
 			if !errors.Is(findErr, gorm.ErrRecordNotFound) && rule.Revision == math.MaxInt64 {
 				return errors.New("渠道固定规则修订号已达上限")
 			}
-			now := common.GetTimestamp()
 			rule.ChannelId = channelId
 			rule.Group = options.Group
-			rule.ManualPrimaryUntil = channelSmartSchedulePrimaryRuleUntil(now, durationMinutes)
+			rule.ManualPrimaryUntil = until
 			rule.ManualPrimaryAllowStabilityDegrade = options.AllowStabilityDegrade
 			rule.UpdatedAt = now
 			rule.UpdatedOrder = time.Now().UnixNano()

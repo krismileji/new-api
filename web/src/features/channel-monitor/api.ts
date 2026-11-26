@@ -579,6 +579,7 @@ export type ChannelMonitorSmartSchedulePrimaryUpdateRequest = {
   group: string
   model: string
   durationMinutes: number | null
+  preserveUntil?: boolean
   allowStabilityDegrade: boolean
   confirmStabilityOverride?: boolean
 }
@@ -601,6 +602,7 @@ export async function updateChannelMonitorSmartScheduleRoutePrimary(
       group: request.group,
       model: request.model,
       duration_minutes: request.durationMinutes,
+      preserve_until: request.preserveUntil === true ? true : undefined,
       allow_stability_degrade: request.allowStabilityDegrade,
       confirm_stability_override:
         request.confirmStabilityOverride === true ? true : undefined,
@@ -633,6 +635,7 @@ export type ChannelMonitorSmartScheduleChannelPrimaryRuleUpdateRequest = {
   channelId: number
   group: string
   durationMinutes: number | null
+  preserveUntil?: boolean
   allowStabilityDegrade?: boolean
   confirmStabilityOverride?: boolean
 }
@@ -655,6 +658,7 @@ export async function updateChannelMonitorSmartScheduleChannelPrimaryRule(
     {
       group: request.group,
       duration_minutes: request.durationMinutes,
+      preserve_until: request.preserveUntil === true ? true : undefined,
       allow_stability_degrade: request.allowStabilityDegrade,
       confirm_stability_override:
         request.confirmStabilityOverride === true ? true : undefined,

@@ -33,6 +33,7 @@ type channelSmartScheduleRoutePrimaryRequest struct {
 	Group                    string `json:"group"`
 	Model                    string `json:"model"`
 	DurationMinutes          *int   `json:"duration_minutes"`
+	PreserveUntil            bool   `json:"preserve_until"`
 	AllowStabilityDegrade    *bool  `json:"allow_stability_degrade"`
 	ConfirmStabilityOverride bool   `json:"confirm_stability_override"`
 }
@@ -40,6 +41,7 @@ type channelSmartScheduleRoutePrimaryRequest struct {
 type channelSmartScheduleChannelPrimaryRuleRequest struct {
 	Group                    string `json:"group"`
 	DurationMinutes          *int   `json:"duration_minutes"`
+	PreserveUntil            bool   `json:"preserve_until"`
 	AllowStabilityDegrade    *bool  `json:"allow_stability_degrade"`
 	ConfirmStabilityOverride bool   `json:"confirm_stability_override"`
 }
@@ -343,6 +345,10 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if request.PreserveUntil && request.DurationMinutes != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "保留到期时间时不能同时设置固定时长"})
+		return
+	}
 	durationMinutes := model.ChannelSmartSchedulePermanentDurationMinutes
 	if request.DurationMinutes != nil {
 		durationMinutes = *request.DurationMinutes
@@ -366,6 +372,7 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 	result, err := model.SaveChannelSmartScheduleRoutePrimary(
 		channelId, group, modelName, model.ChannelSmartScheduleRoutePrimaryOptions{
 			DurationMinutes:           durationMinutes,
+			PreserveUntil:             request.PreserveUntil,
 			AllowStabilityDegrade:     allowStabilityDegrade,
 			ConfirmStabilityOverride:  request.ConfirmStabilityOverride,
 			StabilityFallbackPriority: channelMonitorSmartScheduleBaselinePriority,
@@ -394,11 +401,16 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 			taskResponse = task.ToResponse()
 		}
 	}
+	durationLabel := channelSmartScheduleDurationAuditValue(request.DurationMinutes)
+	if request.PreserveUntil {
+		durationLabel = "保持原到期时间"
+	}
 	if request.DurationMinutes == nil || *request.DurationMinutes > 0 || result.RoutingChanged || result.StabilityProtectionCleared {
-		recordManageAudit(c, "channel.monitor_smart_schedule_config_update", map[string]interface{}{
+		recordManageAudit(c, "channel.monitor_smart_schedule_config_update", map[string]any{
 			"id": channelId, "group": group, "model": modelName,
 			"duration_minutes":             request.DurationMinutes,
-			"duration_label":               channelSmartScheduleDurationAuditValue(request.DurationMinutes),
+			"preserve_until":               request.PreserveUntil,
+			"duration_label":               durationLabel,
 			"allow_stability_degrade":      allowStabilityDegrade,
 			"stability_protection_cleared": result.StabilityProtectionCleared,
 			"manual_primary_until":         result.State.ManualPrimaryUntil,
@@ -409,6 +421,7 @@ func UpdateChannelMonitorSmartScheduleRoutePrimary(c *gin.Context) {
 		"group":                        group,
 		"model":                        modelName,
 		"duration_minutes":             request.DurationMinutes,
+		"preserve_until":               request.PreserveUntil,
 		"allow_stability_degrade":      result.State.ManualPrimaryAllowStabilityDegrade,
 		"manual_primary_until":         result.State.ManualPrimaryUntil,
 		"stability_protection_cleared": result.StabilityProtectionCleared,
@@ -436,6 +449,10 @@ func UpdateChannelMonitorSmartScheduleChannelPrimaryRule(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "无效的参数"})
 		return
 	}
+	if request.PreserveUntil && request.DurationMinutes != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "保留到期时间时不能同时设置固定时长"})
+		return
+	}
 	durationMinutes := model.ChannelSmartSchedulePermanentDurationMinutes
 	if request.DurationMinutes != nil {
 		durationMinutes = *request.DurationMinutes
@@ -460,6 +477,7 @@ func UpdateChannelMonitorSmartScheduleChannelPrimaryRule(c *gin.Context) {
 		channelId, model.ChannelSmartScheduleChannelPrimaryRuleOptions{
 			Group:                     request.Group,
 			DurationMinutes:           durationMinutes,
+			PreserveUntil:             request.PreserveUntil,
 			AllowStabilityDegrade:     allowStabilityDegrade,
 			ConfirmStabilityOverride:  request.ConfirmStabilityOverride,
 			StabilityFallbackPriority: channelMonitorSmartScheduleBaselinePriority,
@@ -488,11 +506,16 @@ func UpdateChannelMonitorSmartScheduleChannelPrimaryRule(c *gin.Context) {
 			taskResponse = task.ToResponse()
 		}
 	}
+	durationLabel := channelSmartScheduleDurationAuditValue(request.DurationMinutes)
+	if request.PreserveUntil {
+		durationLabel = "保持原到期时间"
+	}
 	if durationMinutes != 0 || result.RoutingChanged {
 		recordManageAudit(c, "channel.monitor_smart_schedule_config_update", map[string]any{
 			"id": channelId, "scope": "channel_primary_rule",
 			"duration_minutes":           request.DurationMinutes,
-			"duration_label":             channelSmartScheduleDurationAuditValue(request.DurationMinutes),
+			"preserve_until":             request.PreserveUntil,
+			"duration_label":             durationLabel,
 			"allow_stability_degrade":    allowStabilityDegrade,
 			"channel_primary_rule_until": result.ManualPrimaryUntil,
 			"fixed_routes":               result.FixedRoutes,
@@ -502,6 +525,7 @@ func UpdateChannelMonitorSmartScheduleChannelPrimaryRule(c *gin.Context) {
 		"channel_id":              channelId,
 		"group":                   result.Group,
 		"duration_minutes":        request.DurationMinutes,
+		"preserve_until":          request.PreserveUntil,
 		"allow_stability_degrade": result.AllowStabilityDegrade,
 		"manual_primary_until":    result.ManualPrimaryUntil,
 		"total_routes":            result.Total,

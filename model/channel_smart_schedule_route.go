@@ -92,6 +92,7 @@ type ChannelSmartScheduleRoutePrimaryResult struct {
 }
 
 type ChannelSmartScheduleRoutePrimaryOptions struct {
+	PreserveUntil             bool
 	DurationMinutes           int
 	AllowStabilityDegrade     bool
 	ConfirmStabilityOverride  bool
@@ -925,6 +926,9 @@ func SaveChannelSmartScheduleRoutePrimary(
 	options ChannelSmartScheduleRoutePrimaryOptions,
 ) (result ChannelSmartScheduleRoutePrimaryResult, err error) {
 	durationMinutes := options.DurationMinutes
+	if options.PreserveUntil && durationMinutes != ChannelSmartSchedulePermanentDurationMinutes {
+		return result, errors.New("保留到期时间时不能同时设置固定时长")
+	}
 	if durationMinutes != ChannelSmartSchedulePermanentDurationMinutes &&
 		(durationMinutes < 0 || durationMinutes > ChannelSmartScheduleManualPrimaryMaxMinutes) {
 		return result, fmt.Errorf("主渠道固定时间必须在 0 到 %d 分钟之间", ChannelSmartScheduleManualPrimaryMaxMinutes)
@@ -974,6 +978,14 @@ func SaveChannelSmartScheduleRoutePrimary(
 			abilityByChannel[abilities[index].ChannelId] = &abilities[index]
 		}
 		targetAbility := abilityByChannel[channelId]
+		now = common.GetTimestamp()
+		until := channelSmartSchedulePrimaryRuleUntil(now, durationMinutes)
+		if options.PreserveUntil {
+			if targetState.ManualPrimaryUntil <= now || targetState.ManualPrimaryChannelRule {
+				return errors.New("单模型固定已过期、已解除或已变为渠道固定，请刷新后重试")
+			}
+			until = targetState.ManualPrimaryUntil
+		}
 
 		if durationMinutes == 0 {
 			if targetState.ManualPrimaryUntil <= 0 && !targetState.ManualPrimarySaved {
@@ -1054,11 +1066,7 @@ func SaveChannelSmartScheduleRoutePrimary(
 			if targetState.Revision == math.MaxInt64 {
 				return errors.New("智能调度路由修订号已达上限")
 			}
-			if durationMinutes == ChannelSmartSchedulePermanentDurationMinutes {
-				targetState.ManualPrimaryUntil = common.ChannelMonitorSmartSchedulePermanentUntil
-			} else {
-				targetState.ManualPrimaryUntil = now + int64(durationMinutes)*60
-			}
+			targetState.ManualPrimaryUntil = until
 			targetState.ManualPrimaryAllowStabilityDegrade = options.AllowStabilityDegrade
 			targetState.ManualPrimaryChannelRule = false
 			targetState.Revision++
@@ -1165,11 +1173,7 @@ func SaveChannelSmartScheduleRoutePrimary(
 		if targetState.Revision == math.MaxInt64 {
 			return errors.New("智能调度路由修订号已达上限")
 		}
-		if durationMinutes == ChannelSmartSchedulePermanentDurationMinutes {
-			targetState.ManualPrimaryUntil = common.ChannelMonitorSmartSchedulePermanentUntil
-		} else {
-			targetState.ManualPrimaryUntil = now + int64(durationMinutes)*60
-		}
+		targetState.ManualPrimaryUntil = until
 		targetState.ManualPrimaryAllowStabilityDegrade = options.AllowStabilityDegrade
 		targetState.ManualPrimaryChannelRule = false
 		targetState.LastScheduleStatus = ChannelSmartScheduleStatusSucceeded
