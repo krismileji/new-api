@@ -21,13 +21,14 @@ import (
 // settings API. It is rebuilt from the option map on every option write, so
 // the runtime globals updated by the same write never disagree with it.
 type RequestPolicySnapshot struct {
-	Affinity        operation_setting.ChannelAffinitySetting
-	RetryTimes      int
-	RetryCodes      []operation_setting.StatusCodeRange
-	DisableCodes    []operation_setting.StatusCodeRange
-	DisableKeywords []string
-	AutoDisable     bool
-	Options         map[string]string
+	Affinity               operation_setting.ChannelAffinitySetting
+	RetryTimes             int
+	RetryZeroOutputEnabled bool
+	RetryCodes             []operation_setting.StatusCodeRange
+	DisableCodes           []operation_setting.StatusCodeRange
+	DisableKeywords        []string
+	AutoDisable            bool
+	Options                map[string]string
 }
 
 var requestPolicySnapshot atomic.Pointer[RequestPolicySnapshot]
@@ -49,6 +50,7 @@ func requestPolicyDefaultOptions() map[string]string {
 		}
 	}
 	defaults["RetryTimes"] = strconv.Itoa(common.RetryTimes)
+	defaults["RetryZeroOutputEnabled"] = "false"
 	defaults["AutomaticRetryStatusCodes"] = operation_setting.AutomaticRetryStatusCodesToString()
 	defaults["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
 	defaults["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
@@ -59,6 +61,9 @@ func requestPolicyDefaultOptions() map[string]string {
 }
 
 func IsRequestPolicyOption(key string) bool {
+	if key == "RetryZeroOutputEnabled" {
+		return true
+	}
 	if strings.HasPrefix(key, "channel_affinity_setting.") {
 		return true
 	}
@@ -123,6 +128,10 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 	snapshot.RetryTimes, err = strconv.Atoi(raw["RetryTimes"])
 	if err != nil || snapshot.RetryTimes < 0 || snapshot.RetryTimes == math.MaxInt {
 		return nil, fmt.Errorf("retry times must be a non-negative integer with room for the initial attempt")
+	}
+	snapshot.RetryZeroOutputEnabled, err = strconv.ParseBool(raw["RetryZeroOutputEnabled"])
+	if err != nil {
+		return nil, fmt.Errorf("输出为零重试开关必须为布尔值")
 	}
 	snapshot.AutoDisable, err = strconv.ParseBool(raw["AutomaticDisableChannelEnabled"])
 	if err != nil {

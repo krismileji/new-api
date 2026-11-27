@@ -6,6 +6,7 @@ import { parseHttpStatusCodeRules } from '@/lib/http-status-code-rules'
 export function createRoutingPolicySchema(t: TFunction) {
   return z.object({
     RetryTimes: z.number().int().min(0).max(99),
+    RetryZeroOutputEnabled: z.boolean(),
     AutomaticRetryStatusCodes: z
       .string()
       .refine(
@@ -48,6 +49,7 @@ export function routingPolicyFormValues(
 ): RoutingPolicyFormValues {
   return {
     RetryTimes: Number(options.RetryTimes),
+    RetryZeroOutputEnabled: options.RetryZeroOutputEnabled === 'true',
     AutomaticRetryStatusCodes: options.AutomaticRetryStatusCodes,
     channel_affinity_setting: {
       enabled: options['channel_affinity_setting.enabled'] === 'true',
@@ -71,6 +73,7 @@ export function routingPolicyOptions(
 ): Record<string, string> {
   return {
     RetryTimes: String(values.RetryTimes),
+    RetryZeroOutputEnabled: String(values.RetryZeroOutputEnabled),
     AutomaticRetryStatusCodes: values.AutomaticRetryStatusCodes,
     ...Object.fromEntries(
       Object.entries(values.channel_affinity_setting).map(([key, value]) => [

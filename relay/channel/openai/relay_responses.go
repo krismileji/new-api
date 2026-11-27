@@ -51,9 +51,6 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	info.ObserveResponseModel(responsesResponse.Model)
 	responseBody = rewriteSGLangResponsesCreatedAt(info, responseBody, "created_at", responsesResponse.CreatedAt)
 
-	// 写入新的 response body
-	service.IOCopyBytesGracefully(c, resp, responseBody)
-
 	// compute usage
 	usage := &dto.Usage{}
 	service.ApplyResponsesUsage(usage, responsesResponse.Usage)
@@ -76,6 +73,14 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	}
 	imageCounter.Commit(info)
 
+	if info.RetryEmptyResponse && usage.CompletionTokens == 0 && !c.Writer.Written() {
+		info.CompleteEmptyResponse = func() *types.NewAPIError {
+			service.IOCopyBytesGracefully(c, resp, responseBody)
+			return nil
+		}
+		return usage, newEmptyResponseError()
+	}
+	service.IOCopyBytesGracefully(c, resp, responseBody)
 	return usage, nil
 }
 
@@ -90,9 +95,9 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	accumulator := service.NewResponsesUsageAccumulator(info)
 	var streamErr *types.NewAPIError
 	var pending []responsesStreamFrame
-	pendingBytes := 0
-	const maxPendingBytes = 64 << 10
-	var hasOutput bool
+	if info.RetryEmptyResponse {
+		info.DisablePing = true
+	}
 	var emptyCompletion bool
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
@@ -134,30 +139,14 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		accumulator.Observe(&streamResponse, payload)
 		completed := (streamResponse.Type == "response.completed" || streamResponse.Type == "response.done") &&
 			streamResponse.Response != nil && info.StreamStatus.ResponseOutcome() == string(relaycommon.ResponseOutcomeCompleted)
-		if info.RetryEmptyResponse && completed && !hasOutput && !c.Writer.Written() &&
-			!info.StreamStatus.HasErrors() && c.Request.Context().Err() == nil &&
-			streamResponse.Response.Error == nil && !hasResponsesOutput(ojson.GetBytesNoCopy(payload, "response.output")) {
-			emptyCompletion = true
+		if info.RetryEmptyResponse {
 			pending = append(pending, responsesStreamFrame{kind: streamResponse.Type, data: data})
-			sr.Done()
+			if completed {
+				emptyCompletion = streamResponse.Response.Usage == nil || streamResponse.Response.Usage.OutputTokens == 0
+				sr.Done()
+			}
 			return
 		}
-		if info.RetryEmptyResponse && !hasOutput && !completed && isResponsesMetadataFrame(streamResponse.Type, payload) {
-			if pendingBytes+len(data) <= maxPendingBytes && !c.Writer.Written() {
-				pending = append(pending, responsesStreamFrame{kind: streamResponse.Type, data: data})
-				pendingBytes += len(data)
-				return
-			}
-		} else {
-			hasOutput = true
-		}
-		for _, frame := range pending {
-			if err := helper.ResponseChunkData(c, dto.ResponsesStreamResponse{Type: frame.kind}, frame.data); err != nil {
-				sr.Stop(err)
-				return
-			}
-		}
-		pending = nil
 		if err := helper.ResponseChunkData(c, streamResponse, data); err != nil {
 			sr.Stop(err)
 			return
@@ -181,7 +170,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	common.SetContextKey(c, constant.ContextKeyResponseStreamStatus, info.StreamStatus)
 	info.StreamStatus.RequireTerminal()
 	usage := accumulator.Finish()
-	if emptyCompletion {
+	if emptyCompletion && !c.Writer.Written() && !info.StreamStatus.HasErrors() && c.Request.Context().Err() == nil {
 		info.CompleteEmptyResponse = finish
 		return usage, newEmptyResponseError()
 	}

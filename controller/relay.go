@@ -230,7 +230,8 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 	relayInfo.LastError = nil
 	retryRouting := newRelayRetryRouting()
 	fastFailureRetryBudget := &relayFastFailureRetryBudget{}
-	relayInfo.RetryEmptyResponse = relayFormat == types.RelayFormatOpenAI || relayFormat == types.RelayFormatOpenAIResponses
+	relayInfo.RetryEmptyResponse = model.CurrentRequestPolicy().RetryZeroOutputEnabled &&
+		(relayFormat == types.RelayFormatOpenAI || relayFormat == types.RelayFormatOpenAIResponses)
 	var emptyResponse *relayEmptyResponse
 	attemptIndex := 0
 	finalRetryLogPending := false

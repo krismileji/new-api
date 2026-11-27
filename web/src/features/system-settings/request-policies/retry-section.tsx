@@ -30,6 +30,7 @@ import {
 import { Input } from '@/components/ui/input'
 
 import { SettingsCard } from '../components/settings-card'
+import { SettingsSwitchField } from '../components/settings-form-layout'
 import { safeNumberFieldProps } from '../utils/numeric-field'
 import type { RoutingPolicyFormValues } from './routing-form'
 
@@ -39,6 +40,19 @@ export function RetrySection() {
   return (
     <SettingsCard title={t('Retry budget')} className='shadow-none'>
       <div className='space-y-4'>
+        <FormField
+          control={form.control}
+          name='RetryZeroOutputEnabled'
+          render={({ field }) => (
+            <SettingsSwitchField
+              controlId='RetryZeroOutputEnabled'
+              checked={field.value}
+              onCheckedChange={field.onChange}
+              label='输出为零时自动重试'
+              description='上游输出 Token 数为 0 时重试，不判断正文、工具调用或拒答。沿用最大重试次数和状态码规则（需包含 502）。开启后流式响应暂存至用量确定再返回；未上报用量按 0 处理。'
+            />
+          )}
+        />
         <FormField
           control={form.control}
           name='RetryTimes'

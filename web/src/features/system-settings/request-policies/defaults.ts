@@ -20,6 +20,7 @@ import type { ChannelAffinitySettings } from '../general/channel-affinity/types'
 
 export type RetrySettings = {
   RetryTimes: number
+  RetryZeroOutputEnabled: boolean
   AutomaticRetryStatusCodes: string
 }
 export type HealthSettings = {
@@ -42,6 +43,7 @@ export type RequestPolicySettings = RetrySettings &
 
 export const defaultRequestPolicySettings: RequestPolicySettings = {
   RetryTimes: 0,
+  RetryZeroOutputEnabled: false,
   AutomaticRetryStatusCodes:
     '100-199,300-399,401-407,409-499,500-503,505-523,525-599',
   ChannelDisableThreshold: '',

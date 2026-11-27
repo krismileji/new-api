@@ -26,6 +26,7 @@ import { RoutingPolicySection } from '../routing-section'
 
 const options = {
   RetryTimes: '2',
+  RetryZeroOutputEnabled: 'false',
   'channel_affinity_setting.enabled': 'true',
   'channel_affinity_setting.session_mode': '',
   'channel_affinity_setting.switch_on_success': 'false',
@@ -1039,3 +1040,24 @@ it.each([
     expect(api.patch).not.toHaveBeenCalled()
   }
 )
+
+it('zero output retry switch saves both enabled and disabled values', async () => {
+  show()
+  const control = await screen.findByRole('switch', {
+    name: '输出为零时自动重试',
+  })
+  expect(control).not.toBeChecked()
+  control.focus()
+  await userEvent.keyboard(' ')
+  expect(control).toBeChecked()
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() =>
+    expect(currentOptions.RetryZeroOutputEnabled).toBe('true')
+  )
+  await userEvent.click(control)
+  expect(control).not.toBeChecked()
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() =>
+    expect(currentOptions.RetryZeroOutputEnabled).toBe('false')
+  )
+})

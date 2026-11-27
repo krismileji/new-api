@@ -86,11 +86,11 @@ data: {"type":"response.completed","response":{"id":"empty-attempt","status":"co
 		{"nonretryable status", 400, 1, 1, false, false, false, service.PolicyDecision{Action: "stop", Reason: "status_not_retryable", Source: "global"}, "", ""},
 		{"capacity after budget exhausted", 200, 0, 1, true, false, false, service.PolicyDecision{Action: "stop", Reason: "attempt_budget_exhausted", Source: "global"}, "", ""},
 		{"fast retry without ordinary budget", 503, 0, 2, false, false, true, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "system"}, "", ""},
-		{"empty chat response", 200, 1, 2, false, false, false, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"},
-			`{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":0,"total_tokens":3}}`,
-			`{"choices":[{"message":{"role":"assistant","content":"recovered"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":0,"total_tokens":3}}`},
-		{"empty chat stream", 200, 1, 2, false, false, false, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"},
-			`data: {"id":"empty-attempt","choices":[{"delta":{"role":"assistant","content":""}}]}
+		{"zero output chat response with text", 200, 1, 2, false, false, false, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"},
+			`{"choices":[{"message":{"role":"assistant","content":"first-attempt"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":0,"total_tokens":3}}`,
+			`{"choices":[{"message":{"role":"assistant","content":"recovered"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`},
+		{"zero output chat stream with text", 200, 1, 2, false, false, false, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"},
+			`data: {"id":"empty-attempt","choices":[{"delta":{"role":"assistant","content":"first-attempt"}}]}
 
 data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
 
@@ -105,18 +105,42 @@ data: {"choices":[{"delta":{"tool_calls":[{"id":"recovered","type":"function","f
 
 data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
 
+data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}
+
 data: [DONE]
 
 `},
+		{"zero output switch disabled", 200, 1, 1, false, false, false, service.PolicyDecision{},
+			`{"choices":[{"message":{"content":"first-attempt"}}],"usage":{"prompt_tokens":3,"completion_tokens":0,"total_tokens":3}}`, "unused"},
+		{"nonzero output with empty content", 200, 1, 1, false, false, false, service.PolicyDecision{},
+			`{"choices":[{"message":{"content":""}}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`, "unused"},
+		{"zero output tool call", 200, 1, 2, false, false, false, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"},
+			`{"choices":[{"message":{"tool_calls":[{"id":"first-attempt","type":"function","function":{"name":"lookup","arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":0,"total_tokens":3}}`,
+			`{"choices":[{"message":{"content":"recovered"}}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`},
+		{"zero output refusal", 200, 1, 2, false, false, false, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"},
+			`{"choices":[{"message":{"refusal":"first-attempt"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":0,"total_tokens":3}}`,
+			`{"choices":[{"message":{"content":"recovered"}}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`},
+		{"zero output responses JSON with text", 200, 1, 2, false, false, false, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"},
+			`{"object":"response","id":"first-attempt","status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"first-attempt"}]}],"usage":{"input_tokens":3,"output_tokens":0,"total_tokens":3}}`,
+			`{"object":"response","id":"recovered","status":"completed","output":[],"usage":{"input_tokens":3,"output_tokens":1,"total_tokens":4}}`},
+		{"responses switch disabled", 200, 1, 1, false, false, false, service.PolicyDecision{},
+			`{"object":"response","id":"first-attempt","status":"completed","output":[],"usage":{"input_tokens":3,"output_tokens":0,"total_tokens":3}}`, "unused"},
+		{"missing usage with text", 200, 1, 2, false, false, false, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"},
+			`{"choices":[{"message":{"content":"first-attempt"}}]}`,
+			`{"choices":[{"message":{"content":"recovered"}}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}`},
+		{"chat stream switch disabled", 200, 1, 1, false, false, false, service.PolicyDecision{},
+			"data: {\"choices\":[{\"delta\":{\"content\":\"first-attempt\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":0,\"total_tokens\":3}}\n\ndata: [DONE]\n\n", "unused"},
+		{"nonzero chat stream with empty content", 200, 1, 1, false, false, false, service.PolicyDecision{},
+			"data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1,\"total_tokens\":4}}\n\ndata: [DONE]\n\n", "unused"},
 		{"empty chat stream with retries disabled", 200, 0, 1, false, false, false, service.PolicyDecision{},
 			"data: [DONE]\n\n", ""},
-		{"empty responses stream", 200, 1, 2, false, false, false, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"},
-			emptyResponsesStream,
+		{"zero output responses stream with text", 200, 1, 2, false, false, false, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"},
+			strings.Replace(emptyResponsesStream, `"response.output_item.added","item":{"type":"message","role":"assistant","content":[]}`, `"response.output_text.delta","delta":"first-attempt"`, 1),
 			`data: {"type":"response.created","response":{"id":"recovered","status":"in_progress","output":[]}}
 
 data: {"type":"response.output_text.delta","delta":"hello"}
 
-data: {"type":"response.completed","response":{"id":"recovered","status":"completed","output":[],"usage":{"input_tokens":75613,"output_tokens":0,"total_tokens":75613}}}
+data: {"type":"response.completed","response":{"id":"recovered","status":"completed","output":[],"usage":{"input_tokens":75613,"output_tokens":1,"total_tokens":75614}}}
 
 `},
 		{"all responses attempts are empty", 200, 1, 2, false, false, false, service.PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"},
@@ -126,7 +150,10 @@ data: {"type":"response.completed","response":{"id":"recovered","status":"comple
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			common.RetryTimes = tc.retries
-			options := map[string]string{"ChannelMonitorSmartScheduleEnabled": "false"}
+			options := map[string]string{"ChannelMonitorSmartScheduleEnabled": "false", "RetryZeroOutputEnabled": "true"}
+			if strings.Contains(tc.name, "switch disabled") {
+				options["RetryZeroOutputEnabled"] = "false"
+			}
 			if tc.fast {
 				policy := channelSmartScheduleTestGroupPolicy("default", channelMonitorSmartScheduleStrategySmart, false, channelMonitorSmartScheduleApplyPriorityWeight, []string{"policy-audit-model"}, 5, 80, 30)
 				policy.FastFailureSeconds, policy.SlowFailureSeconds = common.GetPointer(30.0), common.GetPointer(60.0)
@@ -135,9 +162,17 @@ data: {"type":"response.completed","response":{"id":"recovered","status":"comple
 				options["ChannelMonitorSmartScheduleGroupPolicies"] = channelSmartScheduleTestGroupPoliciesJSON(t, policy)
 			}
 			useChannelMonitorOptionMap(t, options)
+			previousZeroOutput := model.CurrentRequestPolicy().Options["RetryZeroOutputEnabled"]
+			require.NoError(t, model.UpdateRequestPolicyOptions(map[string]string{"RetryZeroOutputEnabled": options["RetryZeroOutputEnabled"]}))
+			var storedOption model.Option
+			require.NoError(t, db.Where(map[string]any{"key": "RetryZeroOutputEnabled"}).First(&storedOption).Error)
+			assert.Equal(t, options["RetryZeroOutputEnabled"], storedOption.Value)
+			t.Cleanup(func() {
+				require.NoError(t, model.UpdateRequestPolicyOptions(map[string]string{"RetryZeroOutputEnabled": previousZeroOutput}))
+			})
 			stream := strings.HasPrefix(tc.firstBody, "data:")
-			responses := strings.HasPrefix(tc.firstBody, `data: {"type":"response.`)
-			noCandidate := responses && tc.attempts == 1
+			responses := strings.HasPrefix(tc.firstBody, `data: {"type":"response.`) || strings.HasPrefix(tc.firstBody, `{"object":"response"`)
+			noCandidate := tc.name == "empty responses with no available retry channel"
 			paid := responses && tc.recoveredBody == ""
 			if paid {
 				require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"policy-audit-model":1}`))
@@ -195,7 +230,10 @@ data: {"type":"response.completed","response":{"id":"recovered","status":"comple
 			path, format := "/v1/chat/completions", types.RelayFormatOpenAI
 			if responses {
 				path, format = "/v1/responses", types.RelayFormatOpenAIResponses
-				requestBody = `{"model":"policy-audit-model","stream":true,"input":"hello"}`
+				requestBody = `{"model":"policy-audit-model","input":"hello"}`
+				if stream {
+					requestBody = `{"model":"policy-audit-model","stream":true,"input":"hello"}`
+				}
 			} else if stream {
 				requestBody = `{"model":"policy-audit-model","stream":true,"messages":[{"role":"user","content":"hello"}]}`
 			}
@@ -223,6 +261,13 @@ data: {"type":"response.completed","response":{"id":"recovered","status":"comple
 			var logs []model.Log
 			require.NoError(t, db.Where("request_id = ?", tc.name).Order("id").Find(&logs).Error)
 			if tc.firstBody != "" {
+				if tc.attempts == 1 && tc.recoveredBody != "" {
+					assert.Equal(t, http.StatusOK, recorder.Code)
+					require.Len(t, logs, 1)
+					assert.Equal(t, model.LogTypeConsume, logs[0].Type)
+					assert.NotContains(t, recorder.Body.String(), "unused")
+					return
+				}
 				if tc.recoveredBody == "" {
 					assert.Equal(t, http.StatusOK, recorder.Code)
 					assert.Equal(t, "success", events[len(events)-1].Decision.Action)
@@ -260,7 +305,8 @@ data: {"type":"response.completed","response":{"id":"recovered","status":"comple
 					assert.Equal(t, http.StatusOK, recorder.Code)
 					assert.Contains(t, recorder.Body.String(), "recovered")
 					assert.NotContains(t, recorder.Body.String(), "empty-attempt")
-					if responses {
+					assert.NotContains(t, recorder.Body.String(), "first-attempt")
+					if responses && stream {
 						assert.Contains(t, recorder.Body.String(), `"delta":"hello"`)
 						assert.Equal(t, 1, strings.Count(recorder.Body.String(), "event: response.completed"))
 					} else if stream {
@@ -288,4 +334,15 @@ data: {"type":"response.completed","response":{"id":"recovered","status":"comple
 			}
 		})
 	}
+}
+
+func TestZeroOutputRetryOption(t *testing.T) {
+	policy, err := model.BuildRequestPolicy(nil)
+	require.NoError(t, err)
+	assert.False(t, policy.RetryZeroOutputEnabled)
+	policy, err = model.BuildRequestPolicy(map[string]string{"RetryZeroOutputEnabled": "true"})
+	require.NoError(t, err)
+	assert.True(t, policy.RetryZeroOutputEnabled)
+	_, err = model.BuildRequestPolicy(map[string]string{"RetryZeroOutputEnabled": "invalid"})
+	require.Error(t, err)
 }
