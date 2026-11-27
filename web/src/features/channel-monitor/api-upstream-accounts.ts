@@ -27,6 +27,8 @@ import type {
 } from './types'
 
 export type UpstreamAccount = {
+  pending_save?: boolean
+  pending_error?: string
   has_balance_key: boolean
   id: number
   name: string
@@ -79,6 +81,8 @@ export function useUpstreamAccounts() {
           )
         ).data
       ),
+    refetchInterval: (query) =>
+      query.state.data?.some((account) => account.pending_save) ? 3000 : false,
   })
 }
 

@@ -386,8 +386,12 @@ export function UpstreamConfigDialog(props: UpstreamConfigDialogProps) {
   const saveMutation = useMutation({
     mutationFn: saveChannelMonitorUpstreamConfig,
     onError: handleChannelMonitorMutationError,
-    onSuccess: () => {
-      toast.success('上游配置已保存')
+    onSuccess: (response) => {
+      toast.success(
+        response.data.pending_save
+          ? '配置已暂存，当前任务结束后自动应用'
+          : '上游配置已保存'
+      )
       queryClient.invalidateQueries({ queryKey: ['channel-monitor'] })
       props.onOpenChange(false)
     },

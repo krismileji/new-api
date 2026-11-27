@@ -849,7 +849,9 @@ export async function saveChannelMonitorUpstreamConfig(request: {
   config: ChannelMonitorUpstreamRequest
 }) {
   const response = await api.put<
-    ChannelMonitorApiResponse<ChannelMonitorUpstreamConfig>
+    ChannelMonitorApiResponse<
+      ChannelMonitorUpstreamConfig & { pending_save?: boolean }
+    >
   >(
     `/api/channel_monitor/channel/${request.channelId}/upstream`,
     request.config,

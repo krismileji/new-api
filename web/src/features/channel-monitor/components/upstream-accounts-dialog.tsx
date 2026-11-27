@@ -175,10 +175,14 @@ export default function UpstreamAccountsDialog(props: {
                 account={editing.account}
                 channels={props.channels}
                 onClose={() => setEditing(null)}
-                onSaved={() => {
+                onSaved={(pending) => {
                   setEditing(null)
                   refresh()
-                  toast.success('上游账户已保存，请刷新账户余额')
+                  toast.success(
+                    pending
+                      ? '配置已暂存，当前任务结束后自动应用'
+                      : '上游账户已保存，请刷新账户余额'
+                  )
                 }}
               />
             ) : (
@@ -227,6 +231,18 @@ export default function UpstreamAccountsDialog(props: {
                           <CardTitle className='truncate' title={account.name}>
                             {account.name}
                           </CardTitle>
+                          {account.pending_save ? (
+                            <Badge variant='secondary'>
+                              配置已暂存，等待当前任务结束后应用
+                            </Badge>
+                          ) : null}
+                          {account.pending_error ? (
+                            <Alert variant='destructive'>
+                              <AlertDescription>
+                                {account.pending_error}
+                              </AlertDescription>
+                            </Alert>
+                          ) : null}
                           <p
                             className='text-muted-foreground truncate text-xs'
                             title={account.upstream.base_url}

@@ -147,7 +147,11 @@ export default function UpstreamAutomationsDialog(props: {
           }
         }
       )
-      toast.success(saved.enabled ? '任务已启用' : '任务已暂停')
+      if (saved.state.pending_save) {
+        toast.success('配置已暂存，当前任务结束后自动应用')
+      } else {
+        toast.success(saved.enabled ? '任务已启用' : '任务已暂停')
+      }
     },
     onSettled: refresh,
   })
@@ -327,6 +331,9 @@ export default function UpstreamAutomationsDialog(props: {
                             >
                               {statusText}
                             </Badge>
+                            {task.state.pending_save ? (
+                              <Badge variant='outline'>配置待应用</Badge>
+                            ) : null}
                             {pendingConfirmations > 0 ? (
                               <Badge variant='destructive'>
                                 {pendingConfirmations} 条待核对
@@ -345,14 +352,14 @@ export default function UpstreamAutomationsDialog(props: {
                             className='flex items-center gap-2 px-2'
                             title={
                               running
-                                ? '任务正在检查，完成后可切换启停'
+                                ? '任务正在检查，修改将在本轮结束后应用'
                                 : undefined
                             }
                           >
                             <Switch
                               id={switchId}
                               checked={task.enabled}
-                              disabled={busy || running}
+                              disabled={busy}
                               aria-labelledby={`${switchId}-label`}
                               aria-busy={saving}
                               onCheckedChange={(enabled) =>
@@ -378,7 +385,7 @@ export default function UpstreamAutomationsDialog(props: {
                           <Button
                             variant='outline'
                             size='sm'
-                            disabled={busy || running}
+                            disabled={busy}
                             onClick={() => setEditing(task)}
                           >
                             编辑任务

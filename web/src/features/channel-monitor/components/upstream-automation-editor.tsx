@@ -98,8 +98,12 @@ export function UpstreamAutomationEditor(props: {
     mutationKey: automationsQueryKey,
     mutationFn: saveUpstreamAutomation,
     onError: handleChannelMonitorMutationError,
-    onSuccess: () => {
-      toast.success('上游自动任务已保存')
+    onSuccess: (saved) => {
+      toast.success(
+        saved.state.pending_save
+          ? '配置已暂存，当前任务结束后自动应用'
+          : '上游自动任务已保存'
+      )
       props.onSaved()
     },
   })

@@ -565,7 +565,7 @@ func (task *SystemTask) DecodeState(v any) error {
 }
 
 func (task *SystemTask) ToResponse() SystemTaskResponse {
-	if task.Type == UpstreamAutomationConfigType {
+	if task.Type == UpstreamAutomationConfigType || task.Type == UpstreamAccountEditConfigType {
 		return SystemTaskResponse{ID: task.ID, TaskID: task.TaskID, Type: task.Type, Status: task.Status}
 	}
 	return SystemTaskResponse{

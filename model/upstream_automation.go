@@ -62,18 +62,19 @@ func validateChannelUpstreamAutomationOwnership(tx *gorm.DB, channelID int, upst
 // Configuration and durable execution state reuse system_tasks; these rows are
 // never queued, exposed through generic task APIs, or removed by task retention.
 type UpstreamAutomationState struct {
-	Revision   int64                                      `json:"revision"`
-	LastCheck  int64                                      `json:"last_check"`
-	NextCheck  int64                                      `json:"next_check"`
-	LeaseID    string                                     `json:"lease_id,omitempty"`
-	LeaseUntil int64                                      `json:"lease_until,omitempty"`
-	Status     string                                     `json:"status"`
-	Message    string                                     `json:"message"`
-	Failures   int                                        `json:"failures"`
-	Ratio      *float64                                   `json:"ratio,omitempty"`
-	Balance    *float64                                   `json:"balance,omitempty"`
-	Actions    map[string]ChannelMonitorCustomActionState `json:"actions"`
-	History    []UpstreamAutomationEvent                  `json:"history"`
+	PendingSave bool                                       `json:"pending_save,omitempty"`
+	Revision    int64                                      `json:"revision"`
+	LastCheck   int64                                      `json:"last_check"`
+	NextCheck   int64                                      `json:"next_check"`
+	LeaseID     string                                     `json:"lease_id,omitempty"`
+	LeaseUntil  int64                                      `json:"lease_until,omitempty"`
+	Status      string                                     `json:"status"`
+	Message     string                                     `json:"message"`
+	Failures    int                                        `json:"failures"`
+	Ratio       *float64                                   `json:"ratio,omitempty"`
+	Balance     *float64                                   `json:"balance,omitempty"`
+	Actions     map[string]ChannelMonitorCustomActionState `json:"actions"`
+	History     []UpstreamAutomationEvent                  `json:"history"`
 }
 
 func ListUpstreamAutomations(ctx context.Context) ([]SystemTask, error) {
@@ -162,9 +163,6 @@ func MutateUpstreamAutomation(ctx context.Context, id string, create bool, group
 			if err := lockForUpdate(tx).First(&account, accountIDs[0]).Error; err != nil {
 				return err
 			}
-			if account.LeaseUntil > common.GetTimestamp() {
-				return errors.New("上游账户正在执行，请稍后重试")
-			}
 		}
 		// Group edits take the same group -> task lock order. Runtime state
 		// updates and local credential refreshes do not acquire a group lock.
@@ -215,7 +213,7 @@ func MutateUpstreamAutomation(ctx context.Context, id string, create bool, group
 			return tx.Create(&row).Error
 		}
 		return tx.Model(&SystemTask{}).Where("id = ?", row.ID).Updates(map[string]any{
-			"payload": row.Payload, "state": row.State, "updated_at": common.GetTimestamp(),
+			"payload": row.Payload, "state": row.State, "result": row.Result, "updated_at": common.GetTimestamp(),
 		}).Error
 	})
 	return row, err

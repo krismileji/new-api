@@ -42,6 +42,7 @@ export type UpstreamAutomation = {
   channel_ids: number[]
   custom_config: ChannelMonitorCustomUpstreamConfig
   state: {
+    pending_save?: boolean
     revision: number
     last_check: number
     next_check: number

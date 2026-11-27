@@ -51,6 +51,8 @@ func channelMonitorConfigurationForRequest(channelID int, accountRevision *int64
 }
 
 type upstreamAccountView struct {
+	PendingSave      bool                            `json:"pending_save"`
+	PendingError     string                          `json:"pending_error,omitempty"`
 	HasBalanceKey    bool                            `json:"has_balance_key"`
 	ID               int                             `json:"id"`
 	Name             string                          `json:"name"`
@@ -70,6 +72,11 @@ func channelMonitorAccountView(ctx context.Context, account model.ChannelMonitor
 		HasBalanceKey: account.BalanceKey != "",
 		Balance:       account.Balance, LastBalanceTime: account.LastBalanceTime, LastBalanceError: account.LastBalanceError,
 		Proxy: account.Proxy, ChannelIDs: []int{}, ChannelRevisions: map[int]int64{}}
+	status, message, err := model.UpstreamAccountEditStatus(ctx, account.ID)
+	if err != nil {
+		return view, err
+	}
+	view.PendingSave, view.PendingError = status == model.SystemTaskStatusPending, message
 	settings, err := account.MonitorSettings()
 	if err != nil {
 		return view, err

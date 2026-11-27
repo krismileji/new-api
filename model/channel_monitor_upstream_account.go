@@ -18,6 +18,7 @@ import (
 // change that projection. Ratios, groups and request-time cost snapshots remain
 // channel-owned.
 type ChannelMonitorUpstreamAccount struct {
+	PendingSave            bool     `json:"-" gorm:"-"`
 	SourceChannelID        int      `json:"-" gorm:"-"`
 	ExpectedSourceSettings string   `json:"-" gorm:"-"`
 	ID                     int      `json:"id" gorm:"primaryKey"`
@@ -157,6 +158,11 @@ func GetUpstreamAccountMonitors(ctx context.Context, id int) ([]ChannelRatioMoni
 // concurrent credential rotation cannot be overwritten by an editor. Membership
 // and shared settings are committed together; omitted member IDs keep membership.
 func SaveChannelMonitorUpstreamAccount(ctx context.Context, account *ChannelMonitorUpstreamAccount, expected *ChannelMonitorUpstreamAccount, memberIDs []int, expectedRevisions ...map[int]int64) ([]ChannelRatioMonitor, error) {
+	return saveChannelMonitorUpstreamAccount(ctx, account, expected, memberIDs, nil, expectedRevisions...)
+}
+
+func saveChannelMonitorUpstreamAccount(ctx context.Context, account *ChannelMonitorUpstreamAccount, expected *ChannelMonitorUpstreamAccount, memberIDs []int, pending *SystemTask, expectedRevisions ...map[int]int64) ([]ChannelRatioMonitor, error) {
+	account.PendingSave = false
 	account.Name = strings.TrimSpace(account.Name)
 	if account.Name == "" || utf8.RuneCountInString(account.Name) > 80 {
 		return nil, errors.New("账户名称须为 1 到 80 个字符")
@@ -189,11 +195,30 @@ func SaveChannelMonitorUpstreamAccount(ctx context.Context, account *ChannelMoni
 			if err := lockForUpdate(tx).First(&current, account.ID).Error; err != nil {
 				return err
 			}
+			if pending != nil && expected != nil && current.Revision == expected.Revision && current.Settings != expected.Settings {
+				if err := rebaseUpstreamAccountEditCredentials(account, expected, current); err != nil {
+					return err
+				}
+				settings, err = account.MonitorSettings()
+				if err != nil {
+					return err
+				}
+			}
 			if expected == nil || current.Revision != expected.Revision || current.Settings != expected.Settings || current.Revision == math.MaxInt64 {
 				return ErrUpstreamAccountChanged
 			}
 			if current.LeaseUntil > common.GetTimestamp() {
-				return errors.New("上游账户正在执行，请稍后重试")
+				if pending != nil {
+					return errUpstreamAccountEditBusy
+				}
+				if err := stageUpstreamAccountEdit(tx, *account, *expected, memberIDs, expectedRevisions); err != nil {
+					return err
+				}
+				account.PendingSave = true
+				return nil
+			}
+			if err := lockPendingUpstreamAccountEdit(tx, account.ID, pending); err != nil {
+				return err
 			}
 			account.Revision = current.Revision + 1
 		} else {
@@ -303,10 +328,13 @@ func SaveChannelMonitorUpstreamAccount(ctx context.Context, account *ChannelMoni
 						return err
 					}
 					if state.LeaseUntil > common.GetTimestamp() {
-						return errors.New("关联渠道的自动任务正在执行，请稍后重试")
+						return errUpstreamAccountEditBusy
 					}
 				}
 			}
+		}
+		if err := tx.Where("task_id = ? AND type = ?", upstreamAccountEditTaskID(account.ID), UpstreamAccountEditConfigType).Delete(&SystemTask{}).Error; err != nil {
+			return err
 		}
 		return economic.bump(tx)
 	})

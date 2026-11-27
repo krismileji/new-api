@@ -53,7 +53,7 @@ export function UpstreamAccountEditor(props: {
   account?: UpstreamAccount
   channels: ChannelMonitorItem[]
   onClose: () => void
-  onSaved: () => void
+  onSaved: (pending: boolean) => void
 }) {
   const id = useId()
   const form = useForm<UpstreamAccountFormValues>({
@@ -85,7 +85,7 @@ export function UpstreamAccountEditor(props: {
   const save = useMutation({
     mutationFn: saveUpstreamAccount,
     onError: handleChannelMonitorMutationError,
-    onSuccess: props.onSaved,
+    onSuccess: (saved) => props.onSaved(saved.pending_save === true),
   })
   const busy = inspect.isPending || save.isPending
   const sourceChannels = props.channels.filter(

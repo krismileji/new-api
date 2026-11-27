@@ -61,6 +61,13 @@ func UpstreamAutomationResponse(row model.SystemTask) (UpstreamAutomationView, e
 }
 
 func SaveUpstreamAutomation(ctx context.Context, input UpstreamAutomationConfig) (UpstreamAutomationView, error) {
+	return saveUpstreamAutomation(ctx, input, "")
+}
+
+func saveUpstreamAutomation(ctx context.Context, input UpstreamAutomationConfig, expectedDraft string) (UpstreamAutomationView, error) {
+	// Retain masks/omitted credentials so applying after execution restores the
+	// latest refreshed credentials, rather than an earlier normalized snapshot.
+	draft := input
 	if input.AccountID > 0 {
 		var err error
 		input, err = ResolveUpstreamAccountAutomation(ctx, input)
@@ -115,6 +122,9 @@ func SaveUpstreamAutomation(ctx context.Context, input UpstreamAutomationConfig)
 		groupID, groupRevision = 0, 0
 	}
 	row, err := model.MutateUpstreamAutomation(ctx, input.ID, create, groupID, groupRevision, func(row *model.SystemTask) error {
+		if expectedDraft != "" && row.Result != expectedDraft {
+			return errUpstreamAutomationDraftChanged
+		}
 		state := model.UpstreamAutomationState{Actions: map[string]model.ChannelMonitorCustomActionState{}}
 		var existing *ChannelMonitorCustomUpstreamConfig
 		if !create {
@@ -126,8 +136,8 @@ func SaveUpstreamAutomation(ctx context.Context, input UpstreamAutomationConfig)
 			if current.AccountID > 0 && current.AccountID != input.AccountID {
 				return errors.New("账户任务不能直接改绑，请先处理原账户任务")
 			}
-			if current.Revision != input.Revision || state.LeaseUntil > common.GetTimestamp() {
-				return errors.New("任务正在执行或配置已变化，请刷新后重试")
+			if current.Revision != input.Revision {
+				return errors.New("任务配置已变化，请刷新后重试")
 			}
 			if current.AccountID == input.AccountID && (input.AccountID > 0 || (current.BaseURL == input.BaseURL && current.Proxy == input.Proxy)) {
 				existing = &current.CustomConfig
@@ -141,6 +151,20 @@ func SaveUpstreamAutomation(ctx context.Context, input UpstreamAutomationConfig)
 			return errors.New("请至少配置一条触发规则")
 		}
 		input.CustomConfig = config
+		if state.LeaseUntil > common.GetTimestamp() {
+			pending, err := common.Marshal(draft)
+			if err != nil {
+				return err
+			}
+			if len(pending) > 60<<10 {
+				return errors.New("自动任务配置过大，请减少请求参数或规则")
+			}
+			state.PendingSave = true
+			encoded, err := common.Marshal(state)
+			row.Result, row.State = string(pending), string(encoded)
+			return err
+		}
+		state.PendingSave, row.Result = false, ""
 		state.Revision++
 		input.Revision = state.Revision
 		state.NextCheck, state.Status, state.Message = 0, "waiting", "配置已保存，等待检查"

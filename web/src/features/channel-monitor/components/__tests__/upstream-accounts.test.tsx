@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { toast } from 'sonner'
 import { describe, expect, test, vi } from 'vitest'
 
 import { api } from '@/lib/api'
@@ -30,76 +31,87 @@ import UpstreamAccountsDialog from '../upstream-accounts-dialog'
 import { UpstreamConfigDialog } from '../upstream-config-dialog'
 
 describe('共享上游账户', () => {
-  test('账户余额跟随渠道监控更新，修改账户名称可直接保存且不提交旧刷新间隔', async () => {
-    const channel = customVariableChannel()
-    vi.spyOn(api, 'get').mockResolvedValue({
-      data: {
-        success: true,
-        data: [
-          {
-            id: 8,
-            revision: 1,
-            name: '共享钱包',
-            channel_ids: [channel.id],
-            channel_revisions: { [channel.id]: 3 },
-            refresh_interval_minutes: 5,
-            balance: null,
-            proxy: '',
-            has_balance_key: false,
-            upstream: channel.upstream,
-          },
-        ],
-      },
-    })
-    const preview = vi.spyOn(api, 'post').mockResolvedValue({
-      data: {
-        success: true,
-        data: [{ channel_id: channel.id, revision: 3, fields: [] }],
-      },
-    })
-    const put = vi.spyOn(api, 'put').mockResolvedValue({
-      data: { success: true, data: {} },
-    })
-    const client = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-        mutations: { retry: false },
-      },
-    })
-    render(
-      <QueryClientProvider client={client}>
-        <UpstreamAccountsDialog
-          channels={[channel]}
-          onOpenChange={() => undefined}
-        />
-      </QueryClientProvider>
-    )
-    const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: '管理关联' }))
-    expect(
-      screen.queryByRole('spinbutton', {
-        name: '余额自动刷新间隔（分钟）',
+  test.each([false, true])(
+    '账户编辑保存时暂存状态为 %s，关闭编辑并提示对应的保存结果',
+    async (pending) => {
+      const notify = vi.spyOn(toast, 'success')
+      const channel = customVariableChannel()
+      vi.spyOn(api, 'get').mockResolvedValue({
+        data: {
+          success: true,
+          data: [
+            {
+              id: 8,
+              revision: 1,
+              name: '共享钱包',
+              channel_ids: [channel.id],
+              channel_revisions: { [channel.id]: 3 },
+              refresh_interval_minutes: 5,
+              balance: null,
+              proxy: '',
+              has_balance_key: false,
+              upstream: channel.upstream,
+            },
+          ],
+        },
       })
-    ).not.toBeInTheDocument()
-    expect(
-      screen.getByText('余额自动刷新跟随渠道监控设置中的更新间隔。')
-    ).toBeVisible()
-    await user.type(screen.getByRole('textbox', { name: '账户名称' }), '更新')
-    await user.click(screen.getByRole('button', { name: '保存配置' }))
-    await waitFor(() => expect(put).toHaveBeenCalledOnce())
-    expect(put.mock.calls[0][1]).toMatchObject({
-      id: 8,
-      revision: 1,
-      channel_ids: [channel.id],
-      channel_revisions: { [channel.id]: 3 },
-      name: '共享钱包更新',
-    })
-    expect(put.mock.calls[0][1]).not.toHaveProperty('refresh_interval_minutes')
-    expect(preview).not.toHaveBeenCalled()
-    expect(
-      await screen.findByRole('button', { name: '管理关联' })
-    ).toBeEnabled()
-  })
+      const preview = vi.spyOn(api, 'post').mockResolvedValue({
+        data: {
+          success: true,
+          data: [{ channel_id: channel.id, revision: 3, fields: [] }],
+        },
+      })
+      const put = vi.spyOn(api, 'put').mockResolvedValue({
+        data: { success: true, data: { pending_save: pending } },
+      })
+      const client = new QueryClient({
+        defaultOptions: {
+          queries: { retry: false },
+          mutations: { retry: false },
+        },
+      })
+      render(
+        <QueryClientProvider client={client}>
+          <UpstreamAccountsDialog
+            channels={[channel]}
+            onOpenChange={() => undefined}
+          />
+        </QueryClientProvider>
+      )
+      const user = userEvent.setup()
+      await user.click(await screen.findByRole('button', { name: '管理关联' }))
+      expect(
+        screen.queryByRole('spinbutton', {
+          name: '余额自动刷新间隔（分钟）',
+        })
+      ).not.toBeInTheDocument()
+      expect(
+        screen.getByText('余额自动刷新跟随渠道监控设置中的更新间隔。')
+      ).toBeVisible()
+      await user.type(screen.getByRole('textbox', { name: '账户名称' }), '更新')
+      await user.click(screen.getByRole('button', { name: '保存配置' }))
+      await waitFor(() => expect(put).toHaveBeenCalledOnce())
+      expect(put.mock.calls[0][1]).toMatchObject({
+        id: 8,
+        revision: 1,
+        channel_ids: [channel.id],
+        channel_revisions: { [channel.id]: 3 },
+        name: '共享钱包更新',
+      })
+      expect(put.mock.calls[0][1]).not.toHaveProperty(
+        'refresh_interval_minutes'
+      )
+      expect(preview).not.toHaveBeenCalled()
+      expect(
+        await screen.findByRole('button', { name: '管理关联' })
+      ).toBeEnabled()
+      expect(notify).toHaveBeenCalledWith(
+        pending
+          ? '配置已暂存，当前任务结束后自动应用'
+          : '上游账户已保存，请刷新账户余额'
+      )
+    }
+  )
 
   test('编辑账户更换关联渠道必须重新预览，确认后提交最新渠道版本', async () => {
     const channel = customVariableChannel()

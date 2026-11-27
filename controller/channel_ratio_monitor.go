@@ -1163,7 +1163,7 @@ func SaveChannelMonitorUpstreamConfig(c *gin.Context) {
 			}
 		}
 		recordManageAudit(c, "channel.upstream_account_config_update", map[string]any{"account_id": account.ID})
-		common.ApiSuccess(c, gin.H{"account_id": account.ID})
+		common.ApiSuccess(c, gin.H{"account_id": account.ID, "pending_save": account.PendingSave})
 		return
 	}
 	monitor, err := model.SaveChannelRatioUpstreamConfig(

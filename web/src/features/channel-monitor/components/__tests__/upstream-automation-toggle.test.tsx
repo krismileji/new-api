@@ -200,20 +200,29 @@ test.each(['接口拒绝', '网络失败'] as const)(
   }
 )
 
-test('任务正在检查时列表开关禁用，不提交可能与执行冲突的配置', async () => {
-  const task = savedTask(true)
+test('任务正在检查时允许编辑及暂存暂停操作，当前轮保持运行并提示待应用', async () => {
+  let task = savedTask(true)
   task.state.lease_until = Math.floor(Date.now() / 1000) + 3600
-  vi.spyOn(api, 'get').mockResolvedValue({
+  vi.spyOn(api, 'get').mockImplementation(async () => ({
     data: { success: true, data: [task] },
+  }))
+  const put = vi.spyOn(api, 'put').mockImplementation(async () => {
+    task = { ...task, state: { ...task.state, pending_save: true } }
+    return { data: { success: true, data: task } }
   })
-  const put = vi.spyOn(api, 'put')
+  const notify = vi.spyOn(toast, 'success')
   const user = userEvent.setup()
   renderList()
   const toggle = await screen.findByRole('switch', {
     name: '启用任务：每日额度重置',
   })
-  expect(toggle).toHaveAttribute('aria-disabled', 'true')
+  expect(toggle).not.toHaveAttribute('aria-disabled', 'true')
+  expect(screen.getByRole('button', { name: '编辑任务' })).toBeEnabled()
   expect(screen.getByText('正在检查')).toBeVisible()
   await user.click(toggle)
-  expect(put).not.toHaveBeenCalled()
+  await waitFor(() => expect(put).toHaveBeenCalledOnce())
+  expect(put.mock.calls[0][1]).toMatchObject({ enabled: false })
+  expect(await screen.findByText('配置待应用')).toBeVisible()
+  expect(toggle).toBeChecked()
+  expect(notify).toHaveBeenCalledWith('配置已暂存，当前任务结束后自动应用')
 })

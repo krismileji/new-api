@@ -239,6 +239,7 @@ func TestChannelMonitorSharedAccountPollsBalanceOnceWhileRatiosRun(t *testing.T)
 
 func TestUpstreamAccountProtectsAllMembersAndFencesCredentials(t *testing.T) {
 	db := setupChannelMonitorCustomActionRefreshDB(t, "sqlite")
+	disableChannelMonitorSSRFProtection(t)
 	require.NoError(t, db.AutoMigrate(&model.ChannelMonitorUpstreamAccount{}))
 	config := automationTestConfig("https://account.example")
 	config.CustomConfig.Actions = nil
@@ -275,7 +276,8 @@ func TestUpstreamAccountProtectsAllMembersAndFencesCredentials(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, locked)
 	_, err = model.SaveChannelMonitorUpstreamAccount(t.Context(), &account, &account, nil)
-	require.ErrorContains(t, err, "正在执行")
+	require.NoError(t, err)
+	assert.True(t, account.PendingSave)
 	require.ErrorIs(t, model.RecordUpstreamAccountBalance(t.Context(), account.ID, account.Revision, "other", common.GetPointer(999.0), ""), model.ErrUpstreamAccountChanged)
 	settings.UpstreamAccessToken = "rotated-token"
 	require.NoError(t, model.RefreshUpstreamAccountCredentials(t.Context(), account, settings))
@@ -285,6 +287,150 @@ func TestUpstreamAccountProtectsAllMembersAndFencesCredentials(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, "rotated-token", member.UpstreamAccessToken)
 		assert.Equal(t, 1.0, member.Ratio)
+	}
+}
+
+func TestUpstreamConfigurationDeferredEditsDatabaseMatrix(t *testing.T) {
+	for _, engine := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(engine, func(t *testing.T) {
+			db := setupChannelMonitorCustomActionRefreshDB(t, engine)
+			disableChannelMonitorSSRFProtection(t)
+			require.NoError(t, db.AutoMigrate(&model.ChannelMonitorUpstreamAccount{}))
+			t.Cleanup(func() { assert.NoError(t, db.Migrator().DropTable(&model.ChannelMonitorUpstreamAccount{})) })
+			settings := model.ChannelMonitorAccountSettings{UpstreamType: "new_api", UpstreamBaseURL: "https://account.example", UpstreamAccessToken: "stored-secret"}
+			raw, err := common.Marshal(settings)
+			require.NoError(t, err)
+			account := model.ChannelMonitorUpstreamAccount{Name: "原配置", Settings: string(raw)}
+			require.NoError(t, db.Create(&model.Channel{Id: 101, Name: "关联渠道", Key: "key", Group: "default"}).Error)
+			require.NoError(t, db.Create(&model.ChannelRatioMonitor{ChannelId: 101, Ratio: 1, UpstreamRevision: 1}).Error)
+			_, err = model.SaveChannelMonitorUpstreamAccount(t.Context(), &account, nil, []int{101})
+			require.NoError(t, err)
+			expected := account
+			locked, err := model.AcquireUpstreamAccountLease(t.Context(), account.ID, account.Revision, "running", common.GetTimestamp()+60)
+			require.NoError(t, err)
+			require.True(t, locked)
+			account.Name = "暂存配置"
+			_, err = model.SaveChannelMonitorUpstreamAccount(t.Context(), &account, &expected, nil)
+			require.NoError(t, err)
+			assert.True(t, account.PendingSave)
+			account.Name = "最新暂存"
+			_, err = model.SaveChannelMonitorUpstreamAccount(t.Context(), &account, &expected, nil)
+			require.NoError(t, err)
+			_, err = model.ApplyPendingUpstreamAccountEdits(t.Context())
+			require.NoError(t, err)
+			current, err := model.GetChannelMonitorUpstreamAccount(t.Context(), account.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "原配置", current.Name)
+			assert.Equal(t, "running", current.LeaseID)
+			view, err := channelMonitorAccountView(t.Context(), current)
+			require.NoError(t, err)
+			assert.True(t, view.PendingSave)
+			rows, _, err := model.ListSystemTasks(model.SystemTaskFilter{}, 0, 100)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			response, err := common.Marshal(rows[0].ToResponse())
+			require.NoError(t, err)
+			assert.NotContains(t, string(response), "stored-secret")
+			settings.UpstreamAccessToken = "rotated-secret"
+			require.NoError(t, model.RefreshUpstreamAccountCredentials(t.Context(), current, settings))
+			require.NoError(t, model.ReleaseUpstreamAccountLease(t.Context(), account.ID, "running"))
+			_, err = model.ApplyPendingUpstreamAccountEdits(t.Context())
+			require.NoError(t, err)
+			current, err = model.GetChannelMonitorUpstreamAccount(t.Context(), account.ID)
+			require.NoError(t, err)
+			assert.Equal(t, "最新暂存", current.Name)
+			assert.Equal(t, expected.Revision+1, current.Revision)
+			assert.Contains(t, current.Settings, "rotated-secret")
+			member, err := model.GetChannelRatioMonitor(101)
+			require.NoError(t, err)
+			assert.Equal(t, "rotated-secret", member.UpstreamAccessToken)
+			_, err = model.ApplyPendingUpstreamAccountEdits(t.Context())
+			require.NoError(t, err)
+			status, _, err := model.UpstreamAccountEditStatus(t.Context(), account.ID)
+			require.NoError(t, err)
+			assert.Empty(t, status)
+			_, err = model.SaveChannelMonitorUpstreamAccount(t.Context(), &account, &expected, nil)
+			require.ErrorIs(t, err, model.ErrUpstreamAccountChanged)
+
+			// A setting edit keeps an unrelated token rotation from the run.
+			expected = current
+			account = current
+			desired, err := account.MonitorSettings()
+			require.NoError(t, err)
+			desired.BalanceWarningThreshold = common.GetPointer(5.0)
+			raw, err = common.Marshal(desired)
+			require.NoError(t, err)
+			account.Settings = string(raw)
+			locked, err = model.AcquireUpstreamAccountLease(t.Context(), account.ID, account.Revision, "second-run", common.GetTimestamp()+60)
+			require.NoError(t, err)
+			require.True(t, locked)
+			_, err = model.SaveChannelMonitorUpstreamAccount(t.Context(), &account, &expected, nil)
+			require.NoError(t, err)
+			latest, err := current.MonitorSettings()
+			require.NoError(t, err)
+			latest.UpstreamAccessToken = "latest-rotation"
+			require.NoError(t, model.RefreshUpstreamAccountCredentials(t.Context(), current, latest))
+			require.NoError(t, model.ReleaseUpstreamAccountLease(t.Context(), account.ID, "second-run"))
+			_, err = model.ApplyPendingUpstreamAccountEdits(t.Context())
+			require.NoError(t, err)
+			current, err = model.GetChannelMonitorUpstreamAccount(t.Context(), account.ID)
+			require.NoError(t, err)
+			appliedSettings, err := current.MonitorSettings()
+			require.NoError(t, err)
+			assert.Equal(t, common.GetPointer(5.0), appliedSettings.BalanceWarningThreshold)
+			assert.Equal(t, "latest-rotation", appliedSettings.UpstreamAccessToken)
+
+			config := automationTestConfig("https://automation.example")
+			task, err := service.SaveUpstreamAutomation(t.Context(), config)
+			require.NoError(t, err)
+			_, err = model.MutateUpstreamAutomation(t.Context(), task.ID, false, 0, 0, func(row *model.SystemTask) error {
+				task.State.LeaseID, task.State.LeaseUntil = "task-running", common.GetTimestamp()+60
+				task.State.Actions["reset"] = model.ChannelMonitorCustomActionState{Attempts: 2}
+				encoded, err := common.Marshal(task.State)
+				row.State = string(encoded)
+				return err
+			})
+			require.NoError(t, err)
+			draft := task.UpstreamAutomationConfig
+			draft.Name, draft.Enabled = "执行完暂停", false
+			pending, err := service.SaveUpstreamAutomation(t.Context(), draft)
+			require.NoError(t, err)
+			assert.True(t, pending.State.PendingSave)
+			invalid := draft
+			invalid.IntervalMinutes = 0
+			_, err = service.SaveUpstreamAutomation(t.Context(), invalid)
+			require.Error(t, err)
+			stale := draft
+			stale.Revision--
+			_, err = service.SaveUpstreamAutomation(t.Context(), stale)
+			require.ErrorContains(t, err, "配置已变化")
+			require.NoError(t, service.ApplyPendingUpstreamAutomationEdits(t.Context()))
+			stored, err := model.GetUpstreamAutomation(t.Context(), task.ID)
+			require.NoError(t, err)
+			assert.Contains(t, stored.Payload, `"enabled":true`)
+			assert.NotEmpty(t, stored.Result)
+			_, err = model.MutateUpstreamAutomation(t.Context(), task.ID, false, 0, 0, func(row *model.SystemTask) error {
+				var state model.UpstreamAutomationState
+				if err := common.UnmarshalJsonStr(row.State, &state); err != nil {
+					return err
+				}
+				state.LeaseID, state.LeaseUntil = "", 0
+				encoded, err := common.Marshal(state)
+				row.State = string(encoded)
+				return err
+			})
+			require.NoError(t, err)
+			require.NoError(t, service.ApplyPendingUpstreamAutomationEdits(t.Context()))
+			stored, err = model.GetUpstreamAutomation(t.Context(), task.ID)
+			require.NoError(t, err)
+			applied, err := service.UpstreamAutomationResponse(stored)
+			require.NoError(t, err)
+			assert.False(t, applied.Enabled)
+			assert.False(t, applied.State.PendingSave)
+			assert.Equal(t, "执行完暂停", applied.Name)
+			assert.Equal(t, 2, applied.State.Actions["reset"].Attempts)
+			assert.Empty(t, stored.Result)
+		})
 	}
 }
 
